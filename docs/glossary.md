@@ -15,7 +15,8 @@ the same pull request that introduces it.
 | **Replica** | A device's copy of a folder. |
 | **Full replica** | A replica that stores every chunk of every live file, and keeps recycle-bin contents until retention expires. Typically a NAS or server. |
 | **Partial replica** | A replica that stores all metadata but only some chunks. Missing content is fetched on demand. |
-| **Placeholder** | A file that is visible in a partial replica's file system but whose content is not stored locally. |
+| **Placeholder** | A file that is visible in a partial replica's file system but whose content is not stored locally. Opening it fetches the content on demand. |
+| **Materialised** | A partial replica's file whose content has been fetched and written to disk. Eviction turns it back into a placeholder. |
 | **Chunk** | A contiguous piece of file content produced by FastCDC. Identified by its BLAKE3 hash (`ChunkHash`). Chunks are content-addressed and deduplicated. |
 | **Manifest** | The ordered list of chunks (hash and length) that make up one version of a file's content. |
 | **Content hash** | BLAKE3 hash of a file's full content. Identifies a manifest. |
@@ -42,3 +43,7 @@ the same pull request that introduces it.
 | **Web account** | A username and password on one web peer, linked to a user. It sees exactly the folders that user is a member of. |
 | **Control socket** | `<data_dir>/control.sock`, where a daemon serves its REST API to local tools such as `tidefell`. |
 | **Signed envelope** | A wire message wrapped with the signer's public key and an Ed25519 signature. |
+| **Pairing** | Adding a new device to a user over the network with `pair/1`: a device holding the user key certifies the new device after the person confirms a code on both. |
+| **Pairing code** | What a new device shows to be paired: its device ID, a one-time secret and its addresses. Shown as a QR code or text. Expires after ten minutes or one use. |
+| **Approver** | The device that holds the user key and certifies a new device during pairing. |
+| **Confirmation code** | Six digits derived from the pairing secret and both device IDs, shown on both devices during pairing so the person can check they match. |

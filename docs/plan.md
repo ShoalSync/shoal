@@ -29,7 +29,7 @@ tidefell/tidefell (source of truth)
 ├─ specs/     wire protocol per ALPN + test vectors
 ├─ docs/      mdBook, ADRs, glossary, repo map
 └─ release vX.Y.Z
-   ├─ tidefell-ffi AAR (generated Kotlin inside)  → android
+   ├─ tidefell-ffi AAR asset (generated Kotlin)   → android
    ├─ tidefelld / web binaries (Nix flake outputs) → infra
    ├─ tidefelld config JSON Schema                 → infra (validated in CI)
    ├─ OpenAPI document for `api`                   → external clients
@@ -38,7 +38,7 @@ tidefell/tidefell (source of truth)
 
 | Edge | Artifact | How the consumer pins it |
 | --- | --- | --- |
-| monorepo → android | `org.tidefell:tidefell-ffi` AAR with uniffi-generated Kotlin, published by monorepo release CI to GitHub Packages Maven | `gradle/libs.versions.toml`: `tidefell = "X.Y.Z"`. A `tidefellFfiLocalPath` Gradle property switches to a composite build against a local monorepo checkout for FFI development. |
+| monorepo → android | `tidefell-ffi-X.Y.Z.aar` with uniffi-generated Kotlin, attached to the release (ADR 0014) | `gradle/libs.versions.toml`: `tidefell = "X.Y.Z"`; the build downloads and checks the AAR. A `tidefellFfiLocalPath` Gradle property switches to a composite build against a local monorepo checkout for FFI development. |
 | monorepo → infra | Monorepo `flake.nix` exposes `packages.tidefelld`, `packages.tidefell-web`, and a NixOS module | Infra `flake.nix` input pinned to the release tag; `flake.lock` records the exact revision. Infra CI validates all configs against the schema from the pinned version. Relay and DNS use upstream iroh packages, pinned the same way. |
 | monorepo → site | Built mdBook tarball + `specs/*.md` attached to the release | Site pins the tag; site CI fetches and embeds. Docs live next to code so they change in the same pull request. |
 | downstream → monorepo | Nothing | A downstream need becomes a monorepo issue first, then a release, then a pin bump. |
@@ -103,6 +103,9 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Web accounts | Local logins mapped to Tidefell users; no user keys on servers | ADR 0011 |
 | Web UI | Server-rendered with htmx | ADR 0012 |
 | Website and docs | Zola site, mdBook docs per release | ADR 0013 |
+| Delivering the ffi AAR | Release asset fetched with the org GitHub App token; Maven later | ADR 0014 |
+| Adding devices | Pairing over the network (`pair/1`); user keys never leave their machine | ADR 0015 |
+| Partial replicas | Placeholders, fetch on open, LRU eviction to a budget; Android `DocumentsProvider` | ADR 0016 |
 
 ## Phases
 
@@ -112,7 +115,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **1** Foundations | `proto` message types and vectors, `chunker`, `store`, `meta` with unit tests; `xtask check-deps`, `cargo-deny`, `cargo-semver-checks`; glossary, ADRs, repo map; `CONVENTIONS.md` everywhere; monorepo `flake.nix`; release workflow | `v0.1.0` tag produces versioned artifacts; boundary violations fail CI |
 | **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on the block store, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `tidefelld config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
 | **3** Surfaces | `api` (REST with generated OpenAPI; ADR 0009), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
-| **4** Clients | `ffi` and AAR publishing; Android Gradle project, foreground service, `DocumentsProvider`; `fs-fuse` | Android app syncs against a full replica using the published AAR |
+| **4** Clients | On-demand partial replicas; `pair/1`; `ffi` and the AAR release asset; Android Gradle project, foreground service, `DocumentsProvider` | Android app syncs against a full replica using the published AAR |
+| **4b** Desktop placeholders | `fs-fuse` on the same on-demand engine support | A Linux partial replica mounts a folder and opens placeholders on demand |
 | **5** Hosted | Hosted web peer and full-replica storage in infra; camera-roll backup; retention UX | Hosted deployment runs from pinned artifacts only |
 
 ### Phase 1 work breakdown
@@ -137,6 +141,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
   pins it with relay, DNS and full-replica roles.
 - Phase 3 steps 1–6 are implemented: the `tidefell` CLI, the web peer, and the book built by
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
+- Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
+- Phase 4 is in progress: decisions (step 1) are recorded.
 
 ### Phase 2 work breakdown
 
@@ -185,3 +191,31 @@ from the recycle bin, both through the CLI and through the web peer.
    restore, and account management for admins. Enabled by `[web]` in `tidefelld`.
 6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `tidefell/site`
    becomes a Zola site that serves the pinned release's docs.
+
+### Phase 4 work breakdown
+
+Exit criterion: the Android app, built against the AAR attached to a monorepo release, pairs
+with a `tidefelld` full replica, joins a folder, lists it, opens a file on demand, and syncs a
+file it saves back to the daemon. Android CI runs this against the release's `tidefelld` on an
+emulator.
+
+1. **Decisions.** ADRs 0014–0016 and this breakdown.
+2. **Partial replicas on demand (ADR 0016).** Placeholders in the engine's local state; `open`
+   and `write`; pinning while open; LRU eviction to the budget that turns materialised files
+   back into placeholders. Exposed through `sdk`/`api` (`tidefell open`), and the web peer can
+   download placeholders. Tests with a full and a partial replica in process.
+3. **Pairing (ADR 0015).** `specs/pair-v1.md` and vectors; `proto` messages; pairing code and
+   confirmation code in `identity`; the `pair/1` handler in `net`; an uncertified,
+   pairing-only engine mode; the approver side in the engine, `api` and `tidefell pair <code>`.
+   Test: a new device pairs with a daemon and then syncs a folder.
+4. **`ffi`.** uniffi (proc-macro) surface over `engine`: lifecycle, pairing, folders, files,
+   `open`/`write`, recycle bin, peers, and events through a callback interface. Kotlin JVM
+   tests in monorepo CI load the host library and sync with an in-process peer.
+5. **AAR.** `bindings/android/`, a Gradle Android library built with `cargo-ndk` for
+   `arm64-v8a`, `armeabi-v7a` and `x86_64`; CI builds it and the release workflow attaches
+   `tidefell-ffi-X.Y.Z.aar`. Released as `v0.4.0-rc.1` for the Android work to pin.
+6. **Android app.** Gradle project (Kotlin, Jetpack Compose, Material 3; minimum SDK 29):
+   foreground service hosting the engine, pairing screen with a QR code, folder list and join,
+   `DocumentsProvider`, storage budget setting. CI builds and unit-tests it, then runs the exit
+   criterion on an emulator against the pinned release's `tidefelld`.
+7. **Release.** `v0.4.0` and the Android pin bump.
