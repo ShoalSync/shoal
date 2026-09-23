@@ -97,6 +97,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Versioning | Single workspace version, one pin per consumer | ADR 0005 |
 | Wire encoding and signing | postcard, Ed25519 signed envelopes | ADR 0006 |
 | Minimum supported Rust version | 1.91 | ADR 0007 |
+| Chunk transfer | Own `blobs/1` protocol on the `store` crate, no iroh-blobs | ADR 0008 |
 
 ## Phases
 
@@ -104,7 +105,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | --- | --- | --- |
 | **0** Scaffold | Four repositories, licenses, CI | Done |
 | **1** Foundations | `proto` message types and vectors, `chunker`, `store`, `meta` with unit tests; `xtask check-deps`, `cargo-deny`, `cargo-semver-checks`; glossary, ADRs, repo map; `CONVENTIONS.md` everywhere; monorepo `flake.nix`; release workflow | `v0.1.0` tag produces versioned artifacts; boundary violations fail CI |
-| **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on iroh-blobs, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `tidefelld config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
+| **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on the block store, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `tidefelld config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
 | **3** Surfaces | `api` (REST + gRPC, generated OpenAPI and proto), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
 | **4** Clients | `ffi` and AAR publishing; Android Gradle project, foreground service, `DocumentsProvider`; `fs-fuse` | Android app syncs against a full replica using the published AAR |
 | **5** Hosted | Hosted web peer and full-replica storage in infra; camera-roll backup; retention UX | Hosted deployment runs from pinned artifacts only |
@@ -121,3 +122,28 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
    replicas.
 6. `meta`: file tree, versions, vector clocks, tombstones, recycle bin with retention.
 7. Release: `flake.nix`, tag-driven release workflow producing binaries and checksums.
+
+### Phase 2 work breakdown
+
+Delivered as a sequence of pull requests; each merges before the next is pushed.
+
+1. **Identity and wire updates.** ADR 0008. `identity` crate: device keys (the device's
+   Ed25519 key is also its iroh endpoint key, so `DeviceId` = iroh `EndpointId`), user keys,
+   device certificates (a user key signs "this device belongs to me"), and folder membership
+   (a folder lists the users allowed to sync it; a device is a member if it presents a valid
+   certificate from one of those users). `proto`: signed envelopes take any Ed25519 signer;
+   `Hello` carries the device certificate; `blobs/1` messages and spec.
+2. **`net`.** iroh endpoint built from the device key; relay (default, custom or disabled) and
+   address lookup configuration; `sync/1` and `blobs/1` over QUIC streams with frame I/O.
+   Storage is reached through traits that `engine` implements, so `net` does not depend on
+   `meta` or `store`. In-process multi-peer tests with relays disabled.
+3. **`fetch`.** Rarest-first scheduler over per-peer availability bitmaps, with per-peer
+   concurrency limits, retry with backoff, and peer failure handling. Transport-agnostic and
+   tested with simulated peers.
+4. **`engine` and `daemon`.** Replica policies (full; partial with a byte budget), folder
+   scanning (polling first, notification later), materialising files atomically from chunks,
+   deletes into the recycle bin with chunks pinned until purge. `tidefelld` with TOML config,
+   `tidefelld config schema` (JSON Schema via `schemars`), `init`, `id` and `run`. End-to-end
+   test: two daemons sync a folder, including edits, deletes and a conflict.
+5. **Nix and infra.** NixOS module for `tidefelld` in the monorepo flake; relay and DNS server
+   NixOS configurations in `tidefell/infra`, pinned to the monorepo release.
