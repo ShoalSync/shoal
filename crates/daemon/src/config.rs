@@ -108,6 +108,9 @@ pub struct Peer {
     /// Known direct addresses, e.g. "192.168.1.20:7777". Optional with address lookup.
     #[serde(default)]
     pub addrs: Vec<SocketAddr>,
+    /// A relay the peer is reachable through, e.g. "https://relay.example.org".
+    #[serde(default)]
+    pub relay: Option<String>,
 }
 
 /// Full or partial replica.
@@ -193,6 +196,11 @@ impl Config {
                 Ok(PeerAddr {
                     device: hex_id::<DeviceId>("peer device", &p.device)?,
                     addrs: p.addrs.clone(),
+                    relay: p
+                        .relay
+                        .as_deref()
+                        .map(|r| r.parse().map_err(|_| format!("invalid relay URL {r:?}")))
+                        .transpose()?,
                 })
             })
             .collect::<Result<_, String>>()?;

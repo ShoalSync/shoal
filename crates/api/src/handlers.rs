@@ -401,7 +401,19 @@ pub(crate) async fn add_peer(
                 .map_err(|_| ApiFailure::bad_request(format!("invalid address {a:?}")))
         })
         .collect::<ApiResult<_>>()?;
-    engine.add_peer(PeerAddr { device, addrs })?;
+    let relay = peer
+        .relay
+        .as_deref()
+        .map(|r| {
+            r.parse()
+                .map_err(|_| ApiFailure::bad_request(format!("invalid relay URL {r:?}")))
+        })
+        .transpose()?;
+    engine.add_peer(PeerAddr {
+        device,
+        addrs,
+        relay,
+    })?;
     Ok(StatusCode::NO_CONTENT)
 }
 

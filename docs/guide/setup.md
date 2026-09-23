@@ -82,8 +82,11 @@ peer connected, or to reach one on the local network directly:
 
 ```sh
 tidefell peer add <device id> --addr 192.168.1.20:7777
+tidefell peer add <device id> --relay https://relay.example.org   # reachable only through a relay
 tidefell peer list
 ```
+
+A paired device remembers its approver's addresses and relay automatically.
 
 A peer only syncs folders that both sides have and that the other device's user is a member
 of.

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tidefell_meta::Retention;
-use tidefell_net::RelayConfig;
+use tidefell_net::{RelayConfig, RelayUrl};
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
 /// How much of a folder a replica keeps.
@@ -45,6 +45,9 @@ pub struct PeerAddr {
     pub device: DeviceId,
     /// Known direct addresses.
     pub addrs: Vec<SocketAddr>,
+    /// A relay the peer is reachable through, for when direct connections fail (a phone on a
+    /// mobile network, a NAS behind NAT).
+    pub relay: Option<RelayUrl>,
 }
 
 /// Everything an [`crate::Engine`] needs to start.

@@ -158,5 +158,6 @@ fn approver_peer(addr: &EndpointAddr, device: DeviceId) -> PeerAddr {
     PeerAddr {
         device,
         addrs: addr.ip_addrs().copied().collect(),
+        relay: addr.relay_urls().next().cloned(),
     }
 }

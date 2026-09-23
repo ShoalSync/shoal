@@ -657,14 +657,23 @@ impl Node {
             .collect())
     }
 
-    /// Keeps a peer connected, with optional direct addresses (`host:port`).
-    pub fn add_peer(&self, device: String, addrs: Vec<String>) -> Result<()> {
+    /// Keeps a peer connected, with optional direct addresses (`host:port`) and relay URL.
+    pub fn add_peer(
+        &self,
+        device: String,
+        addrs: Vec<String>,
+        relay: Option<String>,
+    ) -> Result<()> {
         Ok(self.engine()?.add_peer(PeerAddr {
             device: parse("device ID", &device)?,
             addrs: addrs
                 .iter()
                 .map(|a| parse("address", a))
                 .collect::<Result<_>>()?,
+            relay: relay
+                .as_deref()
+                .map(|r| parse("relay URL", r))
+                .transpose()?,
         })?)
     }
 

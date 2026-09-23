@@ -70,6 +70,7 @@ pub(crate) fn known_peer(p: PeerAddr) -> api::KnownPeer {
     api::KnownPeer {
         device: p.device.to_string(),
         addrs: p.addrs.iter().map(ToString::to_string).collect(),
+        relay: p.relay.map(|r| r.to_string()),
     }
 }
 
