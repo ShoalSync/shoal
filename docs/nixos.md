@@ -4,7 +4,7 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
 
 ```nix
 {
-  inputs.tidefell.url = "github:tidefell/tidefell/v0.2.0";
+  inputs.tidefell.url = "github:tidefell/tidefell/v0.3.0";
 
   outputs = { nixpkgs, tidefell, ... }: {
     nixosConfigurations.nas = nixpkgs.lib.nixosSystem {
