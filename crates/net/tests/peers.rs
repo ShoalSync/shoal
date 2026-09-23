@@ -326,3 +326,127 @@ async fn non_members_get_nothing() {
     node_m.shutdown().await;
     node_a.shutdown().await;
 }
+
+fn new_device_config(seed: u8) -> NodeConfig {
+    NodeConfig {
+        secret_key: [seed; 32],
+        relay: RelayConfig::Disabled,
+        address_lookup: false,
+        bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+    }
+}
+
+async fn next_event(server: &mut tidefell_net::PairingServer) -> tidefell_net::PairingEvent {
+    tokio::time::timeout(Duration::from_secs(10), server.next_event())
+        .await
+        .expect("pairing event")
+        .expect("server running")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pairing_issues_a_certificate_once() {
+    use tidefell_net::{PairingEvent, PairingServer};
+    use tidefell_proto::pair::FolderOffer;
+
+    let alice = UserKey::from_seed([1; 32]);
+    let laptop = TestBackend::new(10, &alice, &[&alice]);
+    let node = Node::spawn(laptop.config(), laptop.clone()).await.unwrap();
+    let phone_key = DeviceKey::from_seed([50; 32]);
+    let mut server = PairingServer::start(
+        new_device_config(50),
+        "Pixel".into(),
+        Duration::from_secs(600),
+    )
+    .await
+    .unwrap();
+    let code = server.code().clone();
+    assert_eq!(code.device, phone_key.id());
+
+    // A wrong secret is refused and reported; the code stays usable.
+    let mut wrong = code.clone();
+    wrong.secret[0] ^= 1;
+    assert!(node.pair(&wrong).await.is_err());
+    assert!(matches!(
+        next_event(&mut server).await,
+        PairingEvent::Failed { .. }
+    ));
+
+    // Declining ends that attempt only.
+    let session = node.pair(&code).await.unwrap();
+    let PairingEvent::Confirming {
+        confirmation_code, ..
+    } = next_event(&mut server).await
+    else {
+        panic!("expected confirming");
+    };
+    assert_eq!(confirmation_code, session.confirmation_code());
+    session.decline().await.unwrap();
+    assert!(matches!(
+        next_event(&mut server).await,
+        PairingEvent::Failed { .. }
+    ));
+
+    // The real pairing.
+    let session = node.pair(&code).await.unwrap();
+    assert_eq!(session.suggested_name(), "Pixel");
+    assert_eq!(session.device(), phone_key.id());
+    let PairingEvent::Confirming {
+        approver,
+        confirmation_code,
+    } = next_event(&mut server).await
+    else {
+        panic!("expected confirming");
+    };
+    assert_eq!(approver.user, alice.id());
+    assert_eq!(confirmation_code, session.confirmation_code());
+    let offer = FolderOffer {
+        id: FOLDER,
+        name: "Photos".into(),
+        members: vec![alice.id()],
+        retention_days: 30,
+    };
+    session
+        .complete(
+            alice.certify(phone_key.id(), "Alice's phone", 1),
+            &node.addr(),
+            vec![offer.clone()],
+        )
+        .await
+        .unwrap();
+    let PairingEvent::Paired(paired) = next_event(&mut server).await else {
+        panic!("expected paired");
+    };
+    let certificate = paired.certificate.verify_certificate().unwrap();
+    assert_eq!(certificate.device, phone_key.id());
+    assert_eq!(certificate.name, "Alice's phone");
+    assert_eq!(paired.approver.device, laptop.key.id());
+    assert_eq!(*paired.approver_addr.id.as_bytes(), laptop.key.id().0);
+    assert!(paired.approver_addr.ip_addrs().next().is_some());
+    assert_eq!(paired.folders, vec![offer]);
+
+    // The code is used up.
+    assert!(node.pair(&code).await.is_err());
+
+    // A certificate for another device is rejected by a fresh code.
+    let mut server = PairingServer::start(
+        new_device_config(51),
+        "Other".into(),
+        Duration::from_secs(600),
+    )
+    .await
+    .unwrap();
+    let session = node.pair(server.code()).await.unwrap();
+    assert!(session
+        .complete(
+            alice.certify(phone_key.id(), "wrong device", 1),
+            &node.addr(),
+            Vec::new(),
+        )
+        .await
+        .is_err());
+    let _confirming = next_event(&mut server).await;
+    assert!(matches!(
+        next_event(&mut server).await,
+        PairingEvent::Failed { .. }
+    ));
+}

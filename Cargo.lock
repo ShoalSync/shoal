@@ -3436,6 +3436,7 @@ version = "0.3.0"
 name = "tidefell-identity"
 version = "0.3.0"
 dependencies = [
+ "blake3",
  "ed25519-dalek",
  "getrandom 0.4.3",
  "postcard",

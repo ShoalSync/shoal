@@ -1,19 +1,22 @@
 //! Tidefell `net` crate: iroh endpoint, relay config, address lookup, sync/1 protocol.
 //!
 //! A [`Node`] owns the device's iroh endpoint and serves `tidefell/sync/1` and
-//! `tidefell/blobs/1`. It reaches folder metadata and chunks only through the [`Backend`] trait,
+//! `tidefell/blobs/1`, and can approve a pairing (`tidefell/pair/1`); a new device uses a
+//! [`PairingServer`] instead until it has a certificate. It reaches folder metadata and chunks only through the [`Backend`] trait,
 //! which `engine` implements, so this crate does not depend on `meta` or `store`.
 
 mod backend;
 mod blobs;
 mod frame_io;
 mod node;
+mod pair;
 mod sync;
 
 pub use backend::{Backend, IndexPage};
 pub use blobs::ChunkResult;
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
 pub use node::{Node, NodeConfig, PeerHandle, RelayConfig};
+pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
 
 /// Network and protocol errors.
 #[derive(Debug, thiserror::Error)]

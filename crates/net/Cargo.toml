@@ -16,11 +16,11 @@ iroh.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tidefell-identity.workspace = true
 tidefell-proto.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-tidefell-identity.workspace = true
 tidefell-meta.workspace = true
