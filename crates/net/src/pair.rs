@@ -164,6 +164,10 @@ impl ProtocolHandler for PairProtocol {
             return Ok(());
         };
         let outcome = self.serve(&conn, &mut send, &mut recv).await;
+        let _ = send.finish();
+        // Let the last frame reach the approver, which closes the connection once it has read
+        // to the end, before reporting: the app may shut this endpoint down on `Paired`.
+        let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
         match outcome {
             Ok(Some(paired)) => {
                 let _ = self.events.send(PairingEvent::Paired(Box::new(paired)));
@@ -176,9 +180,6 @@ impl ProtocolHandler for PairProtocol {
                 });
             }
         }
-        let _ = send.finish();
-        // Let the last frame reach the approver before the connection is dropped.
-        let _ = tokio::time::timeout(Duration::from_secs(2), conn.closed()).await;
         Ok(())
     }
 }
