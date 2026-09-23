@@ -620,6 +620,14 @@ version = "0.0.0"
 [[package]]
 name = "tidefell-meta"
 version = "0.0.0"
+dependencies = [
+ "ed25519-dalek",
+ "postcard",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "tidefell-proto",
+]
 
 [[package]]
 name = "tidefell-net"
