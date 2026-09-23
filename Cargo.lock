@@ -2969,6 +2969,23 @@ version = "0.1.0"
 [[package]]
 name = "tidefell-engine"
 version = "0.1.0"
+dependencies = [
+ "blake3",
+ "getrandom 0.4.3",
+ "postcard",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tidefell-chunker",
+ "tidefell-fetch",
+ "tidefell-identity",
+ "tidefell-meta",
+ "tidefell-net",
+ "tidefell-proto",
+ "tidefell-store",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "tidefell-fetch"
