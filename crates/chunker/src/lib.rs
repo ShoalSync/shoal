@@ -60,7 +60,12 @@ where
 {
     let mut content = blake3::Hasher::new();
     let mut chunks = Vec::new();
-    let cdc = StreamCDC::new(reader, params.min, params.avg, params.max);
+    let cdc = StreamCDC::new(
+        reader,
+        params.min as usize,
+        params.avg as usize,
+        params.max as usize,
+    );
     for chunk in cdc {
         let chunk = chunk?;
         content.update(&chunk.data);

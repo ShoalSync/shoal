@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.91"
 license = "AGPL-3.0-only"
 
 [workspace.lints.clippy]
@@ -21,8 +21,7 @@ tidefell-meta = { path = "crates/meta" }
 # Third-party
 blake3 = "1.8"
 ed25519-dalek = "3"
-# fastcdc 5 requires Rust 1.87; stay on 3.x until the MSRV moves.
-fastcdc = "3.2"
+fastcdc = "5"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 proptest = "1"
 serde = { version = "1", features = ["derive"] }

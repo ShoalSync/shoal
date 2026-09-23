@@ -54,7 +54,7 @@ Other directories:
 
 ## Building
 
-Requires stable Rust, 1.85 or newer (pinned via `rust-toolchain.toml`).
+Requires stable Rust, 1.91 or newer (pinned via `rust-toolchain.toml`).
 
 ```sh
 cargo build --workspace
