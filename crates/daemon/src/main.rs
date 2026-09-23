@@ -157,11 +157,11 @@ enum ConfigCommand {
 }
 
 fn device_key_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("device.key")
+    tidefell_engine::device::device_key_path(data_dir)
 }
 
 fn certificate_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("device.cert")
+    tidefell_engine::device::certificate_path(data_dir)
 }
 
 fn now_ms() -> i64 {
@@ -399,7 +399,7 @@ async fn run(path: &Path) -> Result<(), String> {
 
     let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
     // A user key next to the device key lets this daemon approve pairings (ADR 0015).
-    let user_key_path = config.data_dir.join("user.key");
+    let user_key_path = tidefell_engine::device::user_key_path(&config.data_dir);
     let user_key = if user_key_path.exists() {
         let key = UserKey::load(&user_key_path)
             .map_err(|e| format!("{}: {e}", user_key_path.display()))?;
