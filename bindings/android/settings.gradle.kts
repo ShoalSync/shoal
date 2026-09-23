@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "tidefell-bindings"
 
-include(":jvm-test")
+include(":ffi", ":jvm-test")
