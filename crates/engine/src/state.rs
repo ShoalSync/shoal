@@ -45,6 +45,9 @@ pub(crate) struct FolderState {
     pub(crate) local: BTreeMap<String, LocalFile>,
     pub(crate) progress: HashMap<DeviceId, (u64, u64)>,
     dir: PathBuf,
+    /// Set when the folder is removed; later saves are skipped so tasks still finishing their
+    /// work cannot recreate its state directory.
+    removed: bool,
 }
 
 impl FolderState {
@@ -73,6 +76,7 @@ impl FolderState {
             local: BTreeMap::new(),
             progress: HashMap::new(),
             dir,
+            removed: false,
         };
         let state_path = state.dir.join("state");
         if state_path.exists() {
@@ -94,8 +98,17 @@ impl FolderState {
         Ok(state)
     }
 
+    /// Marks the folder removed and returns its state directory for deletion.
+    pub(crate) fn mark_removed(&mut self) -> PathBuf {
+        self.removed = true;
+        self.dir.clone()
+    }
+
     /// Writes metadata and engine state atomically.
     pub(crate) fn save(&self) -> Result<()> {
+        if self.removed {
+            return Ok(());
+        }
         self.meta.save(&self.dir.join("meta"))?;
         let persisted = Persisted {
             manifests: self.manifests.values().cloned().collect(),
@@ -116,6 +129,12 @@ impl FolderState {
             file.sync_all().map_err(io_err(&tmp))?;
         }
         fs::rename(&tmp, &path).map_err(io_err(&path))
+    }
+
+    /// Replaces the member list.
+    pub(crate) fn set_members(&mut self, members: Vec<tidefell_proto::UserId>) {
+        self.members = FolderMembers::new(self.config.id, members.iter().copied());
+        self.config.members = members;
     }
 
     pub(crate) fn add_manifest(&mut self, manifest: Manifest) {

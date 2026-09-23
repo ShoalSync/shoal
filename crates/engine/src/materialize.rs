@@ -14,9 +14,10 @@ use tidefell_proto::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, Manife
 use tracing::{debug, info, warn};
 
 use crate::config::ReplicaMode;
-use crate::engine::Inner;
+use crate::engine::{FolderHandle, Inner};
 use crate::scan::{stat, unchanged, RESERVED_DIR};
 use crate::state::LocalFile;
+use crate::views::Event;
 use crate::{io_err, random_bytes, Error, Result};
 
 /// Fetches chunks from connected peers over blobs/1.
@@ -86,9 +87,14 @@ struct PendingWrite {
 }
 
 /// Brings the folder on disk up to date with its metadata, as far as content is available.
-pub(crate) async fn materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
+pub(crate) async fn materialize(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    id: FolderId,
+    handle: &FolderHandle,
+) -> Result<()> {
     let (root, writes, deletes, mode) = {
-        let state = inner.folder(&id)?.lock().unwrap();
+        let state = handle.lock();
         let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
             state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
         let mut writes = Vec::new();
@@ -135,25 +141,37 @@ pub(crate) async fn materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: Folder
     };
 
     for path in deletes {
-        remove_if_unchanged(inner, id, &root, &path)?;
+        remove_if_unchanged(inner, handle, id, &root, &path)?;
     }
     if matches!(mode, ReplicaMode::Partial { .. }) {
         return Ok(());
     }
     for write in writes {
-        match write_file(inner, node, id, &root, &write).await {
-            Ok(true) => info!(folder = %id, path = %write.path, "updated"),
+        match write_file(inner, node, handle, id, &root, &write).await {
+            Ok(true) => {
+                info!(folder = %id, path = %write.path, "updated");
+                inner.emit(Event::FileUpdated {
+                    folder: id,
+                    path: write.path.clone(),
+                });
+            }
             Ok(false) => {}
             Err(e) => warn!(folder = %id, path = %write.path, error = %e, "update failed"),
         }
     }
-    inner.folder(&id)?.lock().unwrap().save()
+    handle.lock().save()
 }
 
 /// Removes `path` if it is still what the engine last wrote; forgets it either way. A file
 /// edited locally is left in place and becomes a new entry at the next scan.
-fn remove_if_unchanged(inner: &Inner, id: FolderId, root: &Path, path: &str) -> Result<()> {
-    let mut state = inner.folder(&id)?.lock().unwrap();
+fn remove_if_unchanged(
+    inner: &Inner,
+    handle: &FolderHandle,
+    id: FolderId,
+    root: &Path,
+    path: &str,
+) -> Result<()> {
+    let mut state = handle.lock();
     let Some(local) = state.local.remove(path) else {
         return Ok(());
     };
@@ -161,6 +179,10 @@ fn remove_if_unchanged(inner: &Inner, id: FolderId, root: &Path, path: &str) -> 
     if unchanged(&abs, &local) {
         fs::remove_file(&abs).map_err(io_err(&abs))?;
         info!(folder = %id, path, "deleted");
+        inner.emit(Event::FileRemoved {
+            folder: id,
+            path: path.to_owned(),
+        });
     } else {
         debug!(folder = %id, path, "kept locally modified file that was deleted remotely");
     }
@@ -168,12 +190,12 @@ fn remove_if_unchanged(inner: &Inner, id: FolderId, root: &Path, path: &str) -> 
 }
 
 async fn manifest_for(
-    inner: &Inner,
     node: &Node,
+    handle: &FolderHandle,
     id: FolderId,
     content: ContentHash,
 ) -> Result<Option<Manifest>> {
-    if let Some(m) = inner.folder(&id)?.lock().unwrap().manifests.get(&content) {
+    if let Some(m) = handle.lock().manifests.get(&content) {
         return Ok(Some(m.clone()));
     }
     for peer in node.peers() {
@@ -182,11 +204,7 @@ async fn manifest_for(
         }
         match peer.request_manifest(id, content).await {
             Ok(manifest) => {
-                inner
-                    .folder(&id)?
-                    .lock()
-                    .unwrap()
-                    .add_manifest(manifest.clone());
+                handle.lock().add_manifest(manifest.clone());
                 return Ok(Some(manifest));
             }
             Err(e) => debug!(peer = %peer.device(), error = %e, "manifest request failed"),
@@ -200,11 +218,12 @@ async fn manifest_for(
 async fn write_file(
     inner: &Arc<Inner>,
     node: &Arc<Node>,
+    handle: &FolderHandle,
     id: FolderId,
     root: &Path,
     write: &PendingWrite,
 ) -> Result<bool> {
-    let Some(manifest) = manifest_for(inner, node, id, write.content).await? else {
+    let Some(manifest) = manifest_for(node, handle, id, write.content).await? else {
         return Ok(false);
     };
 
@@ -257,7 +276,7 @@ async fn write_file(
     }
 
     let target = root.join(&write.path);
-    let mut state = inner.folder(&id)?.lock().unwrap();
+    let mut state = handle.lock();
     // Never replace a file the user changed since the engine last saw it.
     let replaceable = match state.local.get(&write.path) {
         Some(local) => unchanged(&target, local),

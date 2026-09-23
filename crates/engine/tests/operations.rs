@@ -1,0 +1,228 @@
+//! Runtime operations: folders added and joined while running, membership changes, the
+//! recycle bin, restarts and events.
+
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use tidefell_engine::{
+    Engine, EngineConfig, Error, Event, FolderConfig, RelayConfig, ReplicaMode, Retention,
+};
+use tidefell_identity::{DeviceKey, UserKey};
+use tidefell_proto::{FolderId, UserId};
+
+const FOLDER: FolderId = FolderId([7; 32]);
+
+struct Device {
+    dir: PathBuf,
+    key: DeviceKey,
+    user: UserKey,
+}
+
+impl Device {
+    fn new(root: &Path, name: &str, seed: u8, user: &UserKey) -> Self {
+        Self {
+            dir: root.join(name),
+            key: DeviceKey::from_seed([seed; 32]),
+            user: user.clone(),
+        }
+    }
+
+    fn root(&self) -> PathBuf {
+        self.dir.join("folder")
+    }
+
+    async fn start(&self, configured: Vec<FolderConfig>) -> Engine {
+        let config = EngineConfig {
+            data_dir: self.dir.join("data"),
+            relay: RelayConfig::Disabled,
+            address_lookup: false,
+            bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+            peers: Vec::new(),
+            folders: configured,
+        };
+        let certificate = self.user.certify(self.key.id(), "test", 0);
+        Engine::start(config, self.key.clone(), certificate)
+            .await
+            .unwrap()
+    }
+
+    fn folder(&self, members: &[UserId]) -> FolderConfig {
+        FolderConfig {
+            id: FOLDER,
+            path: self.root(),
+            mode: ReplicaMode::Full,
+            members: members.to_vec(),
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(3600),
+        }
+    }
+
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        fs::read(self.root().join(path)).ok()
+    }
+}
+
+async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    for _ in 0..1000 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_join_delete_restore_and_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let a = Device::new(tmp.path(), "a", 10, &alice);
+    let b = Device::new(tmp.path(), "b", 11, &alice);
+
+    let engine_a = a.start(Vec::new()).await;
+    let engine_b = b.start(Vec::new()).await;
+    // The session starts with nothing to share.
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    // a creates the folder, then b joins it over the existing session.
+    engine_a.add_folder(a.folder(&[alice.id()])).unwrap();
+    fs::write(a.root().join("notes.txt"), b"shared notes").unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.add_folder(b.folder(&[alice.id()])).unwrap();
+    assert!(matches!(
+        engine_b.add_folder(b.folder(&[alice.id()])),
+        Err(Error::FolderExists(_))
+    ));
+
+    eventually("file reaches b after joining", || {
+        b.read("notes.txt").as_deref() == Some(b"shared notes".as_slice())
+    })
+    .await;
+    let files = engine_b.files(FOLDER).unwrap();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].path, "notes.txt");
+    assert!(files[0].on_disk);
+    assert_eq!(
+        engine_b.local_path(FOLDER, "notes.txt").unwrap(),
+        Some(b.root().join("notes.txt"))
+    );
+    let peers = engine_b.connected_peers();
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].shared_folders, vec![FOLDER]);
+
+    // Delete on a; b removes the file and keeps it in the recycle bin.
+    fs::remove_file(a.root().join("notes.txt")).unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("delete reaches b", || b.read("notes.txt").is_none()).await;
+    eventually("b recycled it", || {
+        engine_b.recycle_bin(FOLDER).unwrap().len() == 1
+    })
+    .await;
+    let recycled = engine_b.recycle_bin(FOLDER).unwrap().remove(0);
+    assert_eq!(recycled.path, "notes.txt");
+    assert_eq!(recycled.size, 12);
+    assert!(recycled.expires_at_ms.is_some());
+
+    // Restore on b brings it back on both devices.
+    engine_b.restore(FOLDER, recycled.entry).unwrap();
+    eventually("restored on b", || {
+        b.read("notes.txt").as_deref() == Some(b"shared notes".as_slice())
+    })
+    .await;
+    eventually("restored on a", || {
+        a.read("notes.txt").as_deref() == Some(b"shared notes".as_slice())
+    })
+    .await;
+    assert!(engine_b.recycle_bin(FOLDER).unwrap().is_empty());
+
+    // Runtime folders survive a restart.
+    engine_b.shutdown().await;
+    let engine_b = b.start(Vec::new()).await;
+    let folders = engine_b.folders();
+    assert_eq!(folders.len(), 1);
+    assert_eq!(folders[0].id, FOLDER);
+    assert!(!folders[0].configured);
+    assert_eq!(engine_b.status(FOLDER).unwrap().pending, 0);
+
+    // Removing it stops syncing and forgets metadata, but leaves files alone.
+    engine_b.remove_folder(FOLDER).unwrap();
+    assert!(engine_b.folders().is_empty());
+    assert!(b.read("notes.txt").is_some());
+    engine_b.shutdown().await;
+    assert!(b.start(Vec::new()).await.folders().is_empty());
+
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn membership_granted_at_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let bob = UserKey::from_seed([2; 32]);
+    let a = Device::new(tmp.path(), "a", 20, &alice);
+    let b = Device::new(tmp.path(), "b", 21, &bob);
+
+    let engine_a = a.start(Vec::new()).await;
+    let engine_b = b.start(Vec::new()).await;
+    engine_a.add_folder(a.folder(&[alice.id()])).unwrap();
+    engine_b
+        .add_folder(b.folder(&[alice.id(), bob.id()]))
+        .unwrap();
+    fs::write(a.root().join("for-bob.txt"), b"hello bob").unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+
+    let mut events = engine_b.events();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(b.read("for-bob.txt").is_none(), "bob is not a member yet");
+
+    assert!(engine_a.add_member(FOLDER, bob.id()).unwrap());
+    assert!(!engine_a.add_member(FOLDER, bob.id()).unwrap());
+    eventually("bob receives the file once admitted", || {
+        b.read("for-bob.txt").as_deref() == Some(b"hello bob".as_slice())
+    })
+    .await;
+
+    let mut saw_update = false;
+    while let Ok(event) = events.try_recv() {
+        if event
+            == (Event::FileUpdated {
+                folder: FOLDER,
+                path: "for-bob.txt".into(),
+            })
+        {
+            saw_update = true;
+        }
+    }
+    assert!(saw_update, "a FileUpdated event was emitted");
+
+    // The last member cannot be removed.
+    assert!(engine_a.remove_member(FOLDER, bob.id()).unwrap());
+    assert!(matches!(
+        engine_a.remove_member(FOLDER, alice.id()),
+        Err(Error::Invalid(_))
+    ));
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configured_folders_are_read_only_at_runtime() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let a = Device::new(tmp.path(), "a", 30, &alice);
+    let engine = a.start(vec![a.folder(&[alice.id()])]).await;
+    assert!(engine.folders()[0].configured);
+    assert!(matches!(
+        engine.remove_folder(FOLDER),
+        Err(Error::Configured(_))
+    ));
+    assert!(matches!(
+        engine.add_member(FOLDER, UserKey::from_seed([2; 32]).id()),
+        Err(Error::Configured(_))
+    ));
+    engine.shutdown().await;
+}

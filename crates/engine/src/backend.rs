@@ -10,6 +10,7 @@ use tokio::sync::watch;
 use tracing::{debug, warn};
 
 use crate::engine::Inner;
+use crate::views::Event;
 
 pub(crate) struct EngineBackend(pub(crate) Arc<Inner>);
 
@@ -19,18 +20,18 @@ impl Backend for EngineBackend {
     }
 
     fn folders(&self) -> Vec<FolderId> {
-        self.0.folders.keys().copied().collect()
+        self.0.folder_ids()
     }
 
     fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool {
         self.0
-            .folders
-            .get(folder)
-            .is_some_and(|s| s.lock().unwrap().members.contains(&peer.user))
+            .folder(folder)
+            .is_ok_and(|h| h.lock().members.contains(&peer.user))
     }
 
     fn index_since(&self, folder: &FolderId, epoch: u64, since: u64) -> Option<IndexPage> {
-        let state = self.0.folders.get(folder)?.lock().unwrap();
+        let handle = self.0.folder(folder).ok()?;
+        let state = handle.lock();
         let (versions, up_to) = state.meta.index_since(epoch, since);
         Some(IndexPage {
             epoch: state.meta.epoch(),
@@ -45,12 +46,12 @@ impl Backend for EngineBackend {
         peer: DeviceId,
         versions: Vec<Signed<EntryVersion>>,
     ) {
-        let Some(state) = self.0.folders.get(folder) else {
+        let Ok(handle) = self.0.folder(folder) else {
             return;
         };
         let mut changed = false;
         {
-            let mut state = state.lock().unwrap();
+            let mut state = handle.lock();
             for version in versions {
                 match state.meta.apply_remote(version) {
                     Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
@@ -64,21 +65,22 @@ impl Backend for EngineBackend {
             }
         }
         if changed {
+            self.0.emit(Event::FolderChanged(*folder));
             self.0.changed();
         }
     }
 
     fn peer_progress(&self, folder: &FolderId, peer: DeviceId) -> (u64, u64) {
         self.0
-            .folders
-            .get(folder)
-            .and_then(|s| s.lock().unwrap().progress.get(&peer).copied())
+            .folder(folder)
+            .ok()
+            .and_then(|h| h.lock().progress.get(&peer).copied())
             .unwrap_or((0, 0))
     }
 
     fn set_peer_progress(&self, folder: &FolderId, peer: DeviceId, epoch: u64, up_to: u64) {
-        if let Some(state) = self.0.folders.get(folder) {
-            let mut state = state.lock().unwrap();
+        if let Ok(handle) = self.0.folder(folder) {
+            let mut state = handle.lock();
             state.progress.insert(peer, (epoch, up_to));
             if let Err(e) = state.save() {
                 warn!(folder = %folder, error = %e, "saving peer progress failed");
@@ -87,19 +89,13 @@ impl Backend for EngineBackend {
     }
 
     fn manifest(&self, folder: &FolderId, content: &ContentHash) -> Option<Manifest> {
-        let state = self.0.folders.get(folder)?.lock().unwrap();
+        let handle = self.0.folder(folder).ok()?;
+        let state = handle.lock();
         state.manifests.get(content).cloned()
     }
 
     fn chunk(&self, folder: &FolderId, hash: &ChunkHash) -> Option<Vec<u8>> {
-        let referenced = self
-            .0
-            .folders
-            .get(folder)?
-            .lock()
-            .unwrap()
-            .index
-            .is_referenced(hash);
+        let referenced = self.0.folder(folder).ok()?.lock().index.is_referenced(hash);
         if !referenced {
             return None;
         }

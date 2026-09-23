@@ -20,6 +20,8 @@
 //! <folder root>/.tidefell/tmp/   in-progress downloads, renamed into place when complete
 //! ```
 //!
+//! Folders and peers can also be added at runtime; they are remembered in `<data>/runtime`.
+//!
 //! Phase 2 limitations: empty directories and symlinks are not synced, conflict copies are
 //! kept in metadata but not written to disk, and partial replicas hold metadata only.
 
@@ -27,13 +29,16 @@ mod backend;
 mod config;
 mod engine;
 mod materialize;
+mod runtime;
 mod scan;
 mod state;
+mod views;
 
 pub use config::{EngineConfig, FolderConfig, PeerAddr, ReplicaMode};
 pub use engine::{Engine, FolderStatus};
 pub use tidefell_meta::Retention;
 pub use tidefell_net::RelayConfig;
+pub use views::{Event, FileInfo, FolderInfo, PeerInfo, RecycledInfo};
 
 /// Engine errors.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +66,15 @@ pub enum Error {
     /// A folder named in a request is not configured.
     #[error("unknown folder {0}")]
     UnknownFolder(tidefell_proto::FolderId),
+    /// A folder with this ID already exists.
+    #[error("folder {0} already exists")]
+    FolderExists(tidefell_proto::FolderId),
+    /// The folder comes from the configuration file and cannot be changed at runtime.
+    #[error("folder {0} is managed by the configuration file")]
+    Configured(tidefell_proto::FolderId),
+    /// A request was invalid.
+    #[error("{0}")]
+    Invalid(String),
     /// Randomness was unavailable.
     #[error("no randomness available")]
     Random,
