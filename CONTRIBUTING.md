@@ -1,0 +1,47 @@
+# Contributing to Tidefell
+
+Thanks for your interest in Tidefell. This document covers how changes get in.
+
+## Contributor License Agreement
+
+All contributions require a signed Contributor License Agreement (see `CLA.md` in the
+Tidefell monorepo). You keep the copyright to your work; the CLA grants Tidefell a licence to
+distribute and relicense contributions. Pull requests cannot be merged until the CLA is signed.
+
+## Workflow
+
+Tidefell uses trunk-based development:
+
+- `main` is always releasable. Nobody pushes to it directly.
+- Work on short-lived branches and open a pull request against `main` early.
+- Keep pull requests small and focused; split large changes behind feature flags.
+- Rebase on `main` rather than merging `main` into your branch.
+
+## Commit messages
+
+Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add rarest-first piece selection
+fix(store): release eviction lock on error
+docs: describe recycle bin retention
+chore: bump iroh to 0.x
+```
+
+Common types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `perf`, `ci`.
+Mark breaking changes with `!` (for example `feat(proto)!:`) and a `BREAKING CHANGE:` footer.
+
+## CI gates
+
+A pull request can merge only when CI is green. Run the same checks locally first:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+## Reporting security issues
+
+Please do not open public issues for security vulnerabilities. Contact the maintainers
+privately instead.
