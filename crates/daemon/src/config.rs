@@ -117,7 +117,8 @@ pub enum Mode {
     /// Keep every file.
     #[default]
     Full,
-    /// Keep metadata for everything and content within `budget_bytes`.
+    /// Keep metadata for everything; other devices' files are placeholders until fetched, and
+    /// the least recently used are evicted to stay within `budget_bytes`.
     Partial,
 }
 
@@ -133,7 +134,7 @@ pub struct Folder {
     /// Replica mode.
     #[serde(default)]
     pub mode: Mode,
-    /// Block store budget in bytes; required for `mode = "partial"`.
+    /// Bytes of files a partial replica keeps on disk; required for `mode = "partial"`.
     #[serde(default)]
     pub budget_bytes: Option<u64>,
     /// User IDs (64 hex digits) allowed to sync this folder.

@@ -16,7 +16,7 @@ punching and relay fallback), with content-defined chunks transferred and verifi
 BLAKE3 hashes.
 
 > **Status:** early development. Devices sync folders and can be managed with the `tidefell`
-> command or a browser, but there are no placeholders and no stability promise yet. Read the
+> command or a browser, but there is no stability promise yet. Read the
 > [documentation](docs/README.md).
 
 ## Crate map
@@ -80,15 +80,12 @@ Two machines (or two data directories) owned by the same user:
 tidefelld init --data-dir ~/.local/share/tidefell --name laptop
 tidefelld new-folder-id            # share this ID with your other devices
 
-# On a second device: print its ID (this creates its device key).
-tidefelld id --data-dir /var/lib/tidefell
+# On a second device: print a pairing code and wait.
+tidefelld pair --data-dir /var/lib/tidefell --name nas
 
-# Back on the first device: certify the second device, then copy nas.cert to it.
-tidefelld certify --user-key ~/.local/share/tidefell/user.key \
-    --device <nas device id> --name nas --out nas.cert
-
-# On the second device: finish setup with the certificate.
-tidefelld init --data-dir /var/lib/tidefell --name nas --certificate nas.cert
+# On the first device, with its daemon running: approve it after comparing the
+# confirmation code both devices show.
+tidefell pair TFP1-…
 ```
 
 Start each daemon with a configuration (see
@@ -120,8 +117,9 @@ People sign in from a browser and see the folders their user is a member of: bro
 and restore deleted files. Serve it behind a TLS reverse proxy.
 
 Current limitations: empty directories and symlinks are not synced, conflict copies are kept
-in metadata but not written to disk, partial replicas hold metadata only, files not stored on
-the web peer cannot be downloaded from it, and device certificates cannot be revoked yet.
+in metadata but not written to disk, placeholders of partial replicas are fetched with
+`tidefell fetch` (there is no desktop filesystem integration yet), and device certificates
+cannot be revoked yet.
 
 ## Contributing
 

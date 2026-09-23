@@ -45,6 +45,6 @@ The binaries are `target/release/tidefelld` and `target/release/tidefell`.
 
 - Empty directories and symlinks are not synced.
 - Conflict copies are kept in metadata but not written to disk.
-- Partial replicas hold metadata only; there are no placeholders yet.
-- The web peer can only offer downloads of files it stores itself.
+- Placeholders of a partial replica are fetched with `tidefell fetch` or the web peer; there is
+  no desktop filesystem integration yet.
 - Device certificates cannot be revoked yet.

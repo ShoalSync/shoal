@@ -18,6 +18,7 @@
 mod certificate;
 mod keys;
 mod membership;
+pub mod pairing;
 
 pub use certificate::{decode_certificate, encode_certificate, load_certificate, save_certificate};
 pub use keys::{DeviceKey, UserKey};

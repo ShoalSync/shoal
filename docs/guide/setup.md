@@ -19,9 +19,30 @@ add devices to your account.
 
 `tidefelld id --data-dir ~/.local/share/tidefell` prints the device ID and the user ID.
 
-## More devices
+## More devices: pairing
 
-On the new device, print its ID. This creates its device key:
+The easiest way to add a device is to pair it with one that holds your user key. On the new
+device, instead of `tidefelld init`:
+
+```sh
+tidefelld pair --data-dir /var/lib/tidefell --name nas
+```
+
+It prints a pairing code (`TFP1-…`) and waits. The Android app shows the same code as a QR
+code. Where your user key is, with its daemon running:
+
+```sh
+tidefell pair TFP1-…
+```
+
+Both devices show a six-digit confirmation code. Check that they match and confirm; the new
+device receives its certificate, remembers the approving device as a peer, and lists the
+folders you can join. The code expires after ten minutes or one use. A daemon can approve only
+if its data directory has `user.key` (the default location `tidefelld init` uses).
+
+## More devices: certificate files
+
+Without pairing, certify a device by hand. On the new device, print its ID. This creates its device key:
 
 ```sh
 tidefelld id --data-dir /var/lib/tidefell

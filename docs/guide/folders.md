@@ -50,6 +50,26 @@ Folders listed in the configuration file are managed there and cannot be changed
 `tidefell`. Folders created or joined with `tidefell` are stored in the data directory and
 survive restarts.
 
+## Partial replicas
+
+A device with little space can keep only some of a folder's files. Add `--partial <bytes>` when
+creating or joining:
+
+```sh
+tidefell folder join <folder id> ~/Photos --partial 5000000000
+```
+
+Every file still appears in `tidefell files`, but files made on other devices are
+*placeholders* until you fetch them:
+
+```sh
+tidefell fetch <folder id> 2024/beach.jpg    # prints where the file is on disk
+```
+
+Files you create or edit on the device are synced as usual. When the folder's files on disk
+exceed the budget, the least recently used ones become placeholders again. A file made on this
+device is only removed once another connected device has a copy.
+
 ## Leaving a folder
 
 ```sh

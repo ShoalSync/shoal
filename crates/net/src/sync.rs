@@ -62,6 +62,7 @@ fn offer_for(backend: &dyn Backend, peer: &DeviceCertificate) -> BTreeSet<Folder
 struct Handshake {
     peer: Peer,
     theirs: BTreeSet<FolderId>,
+    /// The folders our `Hello` named: what the peer believes we offer.
     offered: BTreeSet<FolderId>,
     send: SendStream,
     recv: RecvStream,
@@ -76,12 +77,15 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
     }
     .map_err(|e| Error::Stream(e.to_string()))?;
 
-    let (theirs, peer) = if initiator {
+    let (theirs, peer, offered) = if initiator {
+        // The dialer offers everything before it knows the peer, then narrows its offer with a
+        // second `Hello` as soon as the session starts (see `run`).
+        let offered: BTreeSet<FolderId> = backend.folders().into_iter().collect();
         frame_io::write(
             &mut send,
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
-                folders: backend.folders(),
+                folders: offered.iter().copied().collect(),
             },
         )
         .await?;
@@ -92,7 +96,7 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
-        (folders, verify_peer(&certificate, conn)?)
+        (folders, verify_peer(&certificate, conn)?, offered)
     } else {
         let SyncMessage::Hello {
             certificate,
@@ -102,22 +106,27 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
             return Err(Error::Protocol("expected Hello".into()));
         };
         let peer = verify_peer(&certificate, conn)?;
+        let offered = offer_for(backend, &peer);
         frame_io::write(
             &mut send,
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
-                folders: offer_for(backend, &peer).into_iter().collect(),
+                folders: offered.iter().copied().collect(),
             },
         )
         .await?;
-        (folders, peer)
+        (folders, peer, offered)
     };
 
-    // The dialer offered everything before it knew the peer; from here on both sides offer
-    // only folders the peer is a member of.
-    let offered = offer_for(backend, &peer);
+    // Share what both sides named, and only folders the peer may sync now. Folders added or
+    // removed since our `Hello` are announced by `reoffer` once the session runs.
     let theirs: BTreeSet<FolderId> = theirs.into_iter().collect();
-    let shared = theirs.intersection(&offered).copied().collect();
+    let allowed = offer_for(backend, &peer);
+    let shared = theirs
+        .iter()
+        .filter(|f| offered.contains(f) && allowed.contains(f))
+        .copied()
+        .collect();
     Ok(Handshake {
         peer: Peer {
             certificate: peer,
@@ -212,7 +221,10 @@ pub(crate) async fn run(
         offered,
         sent: HashMap::new(),
     };
+    // Subscribe before re-checking the offer: a folder added after the handshake computed it but
+    // before this point would otherwise never be offered.
     let mut changes = backend.changes();
+    reoffer(&mut session, backend.as_ref(), &mut send).await?;
     loop {
         tokio::select! {
             message = incoming.recv() => {
@@ -267,6 +279,7 @@ async fn reoffer(
     .await?;
     session.offered = offer;
     let added = session.reshare();
+    debug!(device = %session.peer.certificate.device, newly_shared = added.len(), "offer updated");
     request_index(backend, send, session.peer.certificate.device, added).await
 }
 
@@ -294,6 +307,7 @@ async fn handle(
             }
             session.theirs = folders.into_iter().collect();
             let added = session.reshare();
+            debug!(%device, offered = session.theirs.len(), newly_shared = added.len(), "peer updated its offer");
             request_index(backend, send, device, added).await
         }
         SyncMessage::IndexRequest {
@@ -302,8 +316,10 @@ async fn handle(
             since,
         } => {
             if !peer.shares(&folder) {
+                debug!(%device, %folder, "index requested for a folder not shared");
                 return send_error(send, ErrorCode::NotAMember).await;
             }
+            debug!(%device, %folder, epoch, since, "index requested");
             let Some(page) = backend.index_since(&folder, epoch, since) else {
                 return send_error(send, ErrorCode::UnknownFolder).await;
             };
@@ -319,8 +335,10 @@ async fn handle(
         } => {
             if !peer.shares(&folder) {
                 // Possible briefly after the folder stopped being shared; ignore it.
+                debug!(%device, %folder, "ignoring index for a folder not shared");
                 return Ok(());
             }
+            debug!(%device, %folder, versions = versions.len(), last, "index received");
             backend.apply_versions(&folder, device, versions);
             if last {
                 backend.set_peer_progress(&folder, device, epoch, up_to);

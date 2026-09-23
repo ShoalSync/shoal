@@ -42,9 +42,29 @@ enum Command {
         /// Folder ID.
         folder: String,
     },
+    /// Make a file available on this device's disk, fetching it from peers if it is a
+    /// placeholder, and print where it is.
+    Fetch {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder.
+        path: String,
+    },
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
+    /// Add a new device to your user from the pairing code it shows. The daemon must hold
+    /// your user key.
+    Pair {
+        /// The code the new device shows (TFP1-…).
+        code: String,
+        /// The new device's name; defaults to the name it suggests.
+        #[arg(long)]
+        name: Option<String>,
+        /// Approve without asking; still prints the confirmation code.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Manage peers.
     #[command(subcommand)]
     Peer(PeerCommand),
@@ -106,6 +126,10 @@ struct FolderOptions {
     /// Days to keep deleted files; 0 keeps them forever.
     #[arg(long, default_value_t = 30)]
     retention_days: u32,
+    /// Keep only BYTES of other devices' files on disk: the rest are placeholders, fetched
+    /// with `tidefell fetch` (a partial replica).
+    #[arg(long, value_name = "BYTES")]
+    partial: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -178,8 +202,8 @@ fn new_folder(
         path: path.display().to_string(),
         members: options.members,
         retention_days: options.retention_days,
-        mode: None,
-        budget_bytes: None,
+        mode: options.partial.map(|_| tidefell_sdk::types::Mode::Partial),
+        budget_bytes: options.partial,
         scan_interval_secs: None,
     })
 }
@@ -233,6 +257,40 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Files { folder } => print(json, &client.files(&folder).await.map_err(e)?, |f| {
             format::files(f)
         }),
+        Command::Fetch { folder, path } => {
+            print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
+                f.local_path.clone()
+            })
+        }
+        Command::Pair { code, name, yes } => {
+            let pairing = client.pair(&code).await.map_err(e)?;
+            let name = name.unwrap_or_else(|| pairing.suggested_name.clone());
+            eprintln!(
+                "Pairing with \"{}\" (device {}).\nConfirmation code: {} {}",
+                pairing.suggested_name,
+                pairing.device,
+                &pairing.confirmation_code[..3],
+                &pairing.confirmation_code[3..],
+            );
+            let approved = yes || {
+                eprint!("Does the new device show the same code? Add it as \"{name}\"? [y/N] ");
+                let mut answer = String::new();
+                std::io::stdin()
+                    .read_line(&mut answer)
+                    .map_err(|e| e.to_string())?;
+                matches!(answer.trim(), "y" | "Y" | "yes")
+            };
+            if approved {
+                client
+                    .approve_pairing(&pairing.id, Some(&name))
+                    .await
+                    .map_err(e)?;
+                print(json, &pairing, |_| format!("added {name} to your devices"));
+            } else {
+                client.decline_pairing(&pairing.id).await.map_err(e)?;
+                return Err("pairing declined".into());
+            }
+        }
         Command::Recycle(command) => match command {
             RecycleCommand::List { folder } => {
                 print(json, &client.recycle_bin(&folder).await.map_err(e)?, |r| {

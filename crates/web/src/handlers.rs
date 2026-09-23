@@ -287,12 +287,23 @@ pub(crate) async fn download(
         return not_found();
     };
     // Only live files known to the folder's metadata are served, from where the engine put them.
-    let Ok(Some(path)) = state.engine.local_path(folder.id, &query.path) else {
-        return not_found();
-    };
-    let file = match tokio::fs::File::open(&path).await {
-        Ok(file) => file,
+    // A placeholder is fetched from peers first. The open file keeps its data even if the engine
+    // evicts it once unpinned.
+    let path = match state.engine.open(folder.id, &query.path).await {
+        Ok(path) => path,
+        Err(tidefell_engine::Error::Unavailable(_)) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "This file is not available right now: no connected device has it.",
+            )
+                .into_response()
+        }
         Err(_) => return not_found(),
+    };
+    let opened = tokio::fs::File::open(&path).await;
+    let _ = state.engine.close(folder.id, &query.path);
+    let Ok(file) = opened else {
+        return not_found();
     };
     let name = FsPath::new(&query.path)
         .file_name()

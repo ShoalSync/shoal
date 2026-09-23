@@ -1,6 +1,6 @@
 //! The running engine: shared state, background tasks and the public handle.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
@@ -20,7 +20,7 @@ use crate::config::{EngineConfig, FolderConfig, PeerAddr};
 use crate::runtime::Runtime;
 use crate::state::FolderState;
 use crate::views::{Event, FileInfo, FolderInfo, PeerInfo, RecycledInfo};
-use crate::{materialize, now_ms, scan, Error, Result};
+use crate::{evict, materialize, now_ms, scan, Error, Result};
 
 /// How often to retry pending downloads and reconnect to peers.
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -35,11 +35,18 @@ pub(crate) struct FolderHandle {
     /// True if the folder comes from the configuration file.
     configured: bool,
     scanner: Mutex<Option<AbortHandle>>,
+    /// Paths opened by front-ends, with how many times; never evicted while open.
+    pins: Mutex<HashMap<String, usize>>,
 }
 
 impl FolderHandle {
     pub(crate) fn lock(&self) -> MutexGuard<'_, FolderState> {
         self.state.lock().unwrap()
+    }
+
+    /// Paths currently open.
+    pub(crate) fn pinned(&self) -> HashSet<String> {
+        self.pins.lock().unwrap().keys().cloned().collect()
     }
 }
 
@@ -71,6 +78,10 @@ impl Inner {
 
     pub(crate) fn folder_ids(&self) -> Vec<FolderId> {
         self.folders.read().unwrap().keys().copied().collect()
+    }
+
+    pub(crate) fn handles(&self) -> Vec<Arc<FolderHandle>> {
+        self.folders.read().unwrap().values().cloned().collect()
     }
 
     /// Signals peers that the index changed and wakes the materialiser.
@@ -164,6 +175,7 @@ fn open_folder(
         fs_lock: tokio::sync::Mutex::new(()),
         configured,
         scanner: Mutex::new(None),
+        pins: Mutex::new(HashMap::new()),
     })
 }
 
@@ -256,6 +268,10 @@ impl Engine {
                         match run_materialize(&inner, &node, id).await {
                             Ok(()) | Err(Error::UnknownFolder(_)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "materialise failed"),
+                        }
+                        match run_evict(&inner, &node, id).await {
+                            Ok(()) | Err(Error::UnknownFolder(_)) => {}
+                            Err(e) => warn!(folder = %id, error = %e, "eviction failed"),
                         }
                     }
                     tokio::select! {
@@ -511,6 +527,76 @@ impl Engine {
         Ok(on_disk.then(|| state.config.path.join(path)))
     }
 
+    /// Makes the live file at `path` available on disk and returns where it is, fetching it
+    /// from connected peers if this replica does not have its current version (a placeholder
+    /// in a partial replica, or a file still pending in a full one). The file stays pinned,
+    /// and so is never evicted, until a matching [`Engine::close`].
+    pub async fn open(&self, folder: FolderId, path: &str) -> Result<PathBuf> {
+        let handle = self.inner.folder(&folder)?;
+        let _guard = handle.fs_lock.lock().await;
+        if self.local_path(folder, path)?.is_none()
+            && !materialize::fetch_one(&self.inner, &self.node, folder, &handle, path).await?
+        {
+            return Err(Error::Unavailable(path.to_owned()));
+        }
+        *handle
+            .pins
+            .lock()
+            .unwrap()
+            .entry(path.to_owned())
+            .or_insert(0) += 1;
+        let abs = {
+            let mut state = handle.lock();
+            state.used.insert(path.to_owned(), now_ms());
+            state.config.path.join(path)
+        };
+        // Opening may have pushed a partial replica over its budget.
+        evict::evict(&self.inner, &self.node, folder, &handle).await?;
+        Ok(abs)
+    }
+
+    /// Releases one [`Engine::open`] of `path`.
+    pub fn close(&self, folder: FolderId, path: &str) -> Result<()> {
+        let handle = self.inner.folder(&folder)?;
+        let mut pins = handle.pins.lock().unwrap();
+        if let Some(count) = pins.get_mut(path) {
+            *count -= 1;
+            if *count == 0 {
+                pins.remove(path);
+            }
+        }
+        Ok(())
+    }
+
+    /// Replaces or creates the file at `path` with the contents of `source`, which is moved
+    /// (or copied, across filesystems) into the folder, and records the change now instead of
+    /// at the next scan.
+    pub async fn write(&self, folder: FolderId, path: &str, source: &Path) -> Result<()> {
+        if !tidefell_proto::sync::is_valid_path(path) {
+            return Err(Error::Invalid(format!("invalid path {path:?}")));
+        }
+        let handle = self.inner.folder(&folder)?;
+        {
+            let _guard = handle.fs_lock.lock().await;
+            let root = handle.lock().config.path.clone();
+            let target = root.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
+            }
+            if std::fs::rename(source, &target).is_err() {
+                let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
+                std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
+                let tmp = tmp_dir.join(format!(
+                    "write-{:016x}",
+                    u64::from_le_bytes(crate::random_bytes()?)
+                ));
+                std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
+                std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
+            }
+        }
+        run_scan(&self.inner, folder).await
+    }
+
     /// Deleted files in `folder`'s recycle bin, most recently deleted first.
     pub fn recycle_bin(&self, folder: FolderId) -> Result<Vec<RecycledInfo>> {
         let handle = self.inner.folder(&folder)?;
@@ -564,6 +650,8 @@ impl Engine {
                 .map(|r| r.version.path.clone())
                 .collect(),
         };
+        let partial = matches!(state.config.mode, crate::ReplicaMode::Partial { .. });
+        let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
         for version in state.meta.entries() {
             if !state.meta.conflicts(&version.entry).is_empty() {
                 status.conflicts += 1;
@@ -574,7 +662,8 @@ impl Engine {
                     .local
                     .get(&version.path)
                     .is_some_and(|l| l.entry == version.entry && l.content == content);
-                if !on_disk {
+                // Placeholders of a partial replica are not pending.
+                if !on_disk && (!partial || materialised.contains(&version.entry)) {
                     status.pending += 1;
                 }
             }
@@ -632,6 +721,20 @@ impl Engine {
         Ok(removed)
     }
 
+    /// Starts approving a new device from its pairing code (ADR 0015). Returns once the new
+    /// device has accepted the proof; show the confirmation code, then approve or decline.
+    pub async fn pair(
+        &self,
+        code: &tidefell_proto::pair::PairingCode,
+    ) -> Result<crate::pairing::PendingPairing> {
+        let session = self.node.pair(code).await?;
+        Ok(crate::pairing::PendingPairing::new(
+            session,
+            self.inner.clone(),
+            self.node.clone(),
+        ))
+    }
+
     /// Stops all tasks, saves state and closes the endpoint.
     pub async fn shutdown(mut self) {
         self.tasks.shutdown().await;
@@ -669,6 +772,12 @@ async fn run_scan(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
         inner.emit(Event::FolderChanged(id));
     }
     Ok(())
+}
+
+async fn run_evict(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
+    let handle = inner.folder(&id)?;
+    let _guard = handle.fs_lock.lock().await;
+    evict::evict(inner, node, id, &handle).await
 }
 
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {

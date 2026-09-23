@@ -49,5 +49,6 @@ toml = "1"
 utoipa = "6"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "io-util"] }
 tracing = "0.1"
+uniffi = "0.32"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

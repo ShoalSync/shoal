@@ -65,7 +65,7 @@ pub struct NewFolder {
     /// Replica mode; defaults to full.
     #[serde(default)]
     pub mode: Option<Mode>,
-    /// Block store budget; required for partial replicas.
+    /// Bytes of files a partial replica keeps on disk; required for partial replicas.
     #[serde(default)]
     pub budget_bytes: Option<u64>,
     /// Seconds between scans for local changes; defaults to 10.
@@ -93,12 +93,27 @@ pub struct File {
     pub modified_ms: i64,
     /// Whether the file is executable.
     pub executable: bool,
-    /// Whether the current version is on this device's disk.
+    /// Whether the current version is on this device's disk. In a partial replica, files not
+    /// on disk are placeholders, fetched with `POST /v1/folders/{id}/fetch`.
     pub on_disk: bool,
     /// Number of unresolved conflict copies.
     pub conflicts: usize,
     /// Device that made the current version.
     pub author: String,
+}
+
+/// A file to make available on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FetchRequest {
+    /// Path within the folder.
+    pub path: String,
+}
+
+/// Where a fetched file is on the daemon's disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Fetched {
+    /// Absolute path on the daemon's machine.
+    pub local_path: String,
 }
 
 /// A deleted file in the recycle bin.
@@ -174,6 +189,34 @@ pub enum Event {
     },
 }
 
+/// Start approving a new device from its pairing code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PairRequest {
+    /// The pairing code the new device shows (`TFP1-…`).
+    pub code: String,
+}
+
+/// A pairing waiting for the person to compare confirmation codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Pairing {
+    /// Identifies this pairing in later requests.
+    pub id: String,
+    /// The new device's ID.
+    pub device: String,
+    /// The name the new device suggests for itself.
+    pub suggested_name: String,
+    /// Six digits the new device also shows.
+    pub confirmation_code: String,
+}
+
+/// Approve a pairing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ApprovePairing {
+    /// The new device's name; defaults to the name it suggested.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Why a request failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -186,6 +229,8 @@ pub enum ErrorKind {
     Conflict,
     /// Something failed on the server.
     Internal,
+    /// The content is not available from any connected peer right now.
+    Unavailable,
 }
 
 /// Error response body.

@@ -5,9 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish = false
+default-run = "xtask"
 
 [lints]
 workspace = true
 
 [dependencies]
 serde_json.workspace = true
+uniffi = { workspace = true, features = ["cli"] }

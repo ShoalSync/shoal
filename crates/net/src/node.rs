@@ -137,6 +137,28 @@ async fn run_session(
     }
 }
 
+/// Binds an iroh endpoint with this device's key, serving `alpns`.
+pub(crate) async fn bind_endpoint(config: &NodeConfig, alpns: Vec<Vec<u8>>) -> Result<Endpoint> {
+    let relay_mode = match &config.relay {
+        RelayConfig::Default => RelayMode::Default,
+        RelayConfig::Disabled => RelayMode::Disabled,
+        RelayConfig::Custom(urls) => RelayMode::Custom(RelayMap::from_iter(urls.iter().cloned())),
+    };
+    let mut builder = Endpoint::builder(presets::N0)
+        .secret_key(SecretKey::from_bytes(&config.secret_key))
+        .alpns(alpns)
+        .relay_mode(relay_mode);
+    if !config.address_lookup {
+        builder = builder.clear_address_lookup();
+    }
+    if let Some(addr) = config.bind {
+        builder = builder
+            .bind_addr(addr)
+            .map_err(|e| Error::Bind(e.to_string()))?;
+    }
+    builder.bind().await.map_err(|e| Error::Bind(e.to_string()))
+}
+
 /// A running Tidefell peer endpoint.
 pub struct Node {
     endpoint: Endpoint,
@@ -157,27 +179,8 @@ impl std::fmt::Debug for Node {
 impl Node {
     /// Binds the endpoint and starts serving `sync/1` and `blobs/1`.
     pub async fn spawn(config: NodeConfig, backend: Arc<dyn Backend>) -> Result<Self> {
-        let relay_mode = match config.relay {
-            RelayConfig::Default => RelayMode::Default,
-            RelayConfig::Disabled => RelayMode::Disabled,
-            RelayConfig::Custom(urls) => RelayMode::Custom(RelayMap::from_iter(urls)),
-        };
-        let mut builder = Endpoint::builder(presets::N0)
-            .secret_key(SecretKey::from_bytes(&config.secret_key))
-            .alpns(vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()])
-            .relay_mode(relay_mode);
-        if !config.address_lookup {
-            builder = builder.clear_address_lookup();
-        }
-        if let Some(addr) = config.bind {
-            builder = builder
-                .bind_addr(addr)
-                .map_err(|e| Error::Bind(e.to_string()))?;
-        }
-        let endpoint = builder
-            .bind()
-            .await
-            .map_err(|e| Error::Bind(e.to_string()))?;
+        let endpoint =
+            bind_endpoint(&config, vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()]).await?;
 
         let peers: Peers = Arc::default();
         let router = Router::builder(endpoint.clone())
@@ -278,6 +281,16 @@ impl Node {
     ) -> Result<(u32, Vec<u8>)> {
         let conn = self.blob_conn(peer.into()).await?;
         blobs::availability(&conn, self.backend.certificate(), folder, content).await
+    }
+
+    /// Starts pairing, as the approver, with the new device in `code` (ADR 0015). Returns once
+    /// the new device has accepted the proof; show its confirmation code, then complete or
+    /// decline the session.
+    pub async fn pair(
+        &self,
+        code: &tidefell_proto::pair::PairingCode,
+    ) -> Result<crate::pair::ApproverSession> {
+        crate::pair::ApproverSession::start(&self.endpoint, self.backend.certificate(), code).await
     }
 
     /// Stops serving and closes the endpoint.

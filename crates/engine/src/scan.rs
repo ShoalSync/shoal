@@ -150,6 +150,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
 
     let mut state = handle.lock();
     let mut index_changed = false;
+    let now = now_ms();
     for c in changed {
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {
             Some(entry) => entry,
@@ -179,6 +180,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
             )?;
             index_changed = true;
         }
+        state.used.insert(c.rel.clone(), now);
         state.local.insert(
             c.rel,
             LocalFile {
@@ -200,6 +202,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
         let Some(local) = state.local.remove(&rel) else {
             continue;
         };
+        state.used.remove(&rel);
         let live_here = state
             .meta
             .current(&local.entry)

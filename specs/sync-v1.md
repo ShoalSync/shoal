@@ -155,7 +155,10 @@ verified in strict mode. Each kind states who must sign:
 Either peer may send `Hello` again on the main stream at any time, when the folders it offers
 this peer change (a folder was added or removed, or the peer's membership changed). The
 certificate must be for the same device and user as in the first `Hello`. After the first
-exchange, both sides offer only folders the peer is a member of.
+exchange, both sides offer only folders the peer is a member of: the connecting peer, whose
+first `Hello` named every folder it syncs, sends an updated `Hello` as soon as its offer for this
+peer differs from what it sent, and either side does the same if its folders changed while the
+handshake was in flight.
 
 On sending or receiving an updated `Hello`, each side recomputes the shared set as the
 intersection of the two latest offers. It sends `IndexRequest` for folders that became shared,
