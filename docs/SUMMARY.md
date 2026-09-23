@@ -42,3 +42,6 @@
   - [0011: Web accounts are local logins mapped to Tidefell users](adr/0011-web-accounts.md)
   - [0012: Server-rendered web UI with htmx](adr/0012-web-ui.md)
   - [0013: Zola for the website, mdBook for documentation](adr/0013-site-generator.md)
+  - [0014: The ffi AAR is a release asset, not a Maven package](adr/0014-aar-release-asset.md)
+  - [0015: Devices join a user by pairing over the network](adr/0015-pairing.md)
+  - [0016: Partial replicas keep placeholders and fetch on demand](adr/0016-partial-replicas-on-demand.md)
