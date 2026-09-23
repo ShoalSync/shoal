@@ -35,12 +35,22 @@ allow = [
     "Zlib",
 ]
 
-# Narrow exceptions for weak-copyleft crates. Each is reached only through iroh; `proto` and
-# `sdk` must not depend on iroh, so these never reach the MIT/Apache crates.
+# Narrow exceptions for weak-copyleft crates. None of them reaches `proto` or `sdk`, so they
+# never constrain the MIT/Apache crates.
 exceptions = [
     # UPnP port mapping client, via iroh -> portmapper -> igd-next. MPL-2.0 is file-level
     # copyleft and compatible with AGPL-3.0; it only reaches the AGPL `net` crate.
     { crate = "attohttpc", allow = ["MPL-2.0"] },
+    # uniffi generates the Kotlin bindings (ADR 0004). Reached only from the AGPL `ffi` crate
+    # and from `xtask`, which runs its bindings generator; never from `proto` or `sdk`.
+    { crate = "uniffi", allow = ["MPL-2.0"] },
+    { crate = "uniffi_bindgen", allow = ["MPL-2.0"] },
+    { crate = "uniffi_core", allow = ["MPL-2.0"] },
+    { crate = "uniffi_internal_macros", allow = ["MPL-2.0"] },
+    { crate = "uniffi_macros", allow = ["MPL-2.0"] },
+    { crate = "uniffi_meta", allow = ["MPL-2.0"] },
+    { crate = "uniffi_pipeline", allow = ["MPL-2.0"] },
+    { crate = "uniffi_udl", allow = ["MPL-2.0"] },
 ]
 
 [licenses.private]
