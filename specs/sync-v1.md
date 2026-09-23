@@ -13,9 +13,16 @@ separately over `tidefell/blobs/1`.
 
 ## Transport
 
-A QUIC connection negotiated with ALPN `tidefell/sync/1` over iroh. The connecting peer opens
-one bidirectional stream. Both sides authenticate by their iroh endpoint key, which is the
-`DeviceId`.
+A QUIC connection negotiated with ALPN `tidefell/sync/1` over iroh. Both sides authenticate by
+their iroh endpoint key, which is the `DeviceId`.
+
+- **Main stream.** The connecting peer opens the first bidirectional stream and sends `Hello`.
+  `Hello`, `IndexRequest`, `IndexBatch` and `Error` travel on this stream for the life of the
+  connection.
+- **Manifest streams.** After the handshake, either peer may open further bidirectional
+  streams, each carrying exactly one `ManifestRequest` and one `ManifestResponse` or `Error`,
+  after which the responder finishes the stream. The handshake on the main stream
+  authenticates the whole connection.
 
 ## Membership
 
@@ -128,8 +135,10 @@ verified in strict mode. Each kind states who must sign:
 
 ## Exchange
 
-1. Both sides send `Hello`. Each side checks the peer's certificate (see Membership) and only
-   proceeds with folders that both sides listed and for which the peer is a member.
+1. The connecting peer sends `Hello` listing the folders it syncs. The accepting peer checks
+   the certificate (see Membership) and replies with `Hello` listing only the folders the
+   connecting peer is a member of. Each side then proceeds only with folders that both sides
+   listed and for which the peer is a member.
 2. For each shared folder, each side sends `IndexRequest` with the epoch and sequence it last
    received from this peer (both 0 the first time).
 3. The responder sends, in sequence order, every version currently in its index (current
@@ -138,8 +147,8 @@ verified in strict mode. Each kind states who must sign:
    `last = true`. Superseded versions are not sent.
 4. The requester verifies each version (signature, signer equals author, folder, path rules)
    and applies it. It records `epoch` and `up_to` only after applying the batch marked `last`.
-5. A peer that needs a file's chunk list sends `ManifestRequest` and receives
-   `ManifestResponse` or `Error`.
+5. A peer that needs a file's chunk list opens a manifest stream, sends `ManifestRequest` and
+   receives `ManifestResponse` or `Error`.
 
 After the initial exchange the stream stays open, and new local versions are pushed as
 `IndexBatch` messages.

@@ -11,3 +11,9 @@ publish = false
 workspace = true
 
 [dependencies]
+thiserror.workspace = true
+tidefell-proto.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
