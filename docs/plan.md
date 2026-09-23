@@ -135,7 +135,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
   an end-to-end test of two daemon processes syncing a folder.
 - Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `tidefell/infra`
   pins it with relay, DNS and full-replica roles.
-- Phase 3 is in progress; see its breakdown below.
+- Phase 3 is in progress: steps 1–5 are implemented, docs and site (step 6) are next.
 
 ### Phase 2 work breakdown
 
@@ -175,8 +175,10 @@ from the recycle bin, both through the CLI and through the web peer.
    and their OpenAPI schemas, and provides a typed client over a Unix socket or HTTP. `api`
    serves them with axum on the control socket, including server-sent events and
    `/v1/openapi.json`. The OpenAPI document is published with each release.
-4. **`tidefell` CLI.** `status`, `folder create|join|list|remove`, `files`, `peers`,
-   `recycle list|restore`, `web account add|remove`. Talks to the daemon only through `sdk`.
+4. **`tidefell` CLI.** `status`, `folder create|join|list|remove|share|unshare|scan`, `files`,
+   `peer list|add|remove`, `recycle list|restore`, `events`. Talks to the daemon only through
+   `sdk`. Web accounts are managed on the web peer's host with `tidefelld web account`, since
+   they live in its data directory.
 5. **`web`.** Accounts (argon2id) linked to user IDs, sessions with CSRF protection, and a
    server-rendered htmx UI: sign in, folders, file listing and download, recycle bin with
    restore, and account management for admins. Enabled by `[web]` in `tidefelld`.

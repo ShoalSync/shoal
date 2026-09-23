@@ -69,11 +69,57 @@ enum Command {
         #[command(subcommand)]
         command: ApiCommand,
     },
+    /// Web peer administration.
+    Web {
+        #[command(subcommand)]
+        command: WebCommand,
+    },
     /// Run the daemon.
     Run {
         /// Configuration file.
         #[arg(long)]
         config: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebCommand {
+    /// Web accounts (stored in `<data_dir>/web/accounts.json`).
+    #[command(subcommand)]
+    Account(AccountCommand),
+}
+
+#[derive(Subcommand)]
+enum AccountCommand {
+    /// Add an account, or change an existing one. Reads the password from standard input.
+    Add {
+        /// State directory.
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// Login name.
+        #[arg(long)]
+        username: String,
+        /// The Tidefell user the account acts for. Defaults to this device's user.
+        #[arg(long)]
+        user: Option<String>,
+        /// Allow managing accounts in the web UI.
+        #[arg(long)]
+        admin: bool,
+    },
+    /// Remove an account.
+    Remove {
+        /// State directory.
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// Login name.
+        #[arg(long)]
+        username: String,
+    },
+    /// List accounts.
+    List {
+        /// State directory.
+        #[arg(long)]
+        data_dir: PathBuf,
     },
 }
 
@@ -195,6 +241,60 @@ fn certify(user_key: &Path, device: &str, name: &str, out: &Path) -> Result<(), 
     Ok(())
 }
 
+fn web_account(command: AccountCommand) -> Result<(), String> {
+    match command {
+        AccountCommand::Add {
+            data_dir,
+            username,
+            user,
+            admin,
+        } => {
+            let user = match user {
+                Some(user) => user
+                    .parse()
+                    .map_err(|_| format!("user {user:?} is not 64 lowercase hex digits"))?,
+                None => {
+                    let (_, cert) = load_identity(&data_dir)?;
+                    cert.verify_certificate().map_err(|e| e.to_string())?.user
+                }
+            };
+            eprint!("Password for {username}: ");
+            let mut password = String::new();
+            std::io::stdin()
+                .read_line(&mut password)
+                .map_err(|e| e.to_string())?;
+            let password = password.trim_end_matches(['\r', '\n']);
+            tidefell_web::AccountStore::new(&data_dir)
+                .upsert(&username, password, user, admin)
+                .map_err(|e| e.to_string())?;
+            eprintln!();
+            println!("saved account {username} for user {user}");
+            Ok(())
+        }
+        AccountCommand::Remove { data_dir, username } => {
+            if tidefell_web::AccountStore::new(&data_dir)
+                .remove(&username)
+                .map_err(|e| e.to_string())?
+            {
+                println!("removed account {username}");
+                Ok(())
+            } else {
+                Err(format!("there is no account {username}"))
+            }
+        }
+        AccountCommand::List { data_dir } => {
+            for account in tidefell_web::AccountStore::new(&data_dir)
+                .list()
+                .map_err(|e| e.to_string())?
+            {
+                let role = if account.admin { "admin" } else { "member" };
+                println!("{}  {}  {role}", account.username, account.user);
+            }
+            Ok(())
+        }
+    }
+}
+
 fn read_config(path: &Path) -> Result<config::Config, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
@@ -216,16 +316,31 @@ async fn run(path: &Path) -> Result<(), String> {
         let (engine, socket) = (engine.clone(), socket.clone());
         async move { tidefell_api::serve_unix(engine, &socket).await }
     });
+    let web = match &config.web {
+        Some(web) => {
+            let listener = tokio::net::TcpListener::bind(web.bind)
+                .await
+                .map_err(|e| format!("web peer cannot bind {}: {e}", web.bind))?;
+            let settings = tidefell_web::WebConfig {
+                secure_cookies: web.secure_cookies,
+            };
+            let (engine, data_dir) = (engine.clone(), config.data_dir.clone());
+            tokio::spawn(
+                async move { tidefell_web::serve(listener, engine, &data_dir, settings).await },
+            )
+        }
+        None => tokio::spawn(std::future::pending()),
+    };
+    let describe =
+        |what: &str, result: Result<std::io::Result<()>, tokio::task::JoinError>| match result {
+            Ok(Ok(())) => format!("{what} stopped"),
+            Ok(Err(e)) => format!("{what} failed: {e}"),
+            Err(e) => format!("{what} task failed: {e}"),
+        };
     tokio::select! {
         _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
-        result = api => {
-            let error = match result {
-                Ok(Ok(())) => "control API stopped".to_string(),
-                Ok(Err(e)) => format!("control API failed: {e}"),
-                Err(e) => format!("control API task failed: {e}"),
-            };
-            return Err(error);
-        }
+        result = api => return Err(describe("control API", result)),
+        result = web => return Err(describe("web peer", result)),
     }
     let _ = std::fs::remove_file(&socket);
 
@@ -269,6 +384,9 @@ fn main() -> ExitCode {
                 .map(|()| println!("{}", FolderId(bytes)))
                 .map_err(|e| e.to_string())
         }
+        Command::Web { command } => match command {
+            WebCommand::Account(command) => web_account(command),
+        },
         Command::Api { command } => match command {
             ApiCommand::Schema => tidefell_api::openapi()
                 .to_pretty_json()

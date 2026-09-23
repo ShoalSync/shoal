@@ -24,6 +24,21 @@ pub struct Config {
     /// Folders to sync.
     #[serde(default)]
     pub folders: Vec<Folder>,
+    /// Serve the web peer. Omit to disable it.
+    #[serde(default)]
+    pub web: Option<Web>,
+}
+
+/// The web peer (ADR 0010, 0011).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Web {
+    /// TCP address to serve the web UI on, e.g. "127.0.0.1:8080". Put a TLS reverse proxy in
+    /// front of it.
+    pub bind: SocketAddr,
+    /// Mark session cookies Secure (HTTPS only). Turn off only for local testing without TLS.
+    #[serde(default = "default_true")]
+    pub secure_cookies: bool,
 }
 
 /// Network settings.

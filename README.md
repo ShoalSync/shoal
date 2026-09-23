@@ -90,13 +90,37 @@ tidefelld certify --user-key ~/.local/share/tidefell/user.key \
 tidefelld init --data-dir /var/lib/tidefell --name nas --certificate nas.cert
 ```
 
-Then write a configuration (see [`crates/daemon/tidefelld.example.toml`](crates/daemon/tidefelld.example.toml)),
-check it with `tidefelld config check <file>`, and start the daemon with
-`tidefelld run --config <file>`. `tidefelld config schema` prints the configuration's JSON Schema.
+Start each daemon with a configuration (see
+[`crates/daemon/tidefelld.example.toml`](crates/daemon/tidefelld.example.toml); `folders` may be
+empty): `tidefelld run --config <file>`. Then manage it with the `tidefell` command, which talks
+to the local daemon over its control socket:
+
+```sh
+tidefell folder create ~/Photos              # prints the folder ID
+tidefell folder join <folder id> /srv/photos # on the other device
+tidefell peer add <laptop device id> --addr 192.168.1.10:7777
+tidefell files <folder id>
+tidefell recycle list <folder id>
+tidefell recycle restore <folder id> holiday.jpg
+```
+
+Everything `tidefell` does goes through the `/v1` REST API; `tidefelld api schema` prints its
+OpenAPI document and `tidefelld config schema` the configuration's JSON Schema.
+
+### Web peer
+
+Add a `[web]` section to a daemon's configuration and create an account:
+
+```sh
+tidefelld web account add --data-dir /var/lib/tidefell --username alice --admin
+```
+
+People sign in from a browser and see the folders their user is a member of: browse, download
+and restore deleted files. Serve it behind a TLS reverse proxy.
 
 Current limitations: empty directories and symlinks are not synced, conflict copies are kept
-in metadata but not written to disk, partial replicas hold metadata only, and device
-certificates cannot be revoked yet.
+in metadata but not written to disk, partial replicas hold metadata only, files not stored on
+the web peer cannot be downloaded from it, and device certificates cannot be revoked yet.
 
 ## Contributing
 

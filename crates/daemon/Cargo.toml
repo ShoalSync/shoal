@@ -19,6 +19,7 @@ clap.workspace = true
 getrandom.workspace = true
 tidefell-api.workspace = true
 tidefell-sdk.workspace = true
+tidefell-web.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
