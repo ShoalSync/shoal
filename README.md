@@ -12,8 +12,8 @@ no central server.
   at first setup.
 
 Tidefell is built in Rust on [iroh](https://github.com/n0-computer/iroh) (QUIC with hole
-punching and relay fallback) and [iroh-blobs](https://github.com/n0-computer/iroh-blobs)
-(BLAKE3 verified transfer).
+punching and relay fallback), with content-defined chunks transferred and verified by their
+BLAKE3 hashes.
 
 > **Status:** early scaffolding. Nothing here syncs files yet.
 

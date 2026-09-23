@@ -7,10 +7,11 @@ the same pull request that introduces it.
 | Term | Meaning |
 | --- | --- |
 | **Peer** | Any running Tidefell node: daemon, desktop, Android app or web peer. All peers speak the same protocols. |
-| **Device** | A peer's durable identity: an Ed25519 key pair generated on first run. A device belongs to exactly one user. `DeviceId` is the public key. |
-| **User** | A person's identity: an Ed25519 key pair that signs device certificates. `UserId` is the public key. |
+| **Device** | A peer's durable identity: an Ed25519 key pair generated on first run. A device belongs to exactly one user. `DeviceId` is the public key, and is also the device's iroh endpoint ID. |
+| **User** | A person's identity: an Ed25519 key pair that signs device certificates. `UserId` is the public key. Folder membership is granted to users, not devices. |
 | **Folder** | A directory tree shared between a set of devices. Identified by a random 32-byte `FolderId`. The unit of membership and sync. |
-| **Member** | A device authorised to sync a folder. |
+| **Member** | A user allowed to sync a folder. A device may sync the folder if it presents a device certificate from a member. |
+| **Device certificate** | A statement "this device belongs to this user", signed by the user's key. Presented in `Hello` on every connection. |
 | **Replica** | A device's copy of a folder. |
 | **Full replica** | A replica that stores every chunk of every live file, and keeps recycle-bin contents until retention expires. Typically a NAS or server. |
 | **Partial replica** | A replica that stores all metadata but only some chunks. Missing content is fetched on demand. |
