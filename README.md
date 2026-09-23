@@ -62,6 +62,9 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+With Nix, `nix build` produces `tidefell` and `tidefelld`, and `nix develop` opens a shell with
+the toolchain and `cargo-deny`.
+
 ## Conventions
 
 Read [CONVENTIONS.md](CONVENTIONS.md) before making changes.
