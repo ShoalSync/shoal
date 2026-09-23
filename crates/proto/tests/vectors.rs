@@ -8,9 +8,11 @@ use std::path::PathBuf;
 
 use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
+use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
+use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
-    frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed,
+    frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, UserId,
 };
 
 fn specs_dir() -> PathBuf {
@@ -26,6 +28,22 @@ fn hex(bytes: &[u8]) -> String {
 
 fn device_key() -> SigningKey {
     SigningKey::from_bytes(&[0x11; 32])
+}
+
+fn user_key() -> SigningKey {
+    SigningKey::from_bytes(&[0x77; 32])
+}
+
+fn certificate() -> Signed<DeviceCertificate> {
+    Signed::sign(
+        &DeviceCertificate {
+            user: UserId(user_key().verifying_key().to_bytes()),
+            device: DeviceId(device_key().verifying_key().to_bytes()),
+            name: "test device".into(),
+            issued_ms: 1_758_600_000_000,
+        },
+        &user_key(),
+    )
 }
 
 fn sample_version() -> EntryVersion {
@@ -51,7 +69,7 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
         (
             "hello",
             SyncMessage::Hello {
-                device: DeviceId(device_key().verifying_key().to_bytes()),
+                certificate: certificate(),
                 folders: vec![folder],
             },
         ),
@@ -117,17 +135,80 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
         .collect()
 }
 
-#[test]
-fn sync_v1_golden_vectors() {
-    let path = specs_dir().join("vectors/sync-v1.json");
-    let actual: Vec<Value> = sync_v1_vectors()
+fn blobs_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
+    let folder = FolderId([0x22; 32]);
+    let messages = [
+        (
+            "hello",
+            BlobsMessage::Hello {
+                certificate: certificate(),
+            },
+        ),
+        (
+            "request",
+            BlobsMessage::Request {
+                folder,
+                chunks: vec![ChunkHash([0x55; 32]), ChunkHash([0x66; 32])],
+            },
+        ),
+        (
+            "chunk",
+            BlobsMessage::Chunk {
+                hash: ChunkHash([0x55; 32]),
+                data: b"chunk bytes".to_vec(),
+            },
+        ),
+        (
+            "missing",
+            BlobsMessage::Missing {
+                hash: ChunkHash([0x66; 32]),
+            },
+        ),
+        (
+            "availability-request",
+            BlobsMessage::AvailabilityRequest {
+                folder,
+                content: ContentHash([0x44; 32]),
+            },
+        ),
+        (
+            "availability",
+            BlobsMessage::Availability {
+                content: ContentHash([0x44; 32]),
+                chunk_count: 10,
+                bitmap: vec![0b0000_0101, 0b0000_0010],
+            },
+        ),
+        (
+            "error-too-many-chunks",
+            BlobsMessage::Error {
+                code: BlobsErrorCode::TooManyChunks,
+            },
+        ),
+    ];
+    messages
+        .into_iter()
+        .map(|(name, msg)| {
+            let bytes = frame::encode(&msg);
+            let (decoded, used): (BlobsMessage, usize) = frame::decode(&bytes).unwrap();
+            assert_eq!(decoded, msg, "{name} does not round-trip");
+            assert_eq!(used, bytes.len());
+            (name, bytes)
+        })
+        .collect()
+}
+
+fn check_vectors(file: &str, alpn: &str, vectors: Vec<(&'static str, Vec<u8>)>) {
+    let path = specs_dir().join("vectors").join(file);
+    let actual: Vec<Value> = vectors
         .into_iter()
         .map(|(name, bytes)| json!({ "name": name, "frame": hex(&bytes) }))
         .collect();
     let actual = json!({
-        "alpn": "tidefell/sync/1",
+        "alpn": alpn,
         "encoding": "varint length prefix + postcard",
-        "signing_key_seed": hex(&[0x11; 32]),
+        "device_key_seed": hex(&[0x11; 32]),
+        "user_key_seed": hex(&[0x77; 32]),
         "vectors": actual,
     });
 
@@ -144,6 +225,27 @@ fn sync_v1_golden_vectors() {
         actual, expected,
         "wire encoding changed; see the header of this test"
     );
+}
+
+#[test]
+fn sync_v1_golden_vectors() {
+    check_vectors("sync-v1.json", "tidefell/sync/1", sync_v1_vectors());
+}
+
+#[test]
+fn blobs_v1_golden_vectors() {
+    check_vectors("blobs-v1.json", "tidefell/blobs/1", blobs_v1_vectors());
+}
+
+#[test]
+fn certificate_must_be_signed_by_its_user() {
+    assert!(certificate().verify_certificate().is_ok());
+    let forged = Signed::sign(&certificate().verify().unwrap(), &device_key());
+    assert!(forged.verify().is_ok());
+    assert!(matches!(
+        forged.verify_certificate(),
+        Err(tidefell_proto::Error::SignerMismatch)
+    ));
 }
 
 #[test]

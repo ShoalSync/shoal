@@ -17,6 +17,18 @@ A QUIC connection negotiated with ALPN `tidefell/sync/1` over iroh. The connecti
 one bidirectional stream. Both sides authenticate by their iroh endpoint key, which is the
 `DeviceId`.
 
+## Membership
+
+Each folder has a set of member users. A device may sync a folder if it presents a device
+certificate, signed by one of those users, whose `device` equals the connection's endpoint ID.
+
+```
+DeviceCertificate = user: UserId || device: DeviceId || name: string || issued_ms: i64
+```
+
+A certificate is sent as `Signed<DeviceCertificate>` with kind `identity/1/device-certificate`,
+and its signer must equal `user`. Revocation is not yet specified.
+
 ## Encoding
 
 Every message is one frame:
@@ -37,7 +49,8 @@ body  = postcard(SyncMessage)
 
 | Type | Size | Meaning |
 | --- | --- | --- |
-| `DeviceId` | 32 | Device Ed25519 public key |
+| `DeviceId` | 32 | Device Ed25519 public key; also its iroh endpoint ID |
+| `UserId` | 32 | User Ed25519 public key |
 | `FolderId` | 32 | Random, chosen when a folder is created |
 | `EntryId` | 16 | Random, chosen when an entry is created; stable across renames |
 | `ChunkHash` | 32 | BLAKE3 of the chunk bytes |
@@ -66,22 +79,26 @@ it has received, and sends them in its next `IndexRequest`.
 
 ## Signed envelopes
 
-`EntryVersion` is always sent signed by its author:
+Attributable messages are sent in a signed envelope:
 
 ```
-Signed<T> = signer: DeviceId || body: bytes || signature: [u8; 64]
+Signed<T> = signer: [u8; 32] || body: bytes || signature: [u8; 64]
 signed bytes = "tidefell/sig/1\0" || u8(len(kind)) || kind || body
 ```
 
-`body` is the postcard encoding of `T`. `kind` for `EntryVersion` is `sync/1/entry-version`.
-Signatures are Ed25519 and are verified in strict mode. Receivers reject a version whose
-`signer` differs from `EntryVersion.author`.
+`body` is the postcard encoding of `T` and `signer` is an Ed25519 public key. Signatures are
+verified in strict mode. Each kind states who must sign:
+
+| Kind | Message | Signer must be |
+| --- | --- | --- |
+| `sync/1/entry-version` | `EntryVersion` | `EntryVersion.author` |
+| `identity/1/device-certificate` | `DeviceCertificate` | `DeviceCertificate.user` |
 
 ## Messages
 
 | Index | Message | Fields |
 | --- | --- | --- |
-| 0 | `Hello` | `device: DeviceId`, `folders: Vec<FolderId>` |
+| 0 | `Hello` | `certificate: Signed<DeviceCertificate>`, `folders: Vec<FolderId>` |
 | 1 | `IndexRequest` | `folder: FolderId`, `epoch: u64`, `since: u64` |
 | 2 | `IndexBatch` | `folder: FolderId`, `epoch: u64`, `up_to: u64`, `versions: Vec<Signed<EntryVersion>>`, `last: bool` |
 | 3 | `ManifestRequest` | `folder: FolderId`, `content: ContentHash` |
@@ -111,7 +128,8 @@ Signatures are Ed25519 and are verified in strict mode. Receivers reject a versi
 
 ## Exchange
 
-1. Both sides send `Hello`. Each side only proceeds with folders listed by both.
+1. Both sides send `Hello`. Each side checks the peer's certificate (see Membership) and only
+   proceeds with folders that both sides listed and for which the peer is a member.
 2. For each shared folder, each side sends `IndexRequest` with the epoch and sequence it last
    received from this peer (both 0 the first time).
 3. The responder sends, in sequence order, every version currently in its index (current
@@ -148,6 +166,5 @@ interoperate; they only deduplicate less.
 
 ## Open questions
 
-- Membership proofs (device certificates signed by a user key) arrive with the `identity`
-  crate in Phase 2.
+- Certificate revocation and changes to a folder's member list.
 - Flow control for large indexes.

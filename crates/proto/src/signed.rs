@@ -6,7 +6,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::{DeviceId, Error};
+use crate::{Error, PublicKey};
 
 /// Prefix of every signed byte string, so Tidefell signatures cannot be confused with signatures
 /// from other protocols.
@@ -23,8 +23,8 @@ pub trait SignedKind: Serialize + DeserializeOwned {
 #[derive(Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct Signed<T> {
-    /// The signing device.
-    pub signer: DeviceId,
+    /// The signing key: a device or a user, depending on the message kind.
+    pub signer: PublicKey,
     /// postcard encoding of the message.
     pub body: Vec<u8>,
     /// Ed25519 signature over [`signing_bytes`].
@@ -78,7 +78,7 @@ impl<T: SignedKind> Signed<T> {
         let body = postcard::to_stdvec(message).expect("in-memory encoding cannot fail");
         let signature = key.sign(&signing_bytes(T::KIND, &body));
         Self {
-            signer: DeviceId(key.verifying_key().to_bytes()),
+            signer: PublicKey(key.verifying_key().to_bytes()),
             body,
             signature: signature.to_bytes(),
             _kind: PhantomData,
