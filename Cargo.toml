@@ -3,7 +3,7 @@ members = ["crates/*", "xtask"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0-rc.1"
 edition = "2021"
 rust-version = "1.91"
 license = "AGPL-3.0-only"
@@ -52,3 +52,9 @@ tracing = "0.1"
 uniffi = "0.32"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# The Android library (ADR 0014): optimised like release, without debug symbols, which would
+# more than double the AAR.
+[profile.mobile]
+inherits = "release"
+strip = "symbols"

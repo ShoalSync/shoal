@@ -5,10 +5,30 @@ uniffi from the built library into package `org.tidefell.ffi`; it is never writt
 
 | Module | What it does |
 | --- | --- |
+| `ffi` | The Android library: `libtidefell_ffi.so` for `arm64-v8a`, `armeabi-v7a` and `x86_64`, built with `cargo-ndk`, plus the generated Kotlin. Each release attaches it as `tidefell-ffi-X.Y.Z.aar` (ADR 0014). |
 | `jvm-test` | Builds `tidefell-ffi`, `tidefelld` and `tidefell` for the host, generates the bindings and runs Kotlin tests on the JVM: pair with a real daemon, join a folder as a partial replica, open a placeholder and save a file. |
 
 ```sh
 ./gradlew :jvm-test:test
+./gradlew :ffi:assembleRelease                        # all three ABIs
+./gradlew :ffi:assembleRelease -Ptidefell.abis=x86_64 # just the emulator's
 ```
 
-Requires a Rust toolchain and JDK 21. The Gradle wrapper downloads Gradle itself.
+Requires a Rust toolchain and JDK 21; the AAR also needs the Android SDK, NDK 30
+(`ANDROID_NDK_HOME`), the Rust Android targets and `cargo-ndk`. The Gradle wrapper downloads
+Gradle itself.
+
+## Using the AAR
+
+The AAR has no POM, so an app declares the AAR's own dependencies next to it:
+
+```kotlin
+dependencies {
+    implementation(files("libs/tidefell-ffi-X.Y.Z.aar"))
+    implementation("net.java.dev.jna:jna:5.19.1@aar")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+}
+```
+
+Its consumer ProGuard rules keep JNA and `org.tidefell.ffi`, which are reached through
+reflection. The minimum SDK is 29.
