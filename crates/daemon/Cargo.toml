@@ -17,6 +17,8 @@ workspace = true
 [dependencies]
 clap.workspace = true
 getrandom.workspace = true
+tidefell-api.workspace = true
+tidefell-sdk.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -30,3 +32,4 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["rt"] }
