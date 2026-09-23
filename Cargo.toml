@@ -21,13 +21,19 @@ tidefell-identity = { path = "crates/identity" }
 tidefell-net = { path = "crates/net" }
 tidefell-fetch = { path = "crates/fetch" }
 tidefell-engine = { path = "crates/engine" }
+tidefell-sdk = { path = "crates/sdk" }
+tidefell-api = { path = "crates/api" }
 
 # Third-party
 blake3 = "1.8"
+axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "3"
 fastcdc = "5"
 getrandom = "0.4"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
 iroh = "1.2"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 proptest = "1"
@@ -37,6 +43,8 @@ serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 toml = "1"
+utoipa = "6"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "io-util"] }
 tracing = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
