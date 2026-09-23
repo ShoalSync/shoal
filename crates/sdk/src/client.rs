@@ -10,8 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, Event, FetchRequest, Fetched, File, Folder, KnownPeer, NewFolder, NewMember, Peer,
-    Recycled, Status,
+    ApiError, ApprovePairing, Event, FetchRequest, Fetched, File, Folder, KnownPeer, NewFolder,
+    NewMember, PairRequest, Pairing, Peer, Recycled, Status,
 };
 
 /// Client errors.
@@ -216,6 +216,36 @@ impl Client {
             }),
         )
         .await
+    }
+
+    /// Starts approving a new device from its pairing code. The daemon needs its user key.
+    pub async fn pair(&self, code: &str) -> Result<Pairing, Error> {
+        self.call(
+            Method::POST,
+            "/v1/pairings",
+            Some(&PairRequest {
+                code: code.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// Certifies the device of a pending pairing, as `name` or the name it suggested.
+    pub async fn approve_pairing(&self, id: &str, name: Option<&str>) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/pairings/{id}/approve"),
+            Some(&ApprovePairing {
+                name: name.map(str::to_owned),
+            }),
+        )
+        .await
+    }
+
+    /// Declines a pending pairing.
+    pub async fn decline_pairing(&self, id: &str) -> Result<(), Error> {
+        self.call(Method::DELETE, &format!("/v1/pairings/{id}"), None::<&()>)
+            .await
     }
 
     /// A folder's recycle bin.

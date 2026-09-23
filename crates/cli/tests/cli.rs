@@ -20,6 +20,16 @@ struct Device {
 
 impl Device {
     async fn start(root: &Path, name: &str, seed: u8, user: &UserKey) -> Self {
+        Self::start_with(root, name, seed, user, None).await
+    }
+
+    async fn start_with(
+        root: &Path,
+        name: &str,
+        seed: u8,
+        user: &UserKey,
+        user_key: Option<UserKey>,
+    ) -> Self {
         let data = root.join(name).join("data");
         let key = DeviceKey::from_seed([seed; 32]);
         let engine = Arc::new(
@@ -41,7 +51,8 @@ impl Device {
         let socket = data.join("control.sock");
         tokio::spawn({
             let (engine, socket) = (engine.clone(), socket.clone());
-            async move { tidefell_api::serve_unix(engine, &socket).await }
+            let options = tidefell_api::Options { user_key };
+            async move { tidefell_api::serve_unix_with(engine, &socket, options).await }
         });
         for _ in 0..200 {
             if socket.exists() {
@@ -205,6 +216,76 @@ async fn create_join_delete_restore() {
         .any(|m| m == &serde_json::Value::String(bob.clone())));
     nas.run(&["folder", "remove", &id]);
     assert!(nas.run(&["folder", "list"]).contains("no folders"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pair_approves_a_new_device() {
+    use tidefell_engine::pairing::{self, PairingEvent};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let laptop = Device::start_with(tmp.path(), "laptop", 20, &alice, Some(alice.clone())).await;
+    let nas = Device::start(tmp.path(), "nas", 21, &alice).await;
+
+    let phone_key = DeviceKey::from_seed([22; 32]);
+    let mut server = pairing::start_pairing(
+        &phone_key,
+        RelayConfig::Disabled,
+        false,
+        Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+        "Pixel",
+    )
+    .await
+    .unwrap();
+    let code = server.code().to_text();
+
+    // Without the user key, a daemon refuses.
+    let out = nas.try_run(&["pair", "--yes", &code]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("user key"));
+
+    let run = {
+        let (bin, data, code) = (BIN, laptop.data.clone(), code.clone());
+        tokio::task::spawn_blocking(move || {
+            Command::new(bin)
+                .arg("--data-dir")
+                .arg(data)
+                .args(["pair", "--yes", "--name", "Alice's phone", &code])
+                .output()
+                .unwrap()
+        })
+    };
+    let mut confirmation = None;
+    let paired = loop {
+        match tokio::time::timeout(Duration::from_secs(10), server.next_event())
+            .await
+            .unwrap()
+            .unwrap()
+        {
+            PairingEvent::Confirming {
+                confirmation_code, ..
+            } => confirmation = Some(confirmation_code),
+            PairingEvent::Paired(paired) => break paired,
+            PairingEvent::Failed { reason } => panic!("pairing failed: {reason}"),
+        }
+    };
+    let out = run.await.unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let confirmation = confirmation.unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!("{} {}", &confirmation[..3], &confirmation[3..])),
+        "{stderr}"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("added Alice's phone"));
+    let certificate = paired.certificate.verify_certificate().unwrap();
+    assert_eq!(certificate.device, phone_key.id());
+    assert_eq!(certificate.name, "Alice's phone");
+    assert_eq!(paired.approver.device, laptop.engine.id());
 }
 
 #[test]

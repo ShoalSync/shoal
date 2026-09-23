@@ -721,6 +721,20 @@ impl Engine {
         Ok(removed)
     }
 
+    /// Starts approving a new device from its pairing code (ADR 0015). Returns once the new
+    /// device has accepted the proof; show the confirmation code, then approve or decline.
+    pub async fn pair(
+        &self,
+        code: &tidefell_proto::pair::PairingCode,
+    ) -> Result<crate::pairing::PendingPairing> {
+        let session = self.node.pair(code).await?;
+        Ok(crate::pairing::PendingPairing::new(
+            session,
+            self.inner.clone(),
+            self.node.clone(),
+        ))
+    }
+
     /// Stops all tasks, saves state and closes the endpoint.
     pub async fn shutdown(mut self) {
         self.tasks.shutdown().await;

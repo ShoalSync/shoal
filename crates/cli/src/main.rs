@@ -53,6 +53,18 @@ enum Command {
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
+    /// Add a new device to your user from the pairing code it shows. The daemon must hold
+    /// your user key.
+    Pair {
+        /// The code the new device shows (TFP1-…).
+        code: String,
+        /// The new device's name; defaults to the name it suggests.
+        #[arg(long)]
+        name: Option<String>,
+        /// Approve without asking; still prints the confirmation code.
+        #[arg(long)]
+        yes: bool,
+    },
     /// Manage peers.
     #[command(subcommand)]
     Peer(PeerCommand),
@@ -249,6 +261,35 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
                 f.local_path.clone()
             })
+        }
+        Command::Pair { code, name, yes } => {
+            let pairing = client.pair(&code).await.map_err(e)?;
+            let name = name.unwrap_or_else(|| pairing.suggested_name.clone());
+            eprintln!(
+                "Pairing with \"{}\" (device {}).\nConfirmation code: {} {}",
+                pairing.suggested_name,
+                pairing.device,
+                &pairing.confirmation_code[..3],
+                &pairing.confirmation_code[3..],
+            );
+            let approved = yes || {
+                eprint!("Does the new device show the same code? Add it as \"{name}\"? [y/N] ");
+                let mut answer = String::new();
+                std::io::stdin()
+                    .read_line(&mut answer)
+                    .map_err(|e| e.to_string())?;
+                matches!(answer.trim(), "y" | "Y" | "yes")
+            };
+            if approved {
+                client
+                    .approve_pairing(&pairing.id, Some(&name))
+                    .await
+                    .map_err(e)?;
+                print(json, &pairing, |_| format!("added {name} to your devices"));
+            } else {
+                client.decline_pairing(&pairing.id).await.map_err(e)?;
+                return Err("pairing declined".into());
+            }
         }
         Command::Recycle(command) => match command {
             RecycleCommand::List { folder } => {

@@ -15,8 +15,8 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ErrorKind, Event, FetchRequest, Fetched, File, Folder, KnownPeer, Mode, NewFolder,
-    NewMember, Peer, Recycled, Status,
+    ApiError, ApprovePairing, ErrorKind, Event, FetchRequest, Fetched, File, Folder, KnownPeer,
+    Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, Status,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -51,6 +51,9 @@ type AppState = State<Arc<Engine>>;
         known_peers,
         add_peer,
         remove_peer,
+        crate::pairing::start,
+        crate::pairing::approve,
+        crate::pairing::decline,
         events
     ),
     components(schemas(
@@ -65,6 +68,9 @@ type AppState = State<Arc<Engine>>;
         Recycled,
         Peer,
         KnownPeer,
+        PairRequest,
+        Pairing,
+        ApprovePairing,
         Event,
         ApiError,
         ErrorKind
@@ -73,7 +79,7 @@ type AppState = State<Arc<Engine>>;
 pub struct ApiDoc;
 
 /// An error response: status code plus `ApiError` body.
-pub(crate) struct ApiFailure(StatusCode, ApiError);
+pub(crate) struct ApiFailure(pub(crate) StatusCode, pub(crate) ApiError);
 
 impl ApiFailure {
     pub(crate) fn bad_request(message: impl Into<String>) -> Self {
@@ -106,7 +112,7 @@ impl From<EngineError> for ApiFailure {
             }
             EngineError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorKind::BadRequest),
             EngineError::NoSuchFile(_) => (StatusCode::NOT_FOUND, ErrorKind::NotFound),
-            EngineError::Unavailable(_) => {
+            EngineError::Unavailable(_) | EngineError::Net(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable)
             }
             _ => (StatusCode::INTERNAL_SERVER_ERROR, ErrorKind::Internal),

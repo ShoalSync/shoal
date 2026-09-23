@@ -32,6 +32,7 @@ mod config;
 mod engine;
 mod evict;
 mod materialize;
+pub mod pairing;
 mod runtime;
 mod scan;
 mod state;

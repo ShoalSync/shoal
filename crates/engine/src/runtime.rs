@@ -99,6 +99,13 @@ fn path(data_dir: &Path) -> PathBuf {
 }
 
 impl Runtime {
+    /// Adds or replaces a peer.
+    pub(crate) fn add_peer(&mut self, peer: PeerAddr) {
+        let stored: StoredPeer = (&peer).into();
+        self.peers.retain(|p| p.device != stored.device);
+        self.peers.push(stored);
+    }
+
     pub(crate) fn load(data_dir: &Path) -> Result<Self> {
         let path = path(data_dir);
         match fs::read(&path) {

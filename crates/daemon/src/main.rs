@@ -36,6 +36,22 @@ enum Command {
         #[arg(long)]
         certificate: Option<PathBuf>,
     },
+    /// Set up this device by pairing with a device that holds your user key (instead of
+    /// `init`): prints a pairing code to approve there with `tidefell pair <code>`, then waits.
+    Pair {
+        /// State directory (the `data_dir` of the configuration).
+        #[arg(long)]
+        data_dir: PathBuf,
+        /// The name to suggest for this device.
+        #[arg(long)]
+        name: String,
+        /// Use no relay and no address lookup: only direct connections, e.g. on a LAN.
+        #[arg(long)]
+        no_relay: bool,
+        /// Local socket address to listen on while pairing.
+        #[arg(long)]
+        bind: Option<std::net::SocketAddr>,
+    },
     /// Issue a certificate for another device, to copy to it and pass to `init --certificate`.
     Certify {
         /// The user key file.
@@ -231,6 +247,76 @@ fn print_id(data_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+async fn pair(
+    data_dir: &Path,
+    name: &str,
+    no_relay: bool,
+    bind: Option<std::net::SocketAddr>,
+) -> Result<(), String> {
+    use tidefell_engine::pairing::{self, PairingEvent};
+
+    if certificate_path(data_dir).exists() {
+        return Err(format!(
+            "{} already has a certificate; this device is set up",
+            data_dir.display()
+        ));
+    }
+    fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
+    let relay = if no_relay {
+        tidefell_engine::RelayConfig::Disabled
+    } else {
+        tidefell_engine::RelayConfig::Default
+    };
+    let mut server = pairing::start_pairing(&key, relay, !no_relay, bind, name)
+        .await
+        .map_err(|e| e.to_string())?;
+    println!("device: {}", key.id());
+    println!("code: {}", server.code().to_text());
+    eprintln!("On a device with your user key, run: tidefell pair <code>");
+    let deadline = tokio::time::Instant::now() + pairing::CODE_TTL;
+    loop {
+        let event = tokio::time::timeout_at(deadline, server.next_event())
+            .await
+            .map_err(|_| "the pairing code expired".to_string())?
+            .ok_or("pairing stopped")?;
+        match event {
+            PairingEvent::Confirming {
+                approver,
+                confirmation_code,
+            } => {
+                println!("confirmation: {confirmation_code}");
+                eprintln!(
+                    "{} wants to add this device. Check it shows confirmation code {}.",
+                    approver.name, confirmation_code
+                );
+            }
+            PairingEvent::Failed { reason } => eprintln!("pairing attempt failed: {reason}"),
+            PairingEvent::Paired(paired) => {
+                server.shutdown().await;
+                save_certificate(&certificate_path(data_dir), &paired.certificate)
+                    .map_err(|e| e.to_string())?;
+                pairing::remember_approver(data_dir, &paired).map_err(|e| e.to_string())?;
+                let certificate = paired
+                    .certificate
+                    .verify_certificate()
+                    .map_err(|e| e.to_string())?;
+                println!("user: {}", certificate.user);
+                println!("name: {}", certificate.name);
+                println!("approver: {}", paired.approver.device);
+                for folder in &paired.folders {
+                    println!("folder: {} {}", folder.id, folder.name);
+                }
+                eprintln!(
+                    "Paired. Start the daemon, then join folders with \
+                     `tidefell folder join <folder id> <path>`."
+                );
+                return Ok(());
+            }
+        }
+    }
+}
+
 fn certify(user_key: &Path, device: &str, name: &str, out: &Path) -> Result<(), String> {
     let user = UserKey::load(user_key).map_err(|e| format!("{}: {e}", user_key.display()))?;
     let device: DeviceId = device
@@ -312,9 +398,20 @@ async fn run(path: &Path) -> Result<(), String> {
     tracing::info!(device = %engine.id(), "tidefelld running");
 
     let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
+    // A user key next to the device key lets this daemon approve pairings (ADR 0015).
+    let user_key_path = config.data_dir.join("user.key");
+    let user_key = if user_key_path.exists() {
+        let key = UserKey::load(&user_key_path)
+            .map_err(|e| format!("{}: {e}", user_key_path.display()))?;
+        tracing::info!("user key found: this daemon can approve new devices");
+        Some(key)
+    } else {
+        None
+    };
     let api = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_unix(engine, &socket).await }
+        let options = tidefell_api::Options { user_key };
+        async move { tidefell_api::serve_unix_with(engine, &socket, options).await }
     });
     let web = match &config.web {
         Some(web) => {
@@ -371,6 +468,16 @@ fn main() -> ExitCode {
             user_key,
             certificate,
         } => init(&data_dir, &name, user_key, certificate),
+        Command::Pair {
+            data_dir,
+            name,
+            no_relay,
+            bind,
+        } => tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())
+            .and_then(|rt| rt.block_on(pair(&data_dir, &name, no_relay, bind))),
         Command::Certify {
             user_key,
             device,

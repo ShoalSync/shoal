@@ -189,6 +189,34 @@ pub enum Event {
     },
 }
 
+/// Start approving a new device from its pairing code.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PairRequest {
+    /// The pairing code the new device shows (`TFP1-…`).
+    pub code: String,
+}
+
+/// A pairing waiting for the person to compare confirmation codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Pairing {
+    /// Identifies this pairing in later requests.
+    pub id: String,
+    /// The new device's ID.
+    pub device: String,
+    /// The name the new device suggests for itself.
+    pub suggested_name: String,
+    /// Six digits the new device also shows.
+    pub confirmation_code: String,
+}
+
+/// Approve a pairing.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ApprovePairing {
+    /// The new device's name; defaults to the name it suggested.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// Why a request failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]

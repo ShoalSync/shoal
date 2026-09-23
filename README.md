@@ -80,15 +80,12 @@ Two machines (or two data directories) owned by the same user:
 tidefelld init --data-dir ~/.local/share/tidefell --name laptop
 tidefelld new-folder-id            # share this ID with your other devices
 
-# On a second device: print its ID (this creates its device key).
-tidefelld id --data-dir /var/lib/tidefell
+# On a second device: print a pairing code and wait.
+tidefelld pair --data-dir /var/lib/tidefell --name nas
 
-# Back on the first device: certify the second device, then copy nas.cert to it.
-tidefelld certify --user-key ~/.local/share/tidefell/user.key \
-    --device <nas device id> --name nas --out nas.cert
-
-# On the second device: finish setup with the certificate.
-tidefelld init --data-dir /var/lib/tidefell --name nas --certificate nas.cert
+# On the first device, with its daemon running: approve it after comparing the
+# confirmation code both devices show.
+tidefell pair TFP1-…
 ```
 
 Start each daemon with a configuration (see
