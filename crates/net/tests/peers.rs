@@ -266,6 +266,12 @@ async fn manifests_chunks_and_availability() {
         .await
         .is_err());
 
+    // With a sync session open, the peer can be dialed by ID alone (no address lookup).
+    // This is the first blobs/1 connection, so nothing is cached.
+    let by_id = tidefell_net::EndpointId::from_bytes(node_a.id().as_bytes()).unwrap();
+    let results = node_b.fetch_chunks(by_id, FOLDER, &[wanted]).await.unwrap();
+    assert!(matches!(results[0], ChunkResult::Found(..)));
+
     let unknown = ChunkHash([9; 32]);
     let results = node_b
         .fetch_chunks(node_a.addr(), FOLDER, &[wanted, unknown])
