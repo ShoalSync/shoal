@@ -3580,6 +3580,7 @@ dependencies = [
  "tidefell-engine",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "uniffi",
 ]
 

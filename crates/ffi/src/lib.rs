@@ -44,7 +44,7 @@ async fn on_runtime<T: Send + 'static>(
         .spawn(future)
         .await
         .map_err(|e| TidefellError::Failed {
-            message: e.to_string(),
+            detail: e.to_string(),
         })
 }
 
@@ -52,43 +52,43 @@ async fn on_runtime<T: Send + 'static>(
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum TidefellError {
     /// A folder, file or entry does not exist.
-    #[error("{message}")]
+    #[error("{detail}")]
     NotFound {
         /// What is missing.
-        message: String,
+        detail: String,
     },
     /// Content or a peer cannot be reached right now.
-    #[error("{message}")]
+    #[error("{detail}")]
     Unavailable {
         /// What is unavailable.
-        message: String,
+        detail: String,
     },
     /// The request was invalid.
-    #[error("{message}")]
+    #[error("{detail}")]
     Invalid {
         /// Why.
-        message: String,
+        detail: String,
     },
     /// The device has no certificate yet; pair it first.
     #[error("this device is not paired yet")]
     NotPaired,
     /// Anything else.
-    #[error("{message}")]
+    #[error("{detail}")]
     Failed {
         /// What failed.
-        message: String,
+        detail: String,
     },
 }
 
 impl From<tidefell_engine::Error> for TidefellError {
     fn from(e: tidefell_engine::Error) -> Self {
         use tidefell_engine::Error as E;
-        let message = e.to_string();
+        let detail = e.to_string();
         match e {
-            E::UnknownFolder(_) | E::NoSuchFile(_) => Self::NotFound { message },
-            E::Unavailable(_) | E::Net(_) => Self::Unavailable { message },
-            E::Invalid(_) | E::FolderExists(_) | E::Configured(_) => Self::Invalid { message },
-            _ => Self::Failed { message },
+            E::UnknownFolder(_) | E::NoSuchFile(_) => Self::NotFound { detail },
+            E::Unavailable(_) | E::Net(_) => Self::Unavailable { detail },
+            E::Invalid(_) | E::FolderExists(_) | E::Configured(_) => Self::Invalid { detail },
+            _ => Self::Failed { detail },
         }
     }
 }
@@ -97,7 +97,7 @@ type Result<T> = std::result::Result<T, TidefellError>;
 
 fn invalid(message: impl Into<String>) -> TidefellError {
     TidefellError::Invalid {
-        message: message.into(),
+        detail: message.into(),
     }
 }
 
@@ -150,6 +150,16 @@ impl Network {
             .map(|b| parse("bind address", b))
             .transpose()
     }
+}
+
+/// Logs to standard error at `filter` (e.g. `info` or `tidefell_net=debug`). Only the first call
+/// has an effect.
+#[uniffi::export]
+pub fn enable_logging(filter: String) {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
+        .with_writer(std::io::stderr)
+        .try_init();
 }
 
 /// This device's ID, creating its key in `data_dir` on first use.
@@ -724,6 +734,8 @@ impl Node {
         retention_days: u32,
     ) -> Result<Folder> {
         let engine = self.engine()?;
+        // Adding a folder starts its scanner; foreign threads have no runtime of their own.
+        let _runtime = runtime().enter();
         let members = if members.is_empty() {
             vec![self.user]
         } else {
@@ -749,13 +761,13 @@ impl Node {
             .find(|f| f.id == id)
             .map(folder_record)
             .ok_or_else(|| TidefellError::NotFound {
-                message: format!("folder {id}"),
+                detail: format!("folder {id}"),
             })
     }
 }
 
 fn getrandom_fill(bytes: &mut [u8]) -> Result<()> {
     getrandom::fill(bytes).map_err(|e| TidefellError::Failed {
-        message: e.to_string(),
+        detail: e.to_string(),
     })
 }

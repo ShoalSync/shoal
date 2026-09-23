@@ -132,15 +132,22 @@ async fn pair_join_open_and_save() {
     node.subscribe(Box::new(Events(events.clone()))).unwrap();
     let offer = &folders[0];
     let root = tmp.path().join("phone-files/Photos");
-    let folder = node
-        .join_folder(
-            offer.id.clone(),
-            root.display().to_string(),
-            Some(10_000_000),
-            offer.members.clone(),
-            offer.retention_days,
-        )
-        .unwrap();
+    // Called from a plain thread, as from Kotlin: no Tokio runtime is current.
+    let folder = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                node.join_folder(
+                    offer.id.clone(),
+                    root.display().to_string(),
+                    Some(10_000_000),
+                    offer.members.clone(),
+                    offer.retention_days,
+                )
+            })
+            .join()
+            .unwrap()
+    })
+    .unwrap();
     assert_eq!(folder.partial_budget, Some(10_000_000));
     assert_eq!(node.folders().unwrap().len(), 1);
 
