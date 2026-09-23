@@ -34,3 +34,8 @@ result-*
 
 # mdBook output
 docs/book
+
+# Gradle (bindings/android)
+.gradle/
+bindings/android/**/build/
+bindings/android/local.properties

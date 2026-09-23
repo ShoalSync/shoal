@@ -65,3 +65,19 @@ jobs:
           exit $missing
       - name: Build
         run: mdbook build docs
+
+  kotlin:
+    name: Kotlin bindings (JVM)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Generate the bindings and run the JVM tests
+        working-directory: bindings/android
+        run: ./gradlew --no-daemon :jvm-test:test
