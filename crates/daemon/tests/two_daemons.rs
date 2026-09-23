@@ -167,4 +167,21 @@ fn two_daemons_sync_a_folder() {
     wait_for("delete on b", &[&a, &b], || {
         !b.folder().join("hello.txt").exists()
     });
+
+    // Each daemon serves the control API on its socket.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let client = tidefell_sdk::Client::unix(b.dir.join("data/control.sock"));
+        let status = client.status().await.unwrap();
+        assert_eq!(status.device, b.device);
+        assert_eq!(status.user, user);
+        let folders = client.folders().await.unwrap();
+        assert_eq!(folders.len(), 1);
+        assert!(folders[0].configured);
+        let recycled = client.recycle_bin(&folder_id).await.unwrap();
+        assert_eq!(recycled[0].path, "hello.txt");
+    });
 }

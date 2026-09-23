@@ -13,3 +13,11 @@ workspace = true
 # Dependency boundary: this crate is permissively licensed (MIT OR Apache-2.0)
 # and must never depend on an AGPL-licensed crate.
 [dependencies]
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+utoipa.workspace = true

@@ -7,10 +7,10 @@ use std::path::Path;
 
 use tidefell_chunker::{chunk_reader, Params};
 use tidefell_proto::sync::{is_valid_path, EntryKind};
-use tidefell_proto::{EntryId, FolderId, Manifest};
+use tidefell_proto::{EntryId, Manifest};
 use tracing::{debug, warn};
 
-use crate::engine::Inner;
+use crate::engine::{FolderHandle, Inner};
 use crate::state::LocalFile;
 use crate::{io_err, now_ms, random_bytes, Result};
 
@@ -101,9 +101,9 @@ struct Changed {
 
 /// Scans `id` for changes since the last scan and records them. Returns true if the index
 /// changed.
-pub(crate) fn scan(inner: &Inner, id: FolderId) -> Result<bool> {
+pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
     let (root, known) = {
-        let state = inner.folder(&id)?.lock().unwrap();
+        let state = handle.lock();
         (state.config.path.clone(), state.local.clone())
     };
 
@@ -148,7 +148,7 @@ pub(crate) fn scan(inner: &Inner, id: FolderId) -> Result<bool> {
         });
     }
 
-    let mut state = inner.folder(&id)?.lock().unwrap();
+    let mut state = handle.lock();
     let mut index_changed = false;
     for c in changed {
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {

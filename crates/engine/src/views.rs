@@ -1,0 +1,100 @@
+//! Read-only views and events the engine exposes to front-ends (API, CLI, web).
+
+use std::path::PathBuf;
+
+use tidefell_meta::Retention;
+use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
+
+use crate::config::ReplicaMode;
+
+/// A synced folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderInfo {
+    /// Folder ID.
+    pub id: FolderId,
+    /// Where the folder lives on this device.
+    pub path: PathBuf,
+    /// Full or partial replica.
+    pub mode: ReplicaMode,
+    /// Users allowed to sync the folder.
+    pub members: Vec<UserId>,
+    /// Recycle-bin retention.
+    pub retention: Retention,
+    /// True if the folder comes from the configuration file (and so cannot be changed or
+    /// removed at runtime).
+    pub configured: bool,
+}
+
+/// A live file in a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileInfo {
+    /// Stable entry ID.
+    pub entry: EntryId,
+    /// Path within the folder.
+    pub path: String,
+    /// Size in bytes.
+    pub size: u64,
+    /// Modification time, milliseconds since the Unix epoch.
+    pub modified_ms: i64,
+    /// Whether the file is executable.
+    pub executable: bool,
+    /// Whether the current version is on this device's disk.
+    pub on_disk: bool,
+    /// Number of unresolved conflict copies.
+    pub conflicts: usize,
+    /// The device that made the current version.
+    pub author: DeviceId,
+}
+
+/// A deleted file in the recycle bin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecycledInfo {
+    /// Entry ID, used to restore it.
+    pub entry: EntryId,
+    /// Path the file had.
+    pub path: String,
+    /// Size in bytes (0 for non-files).
+    pub size: u64,
+    /// When it was deleted, milliseconds since the Unix epoch.
+    pub deleted_at_ms: i64,
+    /// When it will be purged, or `None` to keep forever.
+    pub expires_at_ms: Option<i64>,
+}
+
+/// A connected peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerInfo {
+    /// The peer device.
+    pub device: DeviceId,
+    /// The user it belongs to.
+    pub user: UserId,
+    /// Its name from its certificate.
+    pub name: String,
+    /// Folders shared with it.
+    pub shared_folders: Vec<FolderId>,
+}
+
+/// Something that changed, for live displays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Event {
+    /// A folder was added.
+    FolderAdded(FolderId),
+    /// A folder was removed.
+    FolderRemoved(FolderId),
+    /// A folder's index changed (local or remote edits, membership).
+    FolderChanged(FolderId),
+    /// A file was written to disk.
+    FileUpdated {
+        /// The folder.
+        folder: FolderId,
+        /// The file's path.
+        path: String,
+    },
+    /// A file was removed from disk.
+    FileRemoved {
+        /// The folder.
+        folder: FolderId,
+        /// The file's path.
+        path: String,
+    },
+}

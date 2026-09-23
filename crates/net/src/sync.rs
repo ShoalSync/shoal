@@ -5,7 +5,7 @@
 //! local versions as they appear. Manifest requests use one extra stream each.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use tidefell_proto::identity::DeviceCertificate;
@@ -34,19 +34,41 @@ pub(crate) fn verify_peer(
     Ok(certificate)
 }
 
+/// The folders currently shared with a peer. Changes when either side re-sends `Hello`.
+pub(crate) type Shared = Arc<RwLock<BTreeSet<FolderId>>>;
+
 /// A verified peer and the folders shared with it.
 #[derive(Debug, Clone)]
 pub(crate) struct Peer {
     pub(crate) certificate: DeviceCertificate,
-    pub(crate) shared: Arc<BTreeSet<FolderId>>,
+    pub(crate) shared: Shared,
+}
+
+impl Peer {
+    pub(crate) fn shares(&self, folder: &FolderId) -> bool {
+        self.shared.read().unwrap().contains(folder)
+    }
+}
+
+/// Folders this device offers to `peer`: those it syncs and the peer is a member of.
+fn offer_for(backend: &dyn Backend, peer: &DeviceCertificate) -> BTreeSet<FolderId> {
+    backend
+        .folders()
+        .into_iter()
+        .filter(|f| backend.is_member(f, peer))
+        .collect()
+}
+
+struct Handshake {
+    peer: Peer,
+    theirs: BTreeSet<FolderId>,
+    offered: BTreeSet<FolderId>,
+    send: SendStream,
+    recv: RecvStream,
 }
 
 /// Performs the `Hello` exchange on the main stream.
-async fn handshake(
-    conn: &Connection,
-    backend: &dyn Backend,
-    initiator: bool,
-) -> Result<(Peer, SendStream, RecvStream)> {
+async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) -> Result<Handshake> {
     let (mut send, mut recv) = if initiator {
         conn.open_bi().await
     } else {
@@ -80,35 +102,76 @@ async fn handshake(
             return Err(Error::Protocol("expected Hello".into()));
         };
         let peer = verify_peer(&certificate, conn)?;
-        let offer: Vec<FolderId> = backend
-            .folders()
-            .into_iter()
-            .filter(|f| backend.is_member(f, &peer))
-            .collect();
         frame_io::write(
             &mut send,
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
-                folders: offer,
+                folders: offer_for(backend, &peer).into_iter().collect(),
             },
         )
         .await?;
         (folders, peer)
     };
 
-    let ours: BTreeSet<FolderId> = backend.folders().into_iter().collect();
-    let shared = theirs
-        .into_iter()
-        .filter(|f| ours.contains(f) && backend.is_member(f, &peer))
-        .collect();
-    Ok((
-        Peer {
+    // The dialer offered everything before it knew the peer; from here on both sides offer
+    // only folders the peer is a member of.
+    let offered = offer_for(backend, &peer);
+    let theirs: BTreeSet<FolderId> = theirs.into_iter().collect();
+    let shared = theirs.intersection(&offered).copied().collect();
+    Ok(Handshake {
+        peer: Peer {
             certificate: peer,
-            shared: Arc::new(shared),
+            shared: Arc::new(RwLock::new(shared)),
         },
+        theirs,
+        offered,
         send,
         recv,
-    ))
+    })
+}
+
+/// Per-session state after the handshake.
+struct Session {
+    peer: Peer,
+    /// The peer's latest offer.
+    theirs: BTreeSet<FolderId>,
+    /// Our latest offer.
+    offered: BTreeSet<FolderId>,
+    /// What we have sent to this peer, per folder: (epoch, up_to).
+    sent: HashMap<FolderId, (u64, u64)>,
+}
+
+impl Session {
+    /// Recomputes the shared set. Returns folders that became shared.
+    fn reshare(&mut self) -> Vec<FolderId> {
+        let now: BTreeSet<FolderId> = self.theirs.intersection(&self.offered).copied().collect();
+        let mut shared = self.peer.shared.write().unwrap();
+        let added = now.difference(&shared).copied().collect();
+        self.sent.retain(|f, _| now.contains(f));
+        *shared = now;
+        added
+    }
+}
+
+async fn request_index(
+    backend: &dyn Backend,
+    send: &mut SendStream,
+    device: tidefell_proto::DeviceId,
+    folders: impl IntoIterator<Item = FolderId>,
+) -> Result<()> {
+    for folder in folders {
+        let (epoch, since) = backend.peer_progress(&folder, device);
+        frame_io::write(
+            send,
+            &SyncMessage::IndexRequest {
+                folder,
+                epoch,
+                since,
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Runs a session until the peer disconnects. `on_ready` is called once the handshake
@@ -119,9 +182,16 @@ pub(crate) async fn run(
     initiator: bool,
     on_ready: impl FnOnce(Peer),
 ) -> Result<()> {
-    let (peer, mut send, recv) = handshake(&conn, backend.as_ref(), initiator).await?;
+    let Handshake {
+        peer,
+        theirs,
+        offered,
+        mut send,
+        recv,
+    } = handshake(&conn, backend.as_ref(), initiator).await?;
     let device = peer.certificate.device;
-    debug!(%device, shared = peer.shared.len(), "sync session started");
+    let initial: Vec<FolderId> = peer.shared.read().unwrap().iter().copied().collect();
+    debug!(%device, shared = initial.len(), "sync session started");
     on_ready(peer.clone());
 
     tokio::spawn(serve_manifests(
@@ -134,33 +204,27 @@ pub(crate) async fn run(
     let (tx, mut incoming) = mpsc::channel::<Result<SyncMessage>>(16);
     tokio::spawn(read_loop(recv, tx));
 
-    for folder in peer.shared.iter() {
-        let (epoch, since) = backend.peer_progress(folder, device);
-        frame_io::write(
-            &mut send,
-            &SyncMessage::IndexRequest {
-                folder: *folder,
-                epoch,
-                since,
-            },
-        )
-        .await?;
-    }
+    request_index(backend.as_ref(), &mut send, device, initial).await?;
 
+    let mut session = Session {
+        peer,
+        theirs,
+        offered,
+        sent: HashMap::new(),
+    };
     let mut changes = backend.changes();
-    // What we have sent to this peer, per folder: (epoch, up_to).
-    let mut sent: HashMap<FolderId, (u64, u64)> = HashMap::new();
     loop {
         tokio::select! {
             message = incoming.recv() => {
                 let Some(message) = message else { break };
-                handle(message?, &peer, backend.as_ref(), &mut send, &mut sent).await?;
+                handle(message?, &conn, &mut session, backend.as_ref(), &mut send).await?;
             }
             changed = changes.changed() => {
                 if changed.is_err() {
                     break;
                 }
-                push_updates(backend.as_ref(), &mut send, &mut sent).await?;
+                reoffer(&mut session, backend.as_ref(), &mut send).await?;
+                push_updates(backend.as_ref(), &mut send, &mut session.sent).await?;
             }
         }
     }
@@ -182,21 +246,62 @@ async fn read_loop(mut recv: RecvStream, tx: mpsc::Sender<Result<SyncMessage>>) 
     }
 }
 
-async fn handle(
-    message: SyncMessage,
-    peer: &Peer,
+/// Re-sends `Hello` if the folders we offer the peer changed (a folder was added or removed,
+/// or membership changed).
+async fn reoffer(
+    session: &mut Session,
     backend: &dyn Backend,
     send: &mut SendStream,
-    sent: &mut HashMap<FolderId, (u64, u64)>,
 ) -> Result<()> {
+    let offer = offer_for(backend, &session.peer.certificate);
+    if offer == session.offered {
+        return Ok(());
+    }
+    frame_io::write(
+        send,
+        &SyncMessage::Hello {
+            certificate: backend.certificate(),
+            folders: offer.iter().copied().collect(),
+        },
+    )
+    .await?;
+    session.offered = offer;
+    let added = session.reshare();
+    request_index(backend, send, session.peer.certificate.device, added).await
+}
+
+async fn handle(
+    message: SyncMessage,
+    conn: &Connection,
+    session: &mut Session,
+    backend: &dyn Backend,
+    send: &mut SendStream,
+) -> Result<()> {
+    let peer = &session.peer;
     let device = peer.certificate.device;
+    let sent = &mut session.sent;
     match message {
+        SyncMessage::Hello {
+            certificate,
+            folders,
+        } => {
+            // An updated offer. The certificate must still be for this connection's device.
+            let certificate = verify_peer(&certificate, conn)?;
+            if certificate.user != peer.certificate.user {
+                return Err(Error::Protocol(
+                    "certificate changed user mid-session".into(),
+                ));
+            }
+            session.theirs = folders.into_iter().collect();
+            let added = session.reshare();
+            request_index(backend, send, device, added).await
+        }
         SyncMessage::IndexRequest {
             folder,
             epoch,
             since,
         } => {
-            if !peer.shared.contains(&folder) {
+            if !peer.shares(&folder) {
                 return send_error(send, ErrorCode::NotAMember).await;
             }
             let Some(page) = backend.index_since(&folder, epoch, since) else {
@@ -212,8 +317,9 @@ async fn handle(
             versions,
             last,
         } => {
-            if !peer.shared.contains(&folder) {
-                return Err(Error::Protocol("index batch for an unshared folder".into()));
+            if !peer.shares(&folder) {
+                // Possible briefly after the folder stopped being shared; ignore it.
+                return Ok(());
             }
             backend.apply_versions(&folder, device, versions);
             if last {
@@ -288,18 +394,14 @@ fn variant_name(message: &SyncMessage) -> &'static str {
 }
 
 /// Answers manifest requests, one per extra stream.
-async fn serve_manifests(
-    conn: Connection,
-    backend: Arc<dyn Backend>,
-    shared: Arc<BTreeSet<FolderId>>,
-) {
+async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Shared) {
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
         let backend = backend.clone();
         let shared = shared.clone();
         tokio::spawn(async move {
             let response = match frame_io::expect(&mut recv).await {
                 Ok(SyncMessage::ManifestRequest { folder, content }) => {
-                    if !shared.contains(&folder) {
+                    if !shared.read().unwrap().contains(&folder) {
                         SyncMessage::Error {
                             code: ErrorCode::NotAMember,
                         }

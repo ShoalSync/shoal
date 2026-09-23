@@ -150,6 +150,18 @@ verified in strict mode. Each kind states who must sign:
 5. A peer that needs a file's chunk list opens a manifest stream, sends `ManifestRequest` and
    receives `ManifestResponse` or `Error`.
 
+### Updating the offer
+
+Either peer may send `Hello` again on the main stream at any time, when the folders it offers
+this peer change (a folder was added or removed, or the peer's membership changed). The
+certificate must be for the same device and user as in the first `Hello`. After the first
+exchange, both sides offer only folders the peer is a member of.
+
+On sending or receiving an updated `Hello`, each side recomputes the shared set as the
+intersection of the two latest offers. It sends `IndexRequest` for folders that became shared,
+and stops sending updates for, and ignores `IndexBatch` messages about, folders that are no
+longer shared.
+
 After the initial exchange the stream stays open, and new local versions are pushed as
 `IndexBatch` messages.
 

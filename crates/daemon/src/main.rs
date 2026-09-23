@@ -64,12 +64,23 @@ enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    /// Control API tools.
+    Api {
+        #[command(subcommand)]
+        command: ApiCommand,
+    },
     /// Run the daemon.
     Run {
         /// Configuration file.
         #[arg(long)]
         config: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum ApiCommand {
+    /// Print the control API's OpenAPI document.
+    Schema,
 }
 
 #[derive(Subcommand)]
@@ -193,13 +204,46 @@ async fn run(path: &Path) -> Result<(), String> {
     let config = read_config(path)?;
     let engine_config = config.to_engine()?;
     let (key, cert) = load_identity(&config.data_dir)?;
-    let engine = Engine::start(engine_config, key, cert)
-        .await
-        .map_err(|e| e.to_string())?;
+    let engine = std::sync::Arc::new(
+        Engine::start(engine_config, key, cert)
+            .await
+            .map_err(|e| e.to_string())?,
+    );
     tracing::info!(device = %engine.id(), "tidefelld running");
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutting down");
-    engine.shutdown().await;
+
+    let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
+    let api = tokio::spawn({
+        let (engine, socket) = (engine.clone(), socket.clone());
+        async move { tidefell_api::serve_unix(engine, &socket).await }
+    });
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
+        result = api => {
+            let error = match result {
+                Ok(Ok(())) => "control API stopped".to_string(),
+                Ok(Err(e)) => format!("control API failed: {e}"),
+                Err(e) => format!("control API task failed: {e}"),
+            };
+            return Err(error);
+        }
+    }
+    let _ = std::fs::remove_file(&socket);
+
+    // In-flight API requests hold the engine briefly; wait for them before a clean shutdown.
+    let mut engine = engine;
+    for _ in 0..50 {
+        match std::sync::Arc::try_unwrap(engine) {
+            Ok(engine) => {
+                engine.shutdown().await;
+                return Ok(());
+            }
+            Err(shared) => {
+                engine = shared;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
+    }
+    tracing::warn!("API requests still running; exiting without a clean engine shutdown");
     Ok(())
 }
 
@@ -225,6 +269,12 @@ fn main() -> ExitCode {
                 .map(|()| println!("{}", FolderId(bytes)))
                 .map_err(|e| e.to_string())
         }
+        Command::Api { command } => match command {
+            ApiCommand::Schema => tidefell_api::openapi()
+                .to_pretty_json()
+                .map(|json| println!("{json}"))
+                .map_err(|e| e.to_string()),
+        },
         Command::Config { command } => match command {
             ConfigCommand::Schema => {
                 println!("{}", config::schema());

@@ -63,9 +63,9 @@ impl PeerHandle {
         self.peer.certificate.device
     }
 
-    /// Folders shared with this peer.
-    pub fn shared_folders(&self) -> &BTreeSet<FolderId> {
-        &self.peer.shared
+    /// Folders currently shared with this peer.
+    pub fn shared_folders(&self) -> BTreeSet<FolderId> {
+        self.peer.shared.read().unwrap().clone()
     }
 
     /// Requests the manifest of `content` in `folder`.
