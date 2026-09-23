@@ -107,6 +107,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       # The self-hosted runner may not carry an Android SDK the way GitHub's images do.
       - uses: android-actions/setup-android@v3
+        with:
+          # The default also asks for `tools`, which the SDK repository no longer carries.
+          packages: platform-tools
       - name: Install cargo-ndk and the NDK
         run: |
           cargo install cargo-ndk --locked --version 4.1.2
