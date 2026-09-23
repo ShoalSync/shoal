@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<h1>Folders</h1>
+{% if folders.is_empty() %}
+<p class="muted">No folders on this server are shared with your user.</p>
+{% else %}
+<table>
+  <thead><tr><th>Folder</th><th>Files</th><th>Recycle bin</th></tr></thead>
+  <tbody>
+  {% for f in folders %}
+    <tr>
+      <td><a href="/folders/{{ f.id }}">{{ f.name }}</a><div class="muted mono">{{ f.id }}</div></td>
+      <td>{{ f.files }}</td>
+      <td><a href="/folders/{{ f.id }}/recycle">{{ f.recycled }} deleted</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

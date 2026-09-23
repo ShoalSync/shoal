@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Recycle bin · {{ name }} · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/folders/{{ id }}">← {{ name }}</a></p>
+<h1>Recycle bin</h1>
+{% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if items.is_empty() %}
+<p class="muted">Nothing has been deleted.</p>
+{% else %}
+<table>
+  <thead><tr><th>Name</th><th class="num">Size</th><th>Deleted</th><th>Purged</th><th></th></tr></thead>
+  <tbody>
+  {% for r in items %}
+    <tr>
+      <td>{{ r.path }}</td>
+      <td class="num">{{ r.size }}</td>
+      <td>{{ r.deleted }}</td>
+      <td>{{ r.expires }}</td>
+      <td>
+        <form method="post" action="/folders/{{ id }}/recycle/{{ r.entry }}/restore" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit">Restore</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

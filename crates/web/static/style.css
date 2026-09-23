@@ -1,0 +1,32 @@
+:root {
+  --fg: #1c2530; --muted: #5b6b7c; --bg: #f6f8fa; --card: #ffffff;
+  --accent: #1f6f8b; --warn: #a15c00; --danger: #b3261e; --line: #dde3e9;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --fg: #e6edf3; --muted: #9aa7b4; --bg: #11161c; --card: #19212a; --line: #2c3743; --accent: #5fb3d3; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); }
+header { display: flex; align-items: center; justify-content: space-between; padding: .75rem 1.25rem; background: var(--card); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; color: var(--accent); text-decoration: none; font-size: 1.1rem; }
+nav { display: flex; gap: 1rem; align-items: center; }
+main { max-width: 60rem; margin: 1.5rem auto; padding: 0 1.25rem; }
+.narrow { max-width: 24rem; margin: 3rem auto; }
+a { color: var(--accent); }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); }
+th, td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: .85rem; color: var(--muted); font-weight: 600; }
+.num { text-align: right; white-space: nowrap; }
+.muted { color: var(--muted); }
+.mono { font-family: ui-monospace, monospace; font-size: .8rem; word-break: break-all; }
+.tag { font-size: .75rem; color: var(--muted); border: 1px solid var(--line); border-radius: .25rem; padding: 0 .3rem; margin-left: .4rem; }
+.tag.warn { color: var(--warn); border-color: var(--warn); }
+.error { color: var(--danger); }
+.notice { background: var(--card); border-left: 3px solid var(--accent); padding: .5rem .75rem; }
+form label { display: block; margin: .6rem 0; }
+form label input:not([type=checkbox]) { display: block; width: 100%; padding: .45rem; margin-top: .2rem; border: 1px solid var(--line); border-radius: .3rem; background: var(--bg); color: var(--fg); }
+form.inline { display: inline; margin: 0; }
+button { background: var(--accent); color: #fff; border: 0; border-radius: .3rem; padding: .4rem .8rem; cursor: pointer; }
+button.link { background: none; color: var(--accent); padding: 0; }
+button.danger { background: var(--danger); }

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Accounts · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/">← Folders</a></p>
+<h1>Accounts</h1>
+{% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+<table>
+  <thead><tr><th>Username</th><th>User ID</th><th>Role</th><th></th></tr></thead>
+  <tbody>
+  {% for a in accounts %}
+    <tr>
+      <td>{{ a.username }}</td>
+      <td class="mono">{{ a.user }}</td>
+      <td>{% if a.admin %}admin{% else %}member{% endif %}</td>
+      <td>
+        {% if a.username != username %}
+        <form method="post" action="/admin/accounts/{{ a.username }}/delete" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="danger">Remove</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h2>Add or update an account</h2>
+<form method="post" action="/admin/accounts" hx-boost="false">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>Username <input name="username" required pattern="[a-z0-9._-]{1,64}"></label>
+  <label>Password <input name="password" type="password" minlength="10" required autocomplete="new-password"></label>
+  <label>User ID <input name="user" required pattern="[0-9a-f]{64}" class="mono"></label>
+  <label class="check"><input type="checkbox" name="admin" value="on"> Administrator</label>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

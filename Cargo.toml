@@ -23,9 +23,12 @@ tidefell-fetch = { path = "crates/fetch" }
 tidefell-engine = { path = "crates/engine" }
 tidefell-sdk = { path = "crates/sdk" }
 tidefell-api = { path = "crates/api" }
+tidefell-web = { path = "crates/web" }
 
 # Third-party
 blake3 = "1.8"
+argon2 = "0.6"
+askama = "0.16"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "3"
