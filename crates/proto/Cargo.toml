@@ -1,6 +1,6 @@
 [package]
 name = "tidefell-proto"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license = "MIT OR Apache-2.0"
@@ -13,3 +13,10 @@ workspace = true
 # Dependency boundary: this crate is permissively licensed (MIT OR Apache-2.0)
 # and must never depend on an AGPL-licensed crate.
 [dependencies]
+ed25519-dalek.workspace = true
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
