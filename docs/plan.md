@@ -142,8 +142,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 3 steps 1–6 are implemented: the `tidefell` CLI, the web peer, and the book built by
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
-- Phase 4 is in progress: steps 1–5 are implemented and released as `v0.4.0-rc.1` for the
-  Android app (step 6) to pin.
+- Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
+  criterion on an emulator in CI. Phase 4b (`fs-fuse`) is next.
 
 ### Phase 2 work breakdown
 
