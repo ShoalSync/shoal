@@ -2973,6 +2973,11 @@ version = "0.1.0"
 [[package]]
 name = "tidefell-fetch"
 version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.20",
+ "tidefell-proto",
+ "tokio",
+]
 
 [[package]]
 name = "tidefell-ffi"
