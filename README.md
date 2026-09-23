@@ -62,6 +62,10 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+## Conventions
+
+Read [CONVENTIONS.md](CONVENTIONS.md) before making changes.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). A signed [CLA](CLA.md) is required.
