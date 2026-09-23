@@ -13,10 +13,10 @@ use tidefell_proto::{DeviceId, FolderId, UserId};
 pub enum ReplicaMode {
     /// Keep every file on disk and every chunk in the block store.
     Full,
-    /// Keep metadata for everything but content only for files created locally.
-    /// Placeholders for the rest arrive with the FUSE and Android front-ends.
+    /// Keep metadata for everything; other devices' files are placeholders until opened, and
+    /// the least recently used are evicted to stay within the budget (ADR 0016).
     Partial {
-        /// Upper bound for the block store, in bytes.
+        /// Upper bound for the files kept on disk, in bytes.
         budget_bytes: u64,
     },
 }

@@ -93,12 +93,15 @@ pub(crate) async fn materialize(
     id: FolderId,
     handle: &FolderHandle,
 ) -> Result<()> {
-    let (root, writes, deletes, mode) = {
+    let (root, writes, deletes) = {
         let state = handle.lock();
         let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
             state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
         let mut writes = Vec::new();
         let mut deletes = Vec::new();
+        // A partial replica keeps the files it has materialised up to date and leaves the rest
+        // as placeholders.
+        let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
         for version in state.meta.entries() {
             let here = on_disk.get(&version.entry);
             match version.kind {
@@ -110,7 +113,7 @@ pub(crate) async fn materialize(
                     let current = here.is_some_and(|(p, l)| {
                         **p == version.path && l.content == content && l.executable == executable
                     });
-                    if !current {
+                    if !current && (!partial || here.is_some()) {
                         writes.push(PendingWrite {
                             entry: version.entry,
                             path: version.path.clone(),
@@ -132,19 +135,11 @@ pub(crate) async fn materialize(
                 EntryKind::Directory | EntryKind::Symlink { .. } => {}
             }
         }
-        (
-            state.config.path.clone(),
-            writes,
-            deletes,
-            state.config.mode,
-        )
+        (state.config.path.clone(), writes, deletes)
     };
 
     for path in deletes {
         remove_if_unchanged(inner, handle, id, &root, &path)?;
-    }
-    if matches!(mode, ReplicaMode::Partial { .. }) {
-        return Ok(());
     }
     for write in writes {
         match write_file(inner, node, handle, id, &root, &write).await {
@@ -162,6 +157,81 @@ pub(crate) async fn materialize(
     handle.lock().save()
 }
 
+/// Fetches and writes the current version of the live file at `path` now, for a front-end
+/// opening it. Returns false if its content is not available from connected peers, or the file
+/// on disk has local changes the next scan has not recorded yet.
+pub(crate) async fn fetch_one(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    id: FolderId,
+    handle: &FolderHandle,
+    path: &str,
+) -> Result<bool> {
+    let (root, write) = {
+        let state = handle.lock();
+        let Some(version) = state.meta.find_path(path) else {
+            return Err(Error::NoSuchFile(path.to_owned()));
+        };
+        let EntryKind::File {
+            content,
+            size,
+            executable,
+        } = version.kind
+        else {
+            return Err(Error::NoSuchFile(path.to_owned()));
+        };
+        let old_path = state
+            .local
+            .iter()
+            .find(|(p, l)| l.entry == version.entry && *p != path)
+            .map(|(p, _)| p.clone());
+        (
+            state.config.path.clone(),
+            PendingWrite {
+                entry: version.entry,
+                path: version.path.clone(),
+                content,
+                size,
+                executable,
+                modified_ms: version.modified_ms,
+                old_path,
+            },
+        )
+    };
+    let written = write_file(inner, node, handle, id, &root, &write).await?;
+    if written {
+        inner.emit(Event::FileUpdated {
+            folder: id,
+            path: write.path.clone(),
+        });
+        handle.lock().save()?;
+    }
+    Ok(written)
+}
+
+/// True if a connected peer sharing `folder` reports holding every chunk of `manifest`.
+pub(crate) async fn held_elsewhere(
+    node: &Arc<Node>,
+    folder: FolderId,
+    manifest: &Manifest,
+) -> bool {
+    let source = PeerSource {
+        node: node.clone(),
+        folder,
+    };
+    for peer in node.peers() {
+        if !peer.shared_folders().contains(&folder) {
+            continue;
+        }
+        if let Ok(held) = source.availability(&peer.device(), manifest).await {
+            if held.len() == manifest.chunks.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Removes `path` if it is still what the engine last wrote; forgets it either way. A file
 /// edited locally is left in place and becomes a new entry at the next scan.
 fn remove_if_unchanged(
@@ -175,6 +245,7 @@ fn remove_if_unchanged(
     let Some(local) = state.local.remove(path) else {
         return Ok(());
     };
+    state.used.remove(path);
     let abs = root.join(path);
     if unchanged(&abs, &local) {
         fs::remove_file(&abs).map_err(io_err(&abs))?;
@@ -291,6 +362,7 @@ async fn write_file(
         fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
     fs::rename(&tmp, &target).map_err(io_err(&target))?;
+    state.used.insert(write.path.clone(), crate::now_ms());
     let disk = stat(&target).ok_or_else(|| Error::Io {
         path: target.clone(),
         source: std::io::Error::other("file vanished after writing"),
@@ -306,6 +378,7 @@ async fn write_file(
         },
     );
     if let Some(old) = &write.old_path {
+        state.used.remove(old);
         if let Some(local) = state.local.remove(old) {
             let abs = root.join(old);
             if unchanged(&abs, &local) {

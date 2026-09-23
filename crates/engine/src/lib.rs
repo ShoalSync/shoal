@@ -9,7 +9,9 @@
 //! - **materialises** remote changes: fetches missing chunks from peers, writes files
 //!   atomically and applies deletes, never overwriting a file changed locally since the last
 //!   scan (the next scan turns that edit into a conflict, which edits win);
-//! - **purges** recycle-bin entries past their retention and garbage-collects their chunks.
+//! - **purges** recycle-bin entries past their retention and garbage-collects their chunks;
+//! - in a **partial replica**, keeps files as placeholders until they are opened, and evicts
+//!   the least recently used ones to stay within the folder's budget (ADR 0016).
 //!
 //! # On-disk layout
 //!
@@ -22,12 +24,13 @@
 //!
 //! Folders and peers can also be added at runtime; they are remembered in `<data>/runtime`.
 //!
-//! Phase 2 limitations: empty directories and symlinks are not synced, conflict copies are
-//! kept in metadata but not written to disk, and partial replicas hold metadata only.
+//! Limitations: empty directories and symlinks are not synced, and conflict copies are kept in
+//! metadata but not written to disk.
 
 mod backend;
 mod config;
 mod engine;
+mod evict;
 mod materialize;
 mod runtime;
 mod scan;
@@ -72,6 +75,12 @@ pub enum Error {
     /// The folder comes from the configuration file and cannot be changed at runtime.
     #[error("folder {0} is managed by the configuration file")]
     Configured(tidefell_proto::FolderId),
+    /// No live file has this path.
+    #[error("no such file: {0}")]
+    NoSuchFile(String),
+    /// A file's content could not be fetched from connected peers.
+    #[error("{0} is not available: no connected peer has its content")]
+    Unavailable(String),
     /// A request was invalid.
     #[error("{0}")]
     Invalid(String),
