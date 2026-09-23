@@ -577,11 +577,11 @@ dependencies = [
 
 [[package]]
 name = "tidefell-api"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-chunker"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "blake3",
  "fastcdc",
@@ -591,35 +591,35 @@ dependencies = [
 
 [[package]]
 name = "tidefell-cli"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-daemon"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-engine"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-fetch"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-ffi"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-fs-fuse"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-identity"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-meta"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "postcard",
@@ -631,11 +631,11 @@ dependencies = [
 
 [[package]]
 name = "tidefell-net"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-proto"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "postcard",
@@ -646,11 +646,11 @@ dependencies = [
 
 [[package]]
 name = "tidefell-sdk"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "tidefell-store"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "tempfile",
  "thiserror",
@@ -660,7 +660,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-web"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"
@@ -721,7 +721,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "xtask"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde_json",
 ]
