@@ -33,7 +33,7 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
 }
 ```
 
-- `settings` is the [configuration file](../crates/daemon/tidefelld.example.toml) as Nix.
+- `settings` is the [configuration file](guide/configuration.md) as Nix.
   It is checked with `tidefelld config check` when the system is built, so an invalid
   configuration fails `nixos-rebuild` rather than the service.
 - `data_dir` defaults to `services.tidefelld.dataDir` (`/var/lib/tidefell`).

@@ -1,0 +1,15 @@
+[book]
+title = "Tidefell documentation"
+description = "Open-source peer-to-peer file sync"
+authors = ["The Tidefell contributors"]
+language = "en"
+src = "."
+
+[build]
+build-dir = "book"
+# A page listed in SUMMARY.md but missing is an error, not a silently created stub.
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/tidefell/tidefell"
+edit-url-template = "https://github.com/tidefell/tidefell/edit/main/docs/{path}"

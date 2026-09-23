@@ -15,8 +15,9 @@ Tidefell is built in Rust on [iroh](https://github.com/n0-computer/iroh) (QUIC w
 punching and relay fallback), with content-defined chunks transferred and verified by their
 BLAKE3 hashes.
 
-> **Status:** early development. Two `tidefelld` daemons can sync a folder, but there is no
-> UI, no placeholders and no stability promise yet.
+> **Status:** early development. Devices sync folders and can be managed with the `tidefell`
+> command or a browser, but there are no placeholders and no stability promise yet. Read the
+> [documentation](docs/README.md).
 
 ## Crate map
 
@@ -30,7 +31,7 @@ BLAKE3 hashes.
 | `net` | iroh endpoint, relay config, address lookup, sync/1 protocol | AGPL-3.0-only |
 | `fetch` | Multi-peer scheduler, rarest-first, retry | AGPL-3.0-only |
 | `engine` | Replica policies; wires the crates above into the daemon core | AGPL-3.0-only |
-| `api` | REST + gRPC surface for CLI, web and apps | AGPL-3.0-only |
+| `api` | REST surface for CLI, web and apps | AGPL-3.0-only |
 | `daemon` | Binary `tidefelld`: headless peer for Linux servers and NAS | AGPL-3.0-only |
 | `cli` | Binary `tidefell` | AGPL-3.0-only |
 | `web` | Web peer: accounts, sessions, embedded browser UI | AGPL-3.0-only |
@@ -50,7 +51,7 @@ Other directories:
 
 - `specs/`: one protocol specification per ALPN.
 - `tests/`: multi-peer integration tests.
-- `docs/`: admin guide, self-hosting and contributor docs (mdBook).
+- `docs/`: user guide, self-hosting and contributor docs (mdBook; `mdbook serve docs`).
 - `xtask/`: repository automation (`cargo xtask`).
 
 ## Building

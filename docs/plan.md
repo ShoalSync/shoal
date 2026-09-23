@@ -32,7 +32,7 @@ tidefell/tidefell (source of truth)
    ├─ tidefell-ffi AAR (generated Kotlin inside)  → android
    ├─ tidefelld / web binaries (Nix flake outputs) → infra
    ├─ tidefelld config JSON Schema                 → infra (validated in CI)
-   ├─ OpenAPI + .proto for `api`                   → external clients
+   ├─ OpenAPI document for `api`                   → external clients
    └─ built mdBook + specs                         → site
 ```
 
@@ -111,7 +111,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **0** Scaffold | Four repositories, licenses, CI | Done |
 | **1** Foundations | `proto` message types and vectors, `chunker`, `store`, `meta` with unit tests; `xtask check-deps`, `cargo-deny`, `cargo-semver-checks`; glossary, ADRs, repo map; `CONVENTIONS.md` everywhere; monorepo `flake.nix`; release workflow | `v0.1.0` tag produces versioned artifacts; boundary violations fail CI |
 | **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on the block store, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `tidefelld config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
-| **3** Surfaces | `api` (REST + gRPC, generated OpenAPI and proto), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
+| **3** Surfaces | `api` (REST with generated OpenAPI; ADR 0009), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
 | **4** Clients | `ffi` and AAR publishing; Android Gradle project, foreground service, `DocumentsProvider`; `fs-fuse` | Android app syncs against a full replica using the published AAR |
 | **5** Hosted | Hosted web peer and full-replica storage in infra; camera-roll backup; retention UX | Hosted deployment runs from pinned artifacts only |
 
@@ -135,7 +135,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
   an end-to-end test of two daemon processes syncing a folder.
 - Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `tidefell/infra`
   pins it with relay, DNS and full-replica roles.
-- Phase 3 is in progress: steps 1–5 are implemented, docs and site (step 6) are next.
+- Phase 3 steps 1–6 are implemented: the `tidefell` CLI, the web peer, and the book built by
+  each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
 
 ### Phase 2 work breakdown
 
