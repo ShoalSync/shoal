@@ -66,20 +66,26 @@ jobs:
           path: tidefell-*.tar.gz*
 
   specs:
-    name: Specs and vectors
+    name: Specs, vectors and config schema
     needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - name: Package
         run: |
           name="tidefell-specs-${{ needs.version.outputs.version }}"
           tar -czf "$name.tar.gz" specs
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          schema="tidefelld-config-${{ needs.version.outputs.version }}.schema.json"
+          cargo run --locked --quiet --package tidefell-daemon -- config schema > "$schema"
+          sha256sum "$schema" > "$schema.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: specs
-          path: tidefell-specs-*.tar.gz*
+          path: |
+            tidefell-specs-*.tar.gz*
+            tidefelld-config-*.schema.json*
 
   publish:
     name: Publish GitHub release

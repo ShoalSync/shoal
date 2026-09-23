@@ -15,7 +15,8 @@ Tidefell is built in Rust on [iroh](https://github.com/n0-computer/iroh) (QUIC w
 punching and relay fallback), with content-defined chunks transferred and verified by their
 BLAKE3 hashes.
 
-> **Status:** early scaffolding. Nothing here syncs files yet.
+> **Status:** early development. Two `tidefelld` daemons can sync a folder, but there is no
+> UI, no placeholders and no stability promise yet.
 
 ## Crate map
 
@@ -68,6 +69,34 @@ the toolchain and `cargo-deny`.
 ## Conventions
 
 Read [CONVENTIONS.md](CONVENTIONS.md) before making changes.
+
+## Trying it out
+
+Two machines (or two data directories) owned by the same user:
+
+```sh
+# On the first device: create a device key, a user key and a certificate.
+tidefelld init --data-dir ~/.local/share/tidefell --name laptop
+tidefelld new-folder-id            # share this ID with your other devices
+
+# On a second device: print its ID (this creates its device key).
+tidefelld id --data-dir /var/lib/tidefell
+
+# Back on the first device: certify the second device, then copy nas.cert to it.
+tidefelld certify --user-key ~/.local/share/tidefell/user.key \
+    --device <nas device id> --name nas --out nas.cert
+
+# On the second device: finish setup with the certificate.
+tidefelld init --data-dir /var/lib/tidefell --name nas --certificate nas.cert
+```
+
+Then write a configuration (see [`crates/daemon/tidefelld.example.toml`](crates/daemon/tidefelld.example.toml)),
+check it with `tidefelld config check <file>`, and start the daemon with
+`tidefelld run --config <file>`. `tidefelld config schema` prints the configuration's JSON Schema.
+
+Current limitations: empty directories and symlinks are not synced, conflict copies are kept
+in metadata but not written to disk, partial replicas hold metadata only, and device
+certificates cannot be revoked yet.
 
 ## Contributing
 

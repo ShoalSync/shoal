@@ -1,0 +1,23 @@
+# Example tidefelld configuration. Validate with `tidefelld config check <file>`;
+# the JSON Schema is printed by `tidefelld config schema`.
+
+data_dir = "/var/lib/tidefell"
+
+[network]
+# "default" uses the public iroh relays; "custom" uses `urls`; "disabled" allows only direct
+# connections.
+relay = { mode = "default" }
+address_lookup = true
+bind = "0.0.0.0:7777"
+
+[[network.peers]]
+device = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+addrs = ["192.168.1.20:7777"]
+
+[[folders]]
+id = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+path = "/srv/tidefell/photos"
+mode = "full"
+members = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+retention_days = 30
+scan_interval_secs = 10

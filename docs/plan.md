@@ -123,6 +123,12 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 6. `meta`: file tree, versions, vector clocks, tombstones, recycle bin with retention.
 7. Release: `flake.nix`, tag-driven release workflow producing binaries and checksums.
 
+### Status
+
+- Phase 1 is complete and released as `v0.1.0`.
+- Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `tidefelld`, with
+  an end-to-end test of two daemon processes syncing a folder. Step 5 (Nix and infra) is next.
+
 ### Phase 2 work breakdown
 
 Delivered as a sequence of pull requests; each merges before the next is pushed.

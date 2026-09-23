@@ -1,0 +1,196 @@
+//! End-to-end: two engines with real iroh endpoints on localhost and real folders on disk.
+
+use std::fs;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use tidefell_engine::{
+    Engine, EngineConfig, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Retention,
+};
+use tidefell_identity::{DeviceKey, UserKey};
+use tidefell_proto::FolderId;
+
+const FOLDER: FolderId = FolderId([42; 32]);
+
+struct Replica {
+    root: PathBuf,
+    data: PathBuf,
+    key: DeviceKey,
+}
+
+impl Replica {
+    fn new(dir: &Path, name: &str, seed: u8) -> Self {
+        Self {
+            root: dir.join(name).join("folder"),
+            data: dir.join(name).join("data"),
+            key: DeviceKey::from_seed([seed; 32]),
+        }
+    }
+
+    async fn start(&self, user: &UserKey) -> Engine {
+        let config = EngineConfig {
+            data_dir: self.data.clone(),
+            relay: RelayConfig::Disabled,
+            address_lookup: false,
+            bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+            peers: Vec::new(),
+            folders: vec![FolderConfig {
+                id: FOLDER,
+                path: self.root.clone(),
+                mode: ReplicaMode::Full,
+                members: vec![user.id()],
+                retention: Retention::Days(30),
+                // Scans are triggered explicitly so the tests are deterministic.
+                scan_interval: Duration::from_secs(3600),
+            }],
+        };
+        let certificate = user.certify(self.key.id(), "test", 0);
+        Engine::start(config, self.key.clone(), certificate)
+            .await
+            .unwrap()
+    }
+
+    fn write(&self, path: &str, data: &[u8]) {
+        let abs = self.root.join(path);
+        fs::create_dir_all(abs.parent().unwrap()).unwrap();
+        fs::write(abs, data).unwrap();
+    }
+
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        fs::read(self.root.join(path)).ok()
+    }
+}
+
+async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    for _ in 0..1000 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+fn status(engine: &Engine) -> FolderStatus {
+    engine.status(FOLDER).unwrap()
+}
+
+fn noise(len: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed | 1;
+    (0..len)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 24) as u8
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sync_create_edit_delete() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 10);
+    let b = Replica::new(dir.path(), "b", 11);
+
+    let big = noise(3 * 1024 * 1024, 7);
+    a.write("hello.txt", b"hello from a");
+    a.write("nested/dir/big.bin", &big);
+
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    eventually("initial files on b", || {
+        b.read("hello.txt").as_deref() == Some(b"hello from a".as_slice())
+            && b.read("nested/dir/big.bin").as_deref() == Some(big.as_slice())
+    })
+    .await;
+    eventually("b has nothing pending", || status(&engine_b).pending == 0).await;
+    assert_eq!(status(&engine_a).files, status(&engine_b).files);
+
+    // Edit on b, picked up by b's scan and pushed to a.
+    b.write("hello.txt", b"edited on b");
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("edit reaches a", || {
+        a.read("hello.txt").as_deref() == Some(b"edited on b".as_slice())
+    })
+    .await;
+
+    // New file on b.
+    b.write("from-b.txt", b"new on b");
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("new file reaches a", || a.read("from-b.txt").is_some()).await;
+
+    // Delete on a removes the file on b and keeps it in b's recycle bin.
+    fs::remove_file(a.root.join("nested/dir/big.bin")).unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("delete reaches b", || {
+        b.read("nested/dir/big.bin").is_none()
+    })
+    .await;
+    eventually("b recycled it", || {
+        status(&engine_b).recycled == vec!["nested/dir/big.bin".to_string()]
+    })
+    .await;
+    assert_eq!(status(&engine_a).files, status(&engine_b).files);
+    assert!(
+        !b.root
+            .join(".tidefell/tmp")
+            .read_dir()
+            .unwrap()
+            .any(|_| true),
+        "no temp files left"
+    );
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn conflicting_edits_converge_after_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 20);
+    let b = Replica::new(dir.path(), "b", 21);
+    a.write("doc.txt", b"original");
+
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("initial sync", || b.read("doc.txt").is_some()).await;
+    engine_b.shutdown().await;
+
+    // Both sides edit while apart. b's edit is later, so it wins on both replicas.
+    a.write("doc.txt", b"edit on a");
+    engine_a.scan(FOLDER).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    b.write("doc.txt", b"edit on b, later");
+
+    let engine_b = b.start(&user).await;
+    engine_b.scan(FOLDER).await.unwrap();
+    assert_eq!(
+        status(&engine_b).pending,
+        0,
+        "restart keeps what was on disk"
+    );
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    eventually("both converge on the later edit", || {
+        a.read("doc.txt").as_deref() == Some(b"edit on b, later".as_slice())
+            && b.read("doc.txt").as_deref() == Some(b"edit on b, later".as_slice())
+    })
+    .await;
+    eventually("conflict copy recorded on both", || {
+        status(&engine_a).conflicts == 1 && status(&engine_b).conflicts == 1
+    })
+    .await;
+    assert_eq!(status(&engine_a).files, status(&engine_b).files);
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

@@ -13,3 +13,21 @@ workspace = true
 # Dependency boundary: must not depend on `tidefell-fs-fuse` or `tidefell-web`.
 # Platform front-ends depend on the engine, never the other way round.
 [dependencies]
+getrandom.workspace = true
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tidefell-chunker.workspace = true
+tidefell-fetch.workspace = true
+tidefell-identity.workspace = true
+tidefell-meta.workspace = true
+tidefell-net.workspace = true
+tidefell-proto.workspace = true
+tidefell-store.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
