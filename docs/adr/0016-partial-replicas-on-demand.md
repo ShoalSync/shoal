@@ -18,10 +18,13 @@ opened, and stay within a storage budget.
   fetch), assembles and verifies the file into the folder's directory, marks it materialised,
   and returns its path. It also gains `write(folder, path, source)`, which moves new content
   into place and records the change without waiting for the next scan.
-- Opened files are pinned while in use. After each fetch and on a timer, the engine evicts the
-  least recently used unpinned chunks to stay within the replica's byte budget. A materialised
-  file whose chunks are evicted is removed from disk, if unchanged, and becomes a placeholder
-  again.
+- A partial replica's byte budget counts its materialised files. Opened files are pinned while
+  in use. After each fetch and on a timer, the engine evicts the least recently used unpinned
+  files until the folder fits its budget: an evicted file is removed from disk, if unchanged,
+  becomes a placeholder again, and its chunks leave the block store unless another folder still
+  needs them.
+- A file whose current version was made on this device is evicted only once a connected peer
+  reports holding all of its content, so eviction never loses the only copy.
 - On Android the folder directory is in app-private storage, and a `DocumentsProvider` exposes
   folders to the system file picker and the Files app: listings come from metadata, opening a
   document calls `open`, and saving calls `write`. The phone does not scan shared storage.
