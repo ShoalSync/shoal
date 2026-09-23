@@ -10,6 +10,7 @@ use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
 use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
     frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, UserId,
@@ -198,6 +199,64 @@ fn blobs_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
         .collect()
 }
 
+fn pair_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
+    let messages = [
+        (
+            "request",
+            PairMessage::Request {
+                approver: certificate(),
+                proof: [0x88; 32],
+            },
+        ),
+        (
+            "accept",
+            PairMessage::Accept {
+                name: "Pixel 9".into(),
+            },
+        ),
+        (
+            "complete",
+            PairMessage::Complete {
+                certificate: certificate(),
+                relay: Some("https://relay.tidefell.org./".into()),
+                addrs: vec!["192.168.1.20:7777".parse().unwrap()],
+                folders: vec![FolderOffer {
+                    id: FolderId([0x22; 32]),
+                    name: "Photos".into(),
+                    members: vec![UserId(user_key().verifying_key().to_bytes())],
+                    retention_days: 30,
+                }],
+            },
+        ),
+        (
+            "reject-declined",
+            PairMessage::Reject {
+                code: PairErrorCode::Declined,
+            },
+        ),
+    ];
+    let mut vectors: Vec<(&'static str, Vec<u8>)> = messages
+        .into_iter()
+        .map(|(name, msg)| {
+            let bytes = frame::encode(&msg);
+            let (decoded, used): (PairMessage, usize) = frame::decode(&bytes).unwrap();
+            assert_eq!(decoded, msg, "{name} does not round-trip");
+            assert_eq!(used, bytes.len());
+            (name, bytes)
+        })
+        .collect();
+    // The pairing code's postcard body (its text form is TFP1- and this in base32).
+    let code = PairingCode {
+        device: DeviceId(device_key().verifying_key().to_bytes()),
+        secret: [0x5a; 16],
+        relay: None,
+        addrs: vec!["10.0.2.15:41641".parse().unwrap()],
+    };
+    assert_eq!(PairingCode::from_text(&code.to_text()).unwrap(), code);
+    vectors.push(("pairing-code", postcard::to_stdvec(&code).unwrap()));
+    vectors
+}
+
 fn check_vectors(file: &str, alpn: &str, vectors: Vec<(&'static str, Vec<u8>)>) {
     let path = specs_dir().join("vectors").join(file);
     let actual: Vec<Value> = vectors
@@ -238,6 +297,11 @@ fn blobs_v1_golden_vectors() {
 }
 
 #[test]
+fn pair_v1_golden_vectors() {
+    check_vectors("pair-v1.json", "tidefell/pair/1", pair_v1_vectors());
+}
+
+#[test]
 fn certificate_must_be_signed_by_its_user() {
     assert!(certificate().verify_certificate().is_ok());
     let forged = Signed::sign(&certificate().verify().unwrap(), &device_key());
@@ -270,6 +334,7 @@ fn alpn_constants_match_specs() {
     for (alpn, file) in [
         (tidefell_proto::ALPN_SYNC_V1, "sync-v1.md"),
         (tidefell_proto::ALPN_BLOBS_V1, "blobs-v1.md"),
+        (tidefell_proto::ALPN_PAIR_V1, "pair-v1.md"),
     ] {
         let spec = std::fs::read_to_string(specs_dir().join(file)).unwrap();
         let alpn = std::str::from_utf8(alpn).unwrap();

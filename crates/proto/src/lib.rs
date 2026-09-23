@@ -10,6 +10,7 @@ pub mod frame;
 pub mod identity;
 pub mod ids;
 pub mod manifest;
+pub mod pair;
 pub mod signed;
 pub mod sync;
 pub mod version;
@@ -24,6 +25,9 @@ pub const ALPN_SYNC_V1: &[u8] = b"tidefell/sync/1";
 
 /// ALPN for the version 1 blob transfer protocol. See `specs/blobs-v1.md`.
 pub const ALPN_BLOBS_V1: &[u8] = b"tidefell/blobs/1";
+
+/// ALPN for the version 1 pairing protocol. See `specs/pair-v1.md`.
+pub const ALPN_PAIR_V1: &[u8] = b"tidefell/pair/1";
 
 /// Errors decoding or verifying wire data.
 #[derive(Debug, thiserror::Error)]
@@ -49,4 +53,7 @@ pub enum Error {
     /// A hex string could not be parsed as an identifier.
     #[error("invalid hex identifier")]
     InvalidHex,
+    /// Text is not a valid pairing code.
+    #[error("not a valid pairing code")]
+    InvalidCode,
 }
