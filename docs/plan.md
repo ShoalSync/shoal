@@ -142,7 +142,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 3 steps 1–6 are implemented: the `tidefell` CLI, the web peer, and the book built by
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
-- Phase 4 is in progress: decisions (step 1) are recorded.
+- Phase 4 is in progress: decisions, partial replicas on demand and pairing (steps 1–3) are
+  implemented, and the `ffi` crate exposes them to Kotlin; Kotlin tests and the AAR are next.
 
 ### Phase 2 work breakdown
 
