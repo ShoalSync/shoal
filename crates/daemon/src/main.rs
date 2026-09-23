@@ -51,7 +51,7 @@ enum Command {
         #[arg(long)]
         out: PathBuf,
     },
-    /// Print this device's ID and its user's ID.
+    /// Print this device's ID (creating its key on first use) and, once certified, its user.
     Id {
         /// State directory.
         #[arg(long)]
@@ -160,11 +160,17 @@ fn load_identity(
 }
 
 fn print_id(data_dir: &Path) -> Result<(), String> {
-    let (key, cert) = load_identity(data_dir)?;
-    let body = cert.verify_certificate().map_err(|e| e.to_string())?;
+    fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     println!("device: {}", key.id());
-    println!("user:   {}", body.user);
-    println!("name:   {}", body.name);
+    match load_identity(data_dir) {
+        Ok((_, cert)) => {
+            let body = cert.verify_certificate().map_err(|e| e.to_string())?;
+            println!("user:   {}", body.user);
+            println!("name:   {}", body.name);
+        }
+        Err(_) => println!("not certified yet: see `tidefelld init`"),
+    }
     Ok(())
 }
 
