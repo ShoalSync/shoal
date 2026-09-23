@@ -56,6 +56,18 @@ impl SignedKind for EntryVersion {
     const KIND: &'static str = "sync/1/entry-version";
 }
 
+/// Checks the path rules from `specs/sync-v1.md`: relative, `/`-separated, non-empty
+/// components, no `.` or `..`, no NUL or backslash.
+///
+/// NFC normalisation is the author's responsibility and is not checked here.
+pub fn is_valid_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.contains(['\\', '\0'])
+        && path
+            .split('/')
+            .all(|c| !c.is_empty() && c != "." && c != "..")
+}
+
 impl Signed<EntryVersion> {
     /// Verifies the signature and checks that the signer is the version's author.
     pub fn verify_authored(&self) -> Result<EntryVersion, Error> {
@@ -90,18 +102,27 @@ pub enum SyncMessage {
         /// Folders both devices may sync.
         folders: Vec<FolderId>,
     },
-    /// Ask for every version of `folder` not dominated by `since`.
+    /// Ask for every version the responder has recorded after sequence `since` in its index
+    /// for `folder`.
     IndexRequest {
         /// Folder to synchronise.
         folder: FolderId,
-        /// The requester's summary vector for the folder.
-        since: VersionVector,
+        /// The responder's index epoch the requester last saw, or 0 if none.
+        epoch: u64,
+        /// Highest responder sequence the requester has already received. Ignored, and treated
+        /// as 0, if `epoch` does not match the responder's current epoch.
+        since: u64,
     },
     /// Versions answering an [`SyncMessage::IndexRequest`]. Sent in batches; `last` marks the
     /// end of the response.
     IndexBatch {
         /// Folder the versions belong to.
         folder: FolderId,
+        /// The responder's index epoch.
+        epoch: u64,
+        /// Highest responder sequence covered by this and earlier batches. The requester sends
+        /// it as `since` next time.
+        up_to: u64,
         /// Signed versions, each authored by `EntryVersion::author`.
         versions: Vec<Signed<EntryVersion>>,
         /// True on the final batch.
@@ -124,4 +145,21 @@ pub enum SyncMessage {
         /// Reason.
         code: ErrorCode,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_rules() {
+        for ok in ["a", "a/b.txt", "dir/.hidden", "a..b"] {
+            assert!(is_valid_path(ok), "{ok}");
+        }
+        for bad in [
+            "", "/a", "a/", "a//b", "./a", "a/../b", "..", "a\\b", "a\0b",
+        ] {
+            assert!(!is_valid_path(bad), "{bad:?}");
+        }
+    }
 }

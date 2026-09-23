@@ -49,6 +49,21 @@ body  = postcard(SyncMessage)
 counters. Version `a` supersedes `b` if every counter in `a` is ≥ the one in `b`, and at least
 one is greater. If neither supersedes the other, they are concurrent (a conflict).
 
+Version vectors are per entry and are used only to order versions of that entry. A device
+making a change sets the new vector to the merge of the entry's current version and any
+conflict copies, then increments its own counter.
+
+## Index sequences
+
+Sync progress is tracked separately from version vectors. Every replica keeps, per folder, an
+index: each version it stores gets the next value of a local, monotonically increasing
+sequence number when it is stored. The index also has an `epoch`, a random non-zero `u64`
+chosen when the index is created; a new epoch means the sequence restarted and requesters must
+fetch from the beginning.
+
+A requester remembers, per peer and folder, the responder's `epoch` and the highest `up_to`
+it has received, and sends them in its next `IndexRequest`.
+
 ## Signed envelopes
 
 `EntryVersion` is always sent signed by its author:
@@ -67,8 +82,8 @@ Signatures are Ed25519 and are verified in strict mode. Receivers reject a versi
 | Index | Message | Fields |
 | --- | --- | --- |
 | 0 | `Hello` | `device: DeviceId`, `folders: Vec<FolderId>` |
-| 1 | `IndexRequest` | `folder: FolderId`, `since: VersionVector` |
-| 2 | `IndexBatch` | `folder: FolderId`, `versions: Vec<Signed<EntryVersion>>`, `last: bool` |
+| 1 | `IndexRequest` | `folder: FolderId`, `epoch: u64`, `since: u64` |
+| 2 | `IndexBatch` | `folder: FolderId`, `epoch: u64`, `up_to: u64`, `versions: Vec<Signed<EntryVersion>>`, `last: bool` |
 | 3 | `ManifestRequest` | `folder: FolderId`, `content: ContentHash` |
 | 4 | `ManifestResponse` | `manifest: Manifest` |
 | 5 | `Error` | `code: ErrorCode` |
@@ -79,7 +94,7 @@ Signatures are Ed25519 and are verified in strict mode. Receivers reject a versi
 | --- | --- | --- |
 | `folder` | `FolderId` | |
 | `entry` | `EntryId` | |
-| `path` | string | Relative, `/`-separated, NFC, no `.`/`..`, no leading `/` |
+| `path` | string | Relative, `/`-separated, NFC; non-empty components; no `.` or `..` components; no `\` or NUL |
 | `kind` | `EntryKind` | See below |
 | `modified_ms` | i64 | Milliseconds since Unix epoch, UTC |
 | `author` | `DeviceId` | Must equal the envelope signer |
@@ -97,11 +112,15 @@ Signatures are Ed25519 and are verified in strict mode. Receivers reject a versi
 ## Exchange
 
 1. Both sides send `Hello`. Each side only proceeds with folders listed by both.
-2. For each shared folder, each side sends `IndexRequest` with its summary vector (the merge
-   of the vectors of every version it holds for that folder).
-3. The responder sends every version it holds that the requester's summary does not
-   dominate, as one or more `IndexBatch` messages, the last with `last = true`.
-4. A peer that needs a file's chunk list sends `ManifestRequest` and receives
+2. For each shared folder, each side sends `IndexRequest` with the epoch and sequence it last
+   received from this peer (both 0 the first time).
+3. The responder sends, in sequence order, every version currently in its index (current
+   versions and conflict copies) whose sequence is greater than `since`, or all of them if
+   `epoch` does not match its own. It uses one or more `IndexBatch` messages, the last with
+   `last = true`. Superseded versions are not sent.
+4. The requester verifies each version (signature, signer equals author, folder, path rules)
+   and applies it. It records `epoch` and `up_to` only after applying the batch marked `last`.
+5. A peer that needs a file's chunk list sends `ManifestRequest` and receives
    `ManifestResponse` or `Error`.
 
 After the initial exchange the stream stays open, and new local versions are pushed as
@@ -109,9 +128,17 @@ After the initial exchange the stream stays open, and new local versions are pus
 
 ## Conflict resolution
 
-When two versions of an entry are concurrent, every replica picks the same winner: the higher
-`modified_ms`, then the greater `author` in byte order. The loser is kept as a conflict copy.
-A `Tombstone` that wins moves the previous live version to the recycle bin.
+When two versions of an entry are concurrent, every replica picks the same winner:
+
+1. A live version (anything but `Tombstone`) beats a `Tombstone`: edits win over deletes.
+2. Otherwise the higher `modified_ms` wins.
+3. Otherwise the greater `author`, compared as bytes, wins.
+4. Otherwise (the same author produced two concurrent versions, which is a bug) the greater
+   postcard encoding of the `EntryVersion` wins.
+
+The loser is kept as a conflict copy until a later version supersedes both. When a
+`Tombstone` supersedes a live version, the live version moves to the recycle bin, which
+keeps it for the retention period.
 
 ## Content addressing (informative)
 

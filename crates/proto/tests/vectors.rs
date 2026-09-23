@@ -11,7 +11,6 @@ use serde_json::{json, Value};
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
     frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed,
-    VersionVector,
 };
 
 fn specs_dir() -> PathBuf {
@@ -57,16 +56,19 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
             },
         ),
         (
-            "index-request-empty",
+            "index-request-initial",
             SyncMessage::IndexRequest {
                 folder,
-                since: VersionVector::new(),
+                epoch: 0,
+                since: 0,
             },
         ),
         (
             "index-batch",
             SyncMessage::IndexBatch {
                 folder,
+                epoch: 0x0123_4567_89ab_cdef,
+                up_to: 1,
                 versions: vec![Signed::sign(&sample_version(), &device_key())],
                 last: true,
             },
