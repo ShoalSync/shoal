@@ -1,7 +1,9 @@
 name: CI
 
 on:
+  # Branch pushes are covered by their pull request; one runner serves every repo.
   push:
+    branches: [main]
   pull_request:
 
 env:
@@ -10,7 +12,7 @@ env:
 jobs:
   check:
     name: fmt, clippy, test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -28,7 +30,7 @@ jobs:
 
   msrv:
     name: MSRV (1.91)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91
@@ -38,14 +40,19 @@ jobs:
 
   deny:
     name: cargo-deny
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      # The action runs in a container; installing the binary avoids needing Docker on the runner.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Check
+        run: cargo deny --all-features check
 
   docs:
     name: mdBook
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@v2
@@ -68,7 +75,7 @@ jobs:
 
   kotlin:
     name: Kotlin bindings (JVM)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -84,7 +91,7 @@ jobs:
 
   aar:
     name: Android library (AAR)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       NDK_VERSION: "30.0.16248370"
     steps:
@@ -98,6 +105,8 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
+      # The self-hosted runner may not carry an Android SDK the way GitHub's images do.
+      - uses: android-actions/setup-android@v3
       - name: Install cargo-ndk and the NDK
         run: |
           cargo install cargo-ndk --locked --version 4.1.2
