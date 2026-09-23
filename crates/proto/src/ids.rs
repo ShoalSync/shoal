@@ -61,6 +61,18 @@ macro_rules! id {
     };
 }
 
+impl From<DeviceId> for PublicKey {
+    fn from(id: DeviceId) -> Self {
+        Self(id.0)
+    }
+}
+
+impl From<UserId> for PublicKey {
+    fn from(id: UserId) -> Self {
+        Self(id.0)
+    }
+}
+
 fn hex_val(c: u8) -> Result<u8, Error> {
     match c {
         b'0'..=b'9' => Ok(c - b'0'),
@@ -70,7 +82,11 @@ fn hex_val(c: u8) -> Result<u8, Error> {
 }
 
 id!(
-    /// A device's Ed25519 public key.
+    /// An Ed25519 public key of any signer: a device or a user.
+    PublicKey, 32
+);
+id!(
+    /// A device's Ed25519 public key. Also the device's iroh endpoint ID.
     DeviceId, 32
 );
 id!(

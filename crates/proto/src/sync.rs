@@ -5,8 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::identity::DeviceCertificate;
 use crate::{
-    ContentHash, DeviceId, EntryId, Error, FolderId, Manifest, Signed, SignedKind, VersionVector,
+    ContentHash, DeviceId, EntryId, Error, FolderId, Manifest, PublicKey, Signed, SignedKind,
+    VersionVector,
 };
 
 /// What an entry is in a given version.
@@ -72,7 +74,7 @@ impl Signed<EntryVersion> {
     /// Verifies the signature and checks that the signer is the version's author.
     pub fn verify_authored(&self) -> Result<EntryVersion, Error> {
         let version = self.verify()?;
-        if version.author != self.signer {
+        if PublicKey::from(version.author) != self.signer {
             return Err(Error::SignerMismatch);
         }
         Ok(version)
@@ -95,11 +97,12 @@ pub enum ErrorCode {
 /// A message on a `tidefell/sync/1` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncMessage {
-    /// First message from each side: the folders this device shares with the peer.
+    /// First message from each side: who the device belongs to, and the folders it offers to
+    /// sync with this peer.
     Hello {
-        /// The sending device.
-        device: DeviceId,
-        /// Folders both devices may sync.
+        /// The sending device's certificate. Its `device` must be the connection's endpoint ID.
+        certificate: Signed<DeviceCertificate>,
+        /// Folders the sender offers to sync with this peer.
         folders: Vec<FolderId>,
     },
     /// Ask for every version the responder has recorded after sequence `since` in its index

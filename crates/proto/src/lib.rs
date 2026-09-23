@@ -4,15 +4,17 @@
 //! field order or types of any serialised struct or enum is a breaking change and requires a
 //! new ALPN version. See ADR 0006.
 
+pub mod blobs;
 mod bytes;
 pub mod frame;
+pub mod identity;
 pub mod ids;
 pub mod manifest;
 pub mod signed;
 pub mod sync;
 pub mod version;
 
-pub use ids::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, UserId};
+pub use ids::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, PublicKey, UserId};
 pub use manifest::{ChunkRef, Manifest};
 pub use signed::{Signed, SignedKind};
 pub use version::{Causality, VersionVector};
@@ -41,8 +43,8 @@ pub enum Error {
     /// The signature does not verify against the signer and body.
     #[error("bad signature")]
     BadSignature,
-    /// A signed entry version names a different author than its signer.
-    #[error("signer does not match author")]
+    /// A signed message was signed by a different key than the one it claims.
+    #[error("signer does not match the claimed author or user")]
     SignerMismatch,
     /// A hex string could not be parsed as an identifier.
     #[error("invalid hex identifier")]
