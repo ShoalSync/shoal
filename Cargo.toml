@@ -17,11 +17,13 @@ tidefell-proto = { path = "crates/proto" }
 tidefell-chunker = { path = "crates/chunker" }
 tidefell-store = { path = "crates/store" }
 tidefell-meta = { path = "crates/meta" }
+tidefell-identity = { path = "crates/identity" }
 
 # Third-party
 blake3 = "1.8"
 ed25519-dalek = "3"
 fastcdc = "5"
+getrandom = "0.4"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 proptest = "1"
 serde = { version = "1", features = ["derive"] }

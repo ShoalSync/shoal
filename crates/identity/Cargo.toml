@@ -11,3 +11,10 @@ publish = false
 workspace = true
 
 [dependencies]
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+thiserror.workspace = true
+tidefell-proto.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
