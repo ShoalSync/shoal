@@ -3249,6 +3249,17 @@ dependencies = [
 [[package]]
 name = "tidefell-cli"
 version = "0.2.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidefell-api",
+ "tidefell-engine",
+ "tidefell-identity",
+ "tidefell-sdk",
+ "tokio",
+]
 
 [[package]]
 name = "tidefell-daemon"
