@@ -42,3 +42,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+
+  docs:
+    name: mdBook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4
+      - name: Every ADR is in the book
+        run: |
+          missing=0
+          for adr in docs/adr/[0-9]*.md; do
+            name=${adr#docs/}
+            [ "$name" = adr/0000-template.md ] && continue
+            if ! grep -qF "($name)" docs/SUMMARY.md; then
+              echo "::error file=docs/SUMMARY.md::$name is not listed"
+              missing=1
+            fi
+          done
+          exit $missing
+      - name: Build
+        run: mdbook build docs

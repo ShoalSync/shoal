@@ -4,7 +4,7 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
 
 ```nix
 {
-  inputs.tidefell.url = "github:tidefell/tidefell/v0.2.0";
+  inputs.tidefell.url = "github:tidefell/tidefell/v0.3.0";
 
   outputs = { nixpkgs, tidefell, ... }: {
     nixosConfigurations.nas = nixpkgs.lib.nixosSystem {
@@ -33,10 +33,13 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
 }
 ```
 
-- `settings` is the [configuration file](../crates/daemon/tidefelld.example.toml) as Nix.
+- `settings` is the [configuration file](guide/configuration.md) as Nix.
   It is checked with `tidefelld config check` when the system is built, so an invalid
   configuration fails `nixos-rebuild` rather than the service.
 - `data_dir` defaults to `services.tidefelld.dataDir` (`/var/lib/tidefell`).
+- `settings.web.bind` enables the web peer (see the example configuration). Create accounts
+  on the host with `sudo -u tidefell tidefelld web account add --data-dir /var/lib/tidefell
+  --username <name>`, and put a TLS reverse proxy in front of it.
 - The service runs as the `tidefell` system user with a hardened systemd sandbox. It can
   write only its data directory and the configured folder paths, so those paths must be
   writable by `tidefell`.

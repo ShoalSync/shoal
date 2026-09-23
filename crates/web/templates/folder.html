@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/">← Folders</a></p>
+<h1>{{ name }}</h1>
+<p class="muted mono">{{ id }}</p>
+<p><a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a></p>
+{% if files.is_empty() %}
+<p class="muted">This folder is empty.</p>
+{% else %}
+<table>
+  <thead><tr><th>Name</th><th class="num">Size</th><th>Modified</th></tr></thead>
+  <tbody>
+  {% for f in files %}
+    <tr>
+      <td>
+        {% if f.on_disk %}<a href="/folders/{{ id }}/download?path={{ f.path_query }}" hx-boost="false">{{ f.path }}</a>{% else %}{{ f.path }} <span class="tag">not on this server</span>{% endif %}
+        {% if f.conflicts > 0 %}<span class="tag warn">{{ f.conflicts }} conflict(s)</span>{% endif %}
+      </td>
+      <td class="num">{{ f.size }}</td>
+      <td>{{ f.modified }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

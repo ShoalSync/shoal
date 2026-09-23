@@ -1,0 +1,190 @@
+//! The `tidefell` binary against two in-process engines serving their control sockets: the
+//! Phase 3 flow of creating a folder, joining it from another device, and restoring a
+//! deleted file.
+
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::Arc;
+use std::time::Duration;
+
+use tidefell_engine::{Engine, EngineConfig, RelayConfig};
+use tidefell_identity::{DeviceKey, UserKey};
+
+const BIN: &str = env!("CARGO_BIN_EXE_tidefell");
+
+struct Device {
+    data: PathBuf,
+    engine: Arc<Engine>,
+}
+
+impl Device {
+    async fn start(root: &Path, name: &str, seed: u8, user: &UserKey) -> Self {
+        let data = root.join(name).join("data");
+        let key = DeviceKey::from_seed([seed; 32]);
+        let engine = Arc::new(
+            Engine::start(
+                EngineConfig {
+                    data_dir: data.clone(),
+                    relay: RelayConfig::Disabled,
+                    address_lookup: false,
+                    bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+                    peers: Vec::new(),
+                    folders: Vec::new(),
+                },
+                key.clone(),
+                user.certify(key.id(), name, 0),
+            )
+            .await
+            .unwrap(),
+        );
+        let socket = data.join("control.sock");
+        tokio::spawn({
+            let (engine, socket) = (engine.clone(), socket.clone());
+            async move { tidefell_api::serve_unix(engine, &socket).await }
+        });
+        for _ in 0..200 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        Self { data, engine }
+    }
+
+    /// Runs `tidefell` against this device and returns stdout, failing on a non-zero exit.
+    fn run(&self, args: &[&str]) -> String {
+        let out = self.try_run(args);
+        assert!(
+            out.status.success(),
+            "tidefell {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    }
+
+    fn try_run(&self, args: &[&str]) -> std::process::Output {
+        Command::new(BIN)
+            .arg("--data-dir")
+            .arg(&self.data)
+            .args(args)
+            .output()
+            .unwrap()
+    }
+
+    fn json(&self, args: &[&str]) -> serde_json::Value {
+        let mut all = vec!["--json"];
+        all.extend_from_slice(args);
+        serde_json::from_str(&self.run(&all)).unwrap()
+    }
+}
+
+async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    for _ in 0..500 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn create_join_delete_restore() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let laptop = Device::start(tmp.path(), "laptop", 10, &alice).await;
+    let nas = Device::start(tmp.path(), "nas", 11, &alice).await;
+
+    let status = laptop.json(&["status"]);
+    assert_eq!(status["user"], alice.id().to_string());
+    assert!(laptop.run(&["folder", "list"]).contains("no folders"));
+
+    // Create on the laptop; the output tells the user how to join elsewhere.
+    let laptop_root = tmp.path().join("laptop/photos");
+    let created = laptop.run(&["folder", "create", laptop_root.to_str().unwrap()]);
+    assert!(created.contains("tidefell folder join"));
+    let folders = laptop.json(&["folder", "list"]);
+    let id = folders[0]["id"].as_str().unwrap().to_string();
+    std::fs::write(laptop_root.join("beach.jpg"), b"sand and sea").unwrap();
+    laptop.run(&["folder", "scan", &id]);
+
+    // The NAS joins and keeps the laptop connected.
+    let nas_root = tmp.path().join("nas/photos");
+    nas.run(&[
+        "folder",
+        "join",
+        &id,
+        nas_root.to_str().unwrap(),
+        "--retention-days",
+        "90",
+    ]);
+    let laptop_addr = laptop.engine.addr();
+    let addr = laptop_addr.ip_addrs().next().unwrap().to_string();
+    nas.run(&[
+        "peer",
+        "add",
+        &laptop.engine.id().to_string(),
+        "--addr",
+        &addr,
+    ]);
+
+    eventually("photo reaches the NAS", || {
+        std::fs::read(nas_root.join("beach.jpg")).ok().as_deref()
+            == Some(b"sand and sea".as_slice())
+    })
+    .await;
+    let files = nas.run(&["files", &id]);
+    assert!(files.contains("beach.jpg"), "{files}");
+    let peers = nas.json(&["peer", "list"]);
+    assert_eq!(peers["connected"].as_array().unwrap().len(), 1);
+
+    // Delete on the laptop, restore by path from the NAS.
+    std::fs::remove_file(laptop_root.join("beach.jpg")).unwrap();
+    laptop.run(&["folder", "scan", &id]);
+    eventually("delete reaches the NAS", || {
+        !nas_root.join("beach.jpg").exists()
+    })
+    .await;
+    let bin = nas.run(&["recycle", "list", &id]);
+    assert!(bin.contains("beach.jpg"), "{bin}");
+    assert!(nas
+        .run(&["recycle", "restore", &id, "beach.jpg"])
+        .contains("restored beach.jpg"));
+    eventually("restored on the laptop", || {
+        std::fs::read(laptop_root.join("beach.jpg")).ok().as_deref()
+            == Some(b"sand and sea".as_slice())
+    })
+    .await;
+
+    // Errors are reported on stderr with a non-zero exit.
+    let out = nas.try_run(&["recycle", "restore", &id, "nope.txt"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not in the recycle bin"));
+    let out = nas.try_run(&["files", "not-an-id"]);
+    assert!(!out.status.success());
+
+    // Sharing with another user, then removing the folder.
+    let bob = UserKey::from_seed([2; 32]).id().to_string();
+    nas.run(&["folder", "share", &id, &bob]);
+    assert!(nas.json(&["folder", "list"])[0]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m == &serde_json::Value::String(bob.clone())));
+    nas.run(&["folder", "remove", &id]);
+    assert!(nas.run(&["folder", "list"]).contains("no folders"));
+}
+
+#[test]
+fn missing_daemon_is_a_clear_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = Command::new(BIN)
+        .arg("--data-dir")
+        .arg(tmp.path())
+        .arg("status")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot connect"));
+}

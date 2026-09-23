@@ -15,8 +15,9 @@ Tidefell is built in Rust on [iroh](https://github.com/n0-computer/iroh) (QUIC w
 punching and relay fallback), with content-defined chunks transferred and verified by their
 BLAKE3 hashes.
 
-> **Status:** early development. Two `tidefelld` daemons can sync a folder, but there is no
-> UI, no placeholders and no stability promise yet.
+> **Status:** early development. Devices sync folders and can be managed with the `tidefell`
+> command or a browser, but there are no placeholders and no stability promise yet. Read the
+> [documentation](docs/README.md).
 
 ## Crate map
 
@@ -30,7 +31,7 @@ BLAKE3 hashes.
 | `net` | iroh endpoint, relay config, address lookup, sync/1 protocol | AGPL-3.0-only |
 | `fetch` | Multi-peer scheduler, rarest-first, retry | AGPL-3.0-only |
 | `engine` | Replica policies; wires the crates above into the daemon core | AGPL-3.0-only |
-| `api` | REST + gRPC surface for CLI, web and apps | AGPL-3.0-only |
+| `api` | REST surface for CLI, web and apps | AGPL-3.0-only |
 | `daemon` | Binary `tidefelld`: headless peer for Linux servers and NAS | AGPL-3.0-only |
 | `cli` | Binary `tidefell` | AGPL-3.0-only |
 | `web` | Web peer: accounts, sessions, embedded browser UI | AGPL-3.0-only |
@@ -50,7 +51,7 @@ Other directories:
 
 - `specs/`: one protocol specification per ALPN.
 - `tests/`: multi-peer integration tests.
-- `docs/`: admin guide, self-hosting and contributor docs (mdBook).
+- `docs/`: user guide, self-hosting and contributor docs (mdBook; `mdbook serve docs`).
 - `xtask/`: repository automation (`cargo xtask`).
 
 ## Building
@@ -90,13 +91,37 @@ tidefelld certify --user-key ~/.local/share/tidefell/user.key \
 tidefelld init --data-dir /var/lib/tidefell --name nas --certificate nas.cert
 ```
 
-Then write a configuration (see [`crates/daemon/tidefelld.example.toml`](crates/daemon/tidefelld.example.toml)),
-check it with `tidefelld config check <file>`, and start the daemon with
-`tidefelld run --config <file>`. `tidefelld config schema` prints the configuration's JSON Schema.
+Start each daemon with a configuration (see
+[`crates/daemon/tidefelld.example.toml`](crates/daemon/tidefelld.example.toml); `folders` may be
+empty): `tidefelld run --config <file>`. Then manage it with the `tidefell` command, which talks
+to the local daemon over its control socket:
+
+```sh
+tidefell folder create ~/Photos              # prints the folder ID
+tidefell folder join <folder id> /srv/photos # on the other device
+tidefell peer add <laptop device id> --addr 192.168.1.10:7777
+tidefell files <folder id>
+tidefell recycle list <folder id>
+tidefell recycle restore <folder id> holiday.jpg
+```
+
+Everything `tidefell` does goes through the `/v1` REST API; `tidefelld api schema` prints its
+OpenAPI document and `tidefelld config schema` the configuration's JSON Schema.
+
+### Web peer
+
+Add a `[web]` section to a daemon's configuration and create an account:
+
+```sh
+tidefelld web account add --data-dir /var/lib/tidefell --username alice --admin
+```
+
+People sign in from a browser and see the folders their user is a member of: browse, download
+and restore deleted files. Serve it behind a TLS reverse proxy.
 
 Current limitations: empty directories and symlinks are not synced, conflict copies are kept
-in metadata but not written to disk, partial replicas hold metadata only, and device
-certificates cannot be revoked yet.
+in metadata but not written to disk, partial replicas hold metadata only, files not stored on
+the web peer cannot be downloaded from it, and device certificates cannot be revoked yet.
 
 ## Contributing
 

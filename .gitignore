@@ -31,3 +31,6 @@ rustc-ice-*.txt
 # Nix build output
 result
 result-*
+
+# mdBook output
+docs/book

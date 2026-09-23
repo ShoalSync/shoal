@@ -58,6 +58,7 @@
             clippy
             rustfmt
             cargo-deny
+            mdbook
           ];
         };
       });

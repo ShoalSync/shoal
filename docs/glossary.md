@@ -39,4 +39,6 @@ the same pull request that introduces it.
 | **Relay** | An iroh relay server used when direct connections between peers fail. |
 | **Address lookup** | Resolving a `DeviceId` to current network addresses, via DNS/pkarr or local discovery. |
 | **Web peer** | A peer that also serves the browser UI and manages user accounts and sessions. |
+| **Web account** | A username and password on one web peer, linked to a user. It sees exactly the folders that user is a member of. |
+| **Control socket** | `<data_dir>/control.sock`, where a daemon serves its REST API to local tools such as `tidefell`. |
 | **Signed envelope** | A wire message wrapped with the signer's public key and an Ed25519 signature. |
