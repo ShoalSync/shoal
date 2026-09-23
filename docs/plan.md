@@ -128,8 +128,9 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 1 is complete and released as `v0.1.0`.
 - Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `tidefelld`, with
   an end-to-end test of two daemon processes syncing a folder.
-- Step 5: the NixOS module for `tidefelld` is in the monorepo flake. The infra flake, with
-  relay and DNS server hosts, follows once a release contains the module.
+- Step 5: the NixOS module for `tidefelld` is in the monorepo flake. The monorepo side of
+  Phase 2 is released as `v0.2.0`; the infra flake, with relay and DNS server hosts pinned to
+  that release, is the remaining step.
 
 ### Phase 2 work breakdown
 
