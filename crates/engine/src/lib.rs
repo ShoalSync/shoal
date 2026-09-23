@@ -43,7 +43,7 @@ pub use config::{EngineConfig, FolderConfig, PeerAddr, ReplicaMode};
 pub use engine::{Engine, FolderStatus};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
-pub use tidefell_net::RelayConfig;
+pub use tidefell_net::{RelayConfig, RelayUrl};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{Event, FileInfo, FolderInfo, PeerInfo, RecycledInfo};

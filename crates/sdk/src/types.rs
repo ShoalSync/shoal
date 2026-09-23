@@ -152,6 +152,9 @@ pub struct KnownPeer {
     /// Known direct addresses, e.g. "192.168.1.20:7777".
     #[serde(default)]
     pub addrs: Vec<String>,
+    /// A relay the peer is reachable through.
+    #[serde(default)]
+    pub relay: Option<String>,
 }
 
 /// A change, streamed from `GET /v1/events` as server-sent events.

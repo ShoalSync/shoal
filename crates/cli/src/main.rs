@@ -159,6 +159,9 @@ enum PeerCommand {
         /// Direct addresses, e.g. 192.168.1.20:7777 (repeatable).
         #[arg(long = "addr")]
         addrs: Vec<String>,
+        /// A relay the peer is reachable through, e.g. https://relay.example.org.
+        #[arg(long)]
+        relay: Option<String>,
     },
     /// Stop keeping a peer connected.
     Remove {
@@ -321,11 +324,16 @@ async fn run(cli: Cli) -> Result<(), String> {
                     format::peers(&p.connected, &p.known)
                 });
             }
-            PeerCommand::Add { device, addrs } => {
+            PeerCommand::Add {
+                device,
+                addrs,
+                relay,
+            } => {
                 client
                     .add_peer(&KnownPeer {
                         device: device.clone(),
                         addrs,
+                        relay,
                     })
                     .await
                     .map_err(e)?;

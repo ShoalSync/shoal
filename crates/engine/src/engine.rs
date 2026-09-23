@@ -156,10 +156,14 @@ impl std::fmt::Debug for Engine {
 
 fn endpoint_addr(peer: &PeerAddr) -> Option<EndpointAddr> {
     let id = EndpointId::from_bytes(peer.device.as_bytes()).ok()?;
+    let mut addr = EndpointAddr::new(id);
+    if let Some(relay) = &peer.relay {
+        addr = addr.with_relay_url(relay.clone());
+    }
     Some(
         peer.addrs
             .iter()
-            .fold(EndpointAddr::new(id), |addr, ip| addr.with_ip_addr(*ip)),
+            .fold(addr, |addr, ip| addr.with_ip_addr(*ip)),
     )
 }
 

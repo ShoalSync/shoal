@@ -180,6 +180,7 @@ async fn control_api_end_to_end() {
     let peer = KnownPeer {
         device: DeviceKey::from_seed([9; 32]).id().to_string(),
         addrs: vec!["127.0.0.1:9".into()],
+        relay: Some("https://relay.example.org./".into()),
     };
     client.add_peer(&peer).await.unwrap();
     assert_eq!(client.known_peers().await.unwrap(), vec![peer.clone()]);
