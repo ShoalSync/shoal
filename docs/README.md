@@ -8,3 +8,4 @@ Project-wide references:
 - [repos.md](repos.md): which repository a change belongs in.
 - [glossary.md](glossary.md): shared vocabulary for all repositories.
 - [adr/](adr/): architecture decision records.
+- [nixos.md](nixos.md): running `tidefelld` with the NixOS module.
