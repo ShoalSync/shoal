@@ -65,7 +65,7 @@ pub struct NewFolder {
     /// Replica mode; defaults to full.
     #[serde(default)]
     pub mode: Option<Mode>,
-    /// Block store budget; required for partial replicas.
+    /// Bytes of files a partial replica keeps on disk; required for partial replicas.
     #[serde(default)]
     pub budget_bytes: Option<u64>,
     /// Seconds between scans for local changes; defaults to 10.
@@ -93,12 +93,27 @@ pub struct File {
     pub modified_ms: i64,
     /// Whether the file is executable.
     pub executable: bool,
-    /// Whether the current version is on this device's disk.
+    /// Whether the current version is on this device's disk. In a partial replica, files not
+    /// on disk are placeholders, fetched with `POST /v1/folders/{id}/fetch`.
     pub on_disk: bool,
     /// Number of unresolved conflict copies.
     pub conflicts: usize,
     /// Device that made the current version.
     pub author: String,
+}
+
+/// A file to make available on disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FetchRequest {
+    /// Path within the folder.
+    pub path: String,
+}
+
+/// Where a fetched file is on the daemon's disk.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Fetched {
+    /// Absolute path on the daemon's machine.
+    pub local_path: String,
 }
 
 /// A deleted file in the recycle bin.
@@ -186,6 +201,8 @@ pub enum ErrorKind {
     Conflict,
     /// Something failed on the server.
     Internal,
+    /// The content is not available from any connected peer right now.
+    Unavailable,
 }
 
 /// Error response body.

@@ -19,7 +19,7 @@ This example shows every section:
 | `network.address_lookup` | Publish and resolve device addresses via DNS. |
 | `network.bind` | UDP address to listen on. |
 | `network.peers` | Peers to keep connected, each with a `device` ID and optional direct `addrs`. |
-| `folders` | Folders managed by the configuration: `id`, `path`, `mode` (`full` or `partial`), `members`, `retention_days`, `scan_interval_secs`. |
+| `folders` | Folders managed by the configuration: `id`, `path`, `mode` (`full` or `partial`, which needs `budget_bytes`; see [partial replicas](folders.md#partial-replicas)), `members`, `retention_days`, `scan_interval_secs`. |
 | `web` | Enables the [web peer](web.md): `bind` and `secure_cookies`. |
 
 Folders in the configuration are read-only to `tidefell`; change them here and restart. Folders

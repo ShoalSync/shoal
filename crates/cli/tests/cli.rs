@@ -164,6 +164,37 @@ async fn create_join_delete_restore() {
     let out = nas.try_run(&["files", "not-an-id"]);
     assert!(!out.status.success());
 
+    // A partial replica on a third device keeps the photo as a placeholder until fetched.
+    let phone = Device::start(tmp.path(), "phone", 12, &alice).await;
+    let phone_root = tmp.path().join("phone/photos");
+    phone.run(&[
+        "folder",
+        "join",
+        &id,
+        phone_root.to_str().unwrap(),
+        "--partial",
+        "1000000",
+    ]);
+    phone.engine.connect(nas.engine.addr()).await.unwrap();
+    eventually("the phone lists the photo", || {
+        phone.run(&["files", &id]).contains("beach.jpg")
+    })
+    .await;
+    assert!(!phone_root.join("beach.jpg").exists());
+    assert_eq!(phone.json(&["files", &id])[0]["on_disk"], false);
+    let fetched = phone.run(&["fetch", &id, "beach.jpg"]);
+    assert_eq!(
+        fetched.trim(),
+        phone_root.join("beach.jpg").to_str().unwrap()
+    );
+    assert_eq!(
+        std::fs::read(phone_root.join("beach.jpg")).unwrap(),
+        b"sand and sea"
+    );
+    let out = phone.try_run(&["fetch", &id, "nope.jpg"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no such file"));
+
     // Sharing with another user, then removing the folder.
     let bob = UserKey::from_seed([2; 32]).id().to_string();
     nas.run(&["folder", "share", &id, &bob]);

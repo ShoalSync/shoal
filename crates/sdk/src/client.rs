@@ -10,7 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, Event, File, Folder, KnownPeer, NewFolder, NewMember, Peer, Recycled, Status,
+    ApiError, Event, FetchRequest, Fetched, File, Folder, KnownPeer, NewFolder, NewMember, Peer,
+    Recycled, Status,
 };
 
 /// Client errors.
@@ -202,6 +203,19 @@ impl Client {
     /// Live files in a folder.
     pub async fn files(&self, folder: &str) -> Result<Vec<File>, Error> {
         self.get(&format!("/v1/folders/{folder}/files")).await
+    }
+
+    /// Makes a file available on the daemon's disk, fetching it from peers if needed (a
+    /// placeholder in a partial replica), and returns where it is.
+    pub async fn fetch(&self, folder: &str, path: &str) -> Result<Fetched, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/fetch"),
+            Some(&FetchRequest {
+                path: path.to_owned(),
+            }),
+        )
+        .await
     }
 
     /// A folder's recycle bin.

@@ -37,6 +37,7 @@ pub fn router(engine: Arc<Engine>) -> Router {
         )
         .route("/v1/folders/{id}/scan", post(handlers::scan))
         .route("/v1/folders/{id}/files", get(handlers::files))
+        .route("/v1/folders/{id}/fetch", post(handlers::fetch))
         .route("/v1/folders/{id}/recycle", get(handlers::recycle_bin))
         .route(
             "/v1/folders/{id}/recycle/{entry}/restore",

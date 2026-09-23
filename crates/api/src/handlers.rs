@@ -15,8 +15,8 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ErrorKind, Event, File, Folder, KnownPeer, Mode, NewFolder, NewMember, Peer,
-    Recycled, Status,
+    ApiError, ErrorKind, Event, FetchRequest, Fetched, File, Folder, KnownPeer, Mode, NewFolder,
+    NewMember, Peer, Recycled, Status,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -44,6 +44,7 @@ type AppState = State<Arc<Engine>>;
         remove_member,
         scan,
         files,
+        fetch,
         recycle_bin,
         restore,
         peers,
@@ -53,8 +54,20 @@ type AppState = State<Arc<Engine>>;
         events
     ),
     components(schemas(
-        Status, Folder, Mode, NewFolder, NewMember, File, Recycled, Peer, KnownPeer, Event,
-        ApiError, ErrorKind
+        Status,
+        Folder,
+        Mode,
+        NewFolder,
+        NewMember,
+        File,
+        FetchRequest,
+        Fetched,
+        Recycled,
+        Peer,
+        KnownPeer,
+        Event,
+        ApiError,
+        ErrorKind
     ))
 )]
 pub struct ApiDoc;
@@ -92,6 +105,10 @@ impl From<EngineError> for ApiFailure {
                 (StatusCode::CONFLICT, ErrorKind::Conflict)
             }
             EngineError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorKind::BadRequest),
+            EngineError::NoSuchFile(_) => (StatusCode::NOT_FOUND, ErrorKind::NotFound),
+            EngineError::Unavailable(_) => {
+                (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable)
+            }
             _ => (StatusCode::INTERNAL_SERVER_ERROR, ErrorKind::Internal),
         };
         Self(
@@ -277,6 +294,26 @@ pub(crate) async fn files(
             .map(convert::file)
             .collect(),
     ))
+}
+
+/// Makes a live file available on this device's disk, fetching it from connected peers if
+/// needed (a placeholder in a partial replica), and returns its local path.
+#[utoipa::path(post, path = "/v1/folders/{id}/fetch", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = FetchRequest,
+    responses((status = 200, body = Fetched), (status = 404, body = ApiError),
+        (status = 503, body = ApiError)))]
+pub(crate) async fn fetch(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<FetchRequest>,
+) -> ApiResult<Json<Fetched>> {
+    let folder: FolderId = parse("folder", &id)?;
+    let local = engine.open(folder, &request.path).await?;
+    engine.close(folder, &request.path)?;
+    Ok(Json(Fetched {
+        local_path: local.display().to_string(),
+    }))
 }
 
 /// The folder's recycle bin, most recently deleted first.

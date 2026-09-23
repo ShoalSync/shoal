@@ -42,6 +42,14 @@ enum Command {
         /// Folder ID.
         folder: String,
     },
+    /// Make a file available on this device's disk, fetching it from peers if it is a
+    /// placeholder, and print where it is.
+    Fetch {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder.
+        path: String,
+    },
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
@@ -106,6 +114,10 @@ struct FolderOptions {
     /// Days to keep deleted files; 0 keeps them forever.
     #[arg(long, default_value_t = 30)]
     retention_days: u32,
+    /// Keep only BYTES of other devices' files on disk: the rest are placeholders, fetched
+    /// with `tidefell fetch` (a partial replica).
+    #[arg(long, value_name = "BYTES")]
+    partial: Option<u64>,
 }
 
 #[derive(Subcommand)]
@@ -178,8 +190,8 @@ fn new_folder(
         path: path.display().to_string(),
         members: options.members,
         retention_days: options.retention_days,
-        mode: None,
-        budget_bytes: None,
+        mode: options.partial.map(|_| tidefell_sdk::types::Mode::Partial),
+        budget_bytes: options.partial,
         scan_interval_secs: None,
     })
 }
@@ -233,6 +245,11 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::Files { folder } => print(json, &client.files(&folder).await.map_err(e)?, |f| {
             format::files(f)
         }),
+        Command::Fetch { folder, path } => {
+            print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
+                f.local_path.clone()
+            })
+        }
         Command::Recycle(command) => match command {
             RecycleCommand::List { folder } => {
                 print(json, &client.recycle_bin(&folder).await.map_err(e)?, |r| {
