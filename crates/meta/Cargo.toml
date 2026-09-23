@@ -1,6 +1,6 @@
 [package]
 name = "tidefell-meta"
-version = "0.0.0"
+version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -11,3 +11,11 @@ publish = false
 workspace = true
 
 [dependencies]
+ed25519-dalek.workspace = true
+postcard.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tidefell-proto.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
