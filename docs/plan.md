@@ -98,6 +98,11 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Wire encoding and signing | postcard, Ed25519 signed envelopes | ADR 0006 |
 | Minimum supported Rust version | 1.91 | ADR 0007 |
 | Chunk transfer | Own `blobs/1` protocol on the `store` crate, no iroh-blobs | ADR 0008 |
+| API | REST/JSON with generated OpenAPI; gRPC deferred | ADR 0009 |
+| Local control and web peer placement | Unix socket; web peer inside `tidefelld` | ADR 0010 |
+| Web accounts | Local logins mapped to Tidefell users; no user keys on servers | ADR 0011 |
+| Web UI | Server-rendered with htmx | ADR 0012 |
+| Website and docs | Zola site, mdBook docs per release | ADR 0013 |
 
 ## Phases
 
@@ -128,9 +133,9 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 1 is complete and released as `v0.1.0`.
 - Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `tidefelld`, with
   an end-to-end test of two daemon processes syncing a folder.
-- Step 5: the NixOS module for `tidefelld` is in the monorepo flake. The monorepo side of
-  Phase 2 is released as `v0.2.0`; the infra flake, with relay and DNS server hosts pinned to
-  that release, is the remaining step.
+- Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `tidefell/infra`
+  pins it with relay, DNS and full-replica roles.
+- Phase 3 is in progress; see its breakdown below.
 
 ### Phase 2 work breakdown
 
@@ -156,3 +161,24 @@ Delivered as a sequence of pull requests; each merges before the next is pushed.
    test: two daemons sync a folder, including edits, deletes and a conflict.
 5. **Nix and infra.** NixOS module for `tidefelld` in the monorepo flake; relay and DNS server
    NixOS configurations in `tidefell/infra`, pinned to the monorepo release.
+
+### Phase 3 work breakdown
+
+Exit criterion: set up a device, share a folder with another device, and restore a deleted file
+from the recycle bin, both through the CLI and through the web peer.
+
+1. **Decisions.** ADRs 0009–0013 and this breakdown.
+2. **Engine operations.** Add, join and remove folders at runtime (persisted in the data
+   directory alongside configured folders), restore from the recycle bin, list files, and a
+   stream of status events.
+3. **`sdk` and `api`.** `sdk` (MIT OR Apache-2.0) owns the `/v1` request and response types
+   and their OpenAPI schemas, and provides a typed client over a Unix socket or HTTP. `api`
+   serves them with axum on the control socket, including server-sent events and
+   `/v1/openapi.json`. The OpenAPI document is published with each release.
+4. **`tidefell` CLI.** `status`, `folder create|join|list|remove`, `files`, `peers`,
+   `recycle list|restore`, `web account add|remove`. Talks to the daemon only through `sdk`.
+5. **`web`.** Accounts (argon2id) linked to user IDs, sessions with CSRF protection, and a
+   server-rendered htmx UI: sign in, folders, file listing and download, recycle bin with
+   restore, and account management for admins. Enabled by `[web]` in `tidefelld`.
+6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `tidefell/site`
+   becomes a Zola site that serves the pinned release's docs.
