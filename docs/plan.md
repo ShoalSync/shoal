@@ -96,6 +96,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Android integration | Full peer via FFI, no separate daemon | ADR 0004 |
 | Versioning | Single workspace version, one pin per consumer | ADR 0005 |
 | Wire encoding and signing | postcard, Ed25519 signed envelopes | ADR 0006 |
+| Minimum supported Rust version | 1.91 | ADR 0007 |
 
 ## Phases
 

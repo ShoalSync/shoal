@@ -38,7 +38,7 @@ A change that affects a downstream repository is tracked by one issue here, labe
 - **Checks before pushing:** `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
   `cargo xtask check-deps`.
-- **MSRV** is 1.85; CI builds on it. Do not use newer language or library features.
+- **MSRV** is 1.91; CI builds on it. Do not use newer language or library features.
 - **Commits:** Conventional Commits; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Read first
