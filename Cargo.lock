@@ -3010,6 +3010,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
+ "postcard",
  "tempfile",
  "thiserror 2.0.20",
  "tidefell-proto",

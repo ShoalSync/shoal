@@ -15,9 +15,11 @@
 //!
 //! Key files are created with mode 0600 on Unix.
 
+mod certificate;
 mod keys;
 mod membership;
 
+pub use certificate::{decode_certificate, encode_certificate, load_certificate, save_certificate};
 pub use keys::{DeviceKey, UserKey};
 pub use membership::{AuthError, FolderMembers};
 pub use tidefell_proto::identity::DeviceCertificate;
