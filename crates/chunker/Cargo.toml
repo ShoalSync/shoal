@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-chunker"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: FastCDC content-defined chunking, BLAKE3 hashing, chunk index"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

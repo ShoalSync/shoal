@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-fetch"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: multi-peer scheduler, rarest-first, retry"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

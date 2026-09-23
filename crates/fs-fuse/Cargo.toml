@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-fs-fuse"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: Linux placeholder filesystem"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-meta"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: file tree, versions, vector clocks, tombstones, recycle bin"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

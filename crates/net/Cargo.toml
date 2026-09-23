@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-net"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: iroh endpoint, relay config, address lookup, sync/1 protocol"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

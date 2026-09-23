@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-identity"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: users, devices, folder membership, signing, key formats"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

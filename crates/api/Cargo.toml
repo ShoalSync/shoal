@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-api"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: REST + gRPC surface for CLI, web and apps"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

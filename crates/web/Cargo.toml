@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-web"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: web peer: accounts, sessions, embedded browser UI"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

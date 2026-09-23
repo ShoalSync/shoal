@@ -1,0 +1,15 @@
+[package]
+name = "tidefell-proto"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+description = "Tidefell: wire types, ALPN constants, signed message formats"
+publish = false
+
+[lints]
+workspace = true
+
+# Dependency boundary: this crate is permissively licensed (MIT OR Apache-2.0)
+# and must never depend on an AGPL-licensed crate.
+[dependencies]

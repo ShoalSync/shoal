@@ -1,0 +1,13 @@
+[package]
+name = "tidefell-store"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: block store, availability bitmaps, eviction, on-disk layout"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]

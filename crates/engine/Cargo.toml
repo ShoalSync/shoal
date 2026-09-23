@@ -1,0 +1,15 @@
+[package]
+name = "tidefell-engine"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: replica policies; wires chunker, store, meta, identity, net and fetch into the daemon core"
+publish = false
+
+[lints]
+workspace = true
+
+# Dependency boundary: must not depend on `tidefell-fs-fuse` or `tidefell-web`.
+# Platform front-ends depend on the engine, never the other way round.
+[dependencies]
