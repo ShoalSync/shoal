@@ -266,6 +266,7 @@ pub(crate) async fn folder(
             modified: time(f.modified_ms),
             on_disk: f.on_disk,
             conflicts: f.conflicts,
+            only_here: f.only_here,
         })
         .collect();
     render(pages::Folder {

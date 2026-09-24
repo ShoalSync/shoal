@@ -118,6 +118,16 @@ async fn control_api_end_to_end() {
     let files = client.files(&created.id).await.unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!((files[0].path.as_str(), files[0].size), ("a.txt", 9));
+    // Made here, and no full replica holds it yet.
+    assert!(files[0].only_here);
+    assert_eq!(files[0].confirmed_copies, 0);
+    assert_eq!(client.folder(&created.id).await.unwrap().only_here, 1);
+    assert!(client
+        .copies(&created.id, "a.txt")
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(client.copies(&created.id, "missing.txt").await.is_err());
     std::fs::remove_file(root.join("a.txt")).unwrap();
     client.scan(&created.id).await.unwrap();
     assert!(client.files(&created.id).await.unwrap().is_empty());
@@ -234,6 +244,7 @@ async fn control_api_end_to_end() {
         "/v1/status",
         "/v1/folders",
         "/v1/folders/{id}/retention",
+        "/v1/folders/{id}/copies",
         "/v1/folders/{id}/recycle/{entry}",
         "/v1/folders/{id}/recycle/{entry}/restore",
         "/v1/events",

@@ -30,6 +30,7 @@
       <td>
         {% if f.on_disk %}<a href="/folders/{{ id }}/download?path={{ f.path_query }}" hx-boost="false">{{ f.path }}</a>{% else %}{{ f.path }} <span class="tag">not on this server</span>{% endif %}
         {% if f.conflicts > 0 %}<span class="tag warn">{{ f.conflicts }} conflict(s)</span>{% endif %}
+        {% if f.only_here %}<span class="tag warn" title="Made on this server; no full replica has confirmed holding it yet">only on this server</span>{% endif %}
         {% if share_links %}<a class="tag" href="/folders/{{ id }}/share?path={{ f.path_query }}">share</a>{% endif %}
       </td>
       <td class="num">{{ f.size }}</td>

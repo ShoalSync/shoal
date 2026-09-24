@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use tidefell_engine::{
-    Event, FileInfo, FolderInfo, PeerAddr, PeerInfo, RecycledInfo, ReplicaMode, Retention,
+    CopyInfo, Event, FileInfo, FolderInfo, PeerAddr, PeerInfo, RecycledInfo, ReplicaMode, Retention,
 };
 use tidefell_sdk::types as api;
 
@@ -36,6 +36,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
             next_expiry_ms: f.recycle_bin.next_expiry_ms,
         },
         configured: f.configured,
+        only_here: f.only_here as u64,
     }
 }
 
@@ -49,6 +50,16 @@ pub(crate) fn file(f: FileInfo) -> api::File {
         on_disk: f.on_disk,
         conflicts: f.conflicts,
         author: f.author.to_string(),
+        confirmed_copies: f.confirmed_copies as u64,
+        only_here: f.only_here,
+    }
+}
+
+pub(crate) fn copy(c: CopyInfo) -> api::Copy {
+    api::Copy {
+        device: c.device.to_string(),
+        name: c.name,
+        confirmed_ms: c.confirmed_ms,
     }
 }
 

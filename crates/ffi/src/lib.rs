@@ -359,6 +359,9 @@ pub struct Folder {
     /// When the next one will be purged, milliseconds since the Unix epoch; `None` if none
     /// will be.
     pub next_purge_ms: Option<i64>,
+    /// Live files made on this device that no full replica has confirmed holding yet
+    /// (ADR 0022).
+    pub only_here: u64,
 }
 
 /// A live file.
@@ -376,6 +379,23 @@ pub struct File {
     pub on_disk: bool,
     /// Unresolved conflict copies.
     pub conflicts: u32,
+    /// Full replicas that confirmed holding it (ADR 0022). Only tracked for files made on this
+    /// device; 0 otherwise.
+    pub confirmed_copies: u32,
+    /// True if this device made it and no full replica has confirmed holding it yet, so this
+    /// device may hold the only copy.
+    pub only_here: bool,
+}
+
+/// A full replica that confirmed holding a file.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Copy {
+    /// Its device ID.
+    pub device: String,
+    /// Its name when it confirmed.
+    pub name: String,
+    /// When it confirmed, milliseconds since the Unix epoch.
+    pub confirmed_ms: i64,
 }
 
 /// A deleted file in the recycle bin.
@@ -488,6 +508,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         recycled_files: f.recycle_bin.items as u64,
         recycled_bytes: f.recycle_bin.bytes,
         next_purge_ms: f.recycle_bin.next_expiry_ms,
+        only_here: f.only_here as u64,
     }
 }
 
@@ -618,6 +639,23 @@ impl Node {
                 modified_ms: f.modified_ms,
                 on_disk: f.on_disk,
                 conflicts: f.conflicts as u32,
+                confirmed_copies: f.confirmed_copies as u32,
+                only_here: f.only_here,
+            })
+            .collect())
+    }
+
+    /// The full replicas that confirmed holding a file made on this device. Empty for files
+    /// made elsewhere.
+    pub fn copies(&self, folder: String, path: String) -> Result<Vec<Copy>> {
+        Ok(self
+            .engine()?
+            .copies(parse("folder ID", &folder)?, &path)?
+            .into_iter()
+            .map(|c| Copy {
+                device: c.device.to_string(),
+                name: c.name,
+                confirmed_ms: c.confirmed_ms,
             })
             .collect())
     }
