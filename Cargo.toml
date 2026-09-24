@@ -24,6 +24,7 @@ tidefell-engine = { path = "crates/engine" }
 tidefell-sdk = { path = "crates/sdk" }
 tidefell-api = { path = "crates/api" }
 tidefell-web = { path = "crates/web" }
+tidefell-fs-fuse = { path = "crates/fs-fuse" }
 
 # Third-party
 blake3 = "1.8"
@@ -33,11 +34,13 @@ axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "3"
 fastcdc = "5"
+fuser = "0.18"
 getrandom = "0.4"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 iroh = "1.2"
+libc = "0.2"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 proptest = "1"
 schemars = "1"

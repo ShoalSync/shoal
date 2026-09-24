@@ -11,3 +11,13 @@ publish = false
 workspace = true
 
 [dependencies]
+fuser = { workspace = true }
+libc = { workspace = true }
+thiserror = { workspace = true }
+tidefell-engine = { workspace = true }
+tidefell-proto = { workspace = true }
+tokio = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

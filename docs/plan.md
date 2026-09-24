@@ -145,7 +145,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
 - Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
   criterion on an emulator in CI.
-- Phase 4b is in progress: decisions in ADR 0017; step 1 is done.
+- Phase 4b is in progress: decisions in ADR 0017; steps 1–3 are implemented.
 
 ### Phase 2 work breakdown
 
