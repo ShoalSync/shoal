@@ -18,11 +18,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # The self-hosted runners share one ~/.cargo; restoring or cleaning its bin
-          # directory in one job pulls cargo and tools out from under the others.
-          cache-bin: "false"
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -41,11 +36,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.91
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # The self-hosted runners share one ~/.cargo; restoring or cleaning its bin
-          # directory in one job pulls cargo and tools out from under the others.
-          cache-bin: "false"
       - name: Build
         run: cargo +1.91 build --workspace --all-targets --locked
 
@@ -91,11 +81,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # The self-hosted runners share one ~/.cargo; restoring or cleaning its bin
-          # directory in one job pulls cargo and tools out from under the others.
-          cache-bin: "false"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -115,11 +100,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # The self-hosted runners share one ~/.cargo; restoring or cleaning its bin
-          # directory in one job pulls cargo and tools out from under the others.
-          cache-bin: "false"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -132,8 +112,8 @@ jobs:
           packages: platform-tools
       - name: Install cargo-ndk and the NDK
         run: |
-          # A restored cache can record cargo-ndk as installed without its binary on this
-          # runner, so check the binary itself.
+          # The runners share ~/.cargo, and its install records can outlive the binary, so
+          # check the binary itself.
           if ! cargo ndk --version 2>/dev/null | grep -q " 4.1.2"; then
             cargo install cargo-ndk --locked --version 4.1.2 --force
           fi
