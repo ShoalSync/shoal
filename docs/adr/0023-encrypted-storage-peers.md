@@ -1,6 +1,6 @@
 # 0023: Encrypted folders and storage peers
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-24
 
 ## Context

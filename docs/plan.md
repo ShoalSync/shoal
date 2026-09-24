@@ -188,7 +188,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   `tidefell/android` builds against it with camera-roll backup and retention and recycle-bin
   settings, and its emulator exit criterion backs up a photo to a daemon. The setting to remove
   originals after backup is deferred until the engine can report which peers hold a file.
-- Phases 5b and 6 are proposed: ADRs 0022 and 0023. Phases 7 and 8 wait for CI runners.
+- Phases 5b and 6 are decided: ADRs 0022 and 0023 are accepted. Phases 7 and 8 wait for CI
+  runners.
 
 ### Phase 2 work breakdown
 

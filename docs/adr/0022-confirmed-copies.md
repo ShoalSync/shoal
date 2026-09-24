@@ -1,6 +1,6 @@
 # 0022: Confirmed copies
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-24
 
 ## Context
