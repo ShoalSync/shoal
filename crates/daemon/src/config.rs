@@ -147,6 +147,10 @@ pub struct Folder {
     /// Seconds between scans for local changes.
     #[serde(default = "default_scan_interval")]
     pub scan_interval_secs: u64,
+    /// Where to mount the folder with FUSE (Linux only). Files appear there, placeholders are
+    /// fetched when opened, and `path` becomes backing storage not to be edited directly.
+    #[serde(default)]
+    pub mount: Option<PathBuf>,
 }
 
 fn default_scan_interval() -> u64 {
@@ -236,6 +240,7 @@ impl Config {
                 scan_interval: Duration::from_secs(f.scan_interval_secs.max(1)),
             });
         }
+        self.mounts()?;
         Ok(EngineConfig {
             data_dir: self.data_dir.clone(),
             relay,
@@ -244,6 +249,34 @@ impl Config {
             peers,
             folders,
         })
+    }
+
+    /// Folders to mount with FUSE, and where.
+    pub fn mounts(&self) -> Result<Vec<(FolderId, PathBuf)>, String> {
+        let mut mounts: Vec<(FolderId, PathBuf)> = Vec::new();
+        for f in &self.folders {
+            let Some(mount) = &f.mount else { continue };
+            if !cfg!(target_os = "linux") {
+                return Err(format!(
+                    "folder {}: mounting is only supported on Linux",
+                    f.id
+                ));
+            }
+            if !mount.is_absolute() {
+                return Err(format!("folder {}: mount must be an absolute path", f.id));
+            }
+            if mount.starts_with(&f.path) || f.path.starts_with(mount) {
+                return Err(format!(
+                    "folder {}: mount and path must not contain each other",
+                    f.id
+                ));
+            }
+            if mounts.iter().any(|(_, m)| m == mount) {
+                return Err(format!("{} is mounted twice", mount.display()));
+            }
+            mounts.push((hex_id::<FolderId>("folder id", &f.id)?, mount.clone()));
+        }
+        Ok(mounts)
     }
 }
 
@@ -268,6 +301,24 @@ mod tests {
         assert!(parse(&bad_member).unwrap().to_engine().is_err());
         let partial = EXAMPLE.replace("mode = \"full\"", "mode = \"partial\"");
         assert!(parse(&partial).unwrap().to_engine().is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn validates_mounts() {
+        let with = |mount: &str| {
+            let text = EXAMPLE.replace(
+                "scan_interval_secs = 10\n",
+                &format!("scan_interval_secs = 10\nmount = \"{mount}\"\n"),
+            );
+            parse(&text).unwrap().mounts()
+        };
+        let mounts = with("/home/me/Photos").unwrap();
+        assert_eq!(mounts[0].1, PathBuf::from("/home/me/Photos"));
+        assert!(with("relative/dir").is_err());
+        assert!(with("/srv/tidefell/photos/inside").is_err());
+        assert!(with("/srv/tidefell").is_err());
+        assert!(parse(EXAMPLE).unwrap().mounts().unwrap().is_empty());
     }
 
     #[test]

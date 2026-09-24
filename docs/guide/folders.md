@@ -70,6 +70,9 @@ Files you create or edit on the device are synced as usual. When the folder's fi
 exceed the budget, the least recently used ones become placeholders again. A file made on this
 device is only removed once another connected device has a copy.
 
+On Linux, a partial replica can also be [mounted](mounting.md), so its files open on demand
+from any program.
+
 ## Leaving a folder
 
 ```sh

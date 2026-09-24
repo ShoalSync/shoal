@@ -601,6 +601,115 @@ impl Engine {
         run_scan(&self.inner, folder).await
     }
 
+    /// Deletes the live file at `path`, sending it to peers' recycle bins. Works on placeholders
+    /// too, which scans would otherwise never delete.
+    pub async fn delete(&self, folder: FolderId, path: &str) -> Result<()> {
+        let handle = self.inner.folder(&folder)?;
+        {
+            let _guard = handle.fs_lock.lock().await;
+            let mut state = handle.lock();
+            let entry = match state.meta.find_path(path) {
+                Some(v) if matches!(v.kind, EntryKind::File { .. }) => v.entry,
+                _ => return Err(Error::NoSuchFile(path.to_owned())),
+            };
+            let root = state.config.path.clone();
+            remove_local(&mut state, &root, path)?;
+            state.meta.local_change(
+                self.inner.key.signing_key(),
+                entry,
+                path,
+                EntryKind::Tombstone,
+                now_ms(),
+            )?;
+            state.save()?;
+        }
+        self.inner.changes.send_modify(|n| *n += 1);
+        self.inner.emit(Event::FileRemoved {
+            folder,
+            path: path.to_owned(),
+        });
+        self.inner.emit(Event::FolderChanged(folder));
+        Ok(())
+    }
+
+    /// Moves the live file at `from`, or every live file under the directory `from`, to `to`.
+    /// Entries keep their identity and content, so a placeholder moves without being fetched.
+    /// A live file already at a destination is deleted first.
+    pub async fn rename(&self, folder: FolderId, from: &str, to: &str) -> Result<()> {
+        if !tidefell_proto::sync::is_valid_path(to) {
+            return Err(Error::Invalid(format!("invalid path {to:?}")));
+        }
+        if from == to {
+            return Ok(());
+        }
+        if to.starts_with(&format!("{from}/")) {
+            return Err(Error::Invalid(format!("cannot move {from:?} into itself")));
+        }
+        let handle = self.inner.folder(&folder)?;
+        {
+            let _guard = handle.fs_lock.lock().await;
+            let mut state = handle.lock();
+            let prefix = format!("{from}/");
+            let moves: Vec<(EntryId, String, String, EntryKind, i64)> = state
+                .meta
+                .entries()
+                .filter(|v| matches!(v.kind, EntryKind::File { .. }))
+                .filter_map(|v| {
+                    let dest = if v.path == from {
+                        to.to_owned()
+                    } else {
+                        format!("{to}/{}", v.path.strip_prefix(&prefix)?)
+                    };
+                    Some((v.entry, v.path.clone(), dest, v.kind.clone(), v.modified_ms))
+                })
+                .collect();
+            if moves.is_empty() {
+                return Err(Error::NoSuchFile(from.to_owned()));
+            }
+            if let Some((_, _, dest, _, _)) = moves
+                .iter()
+                .find(|(_, _, dest, _, _)| !tidefell_proto::sync::is_valid_path(dest))
+            {
+                return Err(Error::Invalid(format!("invalid path {dest:?}")));
+            }
+            let root = state.config.path.clone();
+            let key = self.inner.key.signing_key();
+            let now = now_ms();
+            for (entry, old, new, kind, modified_ms) in moves {
+                // Replace whatever is at the destination.
+                let replaced = state
+                    .meta
+                    .find_path(&new)
+                    .filter(|v| v.entry != entry && matches!(v.kind, EntryKind::File { .. }))
+                    .map(|v| v.entry);
+                if let Some(replaced) = replaced {
+                    remove_local(&mut state, &root, &new)?;
+                    state
+                        .meta
+                        .local_change(key, replaced, &new, EntryKind::Tombstone, now)?;
+                }
+                if let Some(local) = state.local.remove(&old) {
+                    let (src, dst) = (root.join(&old), root.join(&new));
+                    if let Some(parent) = dst.parent() {
+                        std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
+                    }
+                    std::fs::rename(&src, &dst).map_err(crate::io_err(&src))?;
+                    state.local.insert(new.clone(), local);
+                    if let Some(used) = state.used.remove(&old) {
+                        state.used.insert(new.clone(), used);
+                    }
+                }
+                state
+                    .meta
+                    .local_change(key, entry, &new, kind, modified_ms)?;
+            }
+            state.save()?;
+        }
+        self.inner.changes.send_modify(|n| *n += 1);
+        self.inner.emit(Event::FolderChanged(folder));
+        Ok(())
+    }
+
     /// Deleted files in `folder`'s recycle bin, most recently deleted first.
     pub fn recycle_bin(&self, folder: FolderId) -> Result<Vec<RecycledInfo>> {
         let handle = self.inner.folder(&folder)?;
@@ -762,6 +871,20 @@ impl Engine {
             node.shutdown().await;
         }
     }
+}
+
+/// Removes the file at `path` from disk and forgets it, if this replica has it.
+fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
+    if state.local.remove(path).is_some() {
+        let abs = root.join(path);
+        match std::fs::remove_file(&abs) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(crate::io_err(&abs)(e)),
+        }
+    }
+    state.used.remove(path);
+    Ok(())
 }
 
 async fn run_scan(inner: &Arc<Inner>, id: FolderId) -> Result<()> {

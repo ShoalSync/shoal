@@ -21,6 +21,11 @@ mode = "full"
 members = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
 retention_days = 30
 scan_interval_secs = 10
+# On a laptop, keep only recently opened files (a partial replica) and show the whole folder
+# at a mount point with FUSE (Linux only):
+# mode = "partial"
+# budget_bytes = 10000000000
+# mount = "/home/me/Tidefell/Photos"
 
 # Optional web peer: sign in from a browser. Create accounts with
 # `tidefelld web account add --data-dir <data_dir> --username <name>`.
