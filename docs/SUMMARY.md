@@ -46,3 +46,4 @@
   - [0014: The ffi AAR is a release asset, not a Maven package](adr/0014-aar-release-asset.md)
   - [0015: Devices join a user by pairing over the network](adr/0015-pairing.md)
   - [0016: Partial replicas keep placeholders and fetch on demand](adr/0016-partial-replicas-on-demand.md)
+  - [0017: tidefelld mounts folders read-write with FUSE](adr/0017-fuse-mounts.md)

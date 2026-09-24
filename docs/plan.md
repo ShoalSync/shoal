@@ -106,6 +106,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Delivering the ffi AAR | Release asset fetched with the org GitHub App token; Maven later | ADR 0014 |
 | Adding devices | Pairing over the network (`pair/1`); user keys never leave their machine | ADR 0015 |
 | Partial replicas | Placeholders, fetch on open, LRU eviction to a budget; Android `DocumentsProvider` | ADR 0016 |
+| Linux placeholders | `tidefelld` mounts folders read-write with FUSE (`fuser`) | ADR 0017 |
 
 ## Phases
 
@@ -143,7 +144,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
 - Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
-  criterion on an emulator in CI. Phase 4b (`fs-fuse`) is next.
+  criterion on an emulator in CI.
+- Phase 4b is in progress: decisions in ADR 0017; step 1 is done.
 
 ### Phase 2 work breakdown
 
@@ -220,3 +222,25 @@ emulator.
    `DocumentsProvider`, storage budget setting. CI builds and unit-tests it, then runs the exit
    criterion on an emulator against the pinned release's `tidefelld`.
 7. **Release.** `v0.4.0` and the Android pin bump.
+
+### Phase 4b work breakdown
+
+Exit criterion: a `tidefelld` partial replica on Linux mounts a folder. Listing it shows every
+file, reading a placeholder fetches it from a full replica, and a file saved through the mount
+reaches the full replica. CI runs this with a real FUSE mount on the self-hosted runner.
+
+1. **Decisions.** ADR 0017 and this breakdown.
+2. **Engine `delete` and `rename`.** `delete` records a delete that sends the file to peers'
+   recycle bins. `rename` moves an entry, or every entry under a directory, to a new path while
+   keeping its content reference, so a placeholder is renamed without a fetch and a rename over
+   an existing file replaces it. Tests with a full and a partial replica in process.
+3. **`fs-fuse`.** A `fuser` filesystem over a small backend trait that the engine implements:
+   inodes from folder metadata; `lookup`, `getattr` and `readdir`; `open` and `read` through the
+   engine's `open` and `close`; staged writes recorded with `write`; `create`, `unlink`,
+   `rename`, in-memory `mkdir` and `rmdir`, truncation and times; kernel cache invalidation on
+   engine events. Unit tests drive the handlers against a fake backend without the kernel.
+4. **Daemon mounts.** `mount = "/path"` on a folder in `tidefelld`'s config and schema;
+   mounting at start and on folder add, unmounting on shutdown and removal, and clearing a
+   stale mount left by a crash. A guide page on mounting. The end-to-end exit-criterion test
+   runs in CI against a real FUSE mount.
+5. **Release.** `v0.5.0`.
