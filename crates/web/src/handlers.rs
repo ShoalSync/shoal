@@ -23,7 +23,7 @@ type AppStateRef = State<Arc<AppState>>;
 
 const COOKIE: &str = "tidefell_session";
 
-fn render(page: impl Template) -> Response {
+pub(crate) fn render(page: impl Template) -> Response {
     match page.render() {
         Ok(html) => Html(html).into_response(),
         Err(e) => {
@@ -33,7 +33,7 @@ fn render(page: impl Template) -> Response {
     }
 }
 
-fn error(status: StatusCode, title: &str, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, title: &str, message: &str) -> Response {
     let mut response = render(pages::Error {
         title: title.to_string(),
         message: message.to_string(),
@@ -42,7 +42,7 @@ fn error(status: StatusCode, title: &str, message: &str) -> Response {
     response
 }
 
-fn not_found() -> Response {
+pub(crate) fn not_found() -> Response {
     error(
         StatusCode::NOT_FOUND,
         "Not found",
@@ -50,7 +50,7 @@ fn not_found() -> Response {
     )
 }
 
-fn session_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn session_token(headers: &HeaderMap) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -63,7 +63,7 @@ fn session_token(headers: &HeaderMap) -> Option<String> {
 }
 
 /// The signed-in session, if the cookie is valid and the account still exists.
-fn session(state: &AppState, headers: &HeaderMap) -> Option<(String, Session)> {
+pub(crate) fn session(state: &AppState, headers: &HeaderMap) -> Option<(String, Session)> {
     let token = session_token(headers)?;
     let session = state.sessions.get(&token)?;
     match state.accounts.get(&session.username) {
@@ -77,15 +77,20 @@ fn session(state: &AppState, headers: &HeaderMap) -> Option<(String, Session)> {
 
 macro_rules! signed_in {
     ($state:expr, $headers:expr) => {
-        match session(&$state, &$headers) {
+        match $crate::handlers::session(&$state, &$headers) {
             Some(found) => found,
-            None => return Redirect::to("/login").into_response(),
+            None => {
+                return axum::response::IntoResponse::into_response(axum::response::Redirect::to(
+                    "/login",
+                ))
+            }
         }
     };
 }
+pub(crate) use signed_in;
 
 /// A rejection page if the form's CSRF token is wrong.
-fn check_csrf(session: &Session, submitted: &str) -> Option<Response> {
+pub(crate) fn check_csrf(session: &Session, submitted: &str) -> Option<Response> {
     if same_secret(&session.csrf, submitted) {
         None
     } else {
@@ -107,14 +112,14 @@ fn visible_folders(state: &AppState, user: &UserId) -> Vec<FolderInfo> {
         .collect()
 }
 
-fn visible_folder(state: &AppState, session: &Session, id: &str) -> Option<FolderInfo> {
+pub(crate) fn visible_folder(state: &AppState, session: &Session, id: &str) -> Option<FolderInfo> {
     let id: FolderId = id.parse().ok()?;
     visible_folders(state, &session.user)
         .into_iter()
         .find(|f| f.id == id)
 }
 
-fn folder_name(folder: &FolderInfo) -> String {
+pub(crate) fn folder_name(folder: &FolderInfo) -> String {
     folder
         .path
         .file_name()
@@ -191,7 +196,7 @@ pub(crate) async fn login(State(state): AppStateRef, Form(form): Form<LoginForm>
 
 #[derive(Deserialize)]
 pub(crate) struct CsrfForm {
-    csrf: String,
+    pub(crate) csrf: String,
 }
 
 pub(crate) async fn logout(
@@ -229,14 +234,21 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
         username: session.username,
         admin: session.admin,
         csrf: session.csrf,
+        share_links: state.config.share_links,
         folders: rows,
     })
+}
+
+#[derive(Deserialize)]
+pub(crate) struct FolderQuery {
+    uploaded: Option<usize>,
 }
 
 pub(crate) async fn folder(
     State(state): AppStateRef,
     headers: HeaderMap,
     Path(id): Path<String>,
+    Query(query): Query<FolderQuery>,
 ) -> Response {
     let (_, session) = signed_in!(state, headers);
     let Some(folder) = visible_folder(&state, &session, &id) else {
@@ -267,6 +279,10 @@ pub(crate) async fn folder(
             .recycle_bin(folder.id)
             .map(|v| v.len())
             .unwrap_or(0),
+        share_links: state.config.share_links,
+        notice: query
+            .uploaded
+            .map(|n| format!("Uploaded {n} file(s). They sync to every device.")),
         files,
     })
 }
@@ -286,26 +302,41 @@ pub(crate) async fn download(
     let Some(folder) = visible_folder(&state, &session, &id) else {
         return not_found();
     };
-    // Only live files known to the folder's metadata are served, from where the engine put them.
-    // A placeholder is fetched from peers first. The open file keeps its data even if the engine
-    // evicts it once unpinned.
-    let path = match state.engine.open(folder.id, &query.path).await {
-        Ok(path) => path,
+    match open_file(&state, folder.id, &query.path).await {
+        Ok(file) => send_file(file, &query.path).await,
+        Err(response) => *response,
+    }
+}
+
+/// Opens a live file of `folder` for download. Only live files known to the folder's metadata
+/// are served, from where the engine put them. A placeholder is fetched from peers first. The
+/// open file keeps its data even if the engine evicts it once unpinned.
+pub(crate) async fn open_file(
+    state: &AppState,
+    folder: FolderId,
+    path: &str,
+) -> Result<tokio::fs::File, Box<Response>> {
+    let local = match state.engine.open(folder, path).await {
+        Ok(local) => local,
         Err(tidefell_engine::Error::Unavailable(_)) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "This file is not available right now: no connected device has it.",
-            )
-                .into_response()
+            return Err(Box::new(
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "This file is not available right now: no connected device has it.",
+                )
+                    .into_response(),
+            ))
         }
-        Err(_) => return not_found(),
+        Err(_) => return Err(Box::new(not_found())),
     };
-    let opened = tokio::fs::File::open(&path).await;
-    let _ = state.engine.close(folder.id, &query.path);
-    let Ok(file) = opened else {
-        return not_found();
-    };
-    let name = FsPath::new(&query.path)
+    let opened = tokio::fs::File::open(&local).await;
+    let _ = state.engine.close(folder, path);
+    opened.map_err(|_| Box::new(not_found()))
+}
+
+/// Streams an opened file as an attachment named after the last component of `path`.
+pub(crate) async fn send_file(file: tokio::fs::File, path: &str) -> Response {
+    let name = FsPath::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().replace(['"', '\\', '\r', '\n'], "_"))
         .unwrap_or_else(|| "download".into());

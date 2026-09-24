@@ -21,6 +21,7 @@ pub(crate) struct Folders {
     pub(crate) username: String,
     pub(crate) admin: bool,
     pub(crate) csrf: String,
+    pub(crate) share_links: bool,
     pub(crate) folders: Vec<FolderRow>,
 }
 
@@ -42,6 +43,8 @@ pub(crate) struct Folder {
     pub(crate) id: String,
     pub(crate) name: String,
     pub(crate) recycled: usize,
+    pub(crate) share_links: bool,
+    pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
 }
 
@@ -86,4 +89,64 @@ pub(crate) struct Accounts {
 pub(crate) struct Error {
     pub(crate) title: String,
     pub(crate) message: String,
+}
+
+#[derive(Template)]
+#[template(path = "share_new.html")]
+pub(crate) struct ShareNew {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) directory: bool,
+    pub(crate) error: Option<String>,
+    /// The new link's URL, shown once.
+    pub(crate) created: Option<String>,
+}
+
+pub(crate) struct ShareRow {
+    pub(crate) id: String,
+    pub(crate) folder: String,
+    pub(crate) path: String,
+    pub(crate) created_by: String,
+    pub(crate) created: String,
+    pub(crate) expires: String,
+    pub(crate) downloads: String,
+    pub(crate) password: bool,
+}
+
+#[derive(Template)]
+#[template(path = "shares.html")]
+pub(crate) struct Shares {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) notice: Option<String>,
+    pub(crate) shares: Vec<ShareRow>,
+}
+
+pub(crate) struct LinkFile {
+    pub(crate) name: String,
+    pub(crate) query: String,
+    pub(crate) size: String,
+}
+
+#[derive(Template)]
+#[template(path = "link.html")]
+pub(crate) struct Link {
+    pub(crate) token: String,
+    pub(crate) title: String,
+    pub(crate) directory: bool,
+    pub(crate) exhausted: bool,
+    pub(crate) expires: Option<String>,
+    pub(crate) files: Vec<LinkFile>,
+}
+
+#[derive(Template)]
+#[template(path = "link_password.html")]
+pub(crate) struct LinkPassword {
+    pub(crate) token: String,
+    pub(crate) error: Option<String>,
 }

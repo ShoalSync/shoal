@@ -2,6 +2,7 @@
 {% block nav %}{% include "nav.html" %}{% endblock %}
 {% block content %}
 <h1>Folders</h1>
+{% if share_links %}<p><a href="/shares">Your share links</a></p>{% endif %}
 {% if folders.is_empty() %}
 <p class="muted">No folders on this server are shared with your user.</p>
 {% else %}

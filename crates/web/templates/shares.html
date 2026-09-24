@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Share links · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/">← Folders</a></p>
+<h1>Share links</h1>
+{% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if shares.is_empty() %}
+<p class="muted">No share links. Open a folder and choose <em>share</em> next to a file.</p>
+{% else %}
+<table>
+  <thead><tr><th>Folder</th><th>Shared</th><th>Created</th><th>Expires</th><th>Downloads</th><th></th></tr></thead>
+  <tbody>
+  {% for s in shares %}
+    <tr>
+      <td>{{ s.folder }}</td>
+      <td>{{ s.path }}{% if s.password %} <span class="tag">password</span>{% endif %}<div class="muted mono">{{ s.id }}{% if admin %} · {{ s.created_by }}{% endif %}</div></td>
+      <td>{{ s.created }}</td>
+      <td>{{ s.expires }}</td>
+      <td>{{ s.downloads }}</td>
+      <td>
+        <form method="post" action="/shares/{{ s.id }}/revoke" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <button type="submit" class="danger">Revoke</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

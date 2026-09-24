@@ -173,6 +173,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
 - Phase 5 is decided: ADRs 0018–0021 are accepted, with option C of ADR 0018.
 - Phase 5 step 2 is implemented: retention changes at runtime, recycle-bin summaries and
   emptying the recycle bin, in the engine, API, sdk and CLI.
+- Phase 5 step 3 is implemented: web uploads and share links (expiry, password, download
+  limit, revocation), off unless `[web] share_links = true`.
 
 ### Phase 2 work breakdown
 

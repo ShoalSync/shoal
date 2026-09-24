@@ -39,6 +39,10 @@ pub struct Web {
     /// Mark session cookies Secure (HTTPS only). Turn off only for local testing without TLS.
     #[serde(default = "default_true")]
     pub secure_cookies: bool,
+    /// Let signed-in accounts create links that share a file or directory with people who
+    /// have no account (ADR 0019).
+    #[serde(default)]
+    pub share_links: bool,
 }
 
 /// Network settings.
