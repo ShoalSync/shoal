@@ -111,6 +111,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Web uploads and share links | Uploads and read-only share links in the web peer, off by default | ADR 0019 |
 | Camera-roll backup | Android, opt-in, upload only, originals kept by default | ADR 0020 |
 | Retention settings | Editable at runtime, recycle-bin size shown | ADR 0021 |
+| Confirmed copies | Full replicas confirm holding a file; eviction and removing originals wait for one | ADR 0022 |
+| Encrypted storage peers | Encrypted folders (sync/2, blobs/2), HPKE key grants, storage mode in `tidefelld` | ADR 0023 |
 
 ## Phases
 
@@ -123,12 +125,15 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **4** Clients | On-demand partial replicas; `pair/1`; `ffi` and the AAR release asset; Android Gradle project, foreground service, `DocumentsProvider` | Android app syncs against a full replica using the published AAR |
 | **4b** Desktop placeholders | `fs-fuse` on the same on-demand engine support | A Linux partial replica mounts a folder and opens placeholders on demand |
 | **5** Always on and sharing | Self-run always-on full replica deployed by infra; web peer uploads and share links; camera-roll backup; retention settings | A self-run always-on peer, deployed from pinned artifacts only, keeps a phone and a laptop in sync while they are never online together |
-| **6** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
-| **7** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
+| **5b** Confirmed copies | The engine records which full replicas hold each file made on a device; eviction and the Android app's removal of backed-up originals rely on it | Android removes a backed-up photo only after a full replica confirms it holds the photo, and a partial replica never evicts a file it made without such a copy |
+| **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
+| **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
+| **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
 
 ### Client phases (outline)
 
-Phases 6 and 7 get their own decisions and breakdown when they start. Known constraints:
+Phases 7 and 8 get their own decisions and breakdown when they start. Both wait for CI
+runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 
 - **iOS.** A new `tidefell/ios` repository consumes a `TidefellFFI.xcframework` release asset,
   as Android consumes the AAR (ADR 0014). The File Provider extension runs under tight memory
@@ -140,8 +145,6 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
 - **Windows.** Rust code stays in the monorepo: `fs-cfapi` beside `fs-fuse` on the same engine
   support (ADR 0016), and the release adds a Windows build and installer. CI needs Windows
   runners, hosted or a self-hosted Windows VM.
-- **Encrypted storage peers** (ADR 0018, option A) are a later phase that changes the wire
-  protocol, designed specs first, and are not scheduled yet.
 
 ### Phase 1 work breakdown
 
@@ -185,6 +188,7 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   `tidefell/android` builds against it with camera-roll backup and retention and recycle-bin
   settings, and its emulator exit criterion backs up a photo to a daemon. The setting to remove
   originals after backup is deferred until the engine can report which peers hold a file.
+- Phases 5b and 6 are proposed: ADRs 0022 and 0023. Phases 7 and 8 wait for CI runners.
 
 ### Phase 2 work breakdown
 
@@ -310,3 +314,35 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    settings. Tested on the emulator with seeded media. The Android pin moves to `v0.6.0` here.
    The off-by-default setting to remove originals after backup is deferred: it needs the engine
    to report which peers hold a file.
+
+### Phase 5b work breakdown
+
+1. **Decisions.** ADRs 0022 and 0023, and the breakdowns of Phases 5b and 6.
+2. **Replica kind on the wire.** blobs/1 `ReplicaRequest` and `Replica`, appended, with
+   golden vectors, spec and `net` handlers.
+3. **Confirmed copies in the engine.** Records of which full replicas hold each file,
+   persisted; the checks that fill them in; eviction requires one. Two-daemon tests with a full
+   and a partial peer.
+4. **Surfaces.** API, sdk, CLI (`ls`, `status`), web peer and `ffi` report files without a
+   confirmed copy. Release `v0.7.0`.
+5. **Removing originals (ADR 0020, 0022).** `tidefell/android` against `v0.7.0`: the
+   off-by-default setting on Android 11 and later, the eligibility notification and the system
+   delete request. The emulator exit criterion checks that a backed-up photo becomes eligible
+   only after the daemon, a full replica, confirms it.
+
+### Phase 6 work breakdown
+
+1. **Decisions.** ADR 0023, in the Phase 5b decisions pull request.
+2. **Specs.** sync/2, blobs/2, the encryption key, key grant and sealed version formats, and
+   the key derivations, each with golden vectors, merged before any code.
+3. **`crypto` crate.** Folder key derivations, chunk and metadata sealing and HPKE grants,
+   checked against the vectors.
+4. **Protocol.** v2 messages in `proto` and sync/2 and blobs/2 in `net`, alongside v1.
+5. **Encrypted folders on members.** Creating and joining, grants for new devices, rotation
+   when a member is removed, and decryption into the folder directory. CLI and API support.
+6. **Storage mode.** `[storage]` in `tidefelld`: stored folders with members and quotas,
+   version retention and chunk collection, operator commands.
+7. **Infra.** `role-storage-peer`, and a VM test of the exit criterion that also checks the
+   storage peer's disk for plaintext.
+8. **Docs, site and release.** Guide pages for encrypted folders and running a storage peer.
+   Release `v0.8.0`, and the infra, site and Android pins.

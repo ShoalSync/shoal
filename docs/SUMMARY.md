@@ -53,3 +53,5 @@
   - [0019: The web peer uploads files and shares links](adr/0019-web-uploads-and-share-links.md)
   - [0020: Camera-roll backup on Android](adr/0020-camera-roll-backup.md)
   - [0021: Recycle-bin retention is visible and editable](adr/0021-retention-settings.md)
+  - [0022: Confirmed copies](adr/0022-confirmed-copies.md)
+  - [0023: Encrypted folders and storage peers](adr/0023-encrypted-storage-peers.md)
