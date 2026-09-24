@@ -145,8 +145,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
 - Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
   criterion on an emulator in CI.
-- Phase 4b is in progress: decisions in ADR 0017; steps 1–4 are implemented, with the exit
-  criterion running in CI against a real FUSE mount.
+- Phase 4b is complete: released as `v0.5.0`. A Linux partial replica mounts a folder with
+  FUSE, and the exit criterion runs in CI against a real mount. Phase 5 (Hosted) is next.
 
 ### Phase 2 work breakdown
 
