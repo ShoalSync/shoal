@@ -1,31 +1,40 @@
 name: Release
 
 # A release is a `vX.Y.Z` tag on main. Every artifact carries the workspace version (ADR 0005).
+# Jobs run on the self-hosted runner except the macOS build. A tag that already exists can be
+# released again from the current workflow with a manual run.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, such as v0.4.0
+        required: true
 
 permissions:
   contents: write
 
 env:
   CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   version:
     name: Check tag matches workspace version
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - id: version
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "tidefell-cli") | .version')
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::tag $GITHUB_REF_NAME does not match workspace version $version"
+          version=$(cargo pkgid --package tidefell-cli | sed 's/.*[#@]//')
+          if [ "v$version" != "$TAG" ]; then
+            echo "::error::tag $TAG does not match workspace version $version"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -34,20 +43,36 @@ jobs:
     name: Binaries (${{ matrix.target }})
     needs: version
     runs-on: ${{ matrix.os }}
+    # The macOS build needs hosted minutes; the release goes out without it when they run out.
+    continue-on-error: ${{ matrix.optional }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: self-hosted
+            optional: false
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-24.04-arm
+            os: self-hosted
+            optional: false
+            cross: aarch64-linux-gnu
           - target: aarch64-apple-darwin
             os: macos-latest
+            optional: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - name: Cross toolchain
+        if: matrix.cross
+        run: |
+          command -v ${{ matrix.cross }}-gcc || sudo apt-get install -y gcc-${{ matrix.cross }}
+          env=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
+          echo "CARGO_TARGET_${env}_LINKER=${{ matrix.cross }}-gcc" >> "$GITHUB_ENV"
+          echo "CC_$(echo "${{ matrix.target }}" | tr - _)=${{ matrix.cross }}-gcc" >> "$GITHUB_ENV"
       - name: Build
         run: >
           cargo build --release --locked --target ${{ matrix.target }}
@@ -59,7 +84,11 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/{tidefell,tidefelld} README.md LICENSE "$name/"
           tar -czf "$name.tar.gz" "$name"
-          shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          else
+            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.target }}
@@ -68,9 +97,11 @@ jobs:
   specs:
     name: Specs, vectors and schemas
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
       - name: Package
         run: |
@@ -94,9 +125,11 @@ jobs:
   docs:
     name: Documentation
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: taiki-e/install-action@v2
         with:
           tool: mdbook@0.5.4
@@ -115,11 +148,13 @@ jobs:
   aar:
     name: Android library (AAR)
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       NDK_VERSION: "30.0.16248370"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
@@ -129,11 +164,14 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install cargo-ndk and the NDK
         run: |
           cargo install cargo-ndk --locked --version 4.1.2
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-36"
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - name: Build
         working-directory: bindings/android
@@ -151,7 +189,7 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [version, binaries, specs, docs, aar]
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -159,6 +197,7 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: dist/*
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}

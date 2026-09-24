@@ -113,8 +113,8 @@ jobs:
       - name: Install cargo-ndk and the NDK
         run: |
           cargo install cargo-ndk --locked --version 4.1.2
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" "platforms;android-36"
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - name: Build
         working-directory: bindings/android
