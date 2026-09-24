@@ -10,7 +10,7 @@ Where does a change belong? Start here. See [plan.md](plan.md) for how the repos
 | Glossary, ADRs, cross-repo conventions | `tidefell/tidefell` (`docs/`) |
 | FFI surface exposed to Kotlin | `tidefell/tidefell` (`crates/ffi`) |
 | Android UI, services, `DocumentsProvider`, Gradle build | `tidefell/android` |
-| Relay, DNS, hosted peers, NixOS deployment | `tidefell/infra` |
+| Relay, DNS, always-on peer role, NixOS deployment | `tidefell/infra` |
 | Daemon packaging and the NixOS module for `tidefelld` | `tidefell/tidefell` (`flake.nix`) |
 | Website design, landing pages, blog posts | `tidefell/site` |
 

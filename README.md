@@ -7,9 +7,13 @@ no central server.
   server); others run as *partial replicas* that hold placeholders and fetch file contents on
   demand.
 - **Swarm downloads.** Files download from many peers at once, verified chunk by chunk.
-- **The web interface is just another peer**, one that adds user accounts and sessions.
-- **Deletes are recoverable.** Deleted files go to a recycle bin with a retention period chosen
-  at first setup.
+- **Always on, without a central server.** Run an always-on peer on a machine you control,
+  such as a NAS or a small VPS, so devices that are rarely online together still sync. The
+  project runs no storage service.
+- **The web interface is just another peer**, one that adds user accounts and sessions. It
+  uploads files and can share a file or directory through a link.
+- **Deletes are recoverable.** Deleted files go to a recycle bin; each device chooses how long
+  to keep them and can change it at any time.
 
 Tidefell is built in Rust on [iroh](https://github.com/n0-computer/iroh) (QUIC with hole
 punching and relay fallback), with content-defined chunks transferred and verified by their
