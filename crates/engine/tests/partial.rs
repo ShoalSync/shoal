@@ -188,7 +188,9 @@ async fn files_made_here_are_kept_until_a_full_replica_has_them() {
         "phone",
         30,
         &alice,
-        ReplicaMode::Partial { budget_bytes: 15 },
+        // Fits either file alone but not both, so a background eviction pass keeps the
+        // most recently used one.
+        ReplicaMode::Partial { budget_bytes: 20 },
     );
     phone.write("one.txt", b"first local file");
     phone.write("two.txt", b"second local file");
