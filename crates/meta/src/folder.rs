@@ -140,6 +140,18 @@ impl Folder {
         self.recycle.purge_expired(now_ms)
     }
 
+    /// Removes `entry` from this replica's recycle bin, so it can no longer be restored here,
+    /// and returns it so the caller can release its content. Other replicas keep their copy.
+    pub fn discard(&mut self, entry: &EntryId) -> Option<Recycled> {
+        self.recycle.remove(entry)
+    }
+
+    /// Empties this replica's recycle bin and returns what it held. Other replicas keep
+    /// their copies.
+    pub fn discard_all(&mut self) -> Vec<Recycled> {
+        self.recycle.take_all()
+    }
+
     /// Records a change made on this device and returns the signed version to send to peers.
     ///
     /// The new version supersedes every version of the entry this replica knows, including

@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::types::{
     ApiError, ApprovePairing, Event, FetchRequest, Fetched, File, Folder, KnownPeer, NewFolder,
-    NewMember, PairRequest, Pairing, Peer, Recycled, Status,
+    NewMember, PairRequest, Pairing, Peer, Recycled, RetentionUpdate, Status,
 };
 
 /// Client errors.
@@ -251,6 +251,43 @@ impl Client {
     /// A folder's recycle bin.
     pub async fn recycle_bin(&self, folder: &str) -> Result<Vec<Recycled>, Error> {
         self.get(&format!("/v1/folders/{folder}/recycle")).await
+    }
+
+    /// Changes how long this device keeps a folder's deleted files; `None` or 0 keeps them
+    /// forever.
+    pub async fn set_retention(
+        &self,
+        folder: &str,
+        retention_days: Option<u32>,
+    ) -> Result<Folder, Error> {
+        self.call(
+            Method::PUT,
+            &format!("/v1/folders/{folder}/retention"),
+            Some(&RetentionUpdate { retention_days }),
+        )
+        .await
+    }
+
+    /// Permanently removes every item from this device's recycle bin for a folder, and
+    /// returns what was removed. Other devices keep their copies.
+    pub async fn empty_recycle_bin(&self, folder: &str) -> Result<Vec<Recycled>, Error> {
+        self.call(
+            Method::DELETE,
+            &format!("/v1/folders/{folder}/recycle"),
+            None::<&()>,
+        )
+        .await
+    }
+
+    /// Permanently removes one entry from this device's recycle bin, and returns it. Other
+    /// devices keep their copies.
+    pub async fn discard(&self, folder: &str, entry: &str) -> Result<Recycled, Error> {
+        self.call(
+            Method::DELETE,
+            &format!("/v1/folders/{folder}/recycle/{entry}"),
+            None::<&()>,
+        )
+        .await
     }
 
     /// Restores a deleted entry.

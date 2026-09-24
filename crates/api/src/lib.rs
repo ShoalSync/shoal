@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::FromRef;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tidefell_engine::Engine;
 use tidefell_identity::UserKey;
@@ -67,6 +67,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             "/v1/folders/{id}",
             get(handlers::folder).delete(handlers::remove_folder),
         )
+        .route("/v1/folders/{id}/retention", put(handlers::set_retention))
         .route("/v1/folders/{id}/members", post(handlers::add_member))
         .route(
             "/v1/folders/{id}/members/{user}",
@@ -75,7 +76,14 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/folders/{id}/scan", post(handlers::scan))
         .route("/v1/folders/{id}/files", get(handlers::files))
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))
-        .route("/v1/folders/{id}/recycle", get(handlers::recycle_bin))
+        .route(
+            "/v1/folders/{id}/recycle",
+            get(handlers::recycle_bin).delete(handlers::empty_recycle_bin),
+        )
+        .route(
+            "/v1/folders/{id}/recycle/{entry}",
+            delete(handlers::discard),
+        )
         .route(
             "/v1/folders/{id}/recycle/{entry}/restore",
             post(handlers::restore),

@@ -91,6 +91,19 @@ impl RecycleBin {
         self.items.is_empty()
     }
 
+    /// Removes and returns every item. The caller releases their content.
+    pub(crate) fn take_all(&mut self) -> Vec<Recycled> {
+        std::mem::take(&mut self.items).into_values().collect()
+    }
+
+    /// When the next item expires, or `None` if none does.
+    pub fn next_expiry_ms(&self) -> Option<i64> {
+        self.items
+            .values()
+            .filter_map(|item| self.expires_at_ms(item))
+            .min()
+    }
+
     /// Removes and returns items whose retention expired at or before `now_ms`. The caller
     /// releases their content.
     pub fn purge_expired(&mut self, now_ms: i64) -> Vec<Recycled> {

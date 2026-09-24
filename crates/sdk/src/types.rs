@@ -44,9 +44,31 @@ pub struct Folder {
     pub members: Vec<String>,
     /// Recycle-bin retention in days; `null` keeps deleted files forever.
     pub retention_days: Option<u32>,
+    /// What this device's recycle bin holds for the folder.
+    #[serde(default)]
+    pub recycle_bin: RecycleBinSummary,
     /// True if the folder comes from the configuration file and cannot be changed through
     /// the API.
     pub configured: bool,
+}
+
+/// A summary of one device's recycle bin for a folder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RecycleBinSummary {
+    /// Number of deleted files.
+    pub items: u64,
+    /// Total size of the deleted files in bytes.
+    pub bytes: u64,
+    /// When the next item will be purged; `null` if none will be.
+    pub next_expiry_ms: Option<i64>,
+}
+
+/// A new recycle-bin retention for a folder. Applies to this device only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RetentionUpdate {
+    /// Days to keep deleted files; `null` or 0 keeps them forever. Items past a shortened
+    /// retention are purged at the next hourly purge.
+    pub retention_days: Option<u32>,
 }
 
 /// Creates a folder, or joins one shared from another device.

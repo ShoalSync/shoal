@@ -136,6 +136,38 @@ async fn control_api_end_to_end() {
         ErrorKind::NotFound
     );
 
+    // Retention and emptying the recycle bin.
+    let forever = client.set_retention(&created.id, None).await.unwrap();
+    assert_eq!(forever.retention_days, None);
+    for name in ["b.txt", "c.txt"] {
+        std::fs::write(root.join(name), b"to delete").unwrap();
+    }
+    client.scan(&created.id).await.unwrap();
+    for name in ["b.txt", "c.txt"] {
+        std::fs::remove_file(root.join(name)).unwrap();
+    }
+    client.scan(&created.id).await.unwrap();
+    let folder = client.set_retention(&created.id, Some(3)).await.unwrap();
+    assert_eq!(folder.retention_days, Some(3));
+    assert_eq!(folder.recycle_bin.items, 2);
+    assert_eq!(folder.recycle_bin.bytes, 18);
+    let bin = client.recycle_bin(&created.id).await.unwrap();
+    assert_eq!(
+        folder.recycle_bin.next_expiry_ms,
+        bin.iter().filter_map(|r| r.expires_at_ms).min()
+    );
+    let discarded = client.discard(&created.id, &bin[0].entry).await.unwrap();
+    assert_eq!(discarded.entry, bin[0].entry);
+    assert_eq!(
+        api_error(client.discard(&created.id, &bin[0].entry).await),
+        ErrorKind::NotFound
+    );
+    let emptied = client.empty_recycle_bin(&created.id).await.unwrap();
+    assert_eq!(emptied.len(), 1);
+    assert_eq!(emptied[0].entry, bin[1].entry);
+    let folder = client.folder(&created.id).await.unwrap();
+    assert_eq!(folder.recycle_bin, Default::default());
+
     // Members.
     let bob = UserKey::from_seed([3; 32]).id().to_string();
     let with_bob = client.add_member(&created.id, &bob).await.unwrap();
@@ -201,6 +233,8 @@ async fn control_api_end_to_end() {
     for path in [
         "/v1/status",
         "/v1/folders",
+        "/v1/folders/{id}/retention",
+        "/v1/folders/{id}/recycle/{entry}",
         "/v1/folders/{id}/recycle/{entry}/restore",
         "/v1/events",
     ] {

@@ -157,6 +157,72 @@ async fn share_join_delete_restore_and_restart() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn retention_and_emptying_the_recycle_bin() {
+    const DAY_MS: i64 = 86_400_000;
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let a = Device::new(tmp.path(), "a", 40, &alice);
+    let engine = a.start(Vec::new()).await;
+    engine.add_folder(a.folder(&[alice.id()])).unwrap();
+
+    let delete = |names: &[&str]| {
+        for name in names {
+            fs::remove_file(a.root().join(name)).unwrap();
+        }
+    };
+    for (name, body) in [("a.txt", "aaaa"), ("b.txt", "bbbbbb"), ("c.txt", "cc")] {
+        fs::write(a.root().join(name), body).unwrap();
+    }
+    engine.scan(FOLDER).await.unwrap();
+    delete(&["a.txt", "b.txt", "c.txt"]);
+    engine.scan(FOLDER).await.unwrap();
+
+    let summary = engine.folders()[0].recycle_bin;
+    assert_eq!(summary.items, 3);
+    assert_eq!(summary.bytes, 12);
+    let bin = engine.recycle_bin(FOLDER).unwrap();
+    let first_expiry = bin.iter().filter_map(|r| r.expires_at_ms).min();
+    assert_eq!(summary.next_expiry_ms, first_expiry);
+
+    // One item, then the rest.
+    let a_txt = bin.iter().find(|r| r.path == "a.txt").unwrap().entry;
+    let emptied = engine.empty_recycle_bin(FOLDER, Some(a_txt)).unwrap();
+    assert_eq!(emptied.len(), 1);
+    assert_eq!(emptied[0].path, "a.txt");
+    assert!(matches!(
+        engine.empty_recycle_bin(FOLDER, Some(a_txt)),
+        Err(Error::NotRecycled(_))
+    ));
+    assert!(engine.restore(FOLDER, a_txt).is_err());
+    assert_eq!(engine.empty_recycle_bin(FOLDER, None).unwrap().len(), 2);
+    assert_eq!(engine.folders()[0].recycle_bin, Default::default());
+
+    // Retention changes are kept across restarts.
+    fs::write(a.root().join("d.txt"), "dddd").unwrap();
+    engine.scan(FOLDER).await.unwrap();
+    delete(&["d.txt"]);
+    engine.scan(FOLDER).await.unwrap();
+    engine.set_retention(FOLDER, Retention::Forever).unwrap();
+    assert_eq!(engine.folders()[0].retention, Retention::Forever);
+    assert_eq!(engine.folders()[0].recycle_bin.next_expiry_ms, None);
+    engine.shutdown().await;
+    let engine = a.start(Vec::new()).await;
+    let folder = &engine.folders()[0];
+    assert_eq!(folder.retention, Retention::Forever);
+    assert_eq!(folder.recycle_bin.items, 1);
+
+    // Shortening retention purges at the next purge, not before.
+    engine.set_retention(FOLDER, Retention::Days(1)).unwrap();
+    assert_eq!(engine.folders()[0].recycle_bin.items, 1);
+    let deleted_at = engine.recycle_bin(FOLDER).unwrap()[0].deleted_at_ms;
+    engine.purge(deleted_at + DAY_MS / 2);
+    assert_eq!(engine.folders()[0].recycle_bin.items, 1);
+    engine.purge(deleted_at + DAY_MS);
+    assert_eq!(engine.folders()[0].recycle_bin.items, 0);
+    engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn membership_granted_at_runtime() {
     let tmp = tempfile::tempdir().unwrap();
     let alice = UserKey::from_seed([1; 32]);
@@ -222,6 +288,10 @@ async fn configured_folders_are_read_only_at_runtime() {
     ));
     assert!(matches!(
         engine.add_member(FOLDER, UserKey::from_seed([2; 32]).id()),
+        Err(Error::Configured(_))
+    ));
+    assert!(matches!(
+        engine.set_retention(FOLDER, Retention::Forever),
         Err(Error::Configured(_))
     ));
     engine.shutdown().await;

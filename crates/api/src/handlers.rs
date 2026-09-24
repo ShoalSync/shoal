@@ -16,7 +16,8 @@ use tidefell_engine::{
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, ErrorKind, Event, FetchRequest, Fetched, File, Folder, KnownPeer,
-    Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, Status,
+    Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, RecycleBinSummary, Recycled,
+    RetentionUpdate, Status,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -40,12 +41,15 @@ type AppState = State<Arc<Engine>>;
         folder,
         add_folder,
         remove_folder,
+        set_retention,
         add_member,
         remove_member,
         scan,
         files,
         fetch,
         recycle_bin,
+        empty_recycle_bin,
+        discard,
         restore,
         peers,
         known_peers,
@@ -61,6 +65,8 @@ type AppState = State<Arc<Engine>>;
         Folder,
         Mode,
         NewFolder,
+        RecycleBinSummary,
+        RetentionUpdate,
         NewMember,
         File,
         FetchRequest,
@@ -111,7 +117,9 @@ impl From<EngineError> for ApiFailure {
                 (StatusCode::CONFLICT, ErrorKind::Conflict)
             }
             EngineError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorKind::BadRequest),
-            EngineError::NoSuchFile(_) => (StatusCode::NOT_FOUND, ErrorKind::NotFound),
+            EngineError::NoSuchFile(_) | EngineError::NotRecycled(_) => {
+                (StatusCode::NOT_FOUND, ErrorKind::NotFound)
+            }
             EngineError::Unavailable(_) | EngineError::Net(_) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable)
             }
@@ -248,6 +256,26 @@ pub(crate) async fn remove_folder(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Changes how long this device keeps the folder's deleted files. Items past a shortened
+/// retention are purged at the next hourly purge, not immediately.
+#[utoipa::path(put, path = "/v1/folders/{id}/retention", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = RetentionUpdate,
+    responses((status = 200, body = Folder), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn set_retention(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(update): Json<RetentionUpdate>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    let retention = match update.retention_days {
+        None | Some(0) => Retention::Forever,
+        Some(days) => Retention::Days(days),
+    };
+    engine.set_retention(id, retention)?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
 /// Lets a user's devices sync the folder.
 #[utoipa::path(post, path = "/v1/folders/{id}/members", tag = "folders",
     params(("id" = String, Path, description = "Folder ID")),
@@ -339,6 +367,49 @@ pub(crate) async fn recycle_bin(
     ))
 }
 
+/// Permanently removes every item from this device's recycle bin for the folder, and
+/// returns what was removed. Other devices keep their copies.
+#[utoipa::path(delete, path = "/v1/folders/{id}/recycle", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = [Recycled]), (status = 404, body = ApiError)))]
+pub(crate) async fn empty_recycle_bin(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<Recycled>>> {
+    Ok(Json(
+        engine
+            .empty_recycle_bin(parse("folder", &id)?, None)?
+            .into_iter()
+            .map(convert::recycled)
+            .collect(),
+    ))
+}
+
+/// Permanently removes one entry from this device's recycle bin, and returns it. Other
+/// devices keep their copies.
+#[utoipa::path(delete, path = "/v1/folders/{id}/recycle/{entry}", tag = "files",
+    params(("id" = String, Path, description = "Folder ID"), ("entry" = String, Path, description = "Entry ID")),
+    responses((status = 200, body = Recycled), (status = 404, body = ApiError)))]
+pub(crate) async fn discard(
+    State(engine): AppState,
+    Path((id, entry)): Path<(String, String)>,
+) -> ApiResult<Json<Recycled>> {
+    let folder: FolderId = parse("folder", &id)?;
+    let entry = parse_entry(&entry)?;
+    engine
+        .empty_recycle_bin(folder, Some(entry))?
+        .into_iter()
+        .next()
+        .map(|r| Json(convert::recycled(r)))
+        .ok_or_else(|| ApiFailure::not_found("entry is not in the recycle bin"))
+}
+
+fn parse_entry(entry: &str) -> ApiResult<EntryId> {
+    entry.parse().map_err(|_| {
+        ApiFailure::bad_request(format!("entry {entry:?} is not 32 lowercase hex digits"))
+    })
+}
+
 /// Restores a deleted entry. It reappears on every replica.
 #[utoipa::path(post, path = "/v1/folders/{id}/recycle/{entry}/restore", tag = "files",
     params(("id" = String, Path, description = "Folder ID"), ("entry" = String, Path, description = "Entry ID")),
@@ -348,9 +419,7 @@ pub(crate) async fn restore(
     Path((id, entry)): Path<(String, String)>,
 ) -> ApiResult<StatusCode> {
     let folder: FolderId = parse("folder", &id)?;
-    let entry: EntryId = entry.parse().map_err(|_| {
-        ApiFailure::bad_request(format!("entry {entry:?} is not 32 lowercase hex digits"))
-    })?;
+    let entry = parse_entry(&entry)?;
     if !engine.recycle_bin(folder)?.iter().any(|r| r.entry == entry) {
         return Err(ApiFailure::not_found("entry is not in the recycle bin"));
     }

@@ -22,8 +22,9 @@ tidefell folder join <folder id> /srv/photos
 ```
 
 Both commands take `--retention-days` (how long deleted files stay in the recycle bin, default
-30; 0 keeps them forever) and `--member` to set the members explicitly. By default the only
-member is your own user.
+30; 0 keeps them forever; change it later with `tidefell folder retention`, see
+[the recycle bin](recycle-bin.md#retention)) and `--member` to set the members explicitly. By
+default the only member is your own user.
 
 ## Sharing with other people
 

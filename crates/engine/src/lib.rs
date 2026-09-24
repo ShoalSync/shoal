@@ -46,7 +46,7 @@ pub use tidefell_meta::Retention;
 pub use tidefell_net::{RelayConfig, RelayUrl};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
-pub use views::{Event, FileInfo, FolderInfo, PeerInfo, RecycledInfo};
+pub use views::{Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
 
 /// Engine errors.
 #[derive(Debug, thiserror::Error)]
@@ -80,6 +80,9 @@ pub enum Error {
     /// The folder comes from the configuration file and cannot be changed at runtime.
     #[error("folder {0} is managed by the configuration file")]
     Configured(tidefell_proto::FolderId),
+    /// The entry is not in the folder's recycle bin.
+    #[error("entry {0} is not in the recycle bin")]
+    NotRecycled(tidefell_proto::EntryId),
     /// No live file has this path.
     #[error("no such file: {0}")]
     NoSuchFile(String),
