@@ -184,6 +184,38 @@ async fn pair_join_open_and_save() {
             == Some(b"new photo".as_slice())
     })
     .await;
+    // Deleting sends it to the recycle bin, which this device can keep longer or empty.
+    node.delete(offer.id.clone(), "camera/new.jpg".into())
+        .await
+        .unwrap();
+    eventually("the laptop removes the deleted photo", || {
+        !laptop_root.join("camera/new.jpg").exists()
+    })
+    .await;
+    let bin = node.recycle_bin(offer.id.clone()).unwrap();
+    assert_eq!(bin.len(), 1);
+    assert_eq!(bin[0].path, "camera/new.jpg");
+    let folder = node.set_retention(offer.id.clone(), 0).unwrap();
+    assert_eq!(folder.retention_days, 0);
+    assert_eq!(folder.recycled_files, 1);
+    assert_eq!(folder.recycled_bytes, 9);
+    assert_eq!(folder.next_purge_ms, None);
+    let folder = node.set_retention(offer.id.clone(), 7).unwrap();
+    assert_eq!(
+        folder.next_purge_ms,
+        Some(bin[0].deleted_at_ms + 7 * 86_400_000)
+    );
+    let discarded = node
+        .discard(offer.id.clone(), bin[0].entry.clone())
+        .unwrap();
+    assert_eq!(discarded.path, "camera/new.jpg");
+    assert!(matches!(
+        node.discard(offer.id.clone(), bin[0].entry.clone()),
+        Err(tidefell_ffi::TidefellError::NotFound { .. })
+    ));
+    assert!(node.empty_recycle_bin(offer.id.clone()).unwrap().is_empty());
+    assert_eq!(node.folders().unwrap()[0].recycled_files, 0);
+
     eventually("events arrive", || {
         events
             .lock()

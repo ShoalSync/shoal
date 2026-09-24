@@ -177,6 +177,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   limit, revocation), off unless `[web] share_links = true`.
 - Phase 5 step 4 is implemented: `tidefell/infra` has `role-always-on` and a three-VM test of
   the exit criterion, and the guide explains running an always-on peer.
+- Phase 5 step 5 is implemented: the Android bindings expose retention, the recycle-bin
+  summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
 
 ### Phase 2 work breakdown
 
@@ -291,10 +293,13 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    replica with the web peer, relay and TLS, pinned to a release; a guide page on running one
    on a small VPS. The exit criterion runs in infra CI: a phone-like partial replica and a
    laptop-like one, never online together, sync through the always-on peer.
-5. **Camera-roll backup (ADR 0020).** `tidefell/android`: backup settings, `MediaStore`
-   tracking, `WorkManager` scheduling, an off-by-default setting to remove originals after
-   backup, and retention and recycle-bin settings from step 2.
-   Tested on the emulator with seeded media.
+5. **Android bindings.** The `ffi` crate exposes what the Android app needs from steps 2 and 5:
+   changing retention, the recycle-bin summary on each folder, emptying the recycle bin, and
+   deleting files. They ship in `v0.6.0`, which the app builds against.
 6. **Site and docs.** Remove any suggestion of a project-run service; document the always-on
    peer, sharing and backup.
-7. **Release.** `v0.6.0`, and the Android, infra and site pin bumps.
+7. **Release.** `v0.6.0`, and the infra and site pin bumps.
+8. **Camera-roll backup (ADR 0020).** `tidefell/android`, against the `v0.6.0` AAR: backup
+   settings, `MediaStore` tracking, `WorkManager` scheduling, an off-by-default setting to remove
+   originals after backup, and retention and recycle-bin settings. Tested on the emulator with
+   seeded media. The Android pin moves to `v0.6.0` here.

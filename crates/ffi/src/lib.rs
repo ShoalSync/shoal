@@ -85,7 +85,7 @@ impl From<tidefell_engine::Error> for TidefellError {
         use tidefell_engine::Error as E;
         let detail = e.to_string();
         match e {
-            E::UnknownFolder(_) | E::NoSuchFile(_) => Self::NotFound { detail },
+            E::UnknownFolder(_) | E::NoSuchFile(_) | E::NotRecycled(_) => Self::NotFound { detail },
             E::Unavailable(_) | E::Net(_) => Self::Unavailable { detail },
             E::Invalid(_) | E::FolderExists(_) | E::Configured(_) => Self::Invalid { detail },
             _ => Self::Failed { detail },
@@ -352,6 +352,13 @@ pub struct Folder {
     pub members: Vec<String>,
     /// Recycle-bin retention in days; 0 keeps deleted files forever.
     pub retention_days: u32,
+    /// Deleted files in this device's recycle bin.
+    pub recycled_files: u64,
+    /// Their total size in bytes.
+    pub recycled_bytes: u64,
+    /// When the next one will be purged, milliseconds since the Unix epoch; `None` if none
+    /// will be.
+    pub next_purge_ms: Option<i64>,
 }
 
 /// A live file.
@@ -478,6 +485,19 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
             Retention::Forever => 0,
             Retention::Days(d) => d,
         },
+        recycled_files: f.recycle_bin.items as u64,
+        recycled_bytes: f.recycle_bin.bytes,
+        next_purge_ms: f.recycle_bin.next_expiry_ms,
+    }
+}
+
+fn recycled_record(r: tidefell_engine::RecycledInfo) -> Recycled {
+    Recycled {
+        entry: r.entry.to_string(),
+        path: r.path,
+        size: r.size,
+        deleted_at_ms: r.deleted_at_ms,
+        expires_at_ms: r.expires_at_ms,
     }
 }
 
@@ -566,6 +586,20 @@ impl Node {
         )
     }
 
+    /// Changes how long this device keeps a folder's deleted files; 0 keeps them forever.
+    /// Files past a shortened retention are purged within the hour, not immediately.
+    pub fn set_retention(&self, folder: String, retention_days: u32) -> Result<Folder> {
+        let engine = self.engine()?;
+        let id: FolderId = parse("folder ID", &folder)?;
+        engine.set_retention(id, retention(retention_days))?;
+        engine
+            .folders()
+            .into_iter()
+            .find(|f| f.id == id)
+            .map(folder_record)
+            .ok_or(TidefellError::NotFound { detail: folder })
+    }
+
     /// Stops syncing a folder. Files on disk are kept.
     pub fn remove_folder(&self, id: String) -> Result<()> {
         Ok(self.engine()?.remove_folder(parse("folder ID", &id)?)?)
@@ -611,6 +645,15 @@ impl Node {
         Ok(())
     }
 
+    /// Deletes the file at `path` on every device; it goes to their recycle bins. Works on
+    /// placeholders too.
+    pub async fn delete(&self, folder: String, path: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.delete(folder, &path).await }).await??;
+        Ok(())
+    }
+
     /// Scans a folder for local changes now.
     pub async fn scan(&self, folder: String) -> Result<()> {
         let engine = self.engine()?;
@@ -625,13 +668,32 @@ impl Node {
             .engine()?
             .recycle_bin(parse("folder ID", &folder)?)?
             .into_iter()
-            .map(|r| Recycled {
-                entry: r.entry.to_string(),
-                path: r.path,
-                size: r.size,
-                deleted_at_ms: r.deleted_at_ms,
-                expires_at_ms: r.expires_at_ms,
-            })
+            .map(recycled_record)
+            .collect())
+    }
+
+    /// Permanently deletes one file from this device's recycle bin. Other devices keep their
+    /// copies.
+    pub fn discard(&self, folder: String, entry: String) -> Result<Recycled> {
+        self.engine()?
+            .empty_recycle_bin(
+                parse("folder ID", &folder)?,
+                Some(parse("entry ID", &entry)?),
+            )?
+            .into_iter()
+            .next()
+            .map(recycled_record)
+            .ok_or(TidefellError::NotFound { detail: entry })
+    }
+
+    /// Permanently deletes everything in this device's recycle bin for a folder, and returns
+    /// what was removed. Other devices keep their copies.
+    pub fn empty_recycle_bin(&self, folder: String) -> Result<Vec<Recycled>> {
+        Ok(self
+            .engine()?
+            .empty_recycle_bin(parse("folder ID", &folder)?, None)?
+            .into_iter()
+            .map(recycled_record)
             .collect())
     }
 
