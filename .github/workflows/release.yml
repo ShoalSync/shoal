@@ -159,6 +159,10 @@ jobs:
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
+        with:
+          # The self-hosted runners share one ~/.cargo; restoring or cleaning its bin
+          # directory in one job pulls cargo and tools out from under the others.
+          cache-bin: "false"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
