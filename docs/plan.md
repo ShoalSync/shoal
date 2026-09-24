@@ -179,6 +179,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   the exit criterion, and the guide explains running an always-on peer.
 - Phase 5 step 5 is implemented: the Android bindings expose retention, the recycle-bin
   summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
+- Phase 5 step 6 is implemented: the README and the book describe self-run always-on peers,
+  uploads, share links and per-device retention; no page suggests a project-run service.
 
 ### Phase 2 work breakdown
 

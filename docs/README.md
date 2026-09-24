@@ -6,9 +6,12 @@ Nextcloud, but with no central server.
 - **Every device is a peer.** Some run as *full replicas* that keep everything (a NAS, a home
   server); others run as *partial replicas* that keep metadata and fetch content on demand.
 - **Swarm downloads.** Files download from many peers at once, verified chunk by chunk.
-- **The web interface is just another peer**, one that adds accounts and sessions.
-- **Deletes are recoverable.** Deleted files go to a recycle bin and are kept for a retention
-  period you choose per folder.
+- **Always on, without a central server.** An [always-on peer](guide/always-on.md) on a
+  machine you control keeps devices in sync when they are rarely online together.
+- **The web interface is just another peer**, one that adds accounts and sessions, uploads, and
+  [share links](guide/web.md#share-links).
+- **Deletes are recoverable.** Deleted files go to a recycle bin and are kept for a
+  [retention period](guide/recycle-bin.md#retention) each device chooses per folder.
 
 This book covers installing and running Tidefell, self-hosting it, the protocols it speaks,
 and how the project is organised. Terms in *italics* are defined in the
