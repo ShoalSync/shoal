@@ -25,7 +25,8 @@ it keeps no record of the answers and cannot tell a full replica from a partial 
   a file that another device made at any time.
 - **Replica kind on the wire.** blobs/1 gains a message pair, appended after the existing
   messages: `ReplicaRequest { folder }` and `Replica { full: bool }`. A peer that does not
-  know them replies with `Error(ProtocolViolation)` and is treated as partial. Appending a
+  know them cannot decode the request and closes the stream without a reply, and any peer
+  that does not answer `Replica` is treated as partial. Appending a
   message is compatible with blobs/1; the spec and golden vectors are updated.
 - **The engine records confirmations.** For each folder it keeps, per content hash, the
   full replicas that confirmed it and when, persisted with the folder's state. It checks only
