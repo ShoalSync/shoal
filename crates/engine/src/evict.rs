@@ -4,14 +4,12 @@ use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
 
-use tidefell_net::Node;
 use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{ChunkHash, FolderId};
 use tracing::{debug, info};
 
 use crate::config::ReplicaMode;
 use crate::engine::{FolderHandle, Inner};
-use crate::materialize::held_elsewhere;
 use crate::scan::unchanged;
 use crate::views::Event;
 use crate::Result;
@@ -25,14 +23,18 @@ struct Candidate {
     authored_here: bool,
 }
 
+/// True if a full replica has confirmed holding `content` (ADR 0022).
+fn has_confirmed_copy(handle: &FolderHandle, content: &tidefell_proto::ContentHash) -> bool {
+    handle
+        .lock()
+        .copies
+        .get(content)
+        .is_some_and(|devices| !devices.is_empty())
+}
+
 /// Evicts least recently used, unpinned files of partial folder `id` until its materialised
 /// files fit its budget. Callers hold the folder's `fs_lock`.
-pub(crate) async fn evict(
-    inner: &Arc<Inner>,
-    node: &Arc<Node>,
-    id: FolderId,
-    handle: &FolderHandle,
-) -> Result<()> {
+pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> Result<()> {
     let (root, budget, mut usage, candidates) = {
         let state = handle.lock();
         let ReplicaMode::Partial { budget_bytes } = state.config.mode else {
@@ -78,13 +80,9 @@ pub(crate) async fn evict(
         if usage <= budget {
             break;
         }
-        if candidate.authored_here {
-            let manifest = handle.lock().manifests.get(&candidate.content).cloned();
-            let Some(manifest) = manifest else { continue };
-            if !held_elsewhere(node, id, &manifest).await {
-                debug!(folder = %id, path = %candidate.path, "keeping: no peer holds it yet");
-                continue;
-            }
+        if candidate.authored_here && !has_confirmed_copy(handle, &candidate.content) {
+            debug!(folder = %id, path = %candidate.path, "keeping: no full replica holds it yet");
+            continue;
         }
         let mut state = handle.lock();
         let Some(local) = state.local.get(&candidate.path).copied() else {

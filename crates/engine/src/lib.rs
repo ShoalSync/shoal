@@ -11,14 +11,17 @@
 //!   scan (the next scan turns that edit into a conflict, which edits win);
 //! - **purges** recycle-bin entries past their retention and garbage-collects their chunks;
 //! - in a **partial replica**, keeps files as placeholders until they are opened, and evicts
-//!   the least recently used ones to stay within the folder's budget (ADR 0016).
+//!   the least recently used ones to stay within the folder's budget (ADR 0016);
+//! - **confirms copies**: asks connected full replicas whether they hold the files this device
+//!   made, and records those that do (ADR 0022). A partial replica evicts a file it made only
+//!   once it has a confirmed copy.
 //!
 //! # On-disk layout
 //!
 //! ```text
 //! <data>/blocks/                 block store shared by all folders
 //! <data>/folders/<id>/meta       folder metadata snapshot (`meta` format)
-//! <data>/folders/<id>/state      engine state: manifests, local file cache, peer progress
+//! <data>/folders/<id>/state      engine state: manifests, local files, peer progress, copies
 //! <folder root>/.tidefell/tmp/   in-progress downloads, renamed into place when complete
 //! ```
 //!
@@ -29,6 +32,7 @@
 
 mod backend;
 mod config;
+mod copies;
 pub mod device;
 mod engine;
 mod evict;
@@ -46,7 +50,7 @@ pub use tidefell_meta::Retention;
 pub use tidefell_net::{RelayConfig, RelayUrl};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
-pub use views::{Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
+pub use views::{CopyInfo, Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
 
 /// Engine errors.
 #[derive(Debug, thiserror::Error)]

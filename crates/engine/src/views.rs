@@ -25,6 +25,8 @@ pub struct FolderInfo {
     /// True if the folder comes from the configuration file (and so cannot be changed or
     /// removed at runtime).
     pub configured: bool,
+    /// Live files made on this device that no full replica has confirmed yet (ADR 0022).
+    pub only_here: usize,
 }
 
 /// A summary of one replica's recycle bin.
@@ -57,6 +59,23 @@ pub struct FileInfo {
     pub conflicts: usize,
     /// The device that made the current version.
     pub author: DeviceId,
+    /// Full replicas that confirmed holding the current version's content (ADR 0022). Only
+    /// tracked for content made on this device; 0 for everything else.
+    pub confirmed_copies: usize,
+    /// True if this device made the current version and no full replica has confirmed it:
+    /// this device may hold the only copy.
+    pub only_here: bool,
+}
+
+/// A full replica that confirmed holding a file's content (ADR 0022).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyInfo {
+    /// The device.
+    pub device: DeviceId,
+    /// Its name when it confirmed.
+    pub name: String,
+    /// When it confirmed, milliseconds since the Unix epoch.
+    pub confirmed_ms: i64,
 }
 
 /// A deleted file in the recycle bin.

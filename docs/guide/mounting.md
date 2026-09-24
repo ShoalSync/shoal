@@ -45,7 +45,9 @@ killed without unmounting, it clears the stale mount on its next start.
   bit are not supported.
 
 Files not opened recently become placeholders again when the folder exceeds its budget. Open
-files are never evicted.
+files are never evicted. Neither is a file made on this device until a full replica, such as a
+NAS or an always-on peer, has confirmed holding it, so a folder with no full replica can grow
+past its budget.
 
 ## Running as a systemd user service
 
