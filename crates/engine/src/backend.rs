@@ -9,6 +9,7 @@ use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signe
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
+use crate::config::ReplicaMode;
 use crate::engine::Inner;
 use crate::views::Event;
 
@@ -106,6 +107,12 @@ impl Backend for EngineBackend {
         let manifest = self.manifest(folder, content)?;
         let availability = self.0.store.lock().unwrap().availability(&manifest);
         Some((availability.len() as u32, availability.as_bytes().to_vec()))
+    }
+
+    fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {
+        let handle = self.0.folder(folder).ok()?;
+        let full = matches!(handle.lock().config.mode, ReplicaMode::Full);
+        Some(full)
     }
 
     fn changes(&self) -> watch::Receiver<u64> {

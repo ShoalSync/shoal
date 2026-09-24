@@ -188,6 +188,10 @@ impl Backend for TestBackend {
         Some((manifest.chunks.len() as u32, bitmap))
     }
 
+    fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {
+        (*folder == FOLDER).then_some(true)
+    }
+
     fn changes(&self) -> watch::Receiver<u64> {
         self.changes.subscribe()
     }
@@ -291,6 +295,12 @@ async fn manifests_chunks_and_availability() {
         .unwrap();
     assert_eq!((count, bitmap), (1, vec![1]));
 
+    assert!(node_b.is_full_replica(node_a.addr(), FOLDER).await.unwrap());
+    assert!(node_b
+        .is_full_replica(node_a.addr(), FolderId([0x99; 32]))
+        .await
+        .is_err());
+
     node_b.shutdown().await;
     node_a.shutdown().await;
 }
@@ -319,6 +329,7 @@ async fn non_members_get_nothing() {
         .availability(node_a.addr(), FOLDER, content)
         .await
         .is_err());
+    assert!(node_m.is_full_replica(node_a.addr(), FOLDER).await.is_err());
 
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(m.current(1).is_none(), "no index leaked to a non-member");

@@ -94,6 +94,15 @@ async fn serve_stream(
             )
             .await?;
         }
+        BlobsMessage::ReplicaRequest { folder } => {
+            if !backend.is_member(&folder, &peer) {
+                return reject(&mut send, BlobsErrorCode::NotAMember).await;
+            }
+            let Some(full) = backend.is_full_replica(&folder) else {
+                return reject(&mut send, BlobsErrorCode::UnknownFolder).await;
+            };
+            frame_io::write(&mut send, &BlobsMessage::Replica { full }).await?;
+        }
         _ => return reject(&mut send, BlobsErrorCode::ProtocolViolation).await,
     }
     send.finish().map_err(|e| Error::Stream(e.to_string()))?;
@@ -187,5 +196,19 @@ pub(crate) async fn availability(
         }
         BlobsMessage::Error { code } => Err(Error::Rejected(format!("{code:?}"))),
         _ => Err(Error::Protocol("unexpected availability response".into())),
+    }
+}
+
+/// Asks whether the peer is a full replica of `folder` (ADR 0022).
+pub(crate) async fn replica(
+    conn: &Connection,
+    certificate: Signed<DeviceCertificate>,
+    folder: FolderId,
+) -> Result<bool> {
+    let mut recv = open(conn, certificate, BlobsMessage::ReplicaRequest { folder }).await?;
+    match frame_io::expect(&mut recv).await? {
+        BlobsMessage::Replica { full } => Ok(full),
+        BlobsMessage::Error { code } => Err(Error::Rejected(format!("{code:?}"))),
+        _ => Err(Error::Protocol("unexpected replica response".into())),
     }
 }

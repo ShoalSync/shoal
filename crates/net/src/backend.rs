@@ -56,6 +56,9 @@ pub trait Backend: Send + Sync + 'static {
     /// `(chunk_count, bitmap)` for `content` in `folder`, if the content is known.
     fn availability(&self, folder: &FolderId, content: &ContentHash) -> Option<(u32, Vec<u8>)>;
 
+    /// Whether this device is a full replica of `folder`; `None` if the folder is unknown.
+    fn is_full_replica(&self, folder: &FolderId) -> Option<bool>;
+
     /// A counter that changes whenever local index entries are added, so sessions can push
     /// new versions to peers.
     fn changes(&self) -> watch::Receiver<u64>;

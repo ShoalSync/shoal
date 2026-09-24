@@ -31,6 +31,14 @@
     {
       "frame": "020602",
       "name": "error-too-many-chunks"
+    },
+    {
+      "frame": "21072222222222222222222222222222222222222222222222222222222222222222",
+      "name": "replica-request"
+    },
+    {
+      "frame": "020801",
+      "name": "replica"
     }
   ]
 }
