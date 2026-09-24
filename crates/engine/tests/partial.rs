@@ -215,3 +215,120 @@ async fn files_made_here_are_kept_until_a_peer_has_them() {
     engine_nas.shutdown().await;
     engine_phone.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn delete_and_rename_work_on_placeholders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 30, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        31,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    nas.write("a.txt", b"first");
+    nas.write("old.txt", b"replaced");
+    fs::create_dir_all(nas.root().join("docs")).unwrap();
+    nas.write("docs/b.txt", b"bee");
+    nas.write("docs/c.txt", b"sea");
+
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 4
+    })
+    .await;
+
+    // Renaming a placeholder moves it on the NAS without fetching it here.
+    engine_laptop
+        .rename(FOLDER, "a.txt", "z.txt")
+        .await
+        .unwrap();
+    assert!(!on_disk(&engine_laptop, "z.txt"));
+    eventually("the NAS moves a.txt", || {
+        nas.read("z.txt").as_deref() == Some(b"first".as_slice()) && nas.read("a.txt").is_none()
+    })
+    .await;
+
+    // Renaming a directory moves materialised files on disk and placeholders in metadata.
+    assert_eq!(touch(&engine_laptop, "docs/b.txt").await, b"bee");
+    engine_laptop
+        .rename(FOLDER, "docs", "archive")
+        .await
+        .unwrap();
+    assert_eq!(
+        laptop.read("archive/b.txt").as_deref(),
+        Some(b"bee".as_slice())
+    );
+    assert!(laptop.read("docs/b.txt").is_none());
+    assert!(on_disk(&engine_laptop, "archive/b.txt"));
+    assert!(!on_disk(&engine_laptop, "archive/c.txt"));
+    eventually("the NAS moves the directory", || {
+        nas.read("archive/b.txt").is_some()
+            && nas.read("archive/c.txt").as_deref() == Some(b"sea".as_slice())
+            && nas.read("docs/c.txt").is_none()
+    })
+    .await;
+
+    // Renaming over a file replaces it, and the replaced version goes to the recycle bin.
+    engine_laptop
+        .rename(FOLDER, "z.txt", "old.txt")
+        .await
+        .unwrap();
+    eventually("the NAS replaces old.txt", || {
+        nas.read("old.txt").as_deref() == Some(b"first".as_slice()) && nas.read("z.txt").is_none()
+    })
+    .await;
+    eventually("the replaced file is in the NAS recycle bin", || {
+        engine_nas
+            .recycle_bin(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|r| r.path == "old.txt")
+    })
+    .await;
+
+    // Deleting a placeholder deletes it everywhere.
+    engine_laptop.delete(FOLDER, "archive/c.txt").await.unwrap();
+    assert!(engine_laptop
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .all(|f| f.path != "archive/c.txt"));
+    eventually("the NAS deletes archive/c.txt", || {
+        nas.read("archive/c.txt").is_none()
+    })
+    .await;
+
+    // Deleting a materialised file removes it from disk here too.
+    engine_laptop.delete(FOLDER, "archive/b.txt").await.unwrap();
+    assert!(laptop.read("archive/b.txt").is_none());
+    eventually("the NAS deletes archive/b.txt", || {
+        nas.read("archive/b.txt").is_none()
+    })
+    .await;
+
+    assert!(matches!(
+        engine_laptop.delete(FOLDER, "nope.txt").await,
+        Err(Error::NoSuchFile(_))
+    ));
+    assert!(matches!(
+        engine_laptop.rename(FOLDER, "nope", "elsewhere").await,
+        Err(Error::NoSuchFile(_))
+    ));
+    assert!(matches!(
+        engine_laptop
+            .rename(FOLDER, "old.txt", "old.txt/inside")
+            .await,
+        Err(Error::Invalid(_))
+    ));
+
+    engine_laptop.shutdown().await;
+    engine_nas.shutdown().await;
+}
