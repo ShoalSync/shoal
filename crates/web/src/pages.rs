@@ -32,6 +32,7 @@ pub(crate) struct FileRow {
     pub(crate) modified: String,
     pub(crate) on_disk: bool,
     pub(crate) conflicts: usize,
+    pub(crate) only_here: bool,
 }
 
 #[derive(Template)]

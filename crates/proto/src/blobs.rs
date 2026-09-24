@@ -1,6 +1,8 @@
 //! Messages of the `tidefell/blobs/1` protocol. See `specs/blobs-v1.md`.
 //!
-//! Variant order is part of the wire format. Append new variants only in a new protocol version.
+//! Variant order is part of the wire format and never changes. A new request may be appended
+//! when older peers failing to decode it is handled (ADR 0022); anything else needs a new
+//! protocol version.
 
 use serde::{Deserialize, Serialize};
 
@@ -71,5 +73,16 @@ pub enum BlobsMessage {
     Error {
         /// Reason.
         code: BlobsErrorCode,
+    },
+    /// Ask whether the responder is a full replica of `folder` (ADR 0022). Peers from before
+    /// this message close the stream without a reply.
+    ReplicaRequest {
+        /// The folder.
+        folder: FolderId,
+    },
+    /// Answer to [`BlobsMessage::ReplicaRequest`].
+    Replica {
+        /// True if the responder keeps every file of the folder, false for a partial replica.
+        full: bool,
     },
 }

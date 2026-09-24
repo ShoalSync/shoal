@@ -486,11 +486,13 @@ async fn uploads_and_share_links() {
     );
     let files = engine.files(FOLDER).unwrap();
     assert!(files.iter().any(|f| f.path == "notes/2026/todo.txt"));
-    assert!(alice
+    let page = alice
         .get(&format!("/folders/{FOLDER}?uploaded=2"))
         .await
-        .body
-        .contains("Uploaded 2 file(s)"));
+        .body;
+    assert!(page.contains("Uploaded 2 file(s)"));
+    // Uploads are made on this server, and no full replica holds them yet.
+    assert!(page.contains("only on this server"));
 
     // Uploads need the form's CSRF token, and stay out of the engine's directory.
     let forged = alice

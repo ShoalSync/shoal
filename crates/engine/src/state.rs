@@ -15,8 +15,10 @@ use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest};
 use crate::config::FolderConfig;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 2\n";
-/// Version 1 had no last-use times.
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 3\n";
+/// Version 2 had no confirmed copies.
+const STATE_HEADER_V2: &[u8] = b"tidefell-engine-folder 2\n";
+/// Version 1 had no last-use times either.
 const STATE_HEADER_V1: &[u8] = b"tidefell-engine-folder 1\n";
 
 /// What this replica last saw or wrote at a path on disk.
@@ -36,6 +38,30 @@ struct Persisted {
     local: Vec<(String, LocalFile)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV2 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFile)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+}
+
+impl From<PersistedV2> for Persisted {
+    fn from(v2: PersistedV2) -> Self {
+        Self {
+            manifests: v2.manifests,
+            local: v2.local,
+            progress: v2.progress,
+            used: v2.used,
+            copies: Vec::new(),
+            copy_names: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -53,6 +79,8 @@ impl From<PersistedV1> for Persisted {
             local: v1.local,
             progress: v1.progress,
             used: Vec::new(),
+            copies: Vec::new(),
+            copy_names: Vec::new(),
         }
     }
 }
@@ -69,6 +97,11 @@ pub(crate) struct FolderState {
     /// When each file on disk was last opened or written, in milliseconds since the Unix
     /// epoch, for evicting the least recently used files of a partial replica.
     pub(crate) used: BTreeMap<String, i64>,
+    /// Confirmed copies (ADR 0022): for content this device made, the full replicas that
+    /// reported holding all of it, and when, in milliseconds since the Unix epoch.
+    pub(crate) copies: HashMap<ContentHash, BTreeMap<DeviceId, i64>>,
+    /// Certificate names of the devices in `copies`, as they were when they confirmed.
+    pub(crate) copy_names: BTreeMap<DeviceId, String>,
     dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
@@ -101,6 +134,8 @@ impl FolderState {
             local: BTreeMap::new(),
             progress: HashMap::new(),
             used: BTreeMap::new(),
+            copies: HashMap::new(),
+            copy_names: BTreeMap::new(),
             dir,
             removed: false,
         };
@@ -109,6 +144,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V2) {
+                postcard::from_bytes::<PersistedV2>(body)
+                    .ok()
+                    .map(Into::into)
             } else {
                 bytes
                     .strip_prefix(STATE_HEADER_V1)
@@ -126,6 +165,10 @@ impl FolderState {
                 .map(|(d, e, s)| (d, (e, s)))
                 .collect();
             state.used = persisted.used.into_iter().collect();
+            for (content, device, at) in persisted.copies {
+                state.copies.entry(content).or_default().insert(device, at);
+            }
+            state.copy_names = persisted.copy_names.into_iter().collect();
         }
         Ok(state)
     }
@@ -151,6 +194,16 @@ impl FolderState {
                 .map(|(d, (e, s))| (*d, *e, *s))
                 .collect(),
             used: self.used.iter().map(|(p, t)| (p.clone(), *t)).collect(),
+            copies: self
+                .copies
+                .iter()
+                .flat_map(|(c, devices)| devices.iter().map(|(d, at)| (*c, *d, *at)))
+                .collect(),
+            copy_names: self
+                .copy_names
+                .iter()
+                .map(|(d, n)| (*d, n.clone()))
+                .collect(),
         };
         let mut bytes = STATE_HEADER.to_vec();
         bytes.extend(postcard::to_stdvec(&persisted).expect("in-memory encoding cannot fail"));
@@ -231,6 +284,13 @@ impl FolderState {
             .filter(|c| !referenced.contains(c))
             .copied()
             .collect();
+        self.copies.retain(|c, _| referenced.contains(c));
+        let still_named: std::collections::HashSet<DeviceId> = self
+            .copies
+            .values()
+            .flat_map(|d| d.keys().copied())
+            .collect();
+        self.copy_names.retain(|d, _| still_named.contains(d));
         let mut orphaned = Vec::new();
         for content in unused {
             self.manifests.remove(&content);
@@ -289,5 +349,48 @@ mod tests {
         assert!(fs::read(dir.join("state"))
             .unwrap()
             .starts_with(STATE_HEADER));
+    }
+    #[test]
+    fn loads_version_2_state_and_keeps_copies() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+        };
+        let dir = tmp.path().join("folders").join(config.id.to_string());
+        fs::create_dir_all(&dir).unwrap();
+        let v2 = PersistedV2 {
+            manifests: Vec::new(),
+            local: Vec::new(),
+            progress: Vec::new(),
+            used: vec![("a.txt".into(), 99)],
+        };
+        let mut bytes = STATE_HEADER_V2.to_vec();
+        bytes.extend(postcard::to_stdvec(&v2).unwrap());
+        fs::write(dir.join("state"), bytes).unwrap();
+
+        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        assert_eq!(state.used.get("a.txt"), Some(&99));
+        assert!(state.copies.is_empty());
+
+        let content = ContentHash([6; 32]);
+        state
+            .copies
+            .entry(content)
+            .or_default()
+            .insert(DeviceId([9; 32]), 1234);
+        state.save().unwrap();
+        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        assert_eq!(
+            reopened
+                .copies
+                .get(&content)
+                .and_then(|d| d.get(&DeviceId([9; 32]))),
+            Some(&1234)
+        );
     }
 }

@@ -19,13 +19,15 @@ use crate::backend::EngineBackend;
 use crate::config::{EngineConfig, FolderConfig, PeerAddr};
 use crate::runtime::Runtime;
 use crate::state::FolderState;
-use crate::views::{Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
-use crate::{evict, materialize, now_ms, scan, Error, Result};
+use crate::views::{CopyInfo, Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
+use crate::{copies, evict, materialize, now_ms, scan, Error, Result};
 
 /// How often to retry pending downloads and reconnect to peers.
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// How often to purge expired recycle-bin items.
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
+/// How often to ask full replicas about files that have no confirmed copy yet (ADR 0022).
+const CONFIRM_INTERVAL: Duration = Duration::from_secs(10);
 
 /// One folder: its state, a lock serialising disk work, and its scanner.
 pub(crate) struct FolderHandle {
@@ -273,7 +275,7 @@ impl Engine {
                             Ok(()) | Err(Error::UnknownFolder(_)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "materialise failed"),
                         }
-                        match run_evict(&inner, &node, id).await {
+                        match run_evict(&inner, id).await {
                             Ok(()) | Err(Error::UnknownFolder(_)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "eviction failed"),
                         }
@@ -301,6 +303,22 @@ impl Engine {
                         }
                     }
                     tokio::time::sleep(RETRY_INTERVAL).await;
+                }
+            });
+        }
+        {
+            let (inner, node) = (inner.clone(), node.clone());
+            tasks.spawn(async move {
+                loop {
+                    tokio::time::sleep(CONFIRM_INTERVAL).await;
+                    for id in inner.folder_ids() {
+                        let Ok(handle) = inner.folder(&id) else {
+                            continue;
+                        };
+                        if let Err(e) = copies::confirm(&inner, &node, id, &handle).await {
+                            warn!(folder = %id, error = %e, "confirming copies failed");
+                        }
+                    }
                 }
             });
         }
@@ -376,6 +394,11 @@ impl Engine {
                     retention: state.config.retention,
                     recycle_bin: recycle_summary(&state),
                     configured: h.configured,
+                    only_here: state
+                        .meta
+                        .entries()
+                        .filter(|v| copies::only_here(&state, self.inner.key.id(), v))
+                        .count(),
                 }
             })
             .collect()
@@ -533,12 +556,44 @@ impl Engine {
                         .is_some_and(|l| l.entry == v.entry && l.content == content),
                     conflicts: state.meta.conflicts(&v.entry).len(),
                     author: v.author,
+                    confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
+                    only_here: copies::only_here(&state, self.inner.key.id(), v),
                 }),
                 _ => None,
             })
             .collect();
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
+    }
+
+    /// The full replicas that confirmed holding the current version of `path` (ADR 0022).
+    /// Empty for files made on other devices, which are not tracked.
+    pub fn copies(&self, folder: FolderId, path: &str) -> Result<Vec<CopyInfo>> {
+        let handle = self.inner.folder(&folder)?;
+        let state = handle.lock();
+        let content = state
+            .meta
+            .entries()
+            .find(|v| v.path == path)
+            .and_then(|v| match v.kind {
+                EntryKind::File { content, .. } => Some(content),
+                _ => None,
+            })
+            .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
+        Ok(state
+            .copies
+            .get(&content)
+            .map(|devices| {
+                devices
+                    .iter()
+                    .map(|(device, at)| CopyInfo {
+                        device: *device,
+                        name: state.copy_names.get(device).cloned().unwrap_or_default(),
+                        confirmed_ms: *at,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default())
     }
 
     /// Where a live file of `folder` is on this device's disk, if its current version is there.
@@ -579,7 +634,7 @@ impl Engine {
             state.config.path.join(path)
         };
         // Opening may have pushed a partial replica over its budget.
-        evict::evict(&self.inner, &self.node, folder, &handle).await?;
+        evict::evict(&self.inner, folder, &handle)?;
         Ok(abs)
     }
 
@@ -948,10 +1003,10 @@ async fn run_scan(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
     Ok(())
 }
 
-async fn run_evict(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
+async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
     let _guard = handle.fs_lock.lock().await;
-    evict::evict(inner, node, id, &handle).await
+    evict::evict(inner, id, &handle)
 }
 
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {

@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use tidefell_sdk::types::{Event, File, Folder, KnownPeer, Peer, Recycled, Status};
+use tidefell_sdk::types::{Event, File, Folder, KnownPeer, Mode, Peer, Recycled, Status};
 
 pub(crate) fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -55,9 +55,27 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         out.push_str("\nfolders:");
         for f in folders {
             let _ = write!(out, "\n  {}  {}\n    {}", f.id, f.path, recycle_bin(f));
+            if let Some(note) = only_here(f) {
+                let _ = write!(out, "\n    {note}");
+            }
         }
     }
     out
+}
+
+/// A warning when files made on this device have no confirmed copy on a full replica.
+fn only_here(f: &Folder) -> Option<String> {
+    if f.only_here == 0 {
+        return None;
+    }
+    let mut note = format!(
+        "{} file(s) only on this device: no full replica has confirmed them yet",
+        f.only_here
+    );
+    if f.mode == Mode::Partial {
+        note.push_str(" (they stay on disk, even over the budget, until one does)");
+    }
+    Some(note)
 }
 
 /// How long a folder keeps deleted files: "for 30 days" or "forever".
@@ -134,6 +152,9 @@ pub(crate) fn files(files: &[File]) -> String {
         if f.conflicts > 0 {
             notes.push(format!("{} conflict(s)", f.conflicts));
         }
+        if f.only_here {
+            notes.push("only on this device".to_string());
+        }
         let notes = if notes.is_empty() {
             String::new()
         } else {
@@ -209,6 +230,29 @@ pub(crate) fn event(e: &Event) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_here_notes() {
+        let mut folder = Folder {
+            id: "f".into(),
+            path: "/p".into(),
+            mode: Mode::Full,
+            budget_bytes: None,
+            members: Vec::new(),
+            retention_days: Some(30),
+            recycle_bin: Default::default(),
+            configured: false,
+            only_here: 0,
+        };
+        assert_eq!(only_here(&folder), None);
+        folder.only_here = 2;
+        assert_eq!(
+            only_here(&folder).unwrap(),
+            "2 file(s) only on this device: no full replica has confirmed them yet"
+        );
+        folder.mode = Mode::Partial;
+        assert!(only_here(&folder).unwrap().ends_with("until one does)"));
+    }
 
     #[test]
     fn sizes() {

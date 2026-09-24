@@ -36,6 +36,7 @@ the same pull request that introduces it.
 | **Block store** | A replica's on-disk, content-addressed chunk storage. |
 | **Availability** | Which chunks of a manifest a peer holds, expressed as a bitmap over the manifest's chunk list. |
 | **Eviction** | Removing chunks from a partial replica's block store to stay within its size budget. Evicted files become placeholders. |
+| **Confirmed copy** | A full replica, other than this device, that has reported holding every chunk of a file this device made. Partial replicas evict such a file only once it has one (ADR 0022). |
 | **Swarm fetch** | Downloading one file's chunks from several peers at once. |
 | **Rarest-first** | Fetch ordering that requests the chunks held by the fewest peers first. |
 | **ALPN** | The QUIC protocol identifier negotiated per connection, e.g. `tidefell/sync/1`. One spec per ALPN. |

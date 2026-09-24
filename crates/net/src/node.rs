@@ -283,6 +283,17 @@ impl Node {
         blobs::availability(&conn, self.backend.certificate(), folder, content).await
     }
 
+    /// Asks a peer whether it is a full replica of `folder` (ADR 0022). Peers that predate
+    /// the question fail with an error; treat that as a partial replica.
+    pub async fn is_full_replica(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+    ) -> Result<bool> {
+        let conn = self.blob_conn(peer.into()).await?;
+        blobs::replica(&conn, self.backend.certificate(), folder).await
+    }
+
     /// Starts pairing, as the approver, with the new device in `code` (ADR 0015). Returns once
     /// the new device has accepted the proof; show its confirmation code, then complete or
     /// decline the session.

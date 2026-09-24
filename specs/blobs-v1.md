@@ -39,6 +39,8 @@ data.
 | 4 | `AvailabilityRequest` | `folder: FolderId`, `content: ContentHash` |
 | 5 | `Availability` | `content: ContentHash`, `chunk_count: u32`, `bitmap: bytes` |
 | 6 | `Error` | `code: BlobsErrorCode` |
+| 7 | `ReplicaRequest` | `folder: FolderId` |
+| 8 | `Replica` | `full: bool` |
 
 `BlobsErrorCode` variants: `0 NotAMember`, `1 UnknownFolder`, `2 TooManyChunks`,
 `3 ProtocolViolation`.
@@ -53,6 +55,13 @@ BLAKE3 and discards it, and treats the peer as faulty, if it does not equal `has
 `Error`. `bitmap` has `ceil(chunk_count / 8)` bytes; bit `i` of byte `i / 8` (least significant
 bit first) is set if the responder holds chunk `i` of the content's manifest. A responder that
 does not know the content replies `Availability` with `chunk_count = 0`.
+
+**Replica kind.** Requester: `Hello`, `ReplicaRequest`. Responder: `Replica` or `Error`.
+`full` is true if the responder is a full replica of the folder, keeping every file, and false
+if it is a partial replica that may evict files. Peers use it to decide which copies count as
+confirmed (ADR 0022). `ReplicaRequest` and `Replica` were added to blobs/1 after its first
+release: a responder from before then cannot decode the request and closes the stream without
+replying. A requester treats any answer other than `Replica` as a partial replica.
 
 ## Open questions
 

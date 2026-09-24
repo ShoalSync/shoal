@@ -67,8 +67,12 @@ impl Device {
     }
 }
 
-async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
-    for _ in 0..1000 {
+async fn eventually(what: &str, check: impl FnMut() -> bool) {
+    eventually_within(what, Duration::from_secs(20), check).await;
+}
+
+async fn eventually_within(what: &str, limit: Duration, mut check: impl FnMut() -> bool) {
+    for _ in 0..limit.as_millis() / 20 {
         if check() {
             return;
         }
@@ -176,7 +180,7 @@ async fn placeholders_open_on_demand_and_evict_to_budget() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn files_made_here_are_kept_until_a_peer_has_them() {
+async fn files_made_here_are_kept_until_a_full_replica_has_them() {
     let tmp = tempfile::tempdir().unwrap();
     let alice = UserKey::from_seed([2; 32]);
     let phone = Device::new(
@@ -184,7 +188,9 @@ async fn files_made_here_are_kept_until_a_peer_has_them() {
         "phone",
         30,
         &alice,
-        ReplicaMode::Partial { budget_bytes: 15 },
+        // Fits either file alone but not both, so a background eviction pass keeps the
+        // most recently used one.
+        ReplicaMode::Partial { budget_bytes: 20 },
     );
     phone.write("one.txt", b"first local file");
     phone.write("two.txt", b"second local file");
@@ -196,7 +202,45 @@ async fn files_made_here_are_kept_until_a_peer_has_them() {
     assert!(phone.read("one.txt").is_some());
     assert!(phone.read("two.txt").is_some());
 
-    // Once a full replica has them, the least recently used one goes.
+    // A partial replica holding them does not count (ADR 0022): it may evict them in turn.
+    let tablet = Device::new(
+        tmp.path(),
+        "tablet",
+        32,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    let engine_tablet = tablet.start().await;
+    engine_tablet.connect(engine_phone.addr()).await.unwrap();
+    eventually("the tablet lists both files", || {
+        engine_tablet.files(FOLDER).unwrap().len() == 2
+    })
+    .await;
+    touch(&engine_tablet, "one.txt").await;
+    touch(&engine_tablet, "two.txt").await;
+    // Longer than the engine's confirmation interval.
+    tokio::time::sleep(Duration::from_secs(12)).await;
+    touch(&engine_phone, "two.txt").await;
+    assert!(
+        phone.read("one.txt").is_some(),
+        "kept while only a partial replica has it"
+    );
+    assert_eq!(engine_phone.folders()[0].only_here, 2);
+    assert!(engine_phone
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .all(|f| f.only_here));
+    assert!(engine_phone
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .all(|f| f.confirmed_copies == 0));
+    engine_tablet.shutdown().await;
+
+    // Once a full replica confirms them, the least recently used one goes.
     let nas = Device::new(tmp.path(), "nas", 31, &alice, ReplicaMode::Full);
     let engine_nas = nas.start().await;
     engine_nas.connect(engine_phone.addr()).await.unwrap();
@@ -204,6 +248,27 @@ async fn files_made_here_are_kept_until_a_peer_has_them() {
         nas.read("one.txt").is_some() && nas.read("two.txt").is_some()
     })
     .await;
+    eventually_within(
+        "the NAS's copies are confirmed",
+        Duration::from_secs(30),
+        || {
+            engine_phone
+                .files(FOLDER)
+                .unwrap()
+                .iter()
+                .all(|f| f.confirmed_copies == 1)
+        },
+    )
+    .await;
+    assert_eq!(engine_phone.folders()[0].only_here, 0);
+    let copies = engine_phone.copies(FOLDER, "one.txt").unwrap();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0].device, engine_nas.id());
+    assert_eq!(copies[0].name, "test");
+    assert!(matches!(
+        engine_phone.copies(FOLDER, "missing.txt"),
+        Err(Error::NoSuchFile(_))
+    ));
     touch(&engine_phone, "two.txt").await;
     assert!(phone.read("one.txt").is_none(), "one.txt evicted");
     assert!(phone.read("two.txt").is_some());

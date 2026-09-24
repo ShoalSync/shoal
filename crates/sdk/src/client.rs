@@ -10,8 +10,8 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, ApprovePairing, Event, FetchRequest, Fetched, File, Folder, KnownPeer, NewFolder,
-    NewMember, PairRequest, Pairing, Peer, Recycled, RetentionUpdate, Status,
+    ApiError, ApprovePairing, CopiesRequest, Copy, Event, FetchRequest, Fetched, File, Folder,
+    KnownPeer, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, RetentionUpdate, Status,
 };
 
 /// Client errors.
@@ -212,6 +212,18 @@ impl Client {
             Method::POST,
             &format!("/v1/folders/{folder}/fetch"),
             Some(&FetchRequest {
+                path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// The full replicas that confirmed holding a file made on this device.
+    pub async fn copies(&self, folder: &str, path: &str) -> Result<Vec<Copy>, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/copies"),
+            Some(&CopiesRequest {
                 path: path.to_owned(),
             }),
         )

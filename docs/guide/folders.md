@@ -69,7 +69,22 @@ tidefell fetch <folder id> 2024/beach.jpg    # prints where the file is on disk
 
 Files you create or edit on the device are synced as usual. When the folder's files on disk
 exceed the budget, the least recently used ones become placeholders again. A file made on this
-device is only removed once another connected device has a copy.
+device is only removed once a full replica has confirmed holding it (see below), so without a
+full replica the folder can grow past its budget.
+
+## Is it safe elsewhere?
+
+Every device keeps track of which full replicas, such as a NAS or an
+[always-on peer](always-on.md), have confirmed holding the files it made. Until one has, the
+device may hold the only copy:
+
+- `tidefell files` marks such files `only on this device`;
+- `tidefell status` counts them per folder;
+- the web peer marks them `only on this server`.
+
+Another partial replica holding a file does not count, because it may drop the file again. A
+confirmation says the replica held the file at that moment; it does not protect against that
+replica losing its disk later.
 
 On Linux, a partial replica can also be [mounted](mounting.md), so its files open on demand
 from any program.

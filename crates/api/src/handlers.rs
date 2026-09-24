@@ -15,9 +15,9 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ApprovePairing, ErrorKind, Event, FetchRequest, Fetched, File, Folder, KnownPeer,
-    Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, RecycleBinSummary, Recycled,
-    RetentionUpdate, Status,
+    ApiError, ApprovePairing, CopiesRequest, Copy, ErrorKind, Event, FetchRequest, Fetched, File,
+    Folder, KnownPeer, Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, RecycleBinSummary,
+    Recycled, RetentionUpdate, Status,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -47,6 +47,7 @@ type AppState = State<Arc<Engine>>;
         scan,
         files,
         fetch,
+        copies,
         recycle_bin,
         empty_recycle_bin,
         discard,
@@ -71,6 +72,8 @@ type AppState = State<Arc<Engine>>;
         File,
         FetchRequest,
         Fetched,
+        CopiesRequest,
+        Copy,
         Recycled,
         Peer,
         KnownPeer,
@@ -348,6 +351,26 @@ pub(crate) async fn fetch(
     Ok(Json(Fetched {
         local_path: local.display().to_string(),
     }))
+}
+
+/// The full replicas that confirmed holding a file made on this device (ADR 0022). Empty
+/// for files made on other devices, which are not tracked.
+#[utoipa::path(post, path = "/v1/folders/{id}/copies", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = CopiesRequest,
+    responses((status = 200, body = [Copy]), (status = 404, body = ApiError)))]
+pub(crate) async fn copies(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<CopiesRequest>,
+) -> ApiResult<Json<Vec<Copy>>> {
+    Ok(Json(
+        engine
+            .copies(parse("folder", &id)?, &request.path)?
+            .into_iter()
+            .map(convert::copy)
+            .collect(),
+    ))
 }
 
 /// The folder's recycle bin, most recently deleted first.

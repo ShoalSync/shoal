@@ -184,6 +184,31 @@ async fn pair_join_open_and_save() {
             == Some(b"new photo".as_slice())
     })
     .await;
+    // The laptop is a full replica, so it confirms the copy (ADR 0022).
+    let photo = || {
+        node.files(offer.id.clone())
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == "camera/new.jpg")
+            .unwrap()
+    };
+    for _ in 0..150 {
+        if photo().confirmed_copies == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    assert_eq!(photo().confirmed_copies, 1);
+    assert!(!photo().only_here);
+    let copies = node
+        .copies(offer.id.clone(), "camera/new.jpg".into())
+        .unwrap();
+    assert_eq!(copies.len(), 1);
+    assert_eq!(copies[0].device, laptop_key.id().to_string());
+    assert!(matches!(
+        node.copies(offer.id.clone(), "nope.jpg".into()),
+        Err(tidefell_ffi::TidefellError::NotFound { .. })
+    ));
     // Deleting sends it to the recycle bin, which this device can keep longer or empty.
     node.delete(offer.id.clone(), "camera/new.jpg".into())
         .await

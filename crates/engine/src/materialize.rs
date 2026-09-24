@@ -209,29 +209,6 @@ pub(crate) async fn fetch_one(
     Ok(written)
 }
 
-/// True if a connected peer sharing `folder` reports holding every chunk of `manifest`.
-pub(crate) async fn held_elsewhere(
-    node: &Arc<Node>,
-    folder: FolderId,
-    manifest: &Manifest,
-) -> bool {
-    let source = PeerSource {
-        node: node.clone(),
-        folder,
-    };
-    for peer in node.peers() {
-        if !peer.shared_folders().contains(&folder) {
-            continue;
-        }
-        if let Ok(held) = source.availability(&peer.device(), manifest).await {
-            if held.len() == manifest.chunks.len() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Removes `path` if it is still what the engine last wrote; forgets it either way. A file
 /// edited locally is left in place and becomes a new entry at the next scan.
 fn remove_if_unchanged(

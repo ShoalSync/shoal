@@ -186,6 +186,8 @@ fn blobs_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
                 code: BlobsErrorCode::TooManyChunks,
             },
         ),
+        ("replica-request", BlobsMessage::ReplicaRequest { folder }),
+        ("replica", BlobsMessage::Replica { full: true }),
     ];
     messages
         .into_iter()

@@ -50,6 +50,10 @@ pub struct Folder {
     /// True if the folder comes from the configuration file and cannot be changed through
     /// the API.
     pub configured: bool,
+    /// Live files made on this device that no full replica has confirmed holding yet: this
+    /// device may hold their only copy.
+    #[serde(default)]
+    pub only_here: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.
@@ -122,6 +126,32 @@ pub struct File {
     pub conflicts: usize,
     /// Device that made the current version.
     pub author: String,
+    /// Full replicas that confirmed holding this file. Only tracked for files made on this
+    /// device; 0 otherwise.
+    #[serde(default)]
+    pub confirmed_copies: u64,
+    /// True if this device made the current version and no full replica has confirmed
+    /// holding it yet.
+    #[serde(default)]
+    pub only_here: bool,
+}
+
+/// A file whose confirmed copies are wanted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CopiesRequest {
+    /// Path within the folder.
+    pub path: String,
+}
+
+/// A full replica that confirmed holding a file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Copy {
+    /// Its device ID.
+    pub device: String,
+    /// Its name when it confirmed.
+    pub name: String,
+    /// When it confirmed.
+    pub confirmed_ms: i64,
 }
 
 /// A file to make available on disk.

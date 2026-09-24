@@ -76,6 +76,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/folders/{id}/scan", post(handlers::scan))
         .route("/v1/folders/{id}/files", get(handlers::files))
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))
+        .route("/v1/folders/{id}/copies", post(handlers::copies))
         .route(
             "/v1/folders/{id}/recycle",
             get(handlers::recycle_bin).delete(handlers::empty_recycle_bin),
