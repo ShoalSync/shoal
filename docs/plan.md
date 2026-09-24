@@ -181,8 +181,10 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
 - Phase 5 step 6 is implemented: the README and the book describe self-run always-on peers,
   uploads, share links and per-device retention; no page suggests a project-run service.
-- `v0.6.0` releases Phase 5 steps 1–6. Step 8, camera-roll backup in `tidefell/android`,
-  builds against it and completes Phase 5.
+- Phase 5 is complete: released as `v0.6.0`; `tidefell/infra` and `tidefell/site` pin it.
+  `tidefell/android` builds against it with camera-roll backup and retention and recycle-bin
+  settings, and its emulator exit criterion backs up a photo to a daemon. The setting to remove
+  originals after backup is deferred until the engine can report which peers hold a file.
 
 ### Phase 2 work breakdown
 
@@ -304,6 +306,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    peer, sharing and backup.
 7. **Release.** `v0.6.0`, and the infra and site pin bumps.
 8. **Camera-roll backup (ADR 0020).** `tidefell/android`, against the `v0.6.0` AAR: backup
-   settings, `MediaStore` tracking, `WorkManager` scheduling, an off-by-default setting to remove
-   originals after backup, and retention and recycle-bin settings. Tested on the emulator with
-   seeded media. The Android pin moves to `v0.6.0` here.
+   settings, `MediaStore` tracking, `WorkManager` scheduling, and retention and recycle-bin
+   settings. Tested on the emulator with seeded media. The Android pin moves to `v0.6.0` here.
+   The off-by-default setting to remove originals after backup is deferred: it needs the engine
+   to report which peers hold a file.
