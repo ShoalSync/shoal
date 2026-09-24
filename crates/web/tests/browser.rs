@@ -69,6 +69,20 @@ impl Browser {
     }
 
     async fn request(&mut self, method: Method, path: &str, body: Option<String>) -> Page {
+        let content_type = body
+            .is_some()
+            .then_some("application/x-www-form-urlencoded");
+        self.send(method, path, content_type, body.map(String::into_bytes))
+            .await
+    }
+
+    async fn send(
+        &mut self,
+        method: Method,
+        path: &str,
+        content_type: Option<&str>,
+        body: Option<Vec<u8>>,
+    ) -> Page {
         let stream = tokio::net::TcpStream::connect(self.addr).await.unwrap();
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
@@ -81,11 +95,8 @@ impl Browser {
         if let Some(cookie) = &self.cookie {
             request = request.header(hyper::header::COOKIE, cookie.as_str());
         }
-        if body.is_some() {
-            request = request.header(
-                hyper::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            );
+        if let Some(content_type) = content_type {
+            request = request.header(hyper::header::CONTENT_TYPE, content_type);
         }
         let response = sender
             .send_request(
@@ -119,6 +130,40 @@ impl Browser {
 
     async fn post(&mut self, path: &str, pairs: &[(&str, &str)]) -> Page {
         self.request(Method::POST, path, Some(form(pairs))).await
+    }
+
+    /// Posts a multipart form: text fields, then files as (field, file name, contents).
+    async fn upload(
+        &mut self,
+        path: &str,
+        fields: &[(&str, &str)],
+        files: &[(&str, &str, &[u8])],
+    ) -> Page {
+        const BOUNDARY: &str = "tidefell-test-boundary";
+        let mut body = Vec::new();
+        for (name, value) in fields {
+            body.extend_from_slice(
+                format!(
+                    "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+                )
+                .as_bytes(),
+            );
+        }
+        for (name, file_name, contents) in files {
+            body.extend_from_slice(
+                format!(
+                    "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"; \
+                     filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                )
+                .as_bytes(),
+            );
+            body.extend_from_slice(contents);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+        let content_type = format!("multipart/form-data; boundary={BOUNDARY}");
+        self.send(Method::POST, path, Some(&content_type), Some(body))
+            .await
     }
 
     async fn login(&mut self, username: &str, password: &str) -> Page {
@@ -193,6 +238,7 @@ async fn web_peer_end_to_end() {
                 &data_dir,
                 WebConfig {
                     secure_cookies: false,
+                    share_links: false,
                 },
             )
             .await
@@ -327,4 +373,301 @@ async fn web_peer_end_to_end() {
     assert_eq!(out.location(), "/login");
     assert!(browser.cookie.is_none());
     assert_eq!(browser.get("/").await.status, StatusCode::SEE_OTHER);
+}
+
+/// An engine with one folder holding `files`, and the web peer serving it with `config`.
+async fn serve_folder(
+    tmp: &std::path::Path,
+    files: &[(&str, &[u8])],
+    config: WebConfig,
+) -> (Arc<Engine>, PathBuf, SocketAddr) {
+    let alice = UserKey::from_seed([1; 32]);
+    let key = DeviceKey::from_seed([3; 32]);
+    let data_dir = tmp.join("data");
+    let root = tmp.join("team-docs");
+    let engine = Arc::new(
+        Engine::start(
+            EngineConfig {
+                data_dir: data_dir.clone(),
+                relay: RelayConfig::Disabled,
+                address_lookup: false,
+                bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+                peers: Vec::new(),
+                folders: Vec::new(),
+            },
+            key.clone(),
+            alice.certify(key.id(), "web", 0),
+        )
+        .await
+        .unwrap(),
+    );
+    engine
+        .add_folder(FolderConfig {
+            id: FOLDER,
+            path: root.clone(),
+            mode: ReplicaMode::Full,
+            members: vec![alice.id()],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(3600),
+        })
+        .unwrap();
+    for (path, contents) in files {
+        let target = root.join(path);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(target, contents).unwrap();
+    }
+    engine.scan(FOLDER).await.unwrap();
+    AccountStore::new(&data_dir)
+        .upsert("alice", "alice password 1", alice.id(), false)
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn({
+        let engine = engine.clone();
+        async move { tidefell_web::serve(listener, engine, &data_dir, config).await }
+    });
+    (engine, root, addr)
+}
+
+/// The path part of the share link shown after creating one.
+fn created_link(page: &Page) -> String {
+    let marker = "value=\"http://localhost/s/";
+    let start = page.body.find(marker).expect("page shows the new link") + marker.len() - 3;
+    let end = start + page.body[start..].find('"').unwrap();
+    page.body[start..end].to_string()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn uploads_and_share_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = WebConfig {
+        secure_cookies: false,
+        share_links: true,
+    };
+    let (engine, root, addr) = serve_folder(
+        tmp.path(),
+        &[
+            ("report.pdf", b"%PDF quarterly numbers"),
+            ("photos/beach.jpg", b"sand"),
+            ("photos/2026/sea.jpg", b"waves"),
+            ("private/diary.txt", b"not for sharing"),
+        ],
+        config,
+    )
+    .await;
+    let mut alice = Browser::new(addr);
+    alice.login("alice", "alice password 1").await;
+    let folder_page = alice.get(&format!("/folders/{FOLDER}")).await;
+    let csrf = folder_page.csrf();
+    assert!(folder_page.body.contains("Upload files"));
+    assert!(folder_page.body.contains("share"));
+
+    // Upload two files into a new directory; they are recorded at once.
+    let upload = format!("/folders/{FOLDER}/upload");
+    let page = alice
+        .upload(
+            &upload,
+            &[("csrf", &csrf), ("dir", "notes/2026")],
+            &[
+                ("file", "todo.txt", b"buy milk"),
+                ("file", "C:\\Users\\alice\\plan.md", b"# plan"),
+            ],
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::SEE_OTHER, "{}", page.body);
+    assert!(page.location().contains("uploaded=2"));
+    assert_eq!(
+        std::fs::read(root.join("notes/2026/todo.txt")).unwrap(),
+        b"buy milk"
+    );
+    assert_eq!(
+        std::fs::read(root.join("notes/2026/plan.md")).unwrap(),
+        b"# plan"
+    );
+    let files = engine.files(FOLDER).unwrap();
+    assert!(files.iter().any(|f| f.path == "notes/2026/todo.txt"));
+    assert!(alice
+        .get(&format!("/folders/{FOLDER}?uploaded=2"))
+        .await
+        .body
+        .contains("Uploaded 2 file(s)"));
+
+    // Uploads need the form's CSRF token, and stay out of the engine's directory.
+    let forged = alice
+        .upload(
+            &upload,
+            &[("csrf", &"0".repeat(64))],
+            &[("file", "x.txt", b"x")],
+        )
+        .await;
+    assert_eq!(forged.status, StatusCode::FORBIDDEN);
+    let missing = alice.upload(&upload, &[], &[("file", "x.txt", b"x")]).await;
+    assert_eq!(missing.status, StatusCode::FORBIDDEN);
+    let escape = alice
+        .upload(
+            &upload,
+            &[("csrf", &csrf), ("dir", "../outside")],
+            &[("file", "x.txt", b"x")],
+        )
+        .await;
+    assert_eq!(escape.status, StatusCode::BAD_REQUEST);
+    let reserved = alice
+        .upload(
+            &upload,
+            &[("csrf", &csrf), ("dir", ".tidefell")],
+            &[("file", "x.txt", b"x")],
+        )
+        .await;
+    assert_eq!(reserved.status, StatusCode::BAD_REQUEST);
+    assert!(!root.join("x.txt").exists() && !tmp.path().join("outside").exists());
+
+    // A file link with a password and a limit of one download.
+    let form = alice
+        .get(&format!("/folders/{FOLDER}/share?path=report.pdf"))
+        .await;
+    assert_eq!(form.status, StatusCode::OK);
+    let created = alice
+        .post(
+            &format!("/folders/{FOLDER}/share"),
+            &[
+                ("csrf", &form.csrf()),
+                ("path", "report.pdf"),
+                ("expires_days", "7"),
+                ("password", "open sesame"),
+                ("max_downloads", "1"),
+            ],
+        )
+        .await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.body);
+    let file_link = created_link(&created);
+
+    let mut visitor = Browser::new(addr);
+    let page = visitor.get(&file_link).await;
+    assert!(page.body.contains("Password needed"), "{}", page.body);
+    assert_eq!(
+        visitor.get(&format!("{file_link}/download")).await.status,
+        StatusCode::SEE_OTHER,
+        "no download before the password"
+    );
+    let wrong = visitor.post(&file_link, &[("password", "guess")]).await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    let right = visitor
+        .post(&file_link, &[("password", "open sesame")])
+        .await;
+    assert_eq!(right.status, StatusCode::SEE_OTHER);
+    let page = visitor.get(&file_link).await;
+    assert!(page.body.contains("report.pdf") && page.body.contains("expires"));
+    let download = visitor.get(&format!("{file_link}/download")).await;
+    assert_eq!(download.status, StatusCode::OK);
+    assert_eq!(download.body, "%PDF quarterly numbers");
+    assert_eq!(
+        visitor.get(&format!("{file_link}/download")).await.status,
+        StatusCode::GONE,
+        "the limit was one download"
+    );
+    // The unlock cookie belongs to that link only, and other visitors still need the password.
+    assert!(Browser::new(addr)
+        .get(&file_link)
+        .await
+        .body
+        .contains("Password needed"));
+
+    // A directory link: its files and nothing else.
+    let form = alice
+        .get(&format!("/folders/{FOLDER}/share?path=photos"))
+        .await;
+    let created = alice
+        .post(
+            &format!("/folders/{FOLDER}/share"),
+            &[("csrf", &form.csrf()), ("path", "photos")],
+        )
+        .await;
+    let dir_link = created_link(&created);
+    let mut visitor = Browser::new(addr);
+    let page = visitor.get(&dir_link).await;
+    assert!(page.body.contains("beach.jpg") && page.body.contains("2026/sea.jpg"));
+    assert!(!page.body.contains("diary") && !page.body.contains("report.pdf"));
+    let sea = visitor
+        .get(&format!("{dir_link}/download?path=2026/sea.jpg"))
+        .await;
+    assert_eq!(sea.body, "waves");
+    for outside in [
+        "../private/diary.txt",
+        "private/diary.txt",
+        "",
+        "../report.pdf",
+    ] {
+        assert_eq!(
+            visitor
+                .get(&format!("{dir_link}/download?path={outside}"))
+                .await
+                .status,
+            StatusCode::NOT_FOUND,
+            "{outside}"
+        );
+    }
+    assert_eq!(
+        visitor
+            .get("/s/00000000000000000000000000000000")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(visitor.get("/shares").await.status, StatusCode::SEE_OTHER);
+
+    // Alice lists and revokes her links; the tokens are not stored.
+    let shares = alice.get("/shares").await;
+    assert!(shares.body.contains("photos/") && shares.body.contains("1 of 1"));
+    let stored = std::fs::read_to_string(tmp.path().join("data/web/shares.json")).unwrap();
+    assert!(!stored.contains(dir_link.trim_start_matches("/s/")));
+    let marker = "action=\"/shares/";
+    let start = shares.body.find(marker).unwrap() + marker.len();
+    let link_id = &shares.body[start..start + 12];
+    let revoked = alice
+        .post(
+            &format!("/shares/{link_id}/revoke"),
+            &[("csrf", &shares.csrf())],
+        )
+        .await;
+    assert!(revoked.body.contains("Revoked"), "{}", revoked.body);
+    // Links are listed newest first, so that was the directory link.
+    assert_eq!(visitor.get(&dir_link).await.status, StatusCode::NOT_FOUND);
+    assert_eq!(visitor.get(&file_link).await.status, StatusCode::OK);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_links_are_off_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, _, addr) = serve_folder(
+        tmp.path(),
+        &[("report.pdf", b"numbers")],
+        WebConfig {
+            secure_cookies: false,
+            share_links: false,
+        },
+    )
+    .await;
+    let mut alice = Browser::new(addr);
+    alice.login("alice", "alice password 1").await;
+    let folder = alice.get(&format!("/folders/{FOLDER}")).await;
+    assert!(!folder.body.contains("/share"));
+    assert!(
+        folder.body.contains("Upload files"),
+        "uploads stay available"
+    );
+    assert_eq!(
+        alice
+            .get(&format!("/folders/{FOLDER}/share?path=report.pdf"))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(alice.get("/shares").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        alice
+            .get("/s/00000000000000000000000000000000")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }

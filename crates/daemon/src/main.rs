@@ -440,6 +440,7 @@ async fn run(path: &Path) -> Result<(), String> {
                 .map_err(|e| format!("web peer cannot bind {}: {e}", web.bind))?;
             let settings = tidefell_web::WebConfig {
                 secure_cookies: web.secure_cookies,
+                share_links: web.share_links,
             };
             let (engine, data_dir) = (engine.clone(), config.data_dir.clone());
             tokio::spawn(

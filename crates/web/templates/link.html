@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Tidefell{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p class="muted">Shared with you through Tidefell.{% if let Some(expires) = expires %} This link expires {{ expires }}.{% endif %}</p>
+{% if exhausted %}
+<p class="notice">This link has reached its download limit.</p>
+{% else if files.is_empty() %}
+<p class="muted">There is nothing here right now.</p>
+{% else %}
+<table>
+  <thead><tr><th>Name</th><th class="num">Size</th></tr></thead>
+  <tbody>
+  {% for f in files %}
+    <tr>
+      <td><a href="/s/{{ token }}/download{% if directory %}?path={{ f.query }}{% endif %}" hx-boost="false">{{ f.name }}</a></td>
+      <td class="num">{{ f.size }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

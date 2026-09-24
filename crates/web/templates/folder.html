@@ -5,7 +5,20 @@
 <p><a href="/">← Folders</a></p>
 <h1>{{ name }}</h1>
 <p class="muted mono">{{ id }}</p>
-<p><a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a></p>
+{% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+<p>
+  <a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a>
+  {% if share_links %} · <a href="/folders/{{ id }}/share">Share the whole folder</a>{% endif %}
+</p>
+<details>
+  <summary>Upload files</summary>
+  <form method="post" action="/folders/{{ id }}/upload" enctype="multipart/form-data" hx-boost="false">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Into folder (optional, created if needed) <input name="dir" placeholder="e.g. photos/2026"></label>
+    <label>Files <input type="file" name="file" multiple required></label>
+    <button type="submit">Upload</button>
+  </form>
+</details>
 {% if files.is_empty() %}
 <p class="muted">This folder is empty.</p>
 {% else %}
@@ -17,6 +30,7 @@
       <td>
         {% if f.on_disk %}<a href="/folders/{{ id }}/download?path={{ f.path_query }}" hx-boost="false">{{ f.path }}</a>{% else %}{{ f.path }} <span class="tag">not on this server</span>{% endif %}
         {% if f.conflicts > 0 %}<span class="tag warn">{{ f.conflicts }} conflict(s)</span>{% endif %}
+        {% if share_links %}<a class="tag" href="/folders/{{ id }}/share?path={{ f.path_query }}">share</a>{% endif %}
       </td>
       <td class="num">{{ f.size }}</td>
       <td>{{ f.modified }}</td>
