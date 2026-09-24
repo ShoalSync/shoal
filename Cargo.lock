@@ -3635,6 +3635,7 @@ dependencies = [
  "tempfile",
  "tidefell-api",
  "tidefell-engine",
+ "tidefell-fs-fuse",
  "tidefell-identity",
  "tidefell-proto",
  "tidefell-sdk",

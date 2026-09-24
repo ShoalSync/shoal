@@ -14,8 +14,8 @@ renaming it over the original.
 ## Decision
 
 - **The daemon hosts the mount.** A folder in `tidefelld`'s config may set
-  `mount = "/path"`. The daemon mounts the folder there when it starts or the folder is added,
-  and unmounts it on shutdown or removal. The folder's `path` stays the engine's backing
+  `mount = "/path"`. The daemon mounts the folder there when it starts and unmounts it on
+  shutdown, including on SIGTERM. The folder's `path` stays the engine's backing
   directory, which the user does not edit directly while it is mounted. Mounting is Linux-only;
   elsewhere a `mount` setting is rejected.
 - **`fs-fuse` implements it with `fuser`** (MIT, no libfuse). Unprivileged mounts use

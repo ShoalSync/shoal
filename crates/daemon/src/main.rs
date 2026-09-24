@@ -1,6 +1,8 @@
 //! `tidefelld`: the headless Tidefell peer for Linux servers and NAS devices.
 
 mod config;
+#[cfg(target_os = "linux")]
+mod mounts;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -386,6 +388,22 @@ fn read_config(path: &Path) -> Result<config::Config, String> {
     config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// Ctrl-C, or SIGTERM from a service manager.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        if let Ok(mut term) = signal(SignalKind::terminate()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 async fn run(path: &Path) -> Result<(), String> {
     let config = read_config(path)?;
     let engine_config = config.to_engine()?;
@@ -396,6 +414,8 @@ async fn run(path: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?,
     );
     tracing::info!(device = %engine.id(), "tidefelld running");
+    #[cfg(target_os = "linux")]
+    let mounts = mounts::Mounts::start(&engine, config.mounts()?)?;
 
     let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
     // A user key next to the device key lets this daemon approve pairings (ADR 0015).
@@ -434,10 +454,19 @@ async fn run(path: &Path) -> Result<(), String> {
             Ok(Err(e)) => format!("{what} failed: {e}"),
             Err(e) => format!("{what} task failed: {e}"),
         };
-    tokio::select! {
-        _ = tokio::signal::ctrl_c() => tracing::info!("shutting down"),
-        result = api => return Err(describe("control API", result)),
-        result = web => return Err(describe("web peer", result)),
+    let failure = tokio::select! {
+        _ = shutdown_signal() => {
+            tracing::info!("shutting down");
+            None
+        }
+        result = api => Some(describe("control API", result)),
+        result = web => Some(describe("web peer", result)),
+    };
+    // Unmount first: mounts hold the engine and would otherwise be left stale.
+    #[cfg(target_os = "linux")]
+    mounts.stop().await;
+    if let Some(failure) = failure {
+        return Err(failure);
     }
     let _ = std::fs::remove_file(&socket);
 

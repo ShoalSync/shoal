@@ -145,7 +145,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
 - Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
   criterion on an emulator in CI.
-- Phase 4b is in progress: decisions in ADR 0017; steps 1–3 are implemented.
+- Phase 4b is in progress: decisions in ADR 0017; steps 1–4 are implemented, with the exit
+  criterion running in CI against a real FUSE mount.
 
 ### Phase 2 work breakdown
 
@@ -240,7 +241,7 @@ reaches the full replica. CI runs this with a real FUSE mount on the self-hosted
    `rename`, in-memory `mkdir` and `rmdir`, truncation and times; kernel cache invalidation on
    engine events. Unit tests drive the handlers against a fake backend without the kernel.
 4. **Daemon mounts.** `mount = "/path"` on a folder in `tidefelld`'s config and schema;
-   mounting at start and on folder add, unmounting on shutdown and removal, and clearing a
-   stale mount left by a crash. A guide page on mounting. The end-to-end exit-criterion test
+   mounting at start, unmounting on shutdown (including SIGTERM), and clearing a stale mount
+   left by a crash. A guide page on mounting. The end-to-end exit-criterion test
    runs in CI against a real FUSE mount.
 5. **Release.** `v0.5.0`.
