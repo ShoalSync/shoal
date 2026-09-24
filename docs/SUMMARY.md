@@ -48,3 +48,7 @@
   - [0015: Devices join a user by pairing over the network](adr/0015-pairing.md)
   - [0016: Partial replicas keep placeholders and fetch on demand](adr/0016-partial-replicas-on-demand.md)
   - [0017: tidefelld mounts folders read-write with FUSE](adr/0017-fuse-mounts.md)
+  - [0018: Always-on peers without a central server](adr/0018-always-on-peers.md)
+  - [0019: The web peer uploads files and shares links](adr/0019-web-uploads-and-share-links.md)
+  - [0020: Camera-roll backup on Android](adr/0020-camera-roll-backup.md)
+  - [0021: Recycle-bin retention is visible and editable](adr/0021-retention-settings.md)

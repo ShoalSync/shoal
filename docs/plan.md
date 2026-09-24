@@ -107,6 +107,10 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Adding devices | Pairing over the network (`pair/1`); user keys never leave their machine | ADR 0015 |
 | Partial replicas | Placeholders, fetch on open, LRU eviction to a budget; Android `DocumentsProvider` | ADR 0016 |
 | Linux placeholders | `tidefelld` mounts folders read-write with FUSE (`fuser`) | ADR 0017 |
+| Always-on peers | Self-run full replica now; encrypted storage peer in a later phase | ADR 0018 |
+| Web uploads and share links | Uploads and read-only share links in the web peer, off by default | ADR 0019 |
+| Camera-roll backup | Android, opt-in, upload only, originals kept by default | ADR 0020 |
+| Retention settings | Editable at runtime, recycle-bin size shown | ADR 0021 |
 
 ## Phases
 
@@ -118,7 +122,26 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **3** Surfaces | `api` (REST with generated OpenAPI; ADR 0009), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
 | **4** Clients | On-demand partial replicas; `pair/1`; `ffi` and the AAR release asset; Android Gradle project, foreground service, `DocumentsProvider` | Android app syncs against a full replica using the published AAR |
 | **4b** Desktop placeholders | `fs-fuse` on the same on-demand engine support | A Linux partial replica mounts a folder and opens placeholders on demand |
-| **5** Hosted | Hosted web peer and full-replica storage in infra; camera-roll backup; retention UX | Hosted deployment runs from pinned artifacts only |
+| **5** Always on and sharing | Self-run always-on full replica deployed by infra; web peer uploads and share links; camera-roll backup; retention settings | A self-run always-on peer, deployed from pinned artifacts only, keeps a phone and a laptop in sync while they are never online together |
+| **6** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
+| **7** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
+
+### Client phases (outline)
+
+Phases 6 and 7 get their own decisions and breakdown when they start. Known constraints:
+
+- **iOS.** A new `tidefell/ios` repository consumes a `TidefellFFI.xcframework` release asset,
+  as Android consumes the AAR (ADR 0014). The File Provider extension runs under tight memory
+  and background-time limits, so the engine either runs inside the extension or in the app
+  with the extension talking to it through an app group; this is the phase's first decision.
+  The same File Provider framework also serves macOS, which could follow cheaply. Building
+  and testing need macOS runners: hosted macOS minutes are expensive, so a self-hosted Mac is
+  likely.
+- **Windows.** Rust code stays in the monorepo: `fs-cfapi` beside `fs-fuse` on the same engine
+  support (ADR 0016), and the release adds a Windows build and installer. CI needs Windows
+  runners, hosted or a self-hosted Windows VM.
+- **Encrypted storage peers** (ADR 0018, option A) are a later phase that changes the wire
+  protocol, designed specs first, and are not scheduled yet.
 
 ### Phase 1 work breakdown
 
@@ -146,7 +169,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 - Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
   criterion on an emulator in CI.
 - Phase 4b is complete: released as `v0.5.0`. A Linux partial replica mounts a folder with
-  FUSE, and the exit criterion runs in CI against a real mount. Phase 5 (Hosted) is next.
+  FUSE, and the exit criterion runs in CI against a real mount.
+- Phase 5 is decided: ADRs 0018–0021 are accepted, with option C of ADR 0018.
 
 ### Phase 2 work breakdown
 
@@ -245,3 +269,26 @@ reaches the full replica. CI runs this with a real FUSE mount on the self-hosted
    left by a crash. A guide page on mounting. The end-to-end exit-criterion test
    runs in CI against a real FUSE mount.
 5. **Release.** `v0.5.0`.
+
+### Phase 5 work breakdown
+
+Delivered as a sequence of pull requests; each merges before the next is pushed. ADR 0018
+takes option C: a self-run always-on peer now, and encrypted storage peers in a later phase.
+
+1. **Decisions.** ADRs 0018–0021 and this breakdown.
+2. **Retention settings (ADR 0021).** Engine, API, sdk and CLI: change retention, recycle-bin
+   summary, empty the recycle bin. The web peer and Android surfaces follow in their own steps.
+3. **Web uploads and share links (ADR 0019).** Uploads and new folders through the web peer;
+   share links with expiry, password, download limit and revocation; link pages; tests that
+   drive the web peer over HTTP.
+4. **Always-on peer (ADR 0018, option B).** `tidefell/infra`: a NixOS role for a self-run full
+   replica with the web peer, relay and TLS, pinned to a release; a guide page on running one
+   on a small VPS. The exit criterion runs in infra CI: a phone-like partial replica and a
+   laptop-like one, never online together, sync through the always-on peer.
+5. **Camera-roll backup (ADR 0020).** `tidefell/android`: backup settings, `MediaStore`
+   tracking, `WorkManager` scheduling, an off-by-default setting to remove originals after
+   backup, and retention and recycle-bin settings from step 2.
+   Tested on the emulator with seeded media.
+6. **Site and docs.** Remove any suggestion of a project-run service; document the always-on
+   peer, sharing and backup.
+7. **Release.** `v0.6.0`, and the Android, infra and site pin bumps.
