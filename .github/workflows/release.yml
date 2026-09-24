@@ -169,7 +169,11 @@ jobs:
           packages: platform-tools
       - name: Install cargo-ndk and the NDK
         run: |
-          cargo install cargo-ndk --locked --version 4.1.2
+          # A restored cache can record cargo-ndk as installed without its binary on this
+          # runner, so check the binary itself.
+          if ! cargo ndk --version 2>/dev/null | grep -q " 4.1.2"; then
+            cargo install cargo-ndk --locked --version 4.1.2 --force
+          fi
           yes | sdkmanager --licenses > /dev/null
           sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
