@@ -233,6 +233,44 @@ fn recycle_bin_retention() {
 }
 
 #[test]
+fn discarding_empties_the_local_recycle_bin() {
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let k = key(1);
+    let e2 = EntryId([2; 16]);
+    let mut sent = Vec::new();
+    for (entry, path, deleted) in [(E, "f", DAY_MS), (e2, "g", 3 * DAY_MS)] {
+        sent.push(a.local_change(&k, entry, path, file(1), 0).unwrap());
+        sent.push(
+            a.local_change(&k, entry, path, EntryKind::Tombstone, deleted)
+                .unwrap(),
+        );
+    }
+    for version in &sent {
+        b.apply_remote(version.clone()).unwrap();
+    }
+    assert_eq!(a.recycle_bin().next_expiry_ms(), Some(31 * DAY_MS));
+
+    let discarded = a.discard(&E).unwrap();
+    assert_eq!(discarded.version.path, "f");
+    assert!(a.discard(&E).is_none());
+    assert!(matches!(a.restore(&k, E, 0), Err(Error::NotRestorable)));
+    assert_eq!(a.recycle_bin().next_expiry_ms(), Some(33 * DAY_MS));
+
+    // A peer re-sending the delete does not bring it back.
+    for version in &sent {
+        a.apply_remote(version.clone()).unwrap();
+    }
+    assert!(a.recycle_bin().get(&E).is_none());
+
+    assert_eq!(a.discard_all().len(), 1);
+    assert!(a.recycle_bin().is_empty());
+    assert_eq!(a.recycle_bin().next_expiry_ms(), None);
+    // Other replicas keep their copies.
+    assert_eq!(b.recycle_bin().len(), 2);
+}
+
+#[test]
 fn snapshot_round_trip() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("folder.meta");

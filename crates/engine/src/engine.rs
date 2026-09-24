@@ -19,7 +19,7 @@ use crate::backend::EngineBackend;
 use crate::config::{EngineConfig, FolderConfig, PeerAddr};
 use crate::runtime::Runtime;
 use crate::state::FolderState;
-use crate::views::{Event, FileInfo, FolderInfo, PeerInfo, RecycledInfo};
+use crate::views::{Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
 use crate::{evict, materialize, now_ms, scan, Error, Result};
 
 /// How often to retry pending downloads and reconnect to peers.
@@ -374,6 +374,7 @@ impl Engine {
                     mode: state.config.mode,
                     members: state.config.members.clone(),
                     retention: state.config.retention,
+                    recycle_bin: recycle_summary(&state),
                     configured: h.configured,
                 }
             })
@@ -428,6 +429,29 @@ impl Engine {
         self.inner.emit(Event::FolderRemoved(id));
         // Sessions stop offering the folder.
         self.inner.changed();
+        Ok(())
+    }
+
+    /// Changes how long this replica keeps deleted files. Items past a shortened retention
+    /// are purged at the next hourly purge, not immediately. Other replicas keep their own
+    /// retention.
+    pub fn set_retention(&self, id: FolderId, retention: crate::Retention) -> Result<()> {
+        let _guard = self.inner.runtime_lock.lock().unwrap();
+        let handle = self.inner.folder(&id)?;
+        if handle.configured {
+            return Err(Error::Configured(id));
+        }
+        {
+            let mut state = handle.lock();
+            if state.config.retention == retention {
+                return Ok(());
+            }
+            state.set_retention(retention);
+            state.save()?;
+        }
+        self.inner.save_runtime()?;
+        info!(folder = %id, ?retention, "retention changed");
+        self.inner.emit(Event::FolderChanged(id));
         Ok(())
     }
 
@@ -717,19 +741,42 @@ impl Engine {
         let bin = state.meta.recycle_bin();
         let mut items: Vec<RecycledInfo> = bin
             .iter()
-            .map(|r| RecycledInfo {
-                entry: r.version.entry,
-                path: r.version.path.clone(),
-                size: match r.version.kind {
-                    EntryKind::File { size, .. } => size,
-                    _ => 0,
-                },
-                deleted_at_ms: r.deleted_at_ms,
-                expires_at_ms: bin.expires_at_ms(r),
-            })
+            .map(|r| recycled_info(r, bin.expires_at_ms(r)))
             .collect();
         items.sort_by_key(|i| std::cmp::Reverse(i.deleted_at_ms));
         Ok(items)
+    }
+
+    /// Permanently removes `entry`, or every item if `None`, from this replica's recycle bin
+    /// and frees its content. Other replicas keep their copies. Returns the removed items.
+    pub fn empty_recycle_bin(
+        &self,
+        folder: FolderId,
+        entry: Option<EntryId>,
+    ) -> Result<Vec<RecycledInfo>> {
+        let handle = self.inner.folder(&folder)?;
+        let (discarded, chunks) = {
+            let mut state = handle.lock();
+            if let Some(entry) = &entry {
+                if state.meta.recycle_bin().get(entry).is_none() {
+                    return Err(Error::NotRecycled(*entry));
+                }
+            }
+            let (discarded, chunks) = state.discard(entry.as_ref());
+            state.save()?;
+            (discarded, chunks)
+        };
+        info!(
+            folder = %folder,
+            items = discarded.len(),
+            chunks = chunks.len(),
+            "emptied recycle bin"
+        );
+        remove_chunks(&self.inner, chunks);
+        if !discarded.is_empty() {
+            self.inner.emit(Event::FolderChanged(folder));
+        }
+        Ok(discarded.iter().map(|r| recycled_info(r, None)).collect())
     }
 
     /// Restores a deleted entry from the recycle bin. The file reappears on every replica,
@@ -933,16 +980,46 @@ fn purge(inner: &Inner, now_ms: i64) {
         }
         orphaned.extend(chunks);
     }
-    // A chunk may still be used by another folder.
+    remove_chunks(inner, orphaned);
+}
+
+/// Removes chunks one folder no longer references from the block store, unless another
+/// folder still uses them.
+fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto::ChunkHash>) {
+    let handles: Vec<Arc<FolderHandle>> = inner.folders.read().unwrap().values().cloned().collect();
     let still_used = |hash: &tidefell_proto::ChunkHash| {
-        handles
-            .iter()
-            .any(|(_, h)| h.lock().index.is_referenced(hash))
+        handles.iter().any(|h| h.lock().index.is_referenced(hash))
     };
     let mut store = inner.store.lock().unwrap();
-    for hash in orphaned {
+    for hash in chunks.into_iter().collect::<BTreeSet<_>>() {
         if !still_used(&hash) {
             let _ = store.remove(&hash);
         }
+    }
+}
+
+fn recycled_size(item: &tidefell_meta::Recycled) -> u64 {
+    match item.version.kind {
+        EntryKind::File { size, .. } => size,
+        _ => 0,
+    }
+}
+
+fn recycled_info(item: &tidefell_meta::Recycled, expires_at_ms: Option<i64>) -> RecycledInfo {
+    RecycledInfo {
+        entry: item.version.entry,
+        path: item.version.path.clone(),
+        size: recycled_size(item),
+        deleted_at_ms: item.deleted_at_ms,
+        expires_at_ms,
+    }
+}
+
+fn recycle_summary(state: &FolderState) -> RecycleSummary {
+    let bin = state.meta.recycle_bin();
+    RecycleSummary {
+        items: bin.len(),
+        bytes: bin.iter().map(recycled_size).sum(),
+        next_expiry_ms: bin.next_expiry_ms(),
     }
 }

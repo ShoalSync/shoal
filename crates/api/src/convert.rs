@@ -30,6 +30,11 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
             Retention::Days(days) => Some(days),
             Retention::Forever => None,
         },
+        recycle_bin: api::RecycleBinSummary {
+            items: f.recycle_bin.items as u64,
+            bytes: f.recycle_bin.bytes,
+            next_expiry_ms: f.recycle_bin.next_expiry_ms,
+        },
         configured: f.configured,
     }
 }

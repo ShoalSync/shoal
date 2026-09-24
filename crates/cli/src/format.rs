@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use tidefell_sdk::types::{Event, File, Folder, KnownPeer, Peer, Recycled, Status};
 
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut value = bytes as f64;
     let mut unit = 0;
@@ -46,11 +46,54 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-pub(crate) fn status(s: &Status) -> String {
-    format!(
+pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
+    let mut out = format!(
         "device:  {}\nuser:    {}\nname:    {}\nversion: {}",
         s.device, s.user, s.name, s.version
+    );
+    if !folders.is_empty() {
+        out.push_str("\nfolders:");
+        for f in folders {
+            let _ = write!(out, "\n  {}  {}\n    {}", f.id, f.path, recycle_bin(f));
+        }
+    }
+    out
+}
+
+/// How long a folder keeps deleted files: "for 30 days" or "forever".
+pub(crate) fn retention(f: &Folder) -> String {
+    f.retention_days
+        .map_or("forever".to_string(), |d| format!("for {d} days"))
+}
+
+/// A one-line summary of a folder's recycle bin on this device.
+fn recycle_bin(f: &Folder) -> String {
+    let bin = &f.recycle_bin;
+    if bin.items == 0 {
+        return format!("recycle bin empty, keeps deleted files {}", retention(f));
+    }
+    let next = bin.next_expiry_ms.map_or("kept forever".to_string(), |t| {
+        format!("next purge {}", time(t))
+    });
+    format!(
+        "recycle bin {} file(s), {}, {next}; keeps deleted files {}",
+        bin.items,
+        size(bin.bytes),
+        retention(f)
     )
+}
+
+/// What `recycle empty` removed.
+pub(crate) fn emptied(items: &[Recycled]) -> String {
+    match items {
+        [] => "the recycle bin is empty".into(),
+        [one] => format!("permanently deleted {}", one.path),
+        many => format!(
+            "permanently deleted {} file(s), {}",
+            many.len(),
+            size(many.iter().map(|r| r.size).sum())
+        ),
+    }
 }
 
 pub(crate) fn folders(folders: &[Folder]) -> String {
@@ -59,16 +102,10 @@ pub(crate) fn folders(folders: &[Folder]) -> String {
     }
     let mut out = String::new();
     for f in folders {
-        let retention = f
-            .retention_days
-            .map_or("forever".to_string(), |d| format!("{d} days"));
         let source = if f.configured { ", from config" } else { "" };
         let _ = writeln!(out, "{}  {}", f.id, f.path);
-        let _ = writeln!(
-            out,
-            "    {} member(s), recycle bin keeps {retention}{source}",
-            f.members.len()
-        );
+        let _ = writeln!(out, "    {} member(s){source}", f.members.len());
+        let _ = writeln!(out, "    {}", recycle_bin(f));
     }
     out.trim_end().to_string()
 }

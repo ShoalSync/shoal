@@ -32,7 +32,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Show this device.
+    /// Show this device and its folders' recycle bins.
     Status,
     /// Manage folders.
     #[command(subcommand)]
@@ -116,6 +116,35 @@ enum FolderCommand {
         /// Folder ID.
         id: String,
     },
+    /// Change how long this device keeps a folder's deleted files. Other devices keep their
+    /// own setting.
+    Retention {
+        /// Folder ID.
+        id: String,
+        /// Days to keep deleted files, or "forever".
+        #[arg(value_parser = parse_retention)]
+        days: Retention,
+        /// Change it without asking when deleted files would be purged.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+/// A retention period given on the command line.
+#[derive(Clone, Copy)]
+enum Retention {
+    Days(u32),
+    Forever,
+}
+
+fn parse_retention(value: &str) -> Result<Retention, String> {
+    match value {
+        "forever" | "0" => Ok(Retention::Forever),
+        days => days
+            .parse()
+            .map(Retention::Days)
+            .map_err(|_| format!("{days:?} is not a number of days or \"forever\"")),
+    }
 }
 
 #[derive(clap::Args)]
@@ -145,6 +174,17 @@ enum RecycleCommand {
         folder: String,
         /// Entry ID or path.
         what: String,
+    },
+    /// Permanently delete files from this device's recycle bin: one, by entry ID or path, or
+    /// all of them. Other devices keep their copies.
+    Empty {
+        /// Folder ID.
+        folder: String,
+        /// Entry ID or path; omit to empty the whole recycle bin.
+        what: Option<String>,
+        /// Delete without asking.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -194,6 +234,34 @@ fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -> String) {
     }
 }
 
+/// Asks a yes/no question on the terminal; anything but yes is no.
+fn confirm(question: &str) -> Result<bool, String> {
+    eprint!("{question} [y/N] ");
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| e.to_string())?;
+    Ok(matches!(answer.trim(), "y" | "Y" | "yes"))
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// Finds a recycle-bin item by entry ID, or by path (the most recent deletion wins).
+fn find_recycled<'a>(
+    bin: &'a [tidefell_sdk::types::Recycled],
+    folder: &str,
+    what: &str,
+) -> Result<&'a tidefell_sdk::types::Recycled, String> {
+    bin.iter()
+        .find(|r| r.entry == what)
+        .or_else(|| bin.iter().find(|r| r.path == what))
+        .ok_or_else(|| format!("{what:?} is not in the recycle bin of {folder}"))
+}
+
 fn new_folder(
     id: Option<String>,
     path: PathBuf,
@@ -219,7 +287,19 @@ async fn run(cli: Cli) -> Result<(), String> {
     let json = cli.json;
     let e = |e: tidefell_sdk::Error| e.to_string();
     match cli.command {
-        Command::Status => print(json, &client.status().await.map_err(e)?, format::status),
+        Command::Status => {
+            #[derive(Serialize)]
+            struct StatusView {
+                #[serde(flatten)]
+                status: tidefell_sdk::types::Status,
+                folders: Vec<tidefell_sdk::types::Folder>,
+            }
+            let view = StatusView {
+                status: client.status().await.map_err(e)?,
+                folders: client.folders().await.map_err(e)?,
+            };
+            print(json, &view, |v| format::status(&v.status, &v.folders));
+        }
         Command::Folder(command) => match command {
             FolderCommand::List => print(json, &client.folders().await.map_err(e)?, |f| {
                 format::folders(f)
@@ -256,6 +336,30 @@ async fn run(cli: Cli) -> Result<(), String> {
                 client.scan(&id).await.map_err(e)?;
                 print(json, &(), |_| String::new());
             }
+            FolderCommand::Retention { id, days, yes } => {
+                let retention_days = match days {
+                    Retention::Days(days) => Some(days),
+                    Retention::Forever => None,
+                };
+                if let Some(days) = retention_days {
+                    let cutoff = now_ms() - i64::from(days) * 86_400_000;
+                    let bin = client.recycle_bin(&id).await.map_err(e)?;
+                    let expiring = bin.iter().filter(|r| r.deleted_at_ms <= cutoff).count();
+                    if expiring > 0 {
+                        eprintln!(
+                            "{expiring} deleted file(s) are older than {days} days and will be \
+                             purged from this device within the hour."
+                        );
+                        if !yes && !confirm("Change retention?")? {
+                            return Err("retention not changed".into());
+                        }
+                    }
+                }
+                let folder = client.set_retention(&id, retention_days).await.map_err(e)?;
+                print(json, &folder, |f| {
+                    format!("{} now keeps deleted files {}", f.id, format::retention(f))
+                });
+            }
         },
         Command::Files { folder } => print(json, &client.files(&folder).await.map_err(e)?, |f| {
             format::files(f)
@@ -275,14 +379,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                 &pairing.confirmation_code[..3],
                 &pairing.confirmation_code[3..],
             );
-            let approved = yes || {
-                eprint!("Does the new device show the same code? Add it as \"{name}\"? [y/N] ");
-                let mut answer = String::new();
-                std::io::stdin()
-                    .read_line(&mut answer)
-                    .map_err(|e| e.to_string())?;
-                matches!(answer.trim(), "y" | "Y" | "yes")
-            };
+            let approved = yes
+                || confirm(&format!(
+                    "Does the new device show the same code? Add it as \"{name}\"?"
+                ))?;
             if approved {
                 client
                     .approve_pairing(&pairing.id, Some(&name))
@@ -302,13 +402,42 @@ async fn run(cli: Cli) -> Result<(), String> {
             }
             RecycleCommand::Restore { folder, what } => {
                 let bin = client.recycle_bin(&folder).await.map_err(e)?;
-                let item = bin
-                    .iter()
-                    .find(|r| r.entry == what)
-                    .or_else(|| bin.iter().find(|r| r.path == what))
-                    .ok_or_else(|| format!("{what:?} is not in the recycle bin of {folder}"))?;
+                let item = find_recycled(&bin, &folder, &what)?;
                 client.restore(&folder, &item.entry).await.map_err(e)?;
                 print(json, item, |r| format!("restored {}", r.path));
+            }
+            RecycleCommand::Empty { folder, what, yes } => {
+                let bin = client.recycle_bin(&folder).await.map_err(e)?;
+                let removed = match what {
+                    Some(what) => {
+                        let item = find_recycled(&bin, &folder, &what)?;
+                        if !yes
+                            && !confirm(&format!(
+                                "Permanently delete {} from this device's recycle bin?",
+                                item.path
+                            ))?
+                        {
+                            return Err("nothing deleted".into());
+                        }
+                        vec![client.discard(&folder, &item.entry).await.map_err(e)?]
+                    }
+                    None if bin.is_empty() => Vec::new(),
+                    None => {
+                        let bytes = bin.iter().map(|r| r.size).sum();
+                        if !yes
+                            && !confirm(&format!(
+                                "Permanently delete {} file(s), {}, from this device's recycle \
+                                 bin?",
+                                bin.len(),
+                                format::size(bytes)
+                            ))?
+                        {
+                            return Err("nothing deleted".into());
+                        }
+                        client.empty_recycle_bin(&folder).await.map_err(e)?
+                    }
+                };
+                print(json, &removed, |r| format::emptied(r));
             }
         },
         Command::Peer(command) => match command {

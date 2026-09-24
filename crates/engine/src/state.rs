@@ -195,10 +195,35 @@ impl FolderState {
         out
     }
 
+    /// Changes the recycle-bin retention. Expired items are purged at the next purge.
+    pub(crate) fn set_retention(&mut self, retention: tidefell_meta::Retention) {
+        self.meta.set_retention(retention);
+        self.config.retention = retention;
+    }
+
     /// Purges expired recycle-bin items and forgets manifests nothing references. Returns
     /// chunks no longer referenced by this folder.
     pub(crate) fn purge(&mut self, now_ms: i64) -> (Vec<Recycled>, Vec<tidefell_proto::ChunkHash>) {
         let purged = self.meta.purge_expired(now_ms);
+        (purged, self.release_unreferenced())
+    }
+
+    /// Removes `entry`, or every item if `None`, from the recycle bin and forgets manifests
+    /// nothing references. Returns the removed items and chunks no longer referenced by this
+    /// folder.
+    pub(crate) fn discard(
+        &mut self,
+        entry: Option<&tidefell_proto::EntryId>,
+    ) -> (Vec<Recycled>, Vec<tidefell_proto::ChunkHash>) {
+        let discarded = match entry {
+            Some(entry) => self.meta.discard(entry).into_iter().collect(),
+            None => self.meta.discard_all(),
+        };
+        (discarded, self.release_unreferenced())
+    }
+
+    /// Forgets manifests nothing references and returns their chunks.
+    fn release_unreferenced(&mut self) -> Vec<tidefell_proto::ChunkHash> {
         let referenced = self.referenced_contents();
         let unused: Vec<ContentHash> = self
             .manifests
@@ -211,7 +236,7 @@ impl FolderState {
             self.manifests.remove(&content);
             orphaned.extend(self.index.remove(&content));
         }
-        (purged, orphaned)
+        orphaned
     }
 }
 

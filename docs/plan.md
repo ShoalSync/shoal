@@ -171,6 +171,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
 - Phase 4b is complete: released as `v0.5.0`. A Linux partial replica mounts a folder with
   FUSE, and the exit criterion runs in CI against a real mount.
 - Phase 5 is decided: ADRs 0018–0021 are accepted, with option C of ADR 0018.
+- Phase 5 step 2 is implemented: retention changes at runtime, recycle-bin summaries and
+  emptying the recycle bin, in the engine, API, sdk and CLI.
 
 ### Phase 2 work breakdown
 

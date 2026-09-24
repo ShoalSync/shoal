@@ -20,9 +20,22 @@ pub struct FolderInfo {
     pub members: Vec<UserId>,
     /// Recycle-bin retention.
     pub retention: Retention,
+    /// What this replica's recycle bin holds.
+    pub recycle_bin: RecycleSummary,
     /// True if the folder comes from the configuration file (and so cannot be changed or
     /// removed at runtime).
     pub configured: bool,
+}
+
+/// A summary of one replica's recycle bin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecycleSummary {
+    /// Number of deleted entries.
+    pub items: usize,
+    /// Total size of the deleted files, in bytes.
+    pub bytes: u64,
+    /// When the next item will be purged, or `None` if none will be.
+    pub next_expiry_ms: Option<i64>,
 }
 
 /// A live file in a folder.

@@ -288,6 +288,69 @@ async fn pair_approves_a_new_device() {
     assert_eq!(paired.approver.device, laptop.engine.id());
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn retention_and_emptying_the_recycle_bin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let laptop = Device::start(tmp.path(), "laptop", 20, &alice).await;
+    let root = tmp.path().join("laptop/docs");
+    laptop.run(&["folder", "create", root.to_str().unwrap()]);
+    let id = laptop.json(&["folder", "list"])[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (name, body) in [("a.txt", "aaaa"), ("b.txt", "bbbbbbbb")] {
+        std::fs::write(root.join(name), body).unwrap();
+    }
+    laptop.run(&["folder", "scan", &id]);
+    for name in ["a.txt", "b.txt"] {
+        std::fs::remove_file(root.join(name)).unwrap();
+    }
+    laptop.run(&["folder", "scan", &id]);
+
+    let status = laptop.run(&["status"]);
+    assert!(status.contains("recycle bin 2 file(s), 12 B"), "{status}");
+    assert!(
+        status.contains("keeps deleted files for 30 days"),
+        "{status}"
+    );
+    let status = laptop.json(&["status"]);
+    assert_eq!(status["user"], alice.id().to_string());
+    assert_eq!(status["folders"][0]["recycle_bin"]["items"], 2);
+
+    let changed = laptop.run(&["folder", "retention", &id, "7"]);
+    assert!(
+        changed.contains("keeps deleted files for 7 days"),
+        "{changed}"
+    );
+    let changed = laptop.run(&["folder", "retention", &id, "forever"]);
+    assert!(changed.contains("keeps deleted files forever"), "{changed}");
+    assert!(laptop.run(&["folder", "list"]).contains("kept forever"));
+    assert!(!laptop
+        .try_run(&["folder", "retention", &id, "soon"])
+        .status
+        .success());
+
+    // Without --yes, emptying asks first; no answer means no.
+    let out = laptop.try_run(&["recycle", "empty", &id]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("2 file(s), 12 B"));
+    assert_eq!(
+        laptop.json(&["folder", "list"])[0]["recycle_bin"]["items"],
+        2
+    );
+
+    let one = laptop.run(&["recycle", "empty", &id, "a.txt", "--yes"]);
+    assert!(one.contains("permanently deleted a.txt"), "{one}");
+    let rest = laptop.run(&["recycle", "empty", &id, "--yes"]);
+    assert!(rest.contains("permanently deleted b.txt"), "{rest}");
+    assert!(laptop
+        .run(&["recycle", "list", &id])
+        .contains("the recycle bin is empty"));
+    let out = laptop.try_run(&["recycle", "empty", &id, "a.txt", "--yes"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not in the recycle bin"));
+}
+
 #[test]
 fn missing_daemon_is_a_clear_error() {
     let tmp = tempfile::tempdir().unwrap();
