@@ -175,6 +175,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   emptying the recycle bin, in the engine, API, sdk and CLI.
 - Phase 5 step 3 is implemented: web uploads and share links (expiry, password, download
   limit, revocation), off unless `[web] share_links = true`.
+- Phase 5 step 4 is implemented: `tidefell/infra` has `role-always-on` and a three-VM test of
+  the exit criterion, and the guide explains running an always-on peer.
 
 ### Phase 2 work breakdown
 

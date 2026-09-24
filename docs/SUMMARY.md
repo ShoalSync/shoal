@@ -15,6 +15,7 @@
 # Self-hosting
 
 - [NixOS](nixos.md)
+- [An always-on peer](guide/always-on.md)
 - [The control API](admin/api.md)
 
 # Reference
