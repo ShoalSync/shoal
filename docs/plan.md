@@ -181,6 +181,8 @@ Phases 6 and 7 get their own decisions and breakdown when they start. Known cons
   summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
 - Phase 5 step 6 is implemented: the README and the book describe self-run always-on peers,
   uploads, share links and per-device retention; no page suggests a project-run service.
+- `v0.6.0` releases Phase 5 steps 1–6. Step 8, camera-roll backup in `tidefell/android`,
+  builds against it and completes Phase 5.
 
 ### Phase 2 work breakdown
 
