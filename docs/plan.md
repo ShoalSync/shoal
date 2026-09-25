@@ -113,6 +113,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Retention settings | Editable at runtime, recycle-bin size shown | ADR 0021 |
 | Confirmed copies | Full replicas confirm holding a file; eviction and removing originals wait for one | ADR 0022 |
 | Encrypted storage peers | Encrypted folders (sync/2, blobs/2), HPKE key grants, storage mode in `tidefelld` | ADR 0023 |
+| Sync consistency and trust | Changes build on what is on disk; same-path and equal-vector rules; bounded exchange with deadlines; authors vouched for by member certificates | ADR 0024 |
 
 ## Phases
 
@@ -126,6 +127,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **4b** Desktop placeholders | `fs-fuse` on the same on-demand engine support | A Linux partial replica mounts a folder and opens placeholders on demand |
 | **5** Always on and sharing | Self-run always-on full replica deployed by infra; web peer uploads and share links; camera-roll backup; retention settings | A self-run always-on peer, deployed from pinned artifacts only, keeps a phone and a laptop in sync while they are never online together |
 | **5b** Confirmed copies | The engine records which full replicas hold each file made on a device; eviction and the Android app's removal of backed-up originals rely on it | Android removes a backed-up photo only after a full replica confirms it holds the photo, and a partial replica never evicts a file it made without such a copy |
+| **5c** Review fixes | The fixes from the codebase review: sync correctness and flow control (ADR 0024), Android safety, supply chain, hardening and maintainability | Every high finding has a regression test that failed before its fix; a folder with 100,000 entries completes its first sync; releases are built off shared runners and signed |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -190,9 +192,13 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   originals after backup is deferred until the engine can report which peers hold a file.
 - Phases 5b and 6 are decided: ADRs 0022 and 0023 are accepted. Phases 7 and 8 wait for CI
   runners.
-- `v0.7.0` releases Phase 5b steps 1–4: full replicas report their kind, the engine records
-  confirmed copies, and a partial replica evicts a file it made only once one exists. Step 5,
-  removing originals in `tidefell/android`, builds against it and completes Phase 5b.
+- Phase 5b is complete: released as `v0.7.0`. Full replicas report their kind, the engine
+  records confirmed copies, and a partial replica evicts a file it made only once one exists.
+  `tidefell/android` pins it and offers to remove backed-up photos from the phone, off by
+  default; its emulator exit criterion checks that a backed-up photo becomes eligible only after
+  the daemon, a full replica, confirms it. `tidefell/infra` and `tidefell/site` still pin
+  `v0.6.0`.
+- Phase 5c is proposed: ADR 0024 records the sync decisions from the codebase review.
 
 ### Phase 2 work breakdown
 
@@ -334,6 +340,31 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    delete request. The emulator exit criterion checks that a backed-up photo becomes eligible
    only after the daemon, a full replica, confirms it.
 
+### Phase 5c work breakdown
+
+Each fix starts with a test that reproduces the finding and fails, then makes it pass.
+
+1. **Decisions.** ADR 0024 and the sync/1 spec changes.
+2. **Sync correctness.** Local changes build on the vector of what is on disk; equal vectors
+   are concurrent; entries at the same path are written by the ADR 0024 rule; counters have a
+   ceiling and checked increments; `.tidefell` is reserved in path validation; manifests are
+   checked against the version's size and dropped when assembly fails.
+3. **Flow control and deadlines.** Paged index batches written from their own task, no echo,
+   deadlines on handshakes and requests, a 64 KiB limit before authentication, and no network
+   I/O under a folder's lock. A test syncs 100,000 entries. Release `v0.8.0`, and the infra,
+   site and Android pins.
+4. **Android safety.** Re-check that a photo is unchanged before offering to remove it and back
+   it up again if it changed; handle the Android 15 foreground-service timeout; exclude app
+   data from device transfer; one backup run at a time.
+5. **Supply chain.** Releases on a dedicated runner with no pull-request jobs, a pinned
+   toolchain and actions pinned by commit, release assets signed with build provenance, and a
+   release only for tags on `main` that passed CI.
+6. **Hardening.** Author certificates (the stream in `v0.8.x`, enforcement in the release after),
+   confirmed copies from current members only, web upload limits and login throttling, relay
+   access tokens and systemd hardening in infra.
+7. **Maintainability.** Split `engine.rs`, view models and background dispatchers in the Android
+   app, shared type conversions, and `unsafe_code = "forbid"` across the workspace.
+
 ### Phase 6 work breakdown
 
 1. **Decisions.** ADR 0023, in the Phase 5b decisions pull request.
@@ -349,4 +380,4 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
 7. **Infra.** `role-storage-peer`, and a VM test of the exit criterion that also checks the
    storage peer's disk for plaintext.
 8. **Docs, site and release.** Guide pages for encrypted folders and running a storage peer.
-   Release `v0.8.0`, and the infra, site and Android pins.
+   Release `v0.9.0`, and the infra, site and Android pins.

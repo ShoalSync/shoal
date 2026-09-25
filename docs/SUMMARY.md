@@ -55,3 +55,4 @@
   - [0021: Recycle-bin retention is visible and editable](adr/0021-retention-settings.md)
   - [0022: Confirmed copies](adr/0022-confirmed-copies.md)
   - [0023: Encrypted folders and storage peers](adr/0023-encrypted-storage-peers.md)
+  - [0024: Sync consistency and trust](adr/0024-sync-consistency-and-trust.md)

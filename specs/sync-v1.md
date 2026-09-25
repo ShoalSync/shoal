@@ -36,6 +36,12 @@ DeviceCertificate = user: UserId || device: DeviceId || name: string || issued_m
 A certificate is sent as `Signed<DeviceCertificate>` with kind `identity/1/device-certificate`,
 and its signer must equal `user`. Revocation is not yet specified.
 
+The author of every version a replica applies must be vouched for: it must have a device
+certificate signed by a user who is a member of the folder (ADR 0024). Replicas keep the
+certificates of the authors of the versions they store and serve them on certificate streams
+(see Exchange). Versions later received from the devices of a user who has been removed from
+the folder are refused; versions already applied stay.
+
 ## Encoding
 
 Every message is one frame:
@@ -66,12 +72,21 @@ body  = postcard(SyncMessage)
 ## Version vectors
 
 `VersionVector` is a map `DeviceId → u64` encoded as a postcard map sorted by key, with no zero
-counters. Version `a` supersedes `b` if every counter in `a` is ≥ the one in `b`, and at least
-one is greater. If neither supersedes the other, they are concurrent (a conflict).
+counters. No counter may exceed 2^62; a version whose vector does is invalid. Version `a`
+supersedes `b` if every counter in `a` is ≥ the one in `b`, and at least one is greater. If
+neither supersedes the other, they are concurrent (a conflict). Two versions with equal vectors
+but different encodings are also concurrent; identical encodings are the same version.
 
-Version vectors are per entry and are used only to order versions of that entry. A device
-making a change sets the new vector to the merge of the entry's current version and any
-conflict copies, then increments its own counter.
+Version vectors are per entry and are used only to order versions of that entry. For every
+file it has written to or scanned from disk, a replica records the vector that content
+corresponds to: its base. A device making a change sets the new vector to the merge of the
+base and the conflict copies that existed when that content was written, then increments its
+own counter. A device refuses a change that would take its counter past 2^62. A remote version
+that arrived but was not written to disk, because the local file had changed, therefore stays
+concurrent with the new version.
+
+A device's counters are never reused, so a device's data must not be restored from a backup or
+copied to another device; such a device re-pairs instead.
 
 ## Index sequences
 
@@ -111,6 +126,8 @@ verified in strict mode. Each kind states who must sign:
 | 3 | `ManifestRequest` | `folder: FolderId`, `content: ContentHash` |
 | 4 | `ManifestResponse` | `manifest: Manifest` |
 | 5 | `Error` | `code: ErrorCode` |
+| 6 | `CertificateRequest` | `folder: FolderId`, `device: DeviceId` |
+| 7 | `CertificateResponse` | `certificate: Signed<DeviceCertificate>` |
 
 `EntryVersion`:
 
@@ -118,7 +135,7 @@ verified in strict mode. Each kind states who must sign:
 | --- | --- | --- |
 | `folder` | `FolderId` | |
 | `entry` | `EntryId` | |
-| `path` | string | Relative, `/`-separated, NFC; non-empty components; no `.` or `..` components; no `\` or NUL |
+| `path` | string | Relative, `/`-separated, NFC; non-empty components; no `.` or `..` components; first component not `.tidefell`; no `\` or NUL |
 | `kind` | `EntryKind` | See below |
 | `modified_ms` | i64 | Milliseconds since Unix epoch, UTC |
 | `author` | `DeviceId` | Must equal the envelope signer |
@@ -128,12 +145,19 @@ verified in strict mode. Each kind states who must sign:
 `1 Directory`, `2 Symlink { target: string }`, `3 Tombstone`.
 
 `Manifest`: `content: ContentHash`, `chunks: Vec<ChunkRef { hash: ChunkHash, len: u32 }>`.
-`content` must equal BLAKE3 of the concatenated chunks.
+`content` must equal BLAKE3 of the concatenated chunks, and the sum of the chunk lengths must
+equal the `size` of the version whose content it describes.
 
 `ErrorCode` variants: `0 NotAMember`, `1 UnknownFolder`, `2 UnknownManifest`,
-`3 ProtocolViolation`.
+`3 ProtocolViolation`, `4 UnknownDevice`.
+
+Messages 6 and 7 and error code 4 were appended by ADR 0024. A peer that does not know them
+cannot decode a certificate request and closes that stream.
 
 ## Exchange
+
+Before the handshake completes, a peer reads at most 64 KiB for a message, and the handshake
+must complete within 10 seconds.
 
 1. The connecting peer sends `Hello` listing the folders it syncs. The accepting peer checks
    the certificate (see Membership) and replies with `Hello` listing only the folders the
@@ -143,12 +167,21 @@ verified in strict mode. Each kind states who must sign:
    received from this peer (both 0 the first time).
 3. The responder sends, in sequence order, every version currently in its index (current
    versions and conflict copies) whose sequence is greater than `since`, or all of them if
-   `epoch` does not match its own. It uses one or more `IndexBatch` messages, the last with
-   `last = true`. Superseded versions are not sent.
-4. The requester verifies each version (signature, signer equals author, folder, path rules)
-   and applies it. It records `epoch` and `up_to` only after applying the batch marked `last`.
+   `epoch` does not match its own. It uses one or more `IndexBatch` messages of at most 512
+   versions each, the last with `last = true`. Superseded versions are not sent. A peer
+   writes batches from a task separate from the one reading the stream, so that reading never
+   waits on writing.
+4. The requester verifies each version (signature, signer equals author, folder, path rules,
+   counter ceiling) and applies it if its author is vouched for (see Membership); otherwise
+   it holds the version and requests the author's certificate. It records `epoch` and `up_to`
+   only after handling the batch marked `last`.
 5. A peer that needs a file's chunk list opens a manifest stream, sends `ManifestRequest` and
-   receives `ManifestResponse` or `Error`.
+   receives `ManifestResponse` or `Error`. A manifest that fails the checks above, or fails
+   when the file is assembled, is not kept.
+6. A peer that needs an author's certificate opens a certificate stream, sends
+   `CertificateRequest` and receives `CertificateResponse`, or `Error` with `UnknownDevice`.
+
+A requester that gets no response to a request within 30 seconds treats the request as failed.
 
 ### Updating the offer
 
@@ -165,8 +198,8 @@ intersection of the two latest offers. It sends `IndexRequest` for folders that 
 and stops sending updates for, and ignores `IndexBatch` messages about, folders that are no
 longer shared.
 
-After the initial exchange the stream stays open, and new local versions are pushed as
-`IndexBatch` messages.
+After the initial exchange the stream stays open, and new versions are pushed as `IndexBatch`
+messages. A peer does not push a version to the peer it received that version from.
 
 ## Conflict resolution
 
@@ -178,9 +211,28 @@ When two versions of an entry are concurrent, every replica picks the same winne
 4. Otherwise (the same author produced two concurrent versions, which is a bug) the greater
    postcard encoding of the `EntryVersion` wins.
 
+Rule 4 also decides between two versions with equal vectors and different encodings.
+
 The loser is kept as a conflict copy until a later version supersedes both. When a
 `Tombstone` supersedes a live version, the live version moves to the recycle bin, which
 keeps it for the retention period.
+
+### Entries at the same path
+
+Different entries can have the same path, for example when two devices create the same file
+while apart. Every replica writes them to disk the same way, without making new versions:
+
+1. Among live entries whose paths are equal, the one with the lower `EntryId`, compared as
+   bytes, keeps the path.
+2. A file or symlink whose path is also a directory, whether a `Directory` entry or implied by
+   entries below it, gives way to the directory. Two directories at one path are one directory.
+3. An entry that gives way is written as `<stem> (conflict <id>)<extension>` in the same
+   directory, where `<id>` is the first 8 hex digits of its `EntryId`, or all 32 if that name is
+   also taken. `<extension>` is the part of the name from its last `.`, if that is not the
+   first character.
+
+The first local change to an entry that gave way, including a rename, records its current name
+as its path.
 
 ## Content addressing (informative)
 
@@ -190,5 +242,5 @@ interoperate; they only deduplicate less.
 
 ## Open questions
 
-- Certificate revocation and changes to a folder's member list.
-- Flow control for large indexes.
+- Certificate revocation.
+- Paths that differ only in case, on case-insensitive filesystems.
