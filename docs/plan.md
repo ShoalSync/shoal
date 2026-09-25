@@ -190,6 +190,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   originals after backup is deferred until the engine can report which peers hold a file.
 - Phases 5b and 6 are decided: ADRs 0022 and 0023 are accepted. Phases 7 and 8 wait for CI
   runners.
+- `v0.7.0` releases Phase 5b steps 1–4: full replicas report their kind, the engine records
+  confirmed copies, and a partial replica evicts a file it made only once one exists. Step 5,
+  removing originals in `tidefell/android`, builds against it and completes Phase 5b.
 
 ### Phase 2 work breakdown
 
