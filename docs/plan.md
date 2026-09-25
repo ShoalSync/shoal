@@ -202,7 +202,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   on what is on disk, equal vectors are concurrent, entries at the same path are written by the
   ADR 0024 rule, counters have a ceiling, `.tidefell` is reserved, manifests are checked against
   sizes, index batches are paged and not echoed, and handshakes and requests have deadlines. A
-  test syncs 100,000 entries per replica. Release `v0.8.0` and the pins follow.
+  test syncs 100,000 entries per replica. Step 4 is implemented in `tidefell/android`
+  (tidefell/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
+  removal and is backed up again, backup runs one at a time, the sync service stops at the
+  Android 15 time limit, and app data is excluded from backups and device transfer.
+- `v0.8.0` releases Phase 5c steps 2 and 3. The infra, site and Android pins follow.
 
 ### Phase 2 work breakdown
 
