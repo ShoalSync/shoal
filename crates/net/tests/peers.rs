@@ -85,6 +85,34 @@ impl TestBackend {
         self.bump();
     }
 
+    /// Records `count` small files, numbered from `start`, in one go.
+    fn bulk(&self, start: u32, count: u32) {
+        let mut folder = self.folder.lock().unwrap();
+        for n in start..start + count {
+            let mut id = [0u8; 16];
+            id[..4].copy_from_slice(&n.to_le_bytes());
+            folder
+                .local_change(
+                    self.key.signing_key(),
+                    EntryId(id),
+                    &format!("f{n}"),
+                    EntryKind::File {
+                        content: ContentHash([1; 32]),
+                        size: 1,
+                        executable: false,
+                    },
+                    1,
+                )
+                .unwrap();
+        }
+        drop(folder);
+        self.bump();
+    }
+
+    fn entry_count(&self) -> usize {
+        self.folder.lock().unwrap().entries().count()
+    }
+
     fn current(&self, entry: u8) -> Option<EntryVersion> {
         self.folder
             .lock()
@@ -116,12 +144,18 @@ impl Backend for TestBackend {
         *folder == FOLDER && self.members.contains(&peer.user)
     }
 
-    fn index_since(&self, folder: &FolderId, epoch: u64, since: u64) -> Option<IndexPage> {
+    fn index_since(
+        &self,
+        folder: &FolderId,
+        epoch: u64,
+        since: u64,
+        limit: usize,
+    ) -> Option<IndexPage> {
         if *folder != FOLDER {
             return None;
         }
         let folder = self.folder.lock().unwrap();
-        let (versions, up_to) = folder.index_since(epoch, since);
+        let (versions, up_to) = folder.index_since(epoch, since, limit);
         Some(IndexPage {
             epoch: folder.epoch(),
             up_to,
@@ -460,4 +494,80 @@ async fn pairing_issues_a_certificate_once() {
         next_event(&mut server).await,
         PairingEvent::Failed { .. }
     ));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn large_indexes_sync_in_both_directions() {
+    // ADR 0024: both sides used to block writing their whole index while neither read, so a
+    // first sync of tens of thousands of versions never finished.
+    // Each replica ends with 100,000 entries, the Phase 5c exit criterion.
+    const EACH: u32 = 50_000;
+    let alice = UserKey::from_seed([103; 32]);
+    let a = TestBackend::new(7, &alice, &[&alice]);
+    let b = TestBackend::new(8, &alice, &[&alice]);
+    a.bulk(0, EACH);
+    b.bulk(EACH, EACH);
+
+    let node_a = Node::spawn(a.config(), a.clone()).await.unwrap();
+    let node_b = Node::spawn(b.config(), b.clone()).await.unwrap();
+    node_b.connect(node_a.addr()).await.unwrap();
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(300);
+    while a.entry_count() < 2 * EACH as usize || b.entry_count() < 2 * EACH as usize {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "stalled at a={} b={} of {}",
+            a.entry_count(),
+            b.entry_count(),
+            2 * EACH
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    node_b.shutdown().await;
+    node_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_peer_that_never_answers_cannot_hold_a_connect() {
+    // ADR 0024: a handshake must complete within 10 seconds.
+    use iroh::endpoint::presets;
+    let silent = iroh::Endpoint::builder(presets::N0)
+        .secret_key(iroh::SecretKey::from_bytes(&[104; 32]))
+        .alpns(vec![tidefell_proto::ALPN_SYNC_V1.to_vec()])
+        .relay_mode(iroh::RelayMode::Disabled)
+        .clear_address_lookup()
+        .bind_addr(SocketAddr::from(([127, 0, 0, 1], 0)))
+        .unwrap()
+        .bind()
+        .await
+        .unwrap();
+    let held = Arc::new(Mutex::new(Vec::new()));
+    let accepting = {
+        let (silent, held) = (silent.clone(), held.clone());
+        tokio::spawn(async move {
+            while let Some(incoming) = silent.accept().await {
+                let Ok(conn) = incoming.await else { continue };
+                // Take the stream and never answer.
+                if let Ok(stream) = conn.accept_bi().await {
+                    held.lock().unwrap().push((conn, stream));
+                }
+            }
+        })
+    };
+
+    let alice = UserKey::from_seed([105; 32]);
+    let a = TestBackend::new(9, &alice, &[&alice]);
+    let node = Node::spawn(a.config(), a.clone()).await.unwrap();
+    let started = std::time::Instant::now();
+    let result = tokio::time::timeout(Duration::from_secs(60), node.connect(silent.addr()))
+        .await
+        .expect("connect gave up on its own");
+    assert!(result.is_err(), "a silent peer is not a peer");
+    let waited = started.elapsed();
+    assert!(waited < Duration::from_secs(20), "gave up after {waited:?}");
+
+    accepting.abort();
+    node.shutdown().await;
+    silent.close().await;
 }

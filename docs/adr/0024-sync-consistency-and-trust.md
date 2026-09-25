@@ -1,6 +1,6 @@
 # 0024: Sync consistency and trust
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-25
 
 ## Context

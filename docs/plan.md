@@ -198,7 +198,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   default; its emulator exit criterion checks that a backed-up photo becomes eligible only after
   the daemon, a full replica, confirms it. `tidefell/infra` and `tidefell/site` still pin
   `v0.6.0`.
-- Phase 5c is proposed: ADR 0024 records the sync decisions from the codebase review.
+- Phase 5c is decided: ADR 0024 is accepted. Steps 2 and 3 are implemented: local changes build
+  on what is on disk, equal vectors are concurrent, entries at the same path are written by the
+  ADR 0024 rule, counters have a ceiling, `.tidefell` is reserved, manifests are checked against
+  sizes, index batches are paged and not echoed, and handshakes and requests have deadlines. A
+  test syncs 100,000 entries per replica. Release `v0.8.0` and the pins follow.
 
 ### Phase 2 work breakdown
 

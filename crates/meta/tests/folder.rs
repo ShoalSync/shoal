@@ -157,7 +157,7 @@ fn index_since_respects_sequence_and_epoch() {
     a.local_change(&key(1), e2, "two", file(2), 2).unwrap();
     a.local_change(&key(1), E, "one", file(3), 3).unwrap();
 
-    let (all, up_to) = a.index_since(0, 0);
+    let (all, up_to) = a.index_since(0, 0, usize::MAX);
     assert_eq!(up_to, 3);
     assert_eq!(
         all.iter().map(|s| s.sequence).collect::<Vec<_>>(),
@@ -165,11 +165,11 @@ fn index_since_respects_sequence_and_epoch() {
         "superseded versions are not sent"
     );
 
-    let (newer, _) = a.index_since(a.epoch(), 2);
+    let (newer, _) = a.index_since(a.epoch(), 2, usize::MAX);
     assert_eq!(newer.len(), 1);
     assert_eq!(newer[0].version.kind, file(3));
 
-    let (reset, _) = a.index_since(a.epoch() + 1, 2);
+    let (reset, _) = a.index_since(a.epoch() + 1, 2, usize::MAX);
     assert_eq!(reset.len(), 2, "unknown epoch sends everything");
 }
 
@@ -292,7 +292,10 @@ fn snapshot_round_trip() {
     assert_eq!(loaded.current(&E), b.current(&E));
     assert_eq!(loaded.conflicts(&E), b.conflicts(&E));
     assert_eq!(loaded.recycle_bin(), b.recycle_bin());
-    assert_eq!(loaded.index_since(0, 0), b.index_since(0, 0));
+    assert_eq!(
+        loaded.index_since(0, 0, usize::MAX),
+        b.index_since(0, 0, usize::MAX)
+    );
 
     let mut corrupt = b.to_snapshot();
     corrupt[0] = b'X';
@@ -300,4 +303,144 @@ fn snapshot_round_trip() {
         Folder::from_snapshot(&corrupt),
         Err(Error::UnsupportedFormat)
     ));
+}
+
+/// A version from `author` with an explicit vector, as a restored or cloned device might sign.
+fn version_with(
+    author: u8,
+    kind: EntryKind,
+    modified_ms: i64,
+    vector: &[(u8, u64)],
+) -> Signed<EntryVersion> {
+    let version = EntryVersion {
+        folder: FOLDER,
+        entry: E,
+        path: "f".into(),
+        kind,
+        modified_ms,
+        author: device(author),
+        version: vector.iter().map(|&(d, c)| (device(d), c)).collect(),
+    };
+    Signed::sign(&version, &key(author))
+}
+
+#[test]
+fn equal_vectors_with_different_content_converge() {
+    // ADR 0024: a device restored from a backup signs a second version with the same vector.
+    let first = version_with(1, EntryKind::Directory, 5, &[(1, 1)]);
+    let second = version_with(1, EntryKind::Symlink { target: "x".into() }, 5, &[(1, 1)]);
+
+    let mut r1 = replica(2);
+    assert_eq!(r1.apply_remote(first.clone()).unwrap(), Applied::New);
+    assert_eq!(r1.apply_remote(second.clone()).unwrap(), Applied::Conflict);
+    let mut r2 = replica(3);
+    r2.apply_remote(second.clone()).unwrap();
+    r2.apply_remote(first.clone()).unwrap();
+
+    assert_eq!(
+        r1.current(&E),
+        r2.current(&E),
+        "replicas pick the same winner"
+    );
+    assert_eq!(r1.conflicts(&E).len(), 1);
+    assert_eq!(r2.conflicts(&E).len(), 1);
+    // The identical version is still recognised as known.
+    assert_eq!(r1.apply_remote(first).unwrap(), Applied::Stale);
+}
+
+#[test]
+fn counters_have_a_ceiling() {
+    let ceiling = tidefell_proto::MAX_COUNTER;
+    let mut b = replica(2);
+    // A peer may not send a counter above the ceiling, for any device.
+    let over = version_with(1, file(1), 1, &[(1, 1), (2, ceiling + 1)]);
+    assert!(matches!(b.apply_remote(over), Err(Error::CounterCeiling)));
+    assert!(b.current(&E).is_none());
+
+    // At the ceiling a device refuses to make another change instead of wrapping or panicking.
+    let at = version_with(1, file(1), 1, &[(1, 1), (2, ceiling)]);
+    assert_eq!(b.apply_remote(at).unwrap(), Applied::New);
+    assert!(matches!(
+        b.local_change(&key(2), E, "f", file(2), 2),
+        Err(Error::CounterCeiling)
+    ));
+}
+
+#[test]
+fn tidefell_directory_is_reserved() {
+    let mut a = replica(1);
+    for path in [".tidefell", ".tidefell/tmp/x", ".tidefell/mount/y"] {
+        assert!(
+            matches!(
+                a.local_change(&key(1), E, path, file(1), 1),
+                Err(Error::InvalidPath(_))
+            ),
+            "{path}"
+        );
+    }
+    // Only the first component is reserved.
+    a.local_change(&key(1), E, "docs/.tidefell", file(1), 1)
+        .unwrap();
+}
+
+#[test]
+fn change_to_older_content_keeps_the_newer_remote_version() {
+    // ADR 0024: B edits a file whose disk content is v1 while A's v2 is already known to B but
+    // was never written to disk. B's change must not supersede v2.
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    b.apply_remote(v1.clone()).unwrap();
+    let on_disk = b.known_vector(&E);
+    let v2 = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    b.apply_remote(v2.clone()).unwrap();
+
+    let (edit, _) = b
+        .local_change_from(&key(2), E, &on_disk, "f", file(3), 3)
+        .unwrap();
+    assert_eq!(b.conflicts(&E).len(), 1, "v2 is kept as a conflict copy");
+    assert_eq!(b.current(&E).unwrap().kind, file(3));
+    assert_eq!(b.conflicts(&E)[0].version.kind, file(2));
+
+    // A sees the same conflict.
+    assert_eq!(a.apply_remote(edit).unwrap(), Applied::Conflict);
+    assert_eq!(a.current(&E), b.current(&E));
+}
+
+#[test]
+fn local_change_from_moves_own_counter_past_earlier_versions() {
+    let mut a = replica(1);
+    a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    let second = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    // A stale base that predates this device's second version.
+    let stale = [(device(1), 1)].into_iter().collect();
+    let (_, third) = a
+        .local_change_from(&key(1), E, &stale, "f", file(3), 3)
+        .unwrap();
+    assert_eq!(third.get(&device(1)), 3);
+    assert!(third.dominates(&second.verify_authored().unwrap().version));
+}
+
+#[test]
+fn index_pages_resume_where_they_stopped() {
+    let mut a = replica(1);
+    for n in 0..10u8 {
+        a.local_change(&key(1), EntryId([n; 16]), &format!("f{n}"), file(n), 1)
+            .unwrap();
+    }
+    let mut since = 0;
+    let mut seen = Vec::new();
+    loop {
+        let (page, up_to) = a.index_since(a.epoch(), since, 3);
+        assert!(page.len() <= 3);
+        assert!(page.windows(2).all(|w| w[0].sequence < w[1].sequence));
+        seen.extend(page.iter().map(|s| s.sequence));
+        let done = page.len() < 3;
+        since = up_to;
+        if done {
+            break;
+        }
+    }
+    assert_eq!(seen, (1..=10).collect::<Vec<_>>());
+    assert_eq!(since, 10, "the last page reports the index's sequence");
 }

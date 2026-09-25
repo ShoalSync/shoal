@@ -45,7 +45,29 @@ pub enum Error {
     /// The peer session has ended.
     #[error("peer session closed")]
     Closed,
+    /// The peer did not respond in time (ADR 0024).
+    #[error("peer did not respond within {0:?}")]
+    Timeout(std::time::Duration),
 }
 
 /// Result alias for this crate.
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// How long a peer has to complete a handshake (ADR 0024).
+pub(crate) const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// How long a request may wait for a response, or a transfer for its next message (ADR 0024).
+pub(crate) const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The largest message read from a peer before it has authenticated (ADR 0024).
+pub(crate) const MAX_UNAUTHENTICATED: u64 = 64 * 1024;
+
+/// Runs `future`, failing with [`Error::Timeout`] if it takes longer than `limit`.
+pub(crate) async fn within<T>(
+    limit: std::time::Duration,
+    future: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(limit, future)
+        .await
+        .map_err(|_| Error::Timeout(limit))?
+}

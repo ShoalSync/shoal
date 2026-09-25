@@ -14,11 +14,14 @@ use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-use crate::backend::{Backend, IndexPage};
+use crate::backend::Backend;
 use crate::{frame_io, Error, Result};
 
-/// Most versions sent in one `IndexBatch`.
+/// Most versions sent in one `IndexBatch` (ADR 0024).
 const BATCH: usize = 512;
+
+/// Most received-version hashes a session remembers to avoid echoing them.
+const MAX_RECEIVED: usize = 1 << 18;
 
 /// Checks a peer's certificate against the authenticated connection.
 pub(crate) fn verify_peer(
@@ -92,7 +95,7 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
         let SyncMessage::Hello {
             certificate,
             folders,
-        } = frame_io::expect(&mut recv).await?
+        } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
@@ -101,7 +104,7 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
         let SyncMessage::Hello {
             certificate,
             folders,
-        } = frame_io::expect(&mut recv).await?
+        } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
@@ -139,15 +142,17 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
     })
 }
 
-/// Per-session state after the handshake.
+/// Per-session state the reading side keeps after the handshake.
 struct Session {
     peer: Peer,
     /// The peer's latest offer.
     theirs: BTreeSet<FolderId>,
     /// Our latest offer.
     offered: BTreeSet<FolderId>,
-    /// What we have sent to this peer, per folder: (epoch, up_to).
-    sent: HashMap<FolderId, (u64, u64)>,
+    /// Work for the writer task.
+    out: mpsc::UnboundedSender<Outgoing>,
+    /// Versions received from this peer, not to be pushed back to it.
+    received: Received,
 }
 
 impl Session {
@@ -156,31 +161,52 @@ impl Session {
         let now: BTreeSet<FolderId> = self.theirs.intersection(&self.offered).copied().collect();
         let mut shared = self.peer.shared.write().unwrap();
         let added = now.difference(&shared).copied().collect();
-        self.sent.retain(|f, _| now.contains(f));
         *shared = now;
         added
     }
-}
 
-async fn request_index(
-    backend: &dyn Backend,
-    send: &mut SendStream,
-    device: tidefell_proto::DeviceId,
-    folders: impl IntoIterator<Item = FolderId>,
-) -> Result<()> {
-    for folder in folders {
-        let (epoch, since) = backend.peer_progress(&folder, device);
-        frame_io::write(
-            send,
-            &SyncMessage::IndexRequest {
+    fn send(&self, outgoing: Outgoing) -> Result<()> {
+        self.out.send(outgoing).map_err(|_| Error::Closed)
+    }
+
+    fn request_index(
+        &self,
+        backend: &dyn Backend,
+        folders: impl IntoIterator<Item = FolderId>,
+    ) -> Result<()> {
+        let device = self.peer.certificate.device;
+        for folder in folders {
+            let (epoch, since) = backend.peer_progress(&folder, device);
+            self.send(Outgoing::Message(SyncMessage::IndexRequest {
                 folder,
                 epoch,
                 since,
-            },
-        )
-        .await?;
+            }))?;
+        }
+        Ok(())
     }
-    Ok(())
+}
+
+/// Work for a session's writer task. Only the writer writes to the main stream, so the reading
+/// side never waits on the network (ADR 0024).
+enum Outgoing {
+    Message(SyncMessage),
+    /// Answer an index request, in pages.
+    Index {
+        folder: FolderId,
+        epoch: u64,
+        since: u64,
+    },
+    /// Send the peer new versions of every folder it has been sent the index of.
+    Push,
+}
+
+/// Hashes of the signed versions a peer sent in this session. The writer skips them when
+/// pushing, so versions are not echoed back to where they came from (ADR 0024).
+type Received = Arc<std::sync::Mutex<std::collections::HashSet<[u8; 32]>>>;
+
+fn version_hash(version: &Signed<tidefell_proto::sync::EntryVersion>) -> [u8; 32] {
+    *blake3::hash(&postcard::to_stdvec(version).expect("in-memory encoding cannot fail")).as_bytes()
 }
 
 /// Runs a session until the peer disconnects. `on_ready` is called once the handshake
@@ -195,9 +221,13 @@ pub(crate) async fn run(
         peer,
         theirs,
         offered,
-        mut send,
+        send,
         recv,
-    } = handshake(&conn, backend.as_ref(), initiator).await?;
+    } = crate::within(
+        crate::HANDSHAKE_TIMEOUT,
+        handshake(&conn, backend.as_ref(), initiator),
+    )
+    .await?;
     let device = peer.certificate.device;
     let initial: Vec<FolderId> = peer.shared.read().unwrap().iter().copied().collect();
     debug!(%device, shared = initial.len(), "sync session started");
@@ -212,36 +242,57 @@ pub(crate) async fn run(
     // Reading frames is not cancel-safe, so a dedicated task feeds them through a channel.
     let (tx, mut incoming) = mpsc::channel::<Result<SyncMessage>>(16);
     tokio::spawn(read_loop(recv, tx));
-
-    request_index(backend.as_ref(), &mut send, device, initial).await?;
+    let (out, queue) = mpsc::unbounded_channel();
+    let received = Received::default();
+    let mut writer = tokio::spawn(write_loop(
+        send,
+        backend.clone(),
+        peer.clone(),
+        queue,
+        received.clone(),
+    ));
 
     let mut session = Session {
         peer,
         theirs,
         offered,
-        sent: HashMap::new(),
+        out,
+        received,
     };
+    session.request_index(backend.as_ref(), initial)?;
     // Subscribe before re-checking the offer: a folder added after the handshake computed it but
     // before this point would otherwise never be offered.
     let mut changes = backend.changes();
-    reoffer(&mut session, backend.as_ref(), &mut send).await?;
-    loop {
+    reoffer(&mut session, backend.as_ref())?;
+    let result = loop {
         tokio::select! {
             message = incoming.recv() => {
-                let Some(message) = message else { break };
-                handle(message?, &conn, &mut session, backend.as_ref(), &mut send).await?;
+                let Some(message) = message else { break Ok(()) };
+                if let Err(e) = message.and_then(|m| handle(m, &conn, &mut session, backend.as_ref())) {
+                    break Err(e);
+                }
             }
             changed = changes.changed() => {
                 if changed.is_err() {
-                    break;
+                    break Ok(());
                 }
-                reoffer(&mut session, backend.as_ref(), &mut send).await?;
-                push_updates(backend.as_ref(), &mut send, &mut session.sent).await?;
+                if let Err(e) = reoffer(&mut session, backend.as_ref())
+                    .and_then(|()| session.send(Outgoing::Push))
+                {
+                    break Err(e);
+                }
+            }
+            written = &mut writer => {
+                break match written {
+                    Ok(result) => result,
+                    Err(e) => Err(Error::Stream(e.to_string())),
+                };
             }
         }
-    }
+    };
+    writer.abort();
     conn.close(0u32.into(), b"done");
-    Ok(())
+    result
 }
 
 async fn read_loop(mut recv: RecvStream, tx: mpsc::Sender<Result<SyncMessage>>) {
@@ -258,41 +309,175 @@ async fn read_loop(mut recv: RecvStream, tx: mpsc::Sender<Result<SyncMessage>>) 
     }
 }
 
+/// Owns the main stream's sending side and does the session's writing.
+async fn write_loop(
+    mut send: SendStream,
+    backend: Arc<dyn Backend>,
+    peer: Peer,
+    mut queue: mpsc::UnboundedReceiver<Outgoing>,
+    received: Received,
+) -> Result<()> {
+    // What the peer has been sent, per folder: (epoch, up_to).
+    let mut sent: HashMap<FolderId, (u64, u64)> = HashMap::new();
+    // Work taken off the queue while coalescing pushes, to do before anything newer.
+    let mut backlog = std::collections::VecDeque::new();
+    loop {
+        let outgoing = match backlog.pop_front() {
+            Some(outgoing) => outgoing,
+            None => match queue.recv().await {
+                Some(outgoing) => outgoing,
+                None => break,
+            },
+        };
+        match outgoing {
+            Outgoing::Message(message) => frame_io::write(&mut send, &message).await?,
+            Outgoing::Index {
+                folder,
+                epoch,
+                since,
+            } => {
+                if !peer.shares(&folder) {
+                    continue;
+                }
+                let Some(progress) = send_index(
+                    &mut send,
+                    backend.as_ref(),
+                    &received,
+                    folder,
+                    epoch,
+                    since,
+                    false,
+                )
+                .await?
+                else {
+                    frame_io::write(
+                        &mut send,
+                        &SyncMessage::Error {
+                            code: ErrorCode::UnknownFolder,
+                        },
+                    )
+                    .await?;
+                    continue;
+                };
+                sent.insert(folder, progress);
+            }
+            Outgoing::Push => {
+                // Pushes queued behind this one would find nothing new.
+                drain_pushes(&mut queue, &mut backlog);
+                sent.retain(|folder, _| peer.shares(folder));
+                let folders: Vec<(FolderId, (u64, u64))> =
+                    sent.iter().map(|(f, p)| (*f, *p)).collect();
+                for (folder, (epoch, up_to)) in folders {
+                    if let Some(progress) = send_index(
+                        &mut send,
+                        backend.as_ref(),
+                        &received,
+                        folder,
+                        epoch,
+                        up_to,
+                        true,
+                    )
+                    .await?
+                    {
+                        sent.insert(folder, progress);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Takes everything already queued, dropping pushes and keeping the rest, in order, in
+/// `backlog`.
+fn drain_pushes(
+    queue: &mut mpsc::UnboundedReceiver<Outgoing>,
+    backlog: &mut std::collections::VecDeque<Outgoing>,
+) {
+    while let Ok(next) = queue.try_recv() {
+        if !matches!(next, Outgoing::Push) {
+            backlog.push_back(next);
+        }
+    }
+}
+
+/// Sends `folder`'s index after `since` in pages of [`BATCH`], skipping versions the peer sent
+/// us. Returns the `(epoch, up_to)` sent, or `None` if the folder is unknown. A push with
+/// nothing new sends nothing.
+async fn send_index(
+    send: &mut SendStream,
+    backend: &dyn Backend,
+    received: &Received,
+    folder: FolderId,
+    epoch: u64,
+    since: u64,
+    push: bool,
+) -> Result<Option<(u64, u64)>> {
+    let (mut epoch_asked, mut since) = (epoch, since);
+    let mut first = true;
+    loop {
+        let Some(page) = backend.index_since(&folder, epoch_asked, since, BATCH) else {
+            return Ok(None);
+        };
+        let last = page.versions.len() < BATCH;
+        let unchanged = page.epoch == epoch && page.up_to == since;
+        if push && first && last && page.versions.is_empty() && unchanged {
+            return Ok(Some((page.epoch, page.up_to)));
+        }
+        first = false;
+        let versions: Vec<_> = {
+            let mut received = received.lock().unwrap();
+            page.versions
+                .into_iter()
+                .filter(|v| !received.remove(&version_hash(v)))
+                .collect()
+        };
+        // Pages in the middle only matter for their versions; the last one also carries the
+        // position the peer records.
+        if last || !versions.is_empty() {
+            frame_io::write(
+                send,
+                &SyncMessage::IndexBatch {
+                    folder,
+                    epoch: page.epoch,
+                    up_to: page.up_to,
+                    versions,
+                    last,
+                },
+            )
+            .await?;
+        }
+        if last {
+            return Ok(Some((page.epoch, page.up_to)));
+        }
+        (epoch_asked, since) = (page.epoch, page.up_to);
+    }
+}
+
 /// Re-sends `Hello` if the folders we offer the peer changed (a folder was added or removed,
 /// or membership changed).
-async fn reoffer(
-    session: &mut Session,
-    backend: &dyn Backend,
-    send: &mut SendStream,
-) -> Result<()> {
+fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
     let offer = offer_for(backend, &session.peer.certificate);
     if offer == session.offered {
         return Ok(());
     }
-    frame_io::write(
-        send,
-        &SyncMessage::Hello {
-            certificate: backend.certificate(),
-            folders: offer.iter().copied().collect(),
-        },
-    )
-    .await?;
+    session.send(Outgoing::Message(SyncMessage::Hello {
+        certificate: backend.certificate(),
+        folders: offer.iter().copied().collect(),
+    }))?;
     session.offered = offer;
     let added = session.reshare();
     debug!(device = %session.peer.certificate.device, newly_shared = added.len(), "offer updated");
-    request_index(backend, send, session.peer.certificate.device, added).await
+    session.request_index(backend, added)
 }
 
-async fn handle(
+fn handle(
     message: SyncMessage,
     conn: &Connection,
     session: &mut Session,
     backend: &dyn Backend,
-    send: &mut SendStream,
 ) -> Result<()> {
-    let peer = &session.peer;
-    let device = peer.certificate.device;
-    let sent = &mut session.sent;
+    let device = session.peer.certificate.device;
     match message {
         SyncMessage::Hello {
             certificate,
@@ -300,7 +485,7 @@ async fn handle(
         } => {
             // An updated offer. The certificate must still be for this connection's device.
             let certificate = verify_peer(&certificate, conn)?;
-            if certificate.user != peer.certificate.user {
+            if certificate.user != session.peer.certificate.user {
                 return Err(Error::Protocol(
                     "certificate changed user mid-session".into(),
                 ));
@@ -308,23 +493,25 @@ async fn handle(
             session.theirs = folders.into_iter().collect();
             let added = session.reshare();
             debug!(%device, offered = session.theirs.len(), newly_shared = added.len(), "peer updated its offer");
-            request_index(backend, send, device, added).await
+            session.request_index(backend, added)
         }
         SyncMessage::IndexRequest {
             folder,
             epoch,
             since,
         } => {
-            if !peer.shares(&folder) {
+            if !session.peer.shares(&folder) {
                 debug!(%device, %folder, "index requested for a folder not shared");
-                return send_error(send, ErrorCode::NotAMember).await;
+                return session.send(Outgoing::Message(SyncMessage::Error {
+                    code: ErrorCode::NotAMember,
+                }));
             }
             debug!(%device, %folder, epoch, since, "index requested");
-            let Some(page) = backend.index_since(&folder, epoch, since) else {
-                return send_error(send, ErrorCode::UnknownFolder).await;
-            };
-            sent.insert(folder, (page.epoch, page.up_to));
-            send_page(send, folder, page).await
+            session.send(Outgoing::Index {
+                folder,
+                epoch,
+                since,
+            })
         }
         SyncMessage::IndexBatch {
             folder,
@@ -333,12 +520,21 @@ async fn handle(
             versions,
             last,
         } => {
-            if !peer.shares(&folder) {
+            if !session.peer.shares(&folder) {
                 // Possible briefly after the folder stopped being shared; ignore it.
                 debug!(%device, %folder, "ignoring index for a folder not shared");
                 return Ok(());
             }
             debug!(%device, %folder, versions = versions.len(), last, "index received");
+            {
+                let mut received = session.received.lock().unwrap();
+                // Versions we already had are never pushed, so their hashes would stay; bound the
+                // set. Forgetting only means some versions may be echoed.
+                if received.len() > MAX_RECEIVED {
+                    received.clear();
+                }
+                received.extend(versions.iter().map(version_hash));
+            }
             backend.apply_versions(&folder, device, versions);
             if last {
                 backend.set_peer_progress(&folder, device, epoch, up_to);
@@ -354,50 +550,6 @@ async fn handle(
             variant_name(&other)
         ))),
     }
-}
-
-async fn push_updates(
-    backend: &dyn Backend,
-    send: &mut SendStream,
-    sent: &mut HashMap<FolderId, (u64, u64)>,
-) -> Result<()> {
-    for (folder, (epoch, up_to)) in sent.iter_mut() {
-        let Some(page) = backend.index_since(folder, *epoch, *up_to) else {
-            continue;
-        };
-        if page.versions.is_empty() && page.epoch == *epoch {
-            continue;
-        }
-        (*epoch, *up_to) = (page.epoch, page.up_to);
-        send_page(send, *folder, page).await?;
-    }
-    Ok(())
-}
-
-async fn send_page(send: &mut SendStream, folder: FolderId, page: IndexPage) -> Result<()> {
-    let mut batches: Vec<Vec<_>> = page.versions.chunks(BATCH).map(<[_]>::to_vec).collect();
-    if batches.is_empty() {
-        batches.push(Vec::new());
-    }
-    let count = batches.len();
-    for (i, versions) in batches.into_iter().enumerate() {
-        frame_io::write(
-            send,
-            &SyncMessage::IndexBatch {
-                folder,
-                epoch: page.epoch,
-                up_to: page.up_to,
-                versions,
-                last: i + 1 == count,
-            },
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-async fn send_error(send: &mut SendStream, code: ErrorCode) -> Result<()> {
-    frame_io::write(send, &SyncMessage::Error { code }).await
 }
 
 fn variant_name(message: &SyncMessage) -> &'static str {
@@ -417,7 +569,8 @@ async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Sh
         let backend = backend.clone();
         let shared = shared.clone();
         tokio::spawn(async move {
-            let response = match frame_io::expect(&mut recv).await {
+            let request = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv));
+            let response = match request.await {
                 Ok(SyncMessage::ManifestRequest { folder, content }) => {
                     if !shared.read().unwrap().contains(&folder) {
                         SyncMessage::Error {
@@ -449,6 +602,18 @@ pub(crate) async fn request_manifest(
     folder: FolderId,
     content: ContentHash,
 ) -> Result<Manifest> {
+    crate::within(
+        crate::REQUEST_TIMEOUT,
+        manifest_exchange(conn, folder, content),
+    )
+    .await
+}
+
+async fn manifest_exchange(
+    conn: &Connection,
+    folder: FolderId,
+    content: ContentHash,
+) -> Result<Manifest> {
     let (mut send, mut recv) = conn
         .open_bi()
         .await
@@ -471,4 +636,43 @@ pub(crate) async fn request_manifest(
 /// The device ID of a peer's endpoint.
 pub(crate) fn device_of(conn: &Connection) -> DeviceId {
     DeviceId(*conn.remote_id().as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalescing_pushes_keeps_other_work_in_order() {
+        let (tx, mut queue) = mpsc::unbounded_channel();
+        let folder = FolderId([1; 32]);
+        tx.send(Outgoing::Push).unwrap();
+        tx.send(Outgoing::Message(SyncMessage::Error {
+            code: ErrorCode::NotAMember,
+        }))
+        .unwrap();
+        tx.send(Outgoing::Push).unwrap();
+        tx.send(Outgoing::Index {
+            folder,
+            epoch: 3,
+            since: 4,
+        })
+        .unwrap();
+        let mut backlog = std::collections::VecDeque::new();
+        drain_pushes(&mut queue, &mut backlog);
+        assert!(queue.try_recv().is_err(), "everything was taken");
+        assert_eq!(backlog.len(), 2, "only pushes are dropped");
+        assert!(matches!(
+            backlog[0],
+            Outgoing::Message(SyncMessage::Error { .. })
+        ));
+        assert!(matches!(
+            backlog[1],
+            Outgoing::Index {
+                epoch: 3,
+                since: 4,
+                ..
+            }
+        ));
+    }
 }

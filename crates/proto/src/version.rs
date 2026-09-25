@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::DeviceId;
 
+/// The largest counter a version vector may hold (ADR 0024). Versions with a larger counter are
+/// invalid, and a device refuses to make a change that would pass it.
+pub const MAX_COUNTER: u64 = 1 << 62;
+
 /// How two version vectors relate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Causality {
@@ -38,11 +42,20 @@ impl VersionVector {
         self.0.get(device).copied().unwrap_or(0)
     }
 
-    /// Increments `device`'s counter and returns the new value.
-    pub fn increment(&mut self, device: DeviceId) -> u64 {
-        let counter = self.0.entry(device).or_insert(0);
-        *counter += 1;
-        *counter
+    /// Increments `device`'s counter and returns the new value, or `None`, leaving the vector
+    /// unchanged, if that would pass [`MAX_COUNTER`].
+    pub fn increment(&mut self, device: DeviceId) -> Option<u64> {
+        let next = self
+            .get(&device)
+            .checked_add(1)
+            .filter(|&n| n <= MAX_COUNTER)?;
+        self.0.insert(device, next);
+        Some(next)
+    }
+
+    /// True if no counter exceeds [`MAX_COUNTER`].
+    pub fn within_ceiling(&self) -> bool {
+        self.0.values().all(|&c| c <= MAX_COUNTER)
     }
 
     /// Sets every counter to the maximum of `self` and `other`.
@@ -111,6 +124,17 @@ mod tests {
     }
 
     #[test]
+    fn increment_stops_at_the_ceiling() {
+        let mut a = vv(&[(1, MAX_COUNTER - 1)]);
+        assert!(a.within_ceiling());
+        assert_eq!(a.increment(d(1)), Some(MAX_COUNTER));
+        assert_eq!(a.increment(d(1)), None);
+        assert_eq!(a.get(&d(1)), MAX_COUNTER, "unchanged when refused");
+        assert!(!vv(&[(2, MAX_COUNTER + 1)]).within_ceiling());
+        assert!(!vv(&[(2, u64::MAX)]).within_ceiling());
+    }
+
+    #[test]
     fn merge_takes_maximum() {
         let mut a = vv(&[(1, 3), (2, 1)]);
         a.merge(&vv(&[(2, 5), (3, 1)]));
@@ -120,8 +144,8 @@ mod tests {
     #[test]
     fn increment() {
         let mut a = VersionVector::new();
-        assert_eq!(a.increment(d(1)), 1);
-        assert_eq!(a.increment(d(1)), 2);
+        assert_eq!(a.increment(d(1)), Some(1));
+        assert_eq!(a.increment(d(1)), Some(2));
         assert!(a.dominates(&vv(&[(1, 1)])));
     }
 }

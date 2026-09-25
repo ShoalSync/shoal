@@ -29,9 +29,16 @@ pub trait Backend: Send + Sync + 'static {
     /// True if `peer` (already verified) may sync `folder`.
     fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool;
 
-    /// Index entries of `folder` after `since`, or everything if `epoch` does not match.
-    /// `None` if the folder is unknown.
-    fn index_since(&self, folder: &FolderId, epoch: u64, since: u64) -> Option<IndexPage>;
+    /// At most `limit` index entries of `folder` after `since`, from the start if `epoch` does
+    /// not match. `up_to` is the sequence of the last entry returned if more follow, otherwise
+    /// the index's current sequence. `None` if the folder is unknown.
+    fn index_since(
+        &self,
+        folder: &FolderId,
+        epoch: u64,
+        since: u64,
+        limit: usize,
+    ) -> Option<IndexPage>;
 
     /// Applies versions received from `peer`. Invalid versions are skipped by the backend.
     fn apply_versions(

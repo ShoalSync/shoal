@@ -18,7 +18,7 @@ pub mod version;
 pub use ids::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, PublicKey, UserId};
 pub use manifest::{ChunkRef, Manifest};
 pub use signed::{Signed, SignedKind};
-pub use version::{Causality, VersionVector};
+pub use version::{Causality, VersionVector, MAX_COUNTER};
 
 /// ALPN for the version 1 sync protocol. See `specs/sync-v1.md`.
 pub const ALPN_SYNC_V1: &[u8] = b"tidefell/sync/1";

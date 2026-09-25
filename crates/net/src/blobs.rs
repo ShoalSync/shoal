@@ -54,14 +54,19 @@ async fn serve_stream(
     mut send: SendStream,
     mut recv: RecvStream,
 ) -> Result<()> {
-    let BlobsMessage::Hello { certificate } = frame_io::expect(&mut recv).await? else {
+    // Before the peer is verified, read little and not for long (ADR 0024).
+    let hello = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED);
+    let BlobsMessage::Hello { certificate } =
+        crate::within(crate::HANDSHAKE_TIMEOUT, hello).await?
+    else {
         return reject(&mut send, BlobsErrorCode::ProtocolViolation).await;
     };
     let peer = match verify_peer(&certificate, conn) {
         Ok(peer) => peer,
         Err(_) => return reject(&mut send, BlobsErrorCode::NotAMember).await,
     };
-    match frame_io::expect(&mut recv).await? {
+    let request = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv)).await?;
+    match request {
         BlobsMessage::Request { folder, chunks } => {
             if chunks.len() > MAX_CHUNKS_PER_REQUEST {
                 return reject(&mut send, BlobsErrorCode::TooManyChunks).await;
@@ -120,6 +125,18 @@ async fn open(
     certificate: Signed<DeviceCertificate>,
     request: BlobsMessage,
 ) -> Result<RecvStream> {
+    crate::within(
+        crate::REQUEST_TIMEOUT,
+        open_stream(conn, certificate, request),
+    )
+    .await
+}
+
+async fn open_stream(
+    conn: &Connection,
+    certificate: Signed<DeviceCertificate>,
+    request: BlobsMessage,
+) -> Result<RecvStream> {
     let (mut send, recv) = conn
         .open_bi()
         .await
@@ -151,7 +168,9 @@ pub(crate) async fn fetch_chunks(
     .await?;
     let mut results = Vec::with_capacity(chunks.len());
     for expected in chunks {
-        match frame_io::expect(&mut recv).await? {
+        // A transfer may be long, but no chunk may take longer than the deadline.
+        let response = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv)).await?;
+        match response {
             BlobsMessage::Chunk { hash, data } if hash == *expected => {
                 if blake3::hash(&data).as_bytes() != hash.as_bytes() {
                     return Err(Error::Corrupt(hash));
@@ -181,7 +200,8 @@ pub(crate) async fn availability(
         BlobsMessage::AvailabilityRequest { folder, content },
     )
     .await?;
-    match frame_io::expect(&mut recv).await? {
+    let response = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv)).await?;
+    match response {
         BlobsMessage::Availability {
             content: got,
             chunk_count,
@@ -206,7 +226,8 @@ pub(crate) async fn replica(
     folder: FolderId,
 ) -> Result<bool> {
     let mut recv = open(conn, certificate, BlobsMessage::ReplicaRequest { folder }).await?;
-    match frame_io::expect(&mut recv).await? {
+    let response = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv)).await?;
+    match response {
         BlobsMessage::Replica { full } => Ok(full),
         BlobsMessage::Error { code } => Err(Error::Rejected(format!("{code:?}"))),
         _ => Err(Error::Protocol("unexpected replica response".into())),

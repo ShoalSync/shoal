@@ -25,6 +25,16 @@ where
     R: AsyncRead + Unpin,
     T: DeserializeOwned,
 {
+    read_limited(reader, MAX_FRAME_LEN).await
+}
+
+/// Reads one frame of at most `max` bytes, for messages from peers that have not yet
+/// authenticated (ADR 0024).
+pub(crate) async fn read_limited<R, T>(reader: &mut R, max: u64) -> Result<Option<T>>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
     let mut len: u64 = 0;
     for i in 0..10 {
         let byte = match reader.read_u8().await {
@@ -34,7 +44,7 @@ where
         };
         len |= u64::from(byte & 0x7f) << (7 * i);
         if byte & 0x80 == 0 {
-            if len > MAX_FRAME_LEN {
+            if len > max.min(MAX_FRAME_LEN) {
                 return Err(Error::Protocol(format!("frame of {len} bytes")));
             }
             let mut body = vec![0u8; len as usize];
@@ -48,6 +58,15 @@ where
         }
     }
     Err(Error::Protocol("frame length varint too long".into()))
+}
+
+/// Reads one frame of at most `max` bytes, treating end of stream as an error.
+pub(crate) async fn expect_limited<R, T>(reader: &mut R, max: u64) -> Result<T>
+where
+    R: AsyncRead + Unpin,
+    T: DeserializeOwned,
+{
+    read_limited(reader, max).await?.ok_or(Error::Closed)
 }
 
 /// Reads one frame, treating end of stream as an error.
@@ -77,5 +96,13 @@ mod tests {
         assert_eq!(second, "second");
         writer.await.unwrap();
         assert!(read::<_, String>(&mut b).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn limited_read_refuses_large_frames_before_allocating() {
+        let (mut a, mut b) = tokio::io::duplex(1 << 16);
+        write(&mut a, &vec![0u8; 100]).await.unwrap();
+        let err = read_limited::<_, Vec<u8>>(&mut b, 50).await.unwrap_err();
+        assert!(matches!(err, Error::Protocol(_)), "{err:?}");
     }
 }

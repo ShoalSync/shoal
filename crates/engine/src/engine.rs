@@ -544,21 +544,24 @@ impl Engine {
                     content,
                     size,
                     executable,
-                } => Some(FileInfo {
-                    entry: v.entry,
-                    path: v.path.clone(),
-                    size,
-                    modified_ms: v.modified_ms,
-                    executable,
-                    on_disk: state
-                        .local
-                        .get(&v.path)
-                        .is_some_and(|l| l.entry == v.entry && l.content == content),
-                    conflicts: state.meta.conflicts(&v.entry).len(),
-                    author: v.author,
-                    confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
-                    only_here: copies::only_here(&state, self.inner.key.id(), v),
-                }),
+                } => {
+                    let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
+                    Some(FileInfo {
+                        entry: v.entry,
+                        path: path.to_owned(),
+                        size,
+                        modified_ms: v.modified_ms,
+                        executable,
+                        on_disk: state
+                            .local
+                            .get(path)
+                            .is_some_and(|l| l.entry == v.entry && l.content == content),
+                        conflicts: state.meta.conflicts(&v.entry).len(),
+                        author: v.author,
+                        confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
+                        only_here: copies::only_here(&state, self.inner.key.id(), v),
+                    })
+                }
                 _ => None,
             })
             .collect();
@@ -573,8 +576,7 @@ impl Engine {
         let state = handle.lock();
         let content = state
             .meta
-            .entries()
-            .find(|v| v.path == path)
+            .find_path(path)
             .and_then(|v| match v.kind {
                 EntryKind::File { content, .. } => Some(content),
                 _ => None,
@@ -616,10 +618,16 @@ impl Engine {
     /// and so is never evicted, until a matching [`Engine::close`].
     pub async fn open(&self, folder: FolderId, path: &str) -> Result<PathBuf> {
         let handle = self.inner.folder(&folder)?;
-        let _guard = handle.fs_lock.lock().await;
+        // Fetching takes the file lock itself once the content has arrived, so it is not held
+        // here while waiting on peers (ADR 0024).
         if self.local_path(folder, path)?.is_none()
             && !materialize::fetch_one(&self.inner, &self.node, folder, &handle, path).await?
         {
+            return Err(Error::Unavailable(path.to_owned()));
+        }
+        let _guard = handle.fs_lock.lock().await;
+        // Evicted or replaced between fetching and pinning; rare, and the caller can retry.
+        if self.local_path(folder, path)?.is_none() {
             return Err(Error::Unavailable(path.to_owned()));
         }
         *handle
@@ -692,10 +700,14 @@ impl Engine {
                 _ => return Err(Error::NoSuchFile(path.to_owned())),
             };
             let root = state.config.path.clone();
+            // A delete of content on disk that is older than a version since received must not
+            // supersede that version (ADR 0024).
+            let base = crate::scan::base_of(&state, path, entry);
             remove_local(&mut state, &root, path)?;
-            state.meta.local_change(
+            state.meta.local_change_from(
                 self.inner.key.signing_key(),
                 entry,
+                &base,
                 path,
                 EntryKind::Tombstone,
                 now_ms(),
@@ -729,17 +741,20 @@ impl Engine {
             let _guard = handle.fs_lock.lock().await;
             let mut state = handle.lock();
             let prefix = format!("{from}/");
+            // Paths are where files are on disk, which for entries that share a path is not
+            // their recorded path (ADR 0024).
             let moves: Vec<(EntryId, String, String, EntryKind, i64)> = state
                 .meta
                 .entries()
                 .filter(|v| matches!(v.kind, EntryKind::File { .. }))
                 .filter_map(|v| {
-                    let dest = if v.path == from {
+                    let old = state.meta.disk_path(&v.entry)?;
+                    let dest = if old == from {
                         to.to_owned()
                     } else {
-                        format!("{to}/{}", v.path.strip_prefix(&prefix)?)
+                        format!("{to}/{}", old.strip_prefix(&prefix)?)
                     };
-                    Some((v.entry, v.path.clone(), dest, v.kind.clone(), v.modified_ms))
+                    Some((v.entry, old.to_owned(), dest, v.kind.clone(), v.modified_ms))
                 })
                 .collect();
             if moves.is_empty() {
@@ -872,10 +887,14 @@ impl Engine {
                 status.conflicts += 1;
             }
             if let EntryKind::File { content, .. } = version.kind {
-                status.files.insert(version.path.clone(), content);
+                let path = state
+                    .meta
+                    .disk_path(&version.entry)
+                    .unwrap_or(&version.path);
+                status.files.insert(path.to_owned(), content);
                 let on_disk = state
                     .local
-                    .get(&version.path)
+                    .get(path)
                     .is_some_and(|l| l.entry == version.entry && l.content == content);
                 // Placeholders of a partial replica are not pending.
                 if !on_disk && (!partial || materialised.contains(&version.entry)) {
@@ -1009,9 +1028,10 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
     evict::evict(inner, id, &handle)
 }
 
+/// Brings `id` up to date on disk. Takes the folder's file lock only around disk work, not
+/// while fetching from peers.
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
-    let _guard = handle.fs_lock.lock().await;
     materialize::materialize(inner, node, id, &handle).await
 }
 

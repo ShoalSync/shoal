@@ -85,7 +85,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             continue;
         }
         let mut state = handle.lock();
-        let Some(local) = state.local.get(&candidate.path).copied() else {
+        let Some(local) = state.local.get(&candidate.path).cloned() else {
             continue;
         };
         if local.content != candidate.content || handle.pinned().contains(&candidate.path) {

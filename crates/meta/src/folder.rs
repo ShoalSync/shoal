@@ -1,11 +1,13 @@
 //! One replica's metadata for one folder.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use ed25519_dalek::SigningKey;
 use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion};
-use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, VersionVector};
+use tidefell_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
 
+use crate::layout::Layout;
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
 use crate::{Error, Result};
@@ -57,6 +59,8 @@ pub struct Folder {
     pub(crate) sequence: u64,
     pub(crate) entries: HashMap<EntryId, Entry>,
     pub(crate) recycle: RecycleBin,
+    /// Where live entries go on disk, computed on demand and cleared when entries change.
+    pub(crate) layout: OnceLock<Layout>,
 }
 
 impl Folder {
@@ -76,6 +80,7 @@ impl Folder {
             epoch,
             sequence: 0,
             entries: HashMap::new(),
+            layout: OnceLock::new(),
             recycle: RecycleBin::new(retention),
         }
     }
@@ -118,10 +123,24 @@ impl Folder {
         self.entries.values().map(|e| &e.current.version)
     }
 
-    /// The live (non-deleted) entry currently at `path`, if any.
+    /// The live (non-deleted) entry on disk at `path`, if any. Entries that share a path are
+    /// told apart by the [`Layout`], so this is the entry whose file is at `path`, which for a
+    /// displaced entry is not its recorded path.
     pub fn find_path(&self, path: &str) -> Option<&EntryVersion> {
-        self.entries()
-            .find(|v| v.path == path && !matches!(v.kind, EntryKind::Tombstone))
+        self.layout()
+            .entry_at(path)
+            .and_then(|entry| self.current(&entry))
+    }
+
+    /// Where every live entry goes on disk (ADR 0024).
+    pub fn layout(&self) -> &Layout {
+        self.layout
+            .get_or_init(|| Layout::new(self.entries.values().map(|e| &e.current.version)))
+    }
+
+    /// Where `entry` goes on disk, if it is live.
+    pub fn disk_path(&self, entry: &EntryId) -> Option<&str> {
+        self.layout().path_of(entry)
     }
 
     /// The recycle bin.
@@ -152,10 +171,9 @@ impl Folder {
         self.recycle.take_all()
     }
 
-    /// Records a change made on this device and returns the signed version to send to peers.
-    ///
-    /// The new version supersedes every version of the entry this replica knows, including
-    /// conflict copies, which resolves any conflict.
+    /// Records a local change built on everything this replica knows of the entry: its
+    /// current version and conflict copies. Use [`Folder::local_change_from`] when the change
+    /// was made to content on disk whose version is known.
     pub fn local_change(
         &mut self,
         key: &SigningKey,
@@ -164,19 +182,53 @@ impl Folder {
         kind: EntryKind,
         modified_ms: i64,
     ) -> Result<Signed<EntryVersion>> {
+        let base = self.known_vector(&entry);
+        self.local_change_from(key, entry, &base, path, kind, modified_ms)
+            .map(|(signed, _)| signed)
+    }
+
+    /// The merge of the vectors of the entry's current version and conflict copies: the base
+    /// of content that reflects all of them. Empty for an unknown entry.
+    pub fn known_vector(&self, entry: &EntryId) -> VersionVector {
+        let mut vector = VersionVector::new();
+        if let Some(existing) = self.entries.get(entry) {
+            for stored in existing.all() {
+                vector.merge(&stored.version.version);
+            }
+        }
+        vector
+    }
+
+    /// Records a local change made to content whose version vector was `base` (ADR 0024).
+    ///
+    /// The new version supersedes only what `base` covers, so a remote version that arrived
+    /// after that content was written stays concurrent and becomes a conflict copy instead of
+    /// being lost. This device's own counter still moves past every version it has made.
+    /// Returns the signed version to send to peers, and its vector: the base of the content
+    /// the change describes.
+    pub fn local_change_from(
+        &mut self,
+        key: &SigningKey,
+        entry: EntryId,
+        base: &VersionVector,
+        path: &str,
+        kind: EntryKind,
+        modified_ms: i64,
+    ) -> Result<(Signed<EntryVersion>, VersionVector)> {
         if key.verifying_key().to_bytes() != *self.device.as_bytes() {
             return Err(Error::WrongDevice);
         }
         if !is_valid_path(path) {
             return Err(Error::InvalidPath(path.to_owned()));
         }
-        let mut version = VersionVector::new();
-        if let Some(existing) = self.entries.get(&entry) {
-            for stored in existing.all() {
-                version.merge(&stored.version.version);
-            }
+        let mut version = base.clone();
+        let own = self.known_vector(&entry).get(&self.device);
+        if own > version.get(&self.device) {
+            version.merge(&[(self.device, own)].into_iter().collect());
         }
-        version.increment(self.device);
+        version
+            .increment(self.device)
+            .ok_or(Error::CounterCeiling)?;
         let new = EntryVersion {
             folder: self.id,
             entry,
@@ -187,8 +239,9 @@ impl Folder {
             version,
         };
         let signed = Signed::sign(&new, key);
+        let vector = new.version.clone();
         self.store(new, signed.clone());
-        Ok(signed)
+        Ok((signed, vector))
     }
 
     /// Verifies and applies a version received from a peer.
@@ -199,6 +252,9 @@ impl Folder {
         }
         if !is_valid_path(&version.path) {
             return Err(Error::InvalidPath(version.path));
+        }
+        if !version.version.within_ceiling() {
+            return Err(Error::CounterCeiling);
         }
         Ok(self.store(version, signed))
     }
@@ -222,9 +278,11 @@ impl Folder {
         self.local_change(key, entry, &old.path, old.kind, now_ms)
     }
 
-    /// Versions stored after `since`, in sequence order, for an index response. If `epoch`
-    /// is not this index's epoch, returns everything. Also returns the `up_to` value to send.
-    pub fn index_since(&self, epoch: u64, since: u64) -> (Vec<&StoredVersion>, u64) {
+    /// At most `limit` versions stored after `since`, in sequence order, for an index
+    /// response. If `epoch` is not this index's epoch, starts from the beginning. Also returns
+    /// the `up_to` value to send: the sequence of the last version returned if more follow,
+    /// otherwise the index's current sequence.
+    pub fn index_since(&self, epoch: u64, since: u64, limit: usize) -> (Vec<&StoredVersion>, u64) {
         let since = if epoch == self.epoch { since } else { 0 };
         let mut out: Vec<&StoredVersion> = self
             .entries
@@ -232,6 +290,13 @@ impl Folder {
             .flat_map(Entry::all)
             .filter(|s| s.sequence > since)
             .collect();
+        if out.len() > limit {
+            out.select_nth_unstable_by_key(limit, |s| s.sequence);
+            out.truncate(limit);
+            out.sort_by_key(|s| s.sequence);
+            let up_to = out.last().map_or(since, |s| s.sequence);
+            return (out, up_to);
+        }
         out.sort_by_key(|s| s.sequence);
         (out, self.sequence)
     }
@@ -239,6 +304,7 @@ impl Folder {
     /// Adds a verified version, keeping only versions no other version supersedes.
     fn store(&mut self, version: EntryVersion, signed: Signed<EntryVersion>) -> Applied {
         let entry_id = version.entry;
+        self.layout.take();
         let existing = self.entries.remove(&entry_id);
         let is_new = existing.is_none();
 
@@ -246,15 +312,18 @@ impl Folder {
         let mut superseded = Vec::new();
         if let Some(existing) = existing {
             let previous_current = existing.current.version.clone();
-            let known = existing
-                .all()
-                .any(|s| s.version.version.dominates(&version.version));
+            // Known if a stored version is later, or is this very version. Equal vectors with
+            // different content are concurrent (ADR 0024).
+            let known = existing.all().any(|s| {
+                s.version == version
+                    || s.version.version.compare(&version.version) == Causality::After
+            });
             if known {
                 self.entries.insert(entry_id, existing);
                 return Applied::Stale;
             }
             for stored in std::iter::once(existing.current).chain(existing.conflicts) {
-                if version.version.dominates(&stored.version.version) {
+                if version.version.compare(&stored.version.version) == Causality::After {
                     superseded.push(stored.version);
                 } else {
                     survivors.push(stored);

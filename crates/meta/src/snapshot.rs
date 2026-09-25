@@ -102,6 +102,7 @@ impl Folder {
             sequence: snapshot.sequence,
             entries,
             recycle,
+            layout: std::sync::OnceLock::new(),
         })
     }
 

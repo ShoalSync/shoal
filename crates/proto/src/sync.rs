@@ -59,16 +59,21 @@ impl SignedKind for EntryVersion {
 }
 
 /// Checks the path rules from `specs/sync-v1.md`: relative, `/`-separated, non-empty
-/// components, no `.` or `..`, no NUL or backslash.
+/// components, no `.` or `..`, not under [`RESERVED_DIR`], no NUL or backslash.
 ///
 /// NFC normalisation is the author's responsibility and is not checked here.
 pub fn is_valid_path(path: &str) -> bool {
     !path.is_empty()
         && !path.contains(['\\', '\0'])
+        && path.split('/').next() != Some(RESERVED_DIR)
         && path
             .split('/')
             .all(|c| !c.is_empty() && c != "." && c != "..")
 }
+
+/// The per-folder directory each replica keeps for its own use; no entry may live under it
+/// (ADR 0024).
+pub const RESERVED_DIR: &str = ".tidefell";
 
 impl Signed<EntryVersion> {
     /// Verifies the signature and checks that the signer is the version's author.
@@ -156,11 +161,28 @@ mod tests {
 
     #[test]
     fn path_rules() {
-        for ok in ["a", "a/b.txt", "dir/.hidden", "a..b"] {
+        for ok in [
+            "a",
+            "a/b.txt",
+            "dir/.hidden",
+            "a..b",
+            "dir/.tidefell",
+            ".tidefellx",
+        ] {
             assert!(is_valid_path(ok), "{ok}");
         }
         for bad in [
-            "", "/a", "a/", "a//b", "./a", "a/../b", "..", "a\\b", "a\0b",
+            "",
+            "/a",
+            "a/",
+            "a//b",
+            "./a",
+            "a/../b",
+            "..",
+            "a\\b",
+            "a\0b",
+            ".tidefell",
+            ".tidefell/tmp/x",
         ] {
             assert!(!is_valid_path(bad), "{bad:?}");
         }

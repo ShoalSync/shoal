@@ -194,3 +194,127 @@ async fn conflicting_edits_converge_after_restart() {
     engine_b.shutdown().await;
     engine_a.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn remote_edit_received_before_local_scan_is_kept() {
+    // ADR 0024: b edits a file, a's edit of it arrives before b scans, and b's scan must not
+    // supersede a's edit.
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 22);
+    let b = Replica::new(dir.path(), "b", 23);
+    a.write("doc.txt", b"original");
+
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("initial sync", || b.read("doc.txt").is_some()).await;
+
+    b.write("doc.txt", b"edit on b");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    a.write("doc.txt", b"edit on a, longer");
+    engine_a.scan(FOLDER).await.unwrap();
+    let a_size = b"edit on a, longer".len() as u64;
+    eventually("b knows a's edit", || {
+        engine_b
+            .files(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "doc.txt" && f.size == a_size)
+    })
+    .await;
+    assert_eq!(
+        b.read("doc.txt").as_deref(),
+        Some(b"edit on b".as_slice()),
+        "b's unrecorded edit is not overwritten"
+    );
+
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("the edits conflict on both replicas", || {
+        status(&engine_a).conflicts == 1 && status(&engine_b).conflicts == 1
+    })
+    .await;
+    eventually("both replicas agree on disk", || {
+        a.read("doc.txt").is_some() && a.read("doc.txt") == b.read("doc.txt")
+    })
+    .await;
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn files_created_at_the_same_path_are_both_kept() {
+    // ADR 0024: two devices create the same path while apart. Both files are kept, and both
+    // replicas write the same one to the path and the other under a conflict name.
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 24);
+    let b = Replica::new(dir.path(), "b", 25);
+    a.write("notes.txt", b"from a");
+    b.write("notes.txt", b"from b");
+
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    let listing = |dir: &Path| {
+        let mut names: Vec<(String, Vec<u8>)> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap())
+            .filter(|e| e.file_type().unwrap().is_file())
+            .map(|e| {
+                (
+                    e.file_name().into_string().unwrap(),
+                    fs::read(e.path()).unwrap(),
+                )
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    eventually("both files on both replicas", || {
+        listing(&a.root).len() == 2 && listing(&a.root) == listing(&b.root)
+    })
+    .await;
+    let files = listing(&a.root);
+    let contents: Vec<&[u8]> = files.iter().map(|(_, c)| c.as_slice()).collect();
+    assert!(contents.contains(&b"from a".as_slice()) && contents.contains(&b"from b".as_slice()));
+    assert!(files.iter().any(|(n, _)| n == "notes.txt"));
+    assert!(files
+        .iter()
+        .any(|(n, _)| n.starts_with("notes (conflict ") && n.ends_with(").txt")));
+
+    // Both replicas list the same two paths, and nothing is pending.
+    let paths = |e: &Engine| -> Vec<String> {
+        e.files(FOLDER)
+            .unwrap()
+            .into_iter()
+            .map(|f| f.path)
+            .collect()
+    };
+    assert_eq!(paths(&engine_a), paths(&engine_b));
+    assert_eq!(status(&engine_a).pending, 0);
+    assert_eq!(status(&engine_b).pending, 0);
+
+    // A rescan does not turn the layout into new versions.
+    let before = engine_a.files(FOLDER).unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.scan(FOLDER).await.unwrap();
+    assert_eq!(engine_a.files(FOLDER).unwrap().len(), before.len());
+    assert_eq!(
+        engine_a
+            .files(FOLDER)
+            .unwrap()
+            .iter()
+            .map(|f| f.entry)
+            .collect::<Vec<_>>(),
+        before.iter().map(|f| f.entry).collect::<Vec<_>>()
+    );
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

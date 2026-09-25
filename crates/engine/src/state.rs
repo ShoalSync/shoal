@@ -10,19 +10,21 @@ use tidefell_chunker::ChunkIndex;
 use tidefell_identity::FolderMembers;
 use tidefell_meta::{Folder, Recycled};
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest};
+use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 3\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 4\n";
+/// Before files on disk recorded the version vector of their content (ADR 0024).
+const STATE_HEADER_V3: &[u8] = b"tidefell-engine-folder 3\n";
 /// Version 2 had no confirmed copies.
 const STATE_HEADER_V2: &[u8] = b"tidefell-engine-folder 2\n";
 /// Version 1 had no last-use times either.
 const STATE_HEADER_V1: &[u8] = b"tidefell-engine-folder 1\n";
 
 /// What this replica last saw or wrote at a path on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LocalFile {
     pub(crate) entry: EntryId,
     pub(crate) content: ContentHash,
@@ -30,6 +32,37 @@ pub(crate) struct LocalFile {
     /// Modification time in nanoseconds since the Unix epoch, as reported by the filesystem.
     pub(crate) mtime_ns: i128,
     pub(crate) executable: bool,
+    /// The version vector this content corresponds to: a local change to it builds on this
+    /// (ADR 0024). Empty if unknown, for files recorded before it was kept.
+    pub(crate) base: VersionVector,
+}
+
+/// [`LocalFile`] in state formats 1 to 3, which had no base.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct LocalFileV3 {
+    entry: EntryId,
+    content: ContentHash,
+    size: u64,
+    mtime_ns: i128,
+    executable: bool,
+}
+
+impl From<LocalFileV3> for LocalFile {
+    fn from(v3: LocalFileV3) -> Self {
+        Self {
+            entry: v3.entry,
+            content: v3.content,
+            size: v3.size,
+            mtime_ns: v3.mtime_ns,
+            executable: v3.executable,
+            base: VersionVector::new(),
+        }
+    }
+}
+
+fn upgrade_local(local: Vec<(String, LocalFileV3)>) -> Vec<(String, LocalFile)> {
+    local.into_iter().map(|(p, l)| (p, l.into())).collect()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,9 +77,33 @@ struct Persisted {
 
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
+struct PersistedV3 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFileV3)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+}
+
+impl From<PersistedV3> for Persisted {
+    fn from(v3: PersistedV3) -> Self {
+        Self {
+            manifests: v3.manifests,
+            local: upgrade_local(v3.local),
+            progress: v3.progress,
+            used: v3.used,
+            copies: v3.copies,
+            copy_names: v3.copy_names,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 struct PersistedV2 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV3)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
 }
@@ -55,7 +112,7 @@ impl From<PersistedV2> for Persisted {
     fn from(v2: PersistedV2) -> Self {
         Self {
             manifests: v2.manifests,
-            local: v2.local,
+            local: upgrade_local(v2.local),
             progress: v2.progress,
             used: v2.used,
             copies: Vec::new(),
@@ -68,7 +125,7 @@ impl From<PersistedV2> for Persisted {
 #[cfg_attr(test, derive(Serialize))]
 struct PersistedV1 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV3)>,
     progress: Vec<(DeviceId, u64, u64)>,
 }
 
@@ -76,7 +133,7 @@ impl From<PersistedV1> for Persisted {
     fn from(v1: PersistedV1) -> Self {
         Self {
             manifests: v1.manifests,
-            local: v1.local,
+            local: upgrade_local(v1.local),
             progress: v1.progress,
             used: Vec::new(),
             copies: Vec::new(),
@@ -144,6 +201,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V3) {
+                postcard::from_bytes::<PersistedV3>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V2) {
                 postcard::from_bytes::<PersistedV2>(body)
                     .ok()
@@ -187,7 +248,11 @@ impl FolderState {
         self.meta.save(&self.dir.join("meta"))?;
         let persisted = Persisted {
             manifests: self.manifests.values().cloned().collect(),
-            local: self.local.iter().map(|(p, l)| (p.clone(), *l)).collect(),
+            local: self
+                .local
+                .iter()
+                .map(|(p, l)| (p.clone(), l.clone()))
+                .collect(),
             progress: self
                 .progress
                 .iter()
@@ -226,6 +291,13 @@ impl FolderState {
     pub(crate) fn add_manifest(&mut self, manifest: Manifest) {
         self.index.insert(&manifest);
         self.manifests.insert(manifest.content, manifest);
+    }
+
+    /// Forgets a manifest that turned out to be wrong, so it is fetched again.
+    pub(crate) fn remove_manifest(&mut self, content: &ContentHash) {
+        if self.manifests.remove(content).is_some() {
+            self.index.remove(content);
+        }
     }
 
     /// Content hashes still needed: current versions, conflict copies and recycle-bin items.
@@ -323,7 +395,7 @@ mod tests {
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
-        let local = LocalFile {
+        let local = LocalFileV3 {
             entry: EntryId([5; 16]),
             content: ContentHash([6; 32]),
             size: 12,
@@ -340,7 +412,11 @@ mod tests {
         fs::write(dir.join("state"), bytes).unwrap();
 
         let state = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
-        assert_eq!(state.local.get("a.txt"), Some(&local));
+        assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
+        assert!(
+            state.local["a.txt"].base.iter().next().is_none(),
+            "unknown base"
+        );
         assert_eq!(state.progress.get(&DeviceId([7; 32])), Some(&(1, 2)));
         assert!(state.used.is_empty());
 
@@ -350,6 +426,56 @@ mod tests {
             .unwrap()
             .starts_with(STATE_HEADER));
     }
+    #[test]
+    fn loads_version_3_state_without_bases() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+        };
+        let dir = tmp.path().join("folders").join(config.id.to_string());
+        fs::create_dir_all(&dir).unwrap();
+        let local = LocalFileV3 {
+            entry: EntryId([5; 16]),
+            content: ContentHash([6; 32]),
+            size: 12,
+            mtime_ns: 34,
+            executable: true,
+        };
+        let v3 = PersistedV3 {
+            manifests: Vec::new(),
+            local: vec![("a.txt".into(), local)],
+            progress: Vec::new(),
+            used: vec![("a.txt".into(), 5)],
+            copies: vec![(ContentHash([6; 32]), DeviceId([9; 32]), 77)],
+            copy_names: vec![(DeviceId([9; 32]), "nas".into())],
+        };
+        let mut bytes = STATE_HEADER_V3.to_vec();
+        bytes.extend(postcard::to_stdvec(&v3).unwrap());
+        fs::write(dir.join("state"), bytes).unwrap();
+
+        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
+        assert_eq!(
+            state.copy_names.get(&DeviceId([9; 32])).map(String::as_str),
+            Some("nas")
+        );
+
+        // A base survives a save in the current format.
+        let base: VersionVector = [(DeviceId([8; 32]), 3)].into_iter().collect();
+        state.local.get_mut("a.txt").unwrap().base = base.clone();
+        state.save().unwrap();
+        assert!(fs::read(dir.join("state"))
+            .unwrap()
+            .starts_with(STATE_HEADER));
+        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        assert_eq!(reopened.local["a.txt"].base, base);
+    }
+
     #[test]
     fn loads_version_2_state_and_keeps_copies() {
         let tmp = tempfile::tempdir().unwrap();

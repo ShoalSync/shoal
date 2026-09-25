@@ -7,11 +7,11 @@ use std::path::Path;
 
 use tidefell_chunker::{chunk_reader, Params};
 use tidefell_proto::sync::{is_valid_path, EntryKind};
-use tidefell_proto::{EntryId, Manifest};
+use tidefell_proto::{EntryId, Manifest, VersionVector};
 use tracing::{debug, warn};
 
 use crate::engine::{FolderHandle, Inner};
-use crate::state::LocalFile;
+use crate::state::{FolderState, LocalFile};
 use crate::{io_err, now_ms, random_bytes, Result};
 
 /// Directory at a folder's root reserved for the engine's own files.
@@ -51,6 +51,18 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
 }
 
 /// True if the file at `path` is exactly what the engine last saw or wrote there.
+/// The vector a local change at `rel` builds on: the recorded base of the content on disk, or,
+/// for a file recorded before bases were kept or not recorded at all, everything known of
+/// `entry`.
+pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> VersionVector {
+    match state.local.get(rel) {
+        Some(local) if local.entry == entry && local.base.iter().next().is_some() => {
+            local.base.clone()
+        }
+        _ => state.meta.known_vector(&entry),
+    }
+}
+
 pub(crate) fn unchanged(path: &Path, local: &LocalFile) -> bool {
     stat(path).is_some_and(|s| s.size == local.size && s.mtime_ns == local.mtime_ns)
 }
@@ -161,15 +173,21 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
         };
         let content = c.manifest.content;
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
-            v.path == c.rel
+            state.meta.disk_path(&entry) == Some(c.rel.as_str())
                 && matches!(v.kind, EntryKind::File { content: current, executable, .. }
                     if current == content && executable == c.stat.executable)
         });
         state.add_manifest(c.manifest);
-        if !up_to_date {
-            state.meta.local_change(
+        let base = if up_to_date {
+            state.meta.known_vector(&entry)
+        } else {
+            // Build on the version the file had on disk, not on versions that arrived since and
+            // were never written, so those become conflict copies instead of being lost.
+            let base = base_of(&state, &c.rel, entry);
+            let (_, vector) = state.meta.local_change_from(
                 inner.key.signing_key(),
                 entry,
+                &base,
                 &c.rel,
                 EntryKind::File {
                     content,
@@ -179,7 +197,8 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
                 (c.stat.mtime_ns / 1_000_000) as i64,
             )?;
             index_changed = true;
-        }
+            vector
+        };
         state.used.insert(c.rel.clone(), now);
         state.local.insert(
             c.rel,
@@ -189,6 +208,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
                 size: c.stat.size,
                 mtime_ns: c.stat.mtime_ns,
                 executable: c.stat.executable,
+                base,
             },
         );
     }
@@ -203,14 +223,20 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
             continue;
         };
         state.used.remove(&rel);
-        let live_here = state
-            .meta
-            .current(&local.entry)
-            .is_some_and(|v| v.path == rel && !matches!(v.kind, EntryKind::Tombstone));
+        let live_here = state.meta.current(&local.entry).is_some_and(|v| {
+            !matches!(v.kind, EntryKind::Tombstone)
+                && state.meta.disk_path(&local.entry) == Some(rel.as_str())
+        });
         if live_here {
-            state.meta.local_change(
+            let base = if local.base.iter().next().is_some() {
+                local.base.clone()
+            } else {
+                state.meta.known_vector(&local.entry)
+            };
+            state.meta.local_change_from(
                 inner.key.signing_key(),
                 local.entry,
+                &base,
                 &rel,
                 EntryKind::Tombstone,
                 now_ms(),

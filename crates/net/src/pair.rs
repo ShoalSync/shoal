@@ -191,7 +191,11 @@ impl PairProtocol {
         send: &mut SendStream,
         recv: &mut RecvStream,
     ) -> Result<Option<Paired>> {
-        let PairMessage::Request { approver, proof } = frame_io::expect(recv).await? else {
+        // Pairing peers are not yet trusted: small messages, and a deadline (ADR 0024).
+        let request = frame_io::expect_limited(recv, crate::MAX_UNAUTHENTICATED);
+        let PairMessage::Request { approver, proof } =
+            crate::within(crate::HANDSHAKE_TIMEOUT, request).await?
+        else {
             return reject(send, PairErrorCode::ProtocolViolation, "expected a request").await;
         };
         let approver_id = DeviceId(*conn.remote_id().as_bytes());
@@ -242,9 +246,12 @@ impl PairProtocol {
             confirmation_code: pairing::confirmation_code(&secret, &approver_id, &self.device),
         });
 
-        let reply = tokio::time::timeout(CONFIRM_TIMEOUT, frame_io::expect(recv))
-            .await
-            .map_err(|_| Error::Protocol("timed out waiting for confirmation".into()))??;
+        let reply = tokio::time::timeout(
+            CONFIRM_TIMEOUT,
+            frame_io::expect_limited(recv, crate::MAX_UNAUTHENTICATED),
+        )
+        .await
+        .map_err(|_| Error::Protocol("timed out waiting for confirmation".into()))??;
         match reply {
             PairMessage::Complete {
                 certificate,
@@ -356,7 +363,8 @@ impl ApproverSession {
             },
         )
         .await?;
-        match frame_io::expect(&mut recv).await? {
+        let reply = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED);
+        match crate::within(crate::HANDSHAKE_TIMEOUT, reply).await? {
             PairMessage::Accept { name } => Ok(Self {
                 conn,
                 send,
@@ -405,7 +413,8 @@ impl ApproverSession {
         )
         .await?;
         let _ = self.send.finish();
-        let reply: Option<PairMessage> = frame_io::read(&mut self.recv).await?;
+        let reply = frame_io::read_limited(&mut self.recv, crate::MAX_UNAUTHENTICATED);
+        let reply: Option<PairMessage> = crate::within(crate::HANDSHAKE_TIMEOUT, reply).await?;
         self.conn.close(0u32.into(), b"done");
         match reply {
             None => Ok(()),
@@ -424,7 +433,9 @@ impl ApproverSession {
         )
         .await?;
         let _ = self.send.finish();
-        let _ = frame_io::read::<_, PairMessage>(&mut self.recv).await;
+        let reply =
+            frame_io::read_limited::<_, PairMessage>(&mut self.recv, crate::MAX_UNAUTHENTICATED);
+        let _ = crate::within(crate::HANDSHAKE_TIMEOUT, reply).await;
         self.conn.close(0u32.into(), b"declined");
         Ok(())
     }

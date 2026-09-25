@@ -10,7 +10,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use tidefell_fetch::{fetch, ChunkSource, Config};
 use tidefell_net::{ChunkResult, EndpointId, Node};
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, Manifest};
+use tidefell_proto::{
+    ChunkHash, ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector,
+};
 use tracing::{debug, info, warn};
 
 use crate::config::ReplicaMode;
@@ -84,6 +86,9 @@ struct PendingWrite {
     modified_ms: i64,
     /// Where this entry was on disk before, if it moved.
     old_path: Option<String>,
+    /// The vector of what is being written, taken when the write was planned: versions that
+    /// arrive while it is fetched are not in it (ADR 0024).
+    base: VersionVector,
 }
 
 /// Brings the folder on disk up to date with its metadata, as far as content is available.
@@ -110,20 +115,26 @@ pub(crate) async fn materialize(
                     size,
                     executable,
                 } => {
+                    // Where this entry goes on disk: its path, unless it shares it (ADR 0024).
+                    let path = state
+                        .meta
+                        .disk_path(&version.entry)
+                        .unwrap_or(&version.path);
                     let current = here.is_some_and(|(p, l)| {
-                        **p == version.path && l.content == content && l.executable == executable
+                        p.as_str() == path && l.content == content && l.executable == executable
                     });
                     if !current && (!partial || here.is_some()) {
                         writes.push(PendingWrite {
                             entry: version.entry,
-                            path: version.path.clone(),
+                            path: path.to_owned(),
                             content,
                             size,
                             executable,
                             modified_ms: version.modified_ms,
                             old_path: here
                                 .map(|(p, _)| (*p).clone())
-                                .filter(|p| *p != version.path),
+                                .filter(|p| p.as_str() != path),
+                            base: state.meta.known_vector(&version.entry),
                         });
                     }
                 }
@@ -138,8 +149,11 @@ pub(crate) async fn materialize(
         (state.config.path.clone(), writes, deletes)
     };
 
-    for path in deletes {
-        remove_if_unchanged(inner, handle, id, &root, &path)?;
+    if !deletes.is_empty() {
+        let _guard = handle.fs_lock.lock().await;
+        for path in deletes {
+            remove_if_unchanged(inner, handle, id, &root, &path)?;
+        }
     }
     for write in writes {
         match write_file(inner, node, handle, id, &root, &write).await {
@@ -189,12 +203,13 @@ pub(crate) async fn fetch_one(
             state.config.path.clone(),
             PendingWrite {
                 entry: version.entry,
-                path: version.path.clone(),
+                path: path.to_owned(),
                 content,
                 size,
                 executable,
                 modified_ms: version.modified_ms,
                 old_path,
+                base: state.meta.known_vector(&version.entry),
             },
         )
     };
@@ -237,24 +252,39 @@ fn remove_if_unchanged(
     Ok(())
 }
 
+/// True if `manifest` can describe a file with `content` and `size` (ADR 0024): its content
+/// hash matches and its chunk lengths add up to the size. Whether the chunks really hash to the
+/// content is only known once the file is assembled.
+fn manifest_fits(manifest: &Manifest, content: ContentHash, size: u64) -> bool {
+    manifest.content == content && manifest.len() == size
+}
+
 async fn manifest_for(
     node: &Node,
     handle: &FolderHandle,
     id: FolderId,
     content: ContentHash,
+    size: u64,
 ) -> Result<Option<Manifest>> {
-    if let Some(m) = handle.lock().manifests.get(&content) {
-        return Ok(Some(m.clone()));
+    {
+        let mut state = handle.lock();
+        if let Some(m) = state.manifests.get(&content) {
+            if manifest_fits(m, content, size) {
+                return Ok(Some(m.clone()));
+            }
+            state.remove_manifest(&content);
+        }
     }
     for peer in node.peers() {
         if !peer.shared_folders().contains(&id) {
             continue;
         }
         match peer.request_manifest(id, content).await {
-            Ok(manifest) => {
+            Ok(manifest) if manifest_fits(&manifest, content, size) => {
                 handle.lock().add_manifest(manifest.clone());
                 return Ok(Some(manifest));
             }
+            Ok(_) => debug!(peer = %peer.device(), "manifest does not match the file's size"),
             Err(e) => debug!(peer = %peer.device(), error = %e, "manifest request failed"),
         }
     }
@@ -271,7 +301,7 @@ async fn write_file(
     root: &Path,
     write: &PendingWrite,
 ) -> Result<bool> {
-    let Some(manifest) = manifest_for(node, handle, id, write.content).await? else {
+    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
         return Ok(false);
     };
 
@@ -309,6 +339,9 @@ async fn write_file(
         }
     }
 
+    // Fetching is done; only now take the folder's file lock, so a slow peer never holds up
+    // scans or file operations (ADR 0024).
+    let _guard = handle.fs_lock.lock().await;
     // Assemble into a temporary file and verify the whole content before it becomes visible.
     let tmp_dir = root.join(RESERVED_DIR).join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(io_err(&tmp_dir))?;
@@ -317,10 +350,20 @@ async fn write_file(
         write.entry,
         u64::from_le_bytes(random_bytes()?)
     ));
-    let result = assemble(inner, &manifest, &tmp, write);
-    if let Err(e) = result {
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
+    match assemble(inner, &manifest, &tmp, write) {
+        Ok(true) => {}
+        Ok(false) => {
+            // The manifest's chunks do not make up its content: drop it so the next attempt
+            // fetches another instead of failing the same way forever.
+            let _ = fs::remove_file(&tmp);
+            handle.lock().remove_manifest(&write.content);
+            debug!(path = %write.path, "manifest does not match its content; dropped");
+            return Ok(false);
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
     }
 
     let target = root.join(&write.path);
@@ -352,6 +395,7 @@ async fn write_file(
             size: disk.size,
             mtime_ns: disk.mtime_ns,
             executable: disk.executable,
+            base: write.base.clone(),
         },
     );
     if let Some(old) = &write.old_path {
@@ -366,7 +410,8 @@ async fn write_file(
     Ok(true)
 }
 
-fn assemble(inner: &Inner, manifest: &Manifest, tmp: &Path, write: &PendingWrite) -> Result<()> {
+/// Writes the file's content to `tmp`. Returns false if the chunks do not hash to the content.
+fn assemble(inner: &Inner, manifest: &Manifest, tmp: &Path, write: &PendingWrite) -> Result<bool> {
     let mut file = fs::File::create(tmp).map_err(io_err(tmp))?;
     let mut hasher = blake3::Hasher::new();
     for chunk in &manifest.chunks {
@@ -383,10 +428,7 @@ fn assemble(inner: &Inner, manifest: &Manifest, tmp: &Path, write: &PendingWrite
         file.write_all(&data).map_err(io_err(tmp))?;
     }
     if hasher.finalize().as_bytes() != manifest.content.as_bytes() || manifest.len() != write.size {
-        return Err(Error::Io {
-            path: tmp.to_path_buf(),
-            source: std::io::Error::other("assembled content does not match its hash"),
-        });
+        return Ok(false);
     }
     file.sync_all().map_err(io_err(tmp))?;
     #[cfg(unix)]
@@ -397,5 +439,40 @@ fn assemble(inner: &Inner, manifest: &Manifest, tmp: &Path, write: &PendingWrite
     }
     let mtime = UNIX_EPOCH + Duration::from_millis(write.modified_ms.max(0) as u64);
     file.set_modified(mtime).map_err(io_err(tmp))?;
-    Ok(())
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use tidefell_proto::ChunkRef;
+
+    use super::*;
+
+    fn manifest(content: u8, lens: &[u32]) -> Manifest {
+        Manifest {
+            content: ContentHash([content; 32]),
+            chunks: lens
+                .iter()
+                .map(|&len| ChunkRef {
+                    hash: ChunkHash([len as u8; 32]),
+                    len,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn manifest_must_fit_content_and_size() {
+        let m = manifest(1, &[100, 50]);
+        assert!(manifest_fits(&m, ContentHash([1; 32]), 150));
+        assert!(
+            !manifest_fits(&m, ContentHash([1; 32]), 151),
+            "size differs"
+        );
+        assert!(
+            !manifest_fits(&m, ContentHash([2; 32]), 150),
+            "other content"
+        );
+        assert!(manifest_fits(&manifest(3, &[]), ContentHash([3; 32]), 0));
+    }
 }

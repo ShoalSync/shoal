@@ -30,10 +30,16 @@ impl Backend for EngineBackend {
             .is_ok_and(|h| h.lock().members.contains(&peer.user))
     }
 
-    fn index_since(&self, folder: &FolderId, epoch: u64, since: u64) -> Option<IndexPage> {
+    fn index_since(
+        &self,
+        folder: &FolderId,
+        epoch: u64,
+        since: u64,
+        limit: usize,
+    ) -> Option<IndexPage> {
         let handle = self.0.folder(folder).ok()?;
         let state = handle.lock();
-        let (versions, up_to) = state.meta.index_since(epoch, since);
+        let (versions, up_to) = state.meta.index_since(epoch, since, limit);
         Some(IndexPage {
             epoch: state.meta.epoch(),
             up_to,
