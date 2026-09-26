@@ -71,6 +71,8 @@ pub(crate) struct Inner {
     pub(crate) user: UserId,
     pub(crate) data_dir: PathBuf,
     pub(crate) store: Mutex<BlockStore>,
+    /// Contents being downloaded, whose chunks the block store keeps until they are written.
+    pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
     folders: RwLock<BTreeMap<FolderId, Arc<FolderHandle>>>,
     configured_peers: Vec<PeerAddr>,
     runtime_peers: RwLock<Vec<PeerAddr>>,
@@ -230,6 +232,7 @@ impl Engine {
             user,
             data_dir: config.data_dir.clone(),
             store: Mutex::new(store),
+            fetching: Mutex::new(HashSet::new()),
             folders: RwLock::new(folders),
             configured_peers: config.peers.clone(),
             runtime_peers: RwLock::new(runtime.peers.into_iter().map(Into::into).collect()),
@@ -271,6 +274,16 @@ impl Engine {
                             Ok(()) | Err(Error::UnknownFolder(_)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "eviction failed"),
                         }
+                    }
+                    // Written files no longer need their chunks in the block store; the first
+                    // pass also releases what earlier versions kept a second copy of (ADR 0027).
+                    let work = !inner.store.lock().unwrap().is_empty()
+                        || inner.handles().iter().any(|h| !h.lock().kept.is_empty());
+                    if work {
+                        let inner = inner.clone();
+                        let _ =
+                            tokio::task::spawn_blocking(move || crate::content::compact(&inner))
+                                .await;
                     }
                     tokio::select! {
                         () = inner.materialize.notified() => {}

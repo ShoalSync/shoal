@@ -284,14 +284,19 @@ impl Engine {
     }
 }
 
-/// Removes the file at `path` from disk and forgets it, if this replica has it.
+/// Removes the file at `path` from disk and forgets it, if this replica has it. Its content is
+/// kept for the recycle bin if the file is unchanged since it was recorded (ADR 0027).
 fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
-    if state.local.remove(path).is_some() {
+    if let Some(local) = state.local.remove(path) {
         let abs = root.join(path);
-        match std::fs::remove_file(&abs) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(crate::io_err(&abs)(e)),
+        if crate::scan::unchanged(&abs, &local) {
+            crate::content::keep_deleted(state, &abs, local.content)?;
+        } else {
+            match std::fs::remove_file(&abs) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(crate::io_err(&abs)(e)),
+            }
         }
     }
     state.used.remove(path);

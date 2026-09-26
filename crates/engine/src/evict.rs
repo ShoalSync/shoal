@@ -1,11 +1,10 @@
 //! Keeping partial replicas within their budget (ADR 0016).
 
-use std::collections::HashSet;
 use std::fs;
 use std::sync::Arc;
 
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkHash, FolderId};
+use tidefell_proto::FolderId;
 use tracing::{debug, info};
 
 use crate::config::ReplicaMode;
@@ -75,7 +74,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
         )
     };
 
-    let mut released = Vec::new();
+    let mut evicted = false;
     for candidate in candidates {
         if usage <= budget {
             break;
@@ -100,7 +99,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
         state.local.remove(&candidate.path);
         state.used.remove(&candidate.path);
         usage = usage.saturating_sub(candidate.size);
-        released.push(candidate.content);
+        evicted = true;
         info!(folder = %id, path = %candidate.path, "evicted");
         drop(state);
         inner.emit(Event::FileRemoved {
@@ -108,49 +107,8 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             path: candidate.path.clone(),
         });
     }
-    if released.is_empty() {
-        return Ok(());
+    if evicted {
+        handle.lock().save()?;
     }
-    handle.lock().save()?;
-    drop_unneeded_chunks(inner, handle, &released);
     Ok(())
-}
-
-/// Removes the chunks of `contents` from the block store unless a replica that holds everything
-/// references them, or another folder has a file on disk that uses them.
-pub(crate) fn drop_unneeded_chunks(
-    inner: &Inner,
-    handle: &FolderHandle,
-    contents: &[tidefell_proto::ContentHash],
-) {
-    let chunks: HashSet<ChunkHash> = {
-        let state = handle.lock();
-        contents
-            .iter()
-            .filter_map(|c| state.manifests.get(c))
-            .flat_map(|m| m.chunks.iter().map(|c| c.hash))
-            .collect()
-    };
-    let mut needed = HashSet::new();
-    for other in inner.handles() {
-        let state = other.lock();
-        if state.config.holds_everything() {
-            needed.extend(
-                chunks
-                    .iter()
-                    .filter(|h| state.index.is_referenced(h))
-                    .copied(),
-            );
-        } else {
-            for local in state.local.values() {
-                if let Some(manifest) = state.manifests.get(&local.content) {
-                    needed.extend(manifest.chunks.iter().map(|c| c.hash));
-                }
-            }
-        }
-    }
-    let mut store = inner.store.lock().unwrap();
-    for hash in chunks.difference(&needed) {
-        let _ = store.remove(hash);
-    }
 }

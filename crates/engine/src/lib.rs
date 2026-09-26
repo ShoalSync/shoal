@@ -32,6 +32,7 @@
 
 mod backend;
 mod config;
+mod content;
 mod copies;
 pub mod device;
 mod engine;

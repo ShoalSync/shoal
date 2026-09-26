@@ -58,3 +58,4 @@
   - [0024: Sync consistency and trust](adr/0024-sync-consistency-and-trust.md)
   - [0025: Phone folders on Android](adr/0025-phone-folders.md)
   - [0026: Compatibility from 1.0](adr/0026-compatibility-from-1-0.md)
+  - [0027: Content is kept once per device](adr/0027-content-kept-once.md)

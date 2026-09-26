@@ -243,6 +243,11 @@ impl BlockStore {
         }
     }
 
+    /// The hashes of every stored chunk, in no particular order.
+    pub fn hashes(&self) -> impl Iterator<Item = &ChunkHash> {
+        self.chunks.keys()
+    }
+
     /// Number of chunks stored.
     pub fn len(&self) -> usize {
         self.chunks.len()

@@ -147,15 +147,10 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
                 continue;
             }
         };
-        let manifest = chunk_reader(BufReader::new(file), Params::DEFAULT, |chunk, bytes| {
-            inner
-                .store
-                .lock()
-                .unwrap()
-                .put_verified(chunk.hash, bytes)
-                .map_err(std::io::Error::other)
-        })
-        .map_err(io_err(&path))?;
+        // The file itself is where its content is kept and read from (ADR 0027); only the
+        // manifest is recorded.
+        let manifest = chunk_reader(BufReader::new(file), Params::DEFAULT, |_, _| Ok(()))
+            .map_err(io_err(&path))?;
         // A file still being written will be picked up by a later scan.
         if stat(&path) != Some(disk) {
             debug!(path = %rel, "file changed while scanning");

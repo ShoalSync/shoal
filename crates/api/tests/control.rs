@@ -131,8 +131,10 @@ async fn control_api_end_to_end() {
         .unwrap()
         .is_empty());
     assert!(client.copies(&created.id, "missing.txt").await.is_err());
-    std::fs::remove_file(root.join("a.txt")).unwrap();
-    client.scan(&created.id).await.unwrap();
+    // Deleted through the engine, which keeps the content for the recycle bin; a file deleted by
+    // hand on the only device has no copy left to restore (ADR 0027).
+    let folder_id: tidefell_proto::FolderId = created.id.parse().unwrap();
+    engine.delete(folder_id, "a.txt").await.unwrap();
     assert!(client.files(&created.id).await.unwrap().is_empty());
     let bin = client.recycle_bin(&created.id).await.unwrap();
     assert_eq!(bin.len(), 1);

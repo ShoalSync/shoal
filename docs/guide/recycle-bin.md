@@ -1,8 +1,14 @@
 # The recycle bin
 
 Deleting a file on any device deletes it everywhere, but its last version is kept in each
-full replica's recycle bin until the folder's retention period expires. Its content stays in
-the block store until then.
+full replica's recycle bin until the folder's retention period expires. The other devices keep
+it by moving their copy into the folder's `.tidefell/deleted/` directory, so the recycle bin
+takes no more space than the file did.
+
+The device where a file was deleted by hand, outside Tidefell, has no copy left to keep: it
+still lists the file, and restoring it fetches the content from the other devices. A folder
+that exists on only one device cannot recover files deleted there by hand; add a second
+device, such as an [always-on peer](always-on.md), if that matters.
 
 ## From the command line
 

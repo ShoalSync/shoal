@@ -253,7 +253,8 @@ fn remove_if_unchanged(
     state.used.remove(path);
     let abs = root.join(path);
     if unchanged(&abs, &local) {
-        fs::remove_file(&abs).map_err(io_err(&abs))?;
+        // Moved aside, not copied, so the recycle bin keeps the content (ADR 0027).
+        crate::content::keep_deleted(&mut state, &abs, local.content)?;
         info!(folder = %id, path, "deleted");
         inner.emit(Event::FileRemoved {
             folder: id,
@@ -324,8 +325,10 @@ async fn write_file(
         .filter(|p| p.shared_folders().contains(&id))
         .map(|p| p.device())
         .collect();
-    let store_has = |h: &ChunkHash| inner.store.lock().unwrap().contains(h);
+    // Chunks already here, in the block store or in any file on disk, are not fetched.
+    let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
     if manifest.chunks.iter().any(|c| !store_has(&c.hash)) {
+        inner.fetching.lock().unwrap().insert(manifest.content);
         let source = Arc::new(PeerSource {
             node: node.clone(),
             folder: id,
@@ -347,10 +350,13 @@ async fn write_file(
         )
         .await;
         if let Err(e) = fetched {
+            inner.fetching.lock().unwrap().remove(&manifest.content);
             debug!(path = %write.path, error = %e, "content not available yet");
             return Ok(false);
         }
     }
+    // Assembled below; the chunks stay in the block store until the next compaction.
+    let _fetched = Fetching(inner, manifest.content);
 
     // Fetching is done; only now take the folder's file lock, so a slow peer never holds up
     // scans or file operations (ADR 0024).
@@ -363,7 +369,7 @@ async fn write_file(
         write.entry,
         u64::from_le_bytes(random_bytes()?)
     ));
-    match assemble(inner, &manifest, &tmp, write) {
+    match assemble(inner, handle, &manifest, &tmp, write) {
         Ok(true) => {}
         Ok(false) => {
             // The manifest's chunks do not make up its content: drop it so the next attempt
@@ -390,6 +396,22 @@ async fn write_file(
         let _ = fs::remove_file(&tmp);
         debug!(path = %write.path, "local changes pending; not overwriting");
         return Ok(false);
+    }
+    // The file there may be the only copy on this device of content still needed: another
+    // entry's, about to move to its own path (ADR 0024), or a conflict copy. Move it aside
+    // rather than overwrite it (ADR 0027).
+    if let Some(existing) = state.local.get(&write.path).cloned() {
+        let needed = existing.content != write.content
+            && (existing.entry != write.entry
+                || state
+                    .meta
+                    .conflicts(&write.entry)
+                    .iter()
+                    .any(|c| matches!(c.version.kind, EntryKind::File { content, .. } if content == existing.content)));
+        if needed {
+            state.local.remove(&write.path);
+            crate::content::keep_deleted(&mut state, &target, existing.content)?;
+        }
     }
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(io_err(parent))?;
@@ -424,19 +446,31 @@ async fn write_file(
     Ok(true)
 }
 
-/// Writes the file's content to `tmp`. Returns false if the chunks do not hash to the content.
-fn assemble(inner: &Inner, manifest: &Manifest, tmp: &Path, write: &PendingWrite) -> Result<bool> {
+/// Forgets that a content is being downloaded when dropped.
+struct Fetching<'a>(&'a Inner, ContentHash);
+
+impl Drop for Fetching<'_> {
+    fn drop(&mut self) {
+        self.0.fetching.lock().unwrap().remove(&self.1);
+    }
+}
+
+/// Writes the file's content to `tmp`, from the block store and files on disk. Returns false if
+/// the chunks do not hash to the content.
+fn assemble(
+    inner: &Inner,
+    handle: &FolderHandle,
+    manifest: &Manifest,
+    tmp: &Path,
+    write: &PendingWrite,
+) -> Result<bool> {
     let mut file = fs::File::create(tmp).map_err(io_err(tmp))?;
     let mut hasher = blake3::Hasher::new();
     for chunk in &manifest.chunks {
-        let data = inner
-            .store
-            .lock()
-            .unwrap()
-            .get(&chunk.hash)?
-            .ok_or_else(|| Error::Io {
+        let data =
+            crate::content::read_chunk(inner, handle, &chunk.hash).ok_or_else(|| Error::Io {
                 path: tmp.to_path_buf(),
-                source: std::io::Error::other("chunk evicted during assembly"),
+                source: std::io::Error::other("chunk no longer available during assembly"),
             })?;
         hasher.update(&data);
         file.write_all(&data).map_err(io_err(tmp))?;

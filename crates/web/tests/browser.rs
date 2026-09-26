@@ -291,9 +291,9 @@ async fn web_peer_end_to_end() {
         .await;
     assert_eq!(traversal.status, StatusCode::NOT_FOUND);
 
-    // Delete on disk, then restore from the web.
-    std::fs::remove_file(root.join("report.pdf")).unwrap();
-    engine.scan(FOLDER).await.unwrap();
+    // Delete, then restore from the web. The engine keeps the content of what it deletes; a
+    // file deleted by hand on the only device has no copy left to restore (ADR 0027).
+    engine.delete(FOLDER, "report.pdf").await.unwrap();
     let bin = browser.get(&format!("/folders/{FOLDER}/recycle")).await;
     assert!(bin.body.contains("report.pdf"));
     let entry = engine.recycle_bin(FOLDER).unwrap()[0].entry.to_string();

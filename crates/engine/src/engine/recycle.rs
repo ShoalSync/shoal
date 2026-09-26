@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use super::{Engine, FolderHandle, Inner};
 use crate::state::FolderState;
 use crate::views::{Event, RecycleSummary, RecycledInfo};
-use crate::{evict, now_ms, setaside, Error, Result};
+use crate::{now_ms, setaside, Error, Result};
 
 impl Engine {
     /// Purges recycle-bin items that expired at or before `now_ms`, and their unused chunks.
@@ -201,20 +201,18 @@ pub(super) fn recycle_summary(state: &FolderState) -> RecycleSummary {
 impl Engine {
     /// Removes the file at `path` from this device only (ADR 0025): it moves to this device's
     /// recycle bin, stays on every other device, and is not downloaded again until opened or
-    /// restored. Its chunks are released here unless another folder needs them.
+    /// restored.
     ///
     /// Callers decide when this is safe; the Android app only removes files a full replica has
     /// confirmed holding (ADR 0022).
     pub async fn remove_here(&self, folder: FolderId, path: &str) -> Result<()> {
         let handle = self.inner.folder(&folder)?;
-        let content = {
+        {
             let _guard = handle.fs_lock.lock().await;
             let mut state = handle.lock();
-            let item = setaside::remove_here(&mut state, path, now_ms())?;
+            setaside::remove_here(&mut state, path, now_ms())?;
             state.save()?;
-            item.local.content
-        };
-        evict::drop_unneeded_chunks(&self.inner, &handle, &[content]);
+        }
         info!(folder = %folder, path, "removed from this device");
         self.inner.emit(Event::FileRemoved {
             folder,

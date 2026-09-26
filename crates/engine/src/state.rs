@@ -15,7 +15,9 @@ use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
 use crate::config::FolderConfig;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 5\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 6\n";
+/// Before deleted files were kept on disk instead of in the block store (ADR 0027).
+const STATE_HEADER_V5: &[u8] = b"tidefell-engine-folder 5\n";
 /// Before files could be dropped from this device only or set aside (ADR 0025).
 const STATE_HEADER_V4: &[u8] = b"tidefell-engine-folder 4\n";
 /// Before files on disk recorded the version vector of their content (ADR 0024).
@@ -63,6 +65,72 @@ impl From<LocalFileV3> for LocalFile {
     }
 }
 
+/// Files on disk by path, also indexed by content so chunks can be read from them instead of
+/// being kept a second time in the block store (ADR 0027).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LocalFiles {
+    files: BTreeMap<String, LocalFile>,
+    by_content: HashMap<ContentHash, BTreeSet<String>>,
+}
+
+impl LocalFiles {
+    /// Records the file at `path`, replacing what was recorded there.
+    pub(crate) fn insert(&mut self, path: String, file: LocalFile) -> Option<LocalFile> {
+        self.by_content
+            .entry(file.content)
+            .or_default()
+            .insert(path.clone());
+        let old = self.files.insert(path.clone(), file);
+        if let Some(old) = &old {
+            self.unindex(&path, old.content);
+        }
+        old
+    }
+
+    /// Forgets the file at `path`.
+    pub(crate) fn remove(&mut self, path: &str) -> Option<LocalFile> {
+        let old = self.files.remove(path)?;
+        self.unindex(path, old.content);
+        Some(old)
+    }
+
+    /// Paths of the files on disk with `content`.
+    pub(crate) fn paths_with(&self, content: &ContentHash) -> impl Iterator<Item = &String> {
+        self.by_content.get(content).into_iter().flatten()
+    }
+
+    fn unindex(&mut self, path: &str, content: ContentHash) {
+        // Still recorded at this path with the same content: keep the index entry.
+        if self.files.get(path).is_some_and(|f| f.content == content) {
+            return;
+        }
+        if let Some(paths) = self.by_content.get_mut(&content) {
+            paths.remove(path);
+            if paths.is_empty() {
+                self.by_content.remove(&content);
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for LocalFiles {
+    type Target = BTreeMap<String, LocalFile>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.files
+    }
+}
+
+impl FromIterator<(String, LocalFile)> for LocalFiles {
+    fn from_iter<I: IntoIterator<Item = (String, LocalFile)>>(iter: I) -> Self {
+        let mut out = Self::default();
+        for (path, file) in iter {
+            out.insert(path, file);
+        }
+        out
+    }
+}
+
 /// A file removed from this device only and kept in the folder's reserved directory until the
 /// recycle bin purges it (ADR 0025). Restoring it moves it back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +159,36 @@ struct Persisted {
     copy_names: Vec<(DeviceId, String)>,
     dropped: Vec<EntryId>,
     set_aside: Vec<(EntryId, SetAside)>,
+    kept: Vec<(ContentHash, String)>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV5 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFile)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+    dropped: Vec<EntryId>,
+    set_aside: Vec<(EntryId, SetAside)>,
+}
+
+impl From<PersistedV5> for Persisted {
+    fn from(v5: PersistedV5) -> Self {
+        Self {
+            manifests: v5.manifests,
+            local: v5.local,
+            progress: v5.progress,
+            used: v5.used,
+            copies: v5.copies,
+            copy_names: v5.copy_names,
+            dropped: v5.dropped,
+            set_aside: v5.set_aside,
+            kept: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -115,6 +213,7 @@ impl From<PersistedV4> for Persisted {
             copy_names: v4.copy_names,
             dropped: Vec::new(),
             set_aside: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -141,6 +240,7 @@ impl From<PersistedV3> for Persisted {
             copy_names: v3.copy_names,
             dropped: Vec::new(),
             set_aside: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -165,6 +265,7 @@ impl From<PersistedV2> for Persisted {
             copy_names: Vec::new(),
             dropped: Vec::new(),
             set_aside: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -188,6 +289,7 @@ impl From<PersistedV1> for Persisted {
             copy_names: Vec::new(),
             dropped: Vec::new(),
             set_aside: Vec::new(),
+            kept: Vec::new(),
         }
     }
 }
@@ -199,7 +301,7 @@ pub(crate) struct FolderState {
     pub(crate) meta: Folder,
     pub(crate) manifests: HashMap<ContentHash, Manifest>,
     pub(crate) index: ChunkIndex,
-    pub(crate) local: BTreeMap<String, LocalFile>,
+    pub(crate) local: LocalFiles,
     pub(crate) progress: HashMap<DeviceId, (u64, u64)>,
     /// When each file on disk was last opened or written, in milliseconds since the Unix
     /// epoch, for evicting the least recently used files of a partial replica.
@@ -214,6 +316,10 @@ pub(crate) struct FolderState {
     pub(crate) dropped: BTreeSet<EntryId>,
     /// Files removed from this device only and kept for the recycle bin (ADR 0025).
     pub(crate) set_aside: BTreeMap<EntryId, SetAside>,
+    /// Content deleted by other devices whose file was moved into the folder's reserved
+    /// directory instead of being copied into the block store, by content: the file name there
+    /// (ADR 0027). Removed once nothing references the content.
+    pub(crate) kept: BTreeMap<ContentHash, String>,
     dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
@@ -243,13 +349,14 @@ impl FolderState {
             meta,
             manifests: HashMap::new(),
             index: ChunkIndex::new(),
-            local: BTreeMap::new(),
+            local: LocalFiles::default(),
             progress: HashMap::new(),
             used: BTreeMap::new(),
             copies: HashMap::new(),
             copy_names: BTreeMap::new(),
             dropped: BTreeSet::new(),
             set_aside: BTreeMap::new(),
+            kept: BTreeMap::new(),
             dir,
             removed: false,
         };
@@ -258,6 +365,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V5) {
+                postcard::from_bytes::<PersistedV5>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V4) {
                 postcard::from_bytes::<PersistedV4>(body)
                     .ok()
@@ -293,6 +404,7 @@ impl FolderState {
             state.copy_names = persisted.copy_names.into_iter().collect();
             state.dropped = persisted.dropped.into_iter().collect();
             state.set_aside = persisted.set_aside.into_iter().collect();
+            state.kept = persisted.kept.into_iter().collect();
         }
         Ok(state)
     }
@@ -338,6 +450,7 @@ impl FolderState {
                 .iter()
                 .map(|(e, s)| (*e, s.clone()))
                 .collect(),
+            kept: self.kept.iter().map(|(c, f)| (*c, f.clone())).collect(),
         };
         let mut bytes = STATE_HEADER.to_vec();
         bytes.extend(postcard::to_stdvec(&persisted).expect("in-memory encoding cannot fail"));
@@ -432,6 +545,17 @@ impl FolderState {
             .flat_map(|d| d.keys().copied())
             .collect();
         self.copy_names.retain(|d, _| still_named.contains(d));
+        let unkept: Vec<ContentHash> = self
+            .kept
+            .keys()
+            .filter(|c| !referenced.contains(c))
+            .copied()
+            .collect();
+        for content in unkept {
+            if let Some(name) = self.kept.remove(&content) {
+                let _ = fs::remove_file(crate::content::kept_dir(&self.config.path).join(name));
+            }
+        }
         let mut orphaned = Vec::new();
         for content in unused {
             self.manifests.remove(&content);
@@ -538,7 +662,9 @@ mod tests {
 
         // A base survives a save in the current format.
         let base: VersionVector = [(DeviceId([8; 32]), 3)].into_iter().collect();
-        state.local.get_mut("a.txt").unwrap().base = base.clone();
+        let mut file = state.local["a.txt"].clone();
+        file.base = base.clone();
+        state.local.insert("a.txt".into(), file);
         state.save().unwrap();
         assert!(fs::read(dir.join("state"))
             .unwrap()

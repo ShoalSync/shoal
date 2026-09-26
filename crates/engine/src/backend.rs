@@ -101,16 +101,21 @@ impl Backend for EngineBackend {
     }
 
     fn chunk(&self, folder: &FolderId, hash: &ChunkHash) -> Option<Vec<u8>> {
-        let referenced = self.0.folder(folder).ok()?.lock().index.is_referenced(hash);
-        if !referenced {
+        let handle = self.0.folder(folder).ok()?;
+        if !handle.lock().index.is_referenced(hash) {
             return None;
         }
-        self.0.store.lock().unwrap().get(hash).ok().flatten()
+        // From the block store, or from a file on disk that holds it (ADR 0027).
+        crate::content::read_chunk(&self.0, &handle, hash)
     }
 
     fn availability(&self, folder: &FolderId, content: &ContentHash) -> Option<(u32, Vec<u8>)> {
-        let manifest = self.manifest(folder, content)?;
-        let availability = self.0.store.lock().unwrap().availability(&manifest);
+        let handle = self.0.folder(folder).ok()?;
+        let state = handle.lock();
+        let manifest = state.manifests.get(content)?;
+        let availability = tidefell_store::Availability::from_fn(manifest.chunks.len(), |i| {
+            crate::content::has_chunk(&self.0, &state, &manifest.chunks[i].hash)
+        });
         Some((availability.len() as u32, availability.as_bytes().to_vec()))
     }
 
