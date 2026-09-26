@@ -87,7 +87,11 @@ impl From<tidefell_engine::Error> for TidefellError {
         match e {
             E::UnknownFolder(_) | E::NoSuchFile(_) | E::NotRecycled(_) => Self::NotFound { detail },
             E::Unavailable(_) | E::Net(_) => Self::Unavailable { detail },
-            E::Invalid(_) | E::FolderExists(_) | E::Configured(_) => Self::Invalid { detail },
+            E::Invalid(_)
+            | E::FolderExists(_)
+            | E::Configured(_)
+            | E::LocalChanges(_)
+            | E::PathTaken(_) => Self::Invalid { detail },
             _ => Self::Failed { detail },
         }
     }
@@ -339,6 +343,64 @@ pub struct DeviceStatus {
     pub name: String,
 }
 
+/// Whether other devices' changes are written to this device (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Direction {
+    /// Send local changes and write other devices' changes here.
+    Both,
+    /// Send local changes only; other devices' changes are never written here.
+    SendOnly,
+}
+
+/// What deleting a file on this device, outside the library, does (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum LocalDeletes {
+    /// The delete is synced: the file moves to every device's recycle bin.
+    Everywhere,
+    /// The file is dropped from this device only; it stays on the others and is not downloaded
+    /// again until opened.
+    ThisDevice,
+}
+
+/// How a folder syncs on this device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Record)]
+pub struct SyncOptions {
+    /// Whether other devices' changes are written here.
+    pub direction: Direction,
+    /// What deleting a file here does.
+    pub local_deletes: LocalDeletes,
+}
+
+impl From<SyncOptions> for tidefell_engine::SyncOptions {
+    fn from(s: SyncOptions) -> Self {
+        Self {
+            direction: match s.direction {
+                Direction::Both => tidefell_engine::Direction::Both,
+                Direction::SendOnly => tidefell_engine::Direction::SendOnly,
+            },
+            local_deletes: match s.local_deletes {
+                LocalDeletes::Everywhere => tidefell_engine::LocalDeletes::Everywhere,
+                LocalDeletes::ThisDevice => tidefell_engine::LocalDeletes::ThisDevice,
+            },
+        }
+    }
+}
+
+impl From<tidefell_engine::SyncOptions> for SyncOptions {
+    fn from(s: tidefell_engine::SyncOptions) -> Self {
+        Self {
+            direction: match s.direction {
+                tidefell_engine::Direction::Both => Direction::Both,
+                tidefell_engine::Direction::SendOnly => Direction::SendOnly,
+            },
+            local_deletes: match s.local_deletes {
+                tidefell_engine::LocalDeletes::Everywhere => LocalDeletes::Everywhere,
+                tidefell_engine::LocalDeletes::ThisDevice => LocalDeletes::ThisDevice,
+            },
+        }
+    }
+}
+
 /// A synced folder.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Folder {
@@ -352,7 +414,10 @@ pub struct Folder {
     pub members: Vec<String>,
     /// Recycle-bin retention in days; 0 keeps deleted files forever.
     pub retention_days: u32,
-    /// Deleted files in this device's recycle bin.
+    /// How it syncs on this device.
+    pub sync: SyncOptions,
+    /// Deleted files in this device's recycle bin, including files removed from this device
+    /// only.
     pub recycled_files: u64,
     /// Their total size in bytes.
     pub recycled_bytes: u64,
@@ -411,6 +476,9 @@ pub struct Recycled {
     pub deleted_at_ms: i64,
     /// When it will be purged; `None` if kept forever.
     pub expires_at_ms: Option<i64>,
+    /// True if it was removed from this device only: other devices still have it, and
+    /// restoring it puts it back here only.
+    pub here_only: bool,
 }
 
 /// A connected peer.
@@ -490,6 +558,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         partial_budget: f.mode.budget_bytes(),
         members: f.members.iter().map(ToString::to_string).collect(),
         retention_days: f.retention.days().unwrap_or(0),
+        sync: f.sync.into(),
         recycled_files: f.recycle_bin.items as u64,
         recycled_bytes: f.recycle_bin.bytes,
         next_purge_ms: f.recycle_bin.next_expiry_ms,
@@ -504,6 +573,7 @@ fn recycled_record(r: tidefell_engine::RecycledInfo) -> Recycled {
         size: r.size,
         deleted_at_ms: r.deleted_at_ms,
         expires_at_ms: r.expires_at_ms,
+        here_only: r.here_only,
     }
 }
 
@@ -564,9 +634,17 @@ impl Node {
         partial_budget: Option<u64>,
         members: Vec<String>,
         retention_days: u32,
+        sync: SyncOptions,
     ) -> Result<Folder> {
         let id: FolderId = parse("folder ID", &id)?;
-        self.add(Some(id), path, partial_budget, members, retention_days)
+        self.add(
+            Some(id),
+            path,
+            partial_budget,
+            members,
+            retention_days,
+            sync,
+        )
     }
 
     /// Creates a new folder at `path`, shared with this device's user.
@@ -575,8 +653,23 @@ impl Node {
         path: String,
         partial_budget: Option<u64>,
         retention_days: u32,
+        sync: SyncOptions,
     ) -> Result<Folder> {
-        self.add(None, path, partial_budget, Vec::new(), retention_days)
+        self.add(None, path, partial_budget, Vec::new(), retention_days, sync)
+    }
+
+    /// Changes how a folder syncs on this device (ADR 0025). Files already dropped from this
+    /// device stay dropped.
+    pub fn set_sync_options(&self, folder: String, sync: SyncOptions) -> Result<Folder> {
+        let engine = self.engine()?;
+        let id: FolderId = parse("folder ID", &folder)?;
+        engine.set_sync_options(id, sync.into())?;
+        engine
+            .folders()
+            .into_iter()
+            .find(|f| f.id == id)
+            .map(folder_record)
+            .ok_or(TidefellError::NotFound { detail: folder })
     }
 
     /// Changes how long this device keeps a folder's deleted files; 0 keeps them forever.
@@ -707,11 +800,23 @@ impl Node {
             .collect())
     }
 
-    /// Restores a deleted file on every device.
-    pub fn restore(&self, folder: String, entry: String) -> Result<()> {
-        Ok(self
-            .engine()?
-            .restore(parse("folder ID", &folder)?, parse("entry ID", &entry)?)?)
+    /// Restores a file from the recycle bin: on every device if it was deleted everywhere,
+    /// here only if it was removed from this device only.
+    pub async fn restore(&self, folder: String, entry: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        let entry = parse("entry ID", &entry)?;
+        on_runtime(async move { engine.restore(folder, entry).await }).await??;
+        Ok(())
+    }
+
+    /// Removes a file from this device only (ADR 0025). It moves to this device's recycle bin,
+    /// stays on every other device, and is not downloaded again until opened or restored.
+    pub async fn remove_here(&self, folder: String, path: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.remove_here(folder, &path).await }).await??;
+        Ok(())
     }
 
     /// Connected peers.
@@ -813,6 +918,7 @@ impl Node {
         partial_budget: Option<u64>,
         members: Vec<String>,
         retention_days: u32,
+        sync: SyncOptions,
     ) -> Result<Folder> {
         let engine = self.engine()?;
         // Adding a folder starts its scanner; foreign threads have no runtime of their own.
@@ -828,6 +934,7 @@ impl Node {
             members,
             retention: Retention::from_days(retention_days),
             scan_interval: Duration::from_secs(30),
+            sync: sync.into(),
         })?;
         Ok(folder_record(folder))
     }

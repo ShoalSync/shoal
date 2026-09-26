@@ -419,6 +419,7 @@ bind = "127.0.0.1:{port}"
                 mode: Some(tidefell_sdk::types::Mode::Partial),
                 budget_bytes: Some(1_000_000),
                 scan_interval_secs: Some(1),
+                sync: Default::default(),
             })
             .await
             .unwrap();

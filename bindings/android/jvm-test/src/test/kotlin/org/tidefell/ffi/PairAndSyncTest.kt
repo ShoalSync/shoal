@@ -123,7 +123,14 @@ class PairAndSyncTest {
                 assertEquals(folderId, offer.id)
                 assertEquals("Photos", offer.name)
                 val phoneFolder = root.resolve("phone-files/Photos")
-                node.joinFolder(offer.id, phoneFolder.path, 10_000_000uL, offer.members, offer.retentionDays)
+                node.joinFolder(
+                    offer.id,
+                    phoneFolder.path,
+                    10_000_000uL,
+                    offer.members,
+                    offer.retentionDays,
+                    SyncOptions(Direction.BOTH, LocalDeletes.EVERYWHERE),
+                )
 
                 eventually("the phone lists the photo") { node.files(offer.id).size == 1 }
                 val placeholder = node.files(offer.id).single()

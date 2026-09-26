@@ -46,6 +46,10 @@ Folders from the configuration file keep the retention set there.
 `tidefell status` and `tidefell folder list` show how many files each recycle bin holds, their
 total size and when the next one will be purged.
 
+Files removed from one device only with `tidefell remove-here` wait in that device's recycle
+bin too, listed as `removed here`. Other devices still have them. Restoring one puts it back on
+this device only, and emptying the bin frees the space it took here.
+
 ## Emptying the recycle bin
 
 To free space on one device without waiting for retention, delete files from its recycle bin

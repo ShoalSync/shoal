@@ -1,6 +1,6 @@
 //! Per-folder engine state and its persistence.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,7 +15,9 @@ use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
 use crate::config::FolderConfig;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 4\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 5\n";
+/// Before files could be dropped from this device only or set aside (ADR 0025).
+const STATE_HEADER_V4: &[u8] = b"tidefell-engine-folder 4\n";
 /// Before files on disk recorded the version vector of their content (ADR 0024).
 const STATE_HEADER_V3: &[u8] = b"tidefell-engine-folder 3\n";
 /// Version 2 had no confirmed copies.
@@ -61,6 +63,20 @@ impl From<LocalFileV3> for LocalFile {
     }
 }
 
+/// A file removed from this device only and kept in the folder's reserved directory until the
+/// recycle bin purges it (ADR 0025). Restoring it moves it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct SetAside {
+    /// Where the file was in the folder.
+    pub(crate) path: String,
+    /// Its file name under the reserved recycle directory.
+    pub(crate) file: String,
+    /// What the engine knew of the file when it was removed.
+    pub(crate) local: LocalFile,
+    /// When it was removed, in milliseconds since the Unix epoch.
+    pub(crate) removed_at_ms: i64,
+}
+
 fn upgrade_local(local: Vec<(String, LocalFileV3)>) -> Vec<(String, LocalFile)> {
     local.into_iter().map(|(p, l)| (p, l.into())).collect()
 }
@@ -73,6 +89,34 @@ struct Persisted {
     used: Vec<(String, i64)>,
     copies: Vec<(ContentHash, DeviceId, i64)>,
     copy_names: Vec<(DeviceId, String)>,
+    dropped: Vec<EntryId>,
+    set_aside: Vec<(EntryId, SetAside)>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV4 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFile)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+}
+
+impl From<PersistedV4> for Persisted {
+    fn from(v4: PersistedV4) -> Self {
+        Self {
+            manifests: v4.manifests,
+            local: v4.local,
+            progress: v4.progress,
+            used: v4.used,
+            copies: v4.copies,
+            copy_names: v4.copy_names,
+            dropped: Vec::new(),
+            set_aside: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -95,6 +139,8 @@ impl From<PersistedV3> for Persisted {
             used: v3.used,
             copies: v3.copies,
             copy_names: v3.copy_names,
+            dropped: Vec::new(),
+            set_aside: Vec::new(),
         }
     }
 }
@@ -117,6 +163,8 @@ impl From<PersistedV2> for Persisted {
             used: v2.used,
             copies: Vec::new(),
             copy_names: Vec::new(),
+            dropped: Vec::new(),
+            set_aside: Vec::new(),
         }
     }
 }
@@ -138,6 +186,8 @@ impl From<PersistedV1> for Persisted {
             used: Vec::new(),
             copies: Vec::new(),
             copy_names: Vec::new(),
+            dropped: Vec::new(),
+            set_aside: Vec::new(),
         }
     }
 }
@@ -159,6 +209,11 @@ pub(crate) struct FolderState {
     pub(crate) copies: HashMap<ContentHash, BTreeMap<DeviceId, i64>>,
     /// Certificate names of the devices in `copies`, as they were when they confirmed.
     pub(crate) copy_names: BTreeMap<DeviceId, String>,
+    /// Live entries dropped from this device only (ADR 0025): not written to disk again, even
+    /// for new versions, until opened.
+    pub(crate) dropped: BTreeSet<EntryId>,
+    /// Files removed from this device only and kept for the recycle bin (ADR 0025).
+    pub(crate) set_aside: BTreeMap<EntryId, SetAside>,
     dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
@@ -193,6 +248,8 @@ impl FolderState {
             used: BTreeMap::new(),
             copies: HashMap::new(),
             copy_names: BTreeMap::new(),
+            dropped: BTreeSet::new(),
+            set_aside: BTreeMap::new(),
             dir,
             removed: false,
         };
@@ -201,6 +258,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V4) {
+                postcard::from_bytes::<PersistedV4>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V3) {
                 postcard::from_bytes::<PersistedV3>(body)
                     .ok()
@@ -230,6 +291,8 @@ impl FolderState {
                 state.copies.entry(content).or_default().insert(device, at);
             }
             state.copy_names = persisted.copy_names.into_iter().collect();
+            state.dropped = persisted.dropped.into_iter().collect();
+            state.set_aside = persisted.set_aside.into_iter().collect();
         }
         Ok(state)
     }
@@ -268,6 +331,12 @@ impl FolderState {
                 .copy_names
                 .iter()
                 .map(|(d, n)| (*d, n.clone()))
+                .collect(),
+            dropped: self.dropped.iter().copied().collect(),
+            set_aside: self
+                .set_aside
+                .iter()
+                .map(|(e, s)| (*e, s.clone()))
                 .collect(),
         };
         let mut bytes = STATE_HEADER.to_vec();
@@ -392,6 +461,7 @@ mod tests {
             members: vec![UserId([4; 32])],
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -436,6 +506,7 @@ mod tests {
             members: vec![UserId([4; 32])],
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -477,6 +548,63 @@ mod tests {
     }
 
     #[test]
+    fn loads_version_4_state_and_keeps_set_aside_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+        };
+        let dir = tmp.path().join("folders").join(config.id.to_string());
+        fs::create_dir_all(&dir).unwrap();
+        let local = LocalFile {
+            entry: EntryId([5; 16]),
+            content: ContentHash([6; 32]),
+            size: 12,
+            mtime_ns: 34,
+            executable: false,
+            base: [(DeviceId([8; 32]), 2)].into_iter().collect(),
+        };
+        let v4 = PersistedV4 {
+            manifests: Vec::new(),
+            local: vec![("a.txt".into(), local.clone())],
+            progress: Vec::new(),
+            used: Vec::new(),
+            copies: Vec::new(),
+            copy_names: Vec::new(),
+        };
+        let mut bytes = STATE_HEADER_V4.to_vec();
+        bytes.extend(postcard::to_stdvec(&v4).unwrap());
+        fs::write(dir.join("state"), bytes).unwrap();
+
+        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        assert_eq!(state.local.get("a.txt"), Some(&local));
+        assert!(state.dropped.is_empty() && state.set_aside.is_empty());
+
+        state.dropped.insert(EntryId([9; 16]));
+        state.set_aside.insert(
+            local.entry,
+            SetAside {
+                path: "a.txt".into(),
+                file: "x".into(),
+                local: local.clone(),
+                removed_at_ms: 77,
+            },
+        );
+        state.save().unwrap();
+        assert!(fs::read(dir.join("state"))
+            .unwrap()
+            .starts_with(STATE_HEADER));
+        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        assert!(reopened.dropped.contains(&EntryId([9; 16])));
+        assert_eq!(reopened.set_aside[&local.entry].removed_at_ms, 77);
+    }
+
+    #[test]
     fn loads_version_2_state_and_keeps_copies() {
         let tmp = tempfile::tempdir().unwrap();
         let config = FolderConfig {
@@ -486,6 +614,7 @@ mod tests {
             members: vec![UserId([4; 32])],
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();

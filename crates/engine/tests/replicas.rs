@@ -43,6 +43,7 @@ impl Replica {
                 retention: Retention::Days(30),
                 // Scans are triggered explicitly so the tests are deterministic.
                 scan_interval: Duration::from_secs(3600),
+                sync: Default::default(),
             }],
         };
         let certificate = user.certify(self.key.id(), "test", 0);

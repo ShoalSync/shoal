@@ -215,7 +215,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   view models hold each screen's state, and node and `MediaStore` work runs on
   `Dispatchers.IO`. Steps 5 and 6 are not started.
 - Phase 5d is decided: ADR 0025 (phone folders on Android) and ADR 0026 (compatibility from
-  1.0).
+  1.0). Step 2 is implemented: per-device `direction` and `local deletes` settings, files
+  dropped from one device, and `remove_here` into the device's recycle bin, in the engine,
+  configuration, API, sdk, CLI and bindings. A new file at a path whose entry was never on disk
+  here is kept beside the other device's file unless its content matches.
 
 ### Phase 2 work breakdown
 

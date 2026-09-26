@@ -29,6 +29,40 @@ pub enum Mode {
     Partial,
 }
 
+/// Whether other devices' changes are written to this device.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Direction {
+    /// Sends local changes and writes other devices' changes to disk.
+    #[default]
+    Both,
+    /// Sends local changes only; other devices' changes are never written here.
+    SendOnly,
+}
+
+/// What deleting a file on this device, outside Tidefell, does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum LocalDeletes {
+    /// The delete is synced: the file moves to every device's recycle bin.
+    #[default]
+    Everywhere,
+    /// The file is dropped from this device only; it stays on the others and is not downloaded
+    /// again until fetched.
+    ThisDevice,
+}
+
+/// How a folder syncs on this device. Applies to this device only.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SyncOptions {
+    /// Whether other devices' changes are written here.
+    #[serde(default)]
+    pub direction: Direction,
+    /// What deleting a file here does.
+    #[serde(default)]
+    pub local_deletes: LocalDeletes,
+}
+
 /// A synced folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Folder {
@@ -44,6 +78,9 @@ pub struct Folder {
     pub members: Vec<String>,
     /// Recycle-bin retention in days; `null` keeps deleted files forever.
     pub retention_days: Option<u32>,
+    /// How the folder syncs on this device.
+    #[serde(default)]
+    pub sync: SyncOptions,
     /// What this device's recycle bin holds for the folder.
     #[serde(default)]
     pub recycle_bin: RecycleBinSummary,
@@ -97,6 +134,16 @@ pub struct NewFolder {
     /// Seconds between scans for local changes; defaults to 10.
     #[serde(default)]
     pub scan_interval_secs: Option<u64>,
+    /// How the folder syncs on this device; defaults to both directions, with deletes synced.
+    #[serde(default)]
+    pub sync: SyncOptions,
+}
+
+/// A file to remove from this device only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RemoveHereRequest {
+    /// Path within the folder.
+    pub path: String,
 }
 
 /// A user to add to a folder.
@@ -181,6 +228,10 @@ pub struct Recycled {
     pub deleted_at_ms: i64,
     /// When it will be purged; `null` if kept forever.
     pub expires_at_ms: Option<i64>,
+    /// True if the file was removed from this device only: other devices still have it, and
+    /// restoring it puts it back here only.
+    #[serde(default)]
+    pub here_only: bool,
 }
 
 /// A peer with an active sync session.

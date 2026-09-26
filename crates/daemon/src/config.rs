@@ -9,7 +9,9 @@ use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tidefell_engine::{EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention};
+use tidefell_engine::{
+    EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention, SyncOptions,
+};
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
 /// Configuration for `tidefelld`.
@@ -129,6 +131,28 @@ pub enum Mode {
     Partial,
 }
 
+/// Whether other devices' changes are written to this device (ADR 0025).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Direction {
+    /// Send local changes and write other devices' changes to disk.
+    #[default]
+    Both,
+    /// Send local changes only; other devices' changes are never written here.
+    SendOnly,
+}
+
+/// What deleting a file in the folder on this device, outside Tidefell, does (ADR 0025).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum LocalDeletes {
+    /// The delete is synced: the file moves to every device's recycle bin.
+    #[default]
+    Everywhere,
+    /// The file is dropped from this device only and stays on the others.
+    ThisDevice,
+}
+
 /// A synced folder.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -151,6 +175,13 @@ pub struct Folder {
     /// Seconds between scans for local changes.
     #[serde(default = "default_scan_interval")]
     pub scan_interval_secs: u64,
+    /// Whether other devices' changes are written here. Only a full replica with the default
+    /// `direction` and `local_deletes` counts as holding everything (ADR 0022).
+    #[serde(default)]
+    pub direction: Direction,
+    /// What deleting a file here, outside Tidefell, does.
+    #[serde(default)]
+    pub local_deletes: LocalDeletes,
     /// Where to mount the folder with FUSE (Linux only). Files appear there, placeholders are
     /// fetched when opened, and `path` becomes backing storage not to be edited directly.
     #[serde(default)]
@@ -239,6 +270,16 @@ impl Config {
                     .collect::<Result<_, _>>()?,
                 retention: Retention::from_days(f.retention_days),
                 scan_interval: Duration::from_secs(f.scan_interval_secs.max(1)),
+                sync: SyncOptions {
+                    direction: match f.direction {
+                        Direction::Both => tidefell_engine::Direction::Both,
+                        Direction::SendOnly => tidefell_engine::Direction::SendOnly,
+                    },
+                    local_deletes: match f.local_deletes {
+                        LocalDeletes::Everywhere => tidefell_engine::LocalDeletes::Everywhere,
+                        LocalDeletes::ThisDevice => tidefell_engine::LocalDeletes::ThisDevice,
+                    },
+                },
             });
         }
         self.mounts()?;
@@ -293,6 +334,28 @@ mod tests {
         let engine = config.to_engine().unwrap();
         assert_eq!(engine.folders.len(), 1);
         assert_eq!(engine.folders[0].retention, Retention::Days(30));
+        assert_eq!(engine.folders[0].sync, SyncOptions::default());
+    }
+
+    #[test]
+    fn reads_sync_options() {
+        let text = EXAMPLE.replace(
+            "scan_interval_secs = 10\n",
+            "scan_interval_secs = 10\ndirection = \"send-only\"\nlocal_deletes = \"this-device\"\n",
+        );
+        let engine = parse(&text).unwrap().to_engine().unwrap();
+        assert_eq!(
+            engine.folders[0].sync,
+            SyncOptions {
+                direction: tidefell_engine::Direction::SendOnly,
+                local_deletes: tidefell_engine::LocalDeletes::ThisDevice,
+            }
+        );
+        let bad = EXAMPLE.replace(
+            "scan_interval_secs = 10\n",
+            "scan_interval_secs = 10\ndirection = \"receive-only\"\n",
+        );
+        assert!(parse(&bad).is_err());
     }
 
     #[test]

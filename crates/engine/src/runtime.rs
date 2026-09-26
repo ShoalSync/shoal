@@ -3,8 +3,9 @@
 //! Folders and peers from the configuration file are not stored here; they are re-applied at
 //! every start and cannot be removed at runtime.
 //!
-//! Format (version 2): the bytes `tidefell-engine-runtime 2\n` followed by the postcard
-//! encoding of [`Runtime`]. Version 1 had no peer relays and is still read.
+//! Format (version 3): the bytes `tidefell-engine-runtime 3\n` followed by the postcard
+//! encoding of [`Runtime`]. Version 2 had no folder sync options, and version 1 no peer relays
+//! either; both are still read.
 
 use std::fs;
 use std::io::Write;
@@ -16,10 +17,11 @@ use serde::{Deserialize, Serialize};
 use tidefell_meta::Retention;
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
-use crate::config::{FolderConfig, PeerAddr, ReplicaMode};
+use crate::config::{Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions};
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 2\n";
+const HEADER: &[u8] = b"tidefell-engine-runtime 3\n";
+const HEADER_V2: &[u8] = b"tidefell-engine-runtime 2\n";
 const HEADER_V1: &[u8] = b"tidefell-engine-runtime 1\n";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -37,6 +39,37 @@ pub(crate) struct StoredFolder {
     members: Vec<UserId>,
     retention: Retention,
     scan_interval_secs: u64,
+    /// True for [`Direction::SendOnly`].
+    send_only: bool,
+    /// True for [`LocalDeletes::ThisDevice`].
+    local_deletes_here: bool,
+}
+
+/// [`StoredFolder`] in formats 1 and 2, which had no sync options.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct StoredFolderV2 {
+    id: FolderId,
+    path: PathBuf,
+    partial_budget: Option<u64>,
+    members: Vec<UserId>,
+    retention: Retention,
+    scan_interval_secs: u64,
+}
+
+impl From<StoredFolderV2> for StoredFolder {
+    fn from(v2: StoredFolderV2) -> Self {
+        Self {
+            id: v2.id,
+            path: v2.path,
+            partial_budget: v2.partial_budget,
+            members: v2.members,
+            retention: v2.retention,
+            scan_interval_secs: v2.scan_interval_secs,
+            send_only: false,
+            local_deletes_here: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,8 +81,24 @@ pub(crate) struct StoredPeer {
 
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
+struct RuntimeV2 {
+    folders: Vec<StoredFolderV2>,
+    peers: Vec<StoredPeer>,
+}
+
+impl From<RuntimeV2> for Runtime {
+    fn from(v2: RuntimeV2) -> Self {
+        Self {
+            folders: v2.folders.into_iter().map(Into::into).collect(),
+            peers: v2.peers,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
 struct RuntimeV1 {
-    folders: Vec<StoredFolder>,
+    folders: Vec<StoredFolderV2>,
     peers: Vec<StoredPeerV1>,
 }
 
@@ -63,7 +112,7 @@ struct StoredPeerV1 {
 impl From<RuntimeV1> for Runtime {
     fn from(v1: RuntimeV1) -> Self {
         Self {
-            folders: v1.folders,
+            folders: v1.folders.into_iter().map(Into::into).collect(),
             peers: v1
                 .peers
                 .into_iter()
@@ -89,6 +138,8 @@ impl From<&FolderConfig> for StoredFolder {
             members: c.members.clone(),
             retention: c.retention,
             scan_interval_secs: c.scan_interval.as_secs(),
+            send_only: c.sync.direction == Direction::SendOnly,
+            local_deletes_here: c.sync.local_deletes == LocalDeletes::ThisDevice,
         }
     }
 }
@@ -105,6 +156,18 @@ impl From<StoredFolder> for FolderConfig {
             members: s.members,
             retention: s.retention,
             scan_interval: Duration::from_secs(s.scan_interval_secs.max(1)),
+            sync: SyncOptions {
+                direction: if s.send_only {
+                    Direction::SendOnly
+                } else {
+                    Direction::Both
+                },
+                local_deletes: if s.local_deletes_here {
+                    LocalDeletes::ThisDevice
+                } else {
+                    LocalDeletes::Everywhere
+                },
+            },
         }
     }
 }
@@ -147,6 +210,8 @@ impl Runtime {
         match fs::read(&path) {
             Ok(bytes) => if let Some(body) = bytes.strip_prefix(HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(HEADER_V2) {
+                postcard::from_bytes::<RuntimeV2>(body).ok().map(Into::into)
             } else {
                 bytes
                     .strip_prefix(HEADER_V1)
@@ -178,7 +243,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reads_version_1_and_writes_version_2() {
+    fn reads_version_1_and_writes_the_current_version() {
         let tmp = tempfile::tempdir().unwrap();
         let v1 = RuntimeV1 {
             folders: Vec::new(),
@@ -209,5 +274,38 @@ mod tests {
             peer.relay.unwrap().to_string(),
             "https://relay.tidefell.org./"
         );
+    }
+
+    #[test]
+    fn reads_version_2_folders_with_default_sync_options() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v2 = RuntimeV2 {
+            folders: vec![StoredFolderV2 {
+                id: FolderId([1; 32]),
+                path: "/photos".into(),
+                partial_budget: Some(10),
+                members: vec![UserId([2; 32])],
+                retention: Retention::Days(30),
+                scan_interval_secs: 60,
+            }],
+            peers: Vec::new(),
+        };
+        let mut bytes = HEADER_V2.to_vec();
+        bytes.extend(postcard::to_stdvec(&v2).unwrap());
+        fs::write(path(tmp.path()), bytes).unwrap();
+
+        let mut runtime = Runtime::load(tmp.path()).unwrap();
+        let mut folder: FolderConfig = runtime.folders[0].clone().into();
+        assert_eq!(folder.mode, ReplicaMode::Partial { budget_bytes: 10 });
+        assert_eq!(folder.sync, SyncOptions::default());
+
+        folder.sync = SyncOptions {
+            direction: Direction::SendOnly,
+            local_deletes: LocalDeletes::ThisDevice,
+        };
+        runtime.folders = vec![(&folder).into()];
+        runtime.save(tmp.path()).unwrap();
+        let reloaded: FolderConfig = Runtime::load(tmp.path()).unwrap().folders[0].clone().into();
+        assert_eq!(reloaded.sync, folder.sync);
     }
 }

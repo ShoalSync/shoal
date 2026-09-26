@@ -420,7 +420,7 @@ pub(crate) async fn restore(
     let Some(item) = bin.iter().find(|r| r.entry == entry) else {
         return not_found();
     };
-    if let Err(e) = state.engine.restore(folder.id, entry) {
+    if let Err(e) = state.engine.restore(folder.id, entry).await {
         tracing::warn!(error = %e, "restore failed");
         return error(
             StatusCode::INTERNAL_SERVER_ERROR,

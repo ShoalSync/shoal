@@ -39,6 +39,37 @@ impl ReplicaMode {
     }
 }
 
+/// Whether a replica applies other devices' changes to its files (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Direction {
+    /// Send local changes and write other devices' changes to disk.
+    #[default]
+    Both,
+    /// Send local changes only. Other devices' changes are recorded in the metadata but never
+    /// downloaded or applied to files on this device.
+    SendOnly,
+}
+
+/// What a file deleted on this device, outside the engine, means for other devices (ADR 0025).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LocalDeletes {
+    /// The delete is synced: the file moves to every replica's recycle bin.
+    #[default]
+    Everywhere,
+    /// The file is dropped from this device only. It stays on every other device and is not
+    /// downloaded again, even when a new version arrives, until it is opened.
+    ThisDevice,
+}
+
+/// How a folder syncs on this device. Not synced to other devices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SyncOptions {
+    /// Whether other devices' changes are applied here.
+    pub direction: Direction,
+    /// Whether deleting a file here deletes it everywhere.
+    pub local_deletes: LocalDeletes,
+}
+
 /// One synced folder.
 #[derive(Debug, Clone)]
 pub struct FolderConfig {
@@ -54,6 +85,17 @@ pub struct FolderConfig {
     pub retention: Retention,
     /// How often to rescan the folder for local changes.
     pub scan_interval: Duration,
+    /// How the folder syncs on this device.
+    pub sync: SyncOptions,
+}
+
+impl FolderConfig {
+    /// True if this replica keeps every file of the folder: a full replica that applies every
+    /// change and syncs its deletes. Only such a replica reports itself as full (ADR 0022) and
+    /// keeps every chunk.
+    pub fn holds_everything(&self) -> bool {
+        self.mode == ReplicaMode::Full && self.sync == SyncOptions::default()
+    }
 }
 
 /// A folder to add at runtime, before defaults: a fresh random ID when `id` is `None`, and
@@ -73,6 +115,8 @@ pub struct NewFolder {
     pub retention: Retention,
     /// How often to scan the folder for local changes.
     pub scan_interval: Duration,
+    /// How the folder syncs on this device.
+    pub sync: SyncOptions,
 }
 
 /// A peer to dial: its device ID and, without address lookup, where to reach it.

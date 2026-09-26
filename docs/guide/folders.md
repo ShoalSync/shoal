@@ -72,6 +72,39 @@ exceed the budget, the least recently used ones become placeholders again. A fil
 device is only removed once a full replica has confirmed holding it (see below), so without a
 full replica the folder can grow past its budget.
 
+## Send-only folders and deletes that stay on one device
+
+Two settings change how a folder syncs on one device. Other devices keep their own.
+
+- `--direction send-only` sends this device's new and changed files, but never writes other
+  devices' changes here: nothing is downloaded, and edits and deletes made elsewhere leave the
+  files here alone.
+- `--local-deletes this-device` makes a file deleted here, by any program, disappear from this
+  device only. It stays on every other device, and it is not downloaded again, even when a new
+  version arrives, until you fetch it.
+
+Set them when creating or joining a folder, or change them later:
+
+```sh
+tidefell folder join <folder id> ~/Camera --direction send-only --local-deletes this-device
+tidefell folder sync <folder id> --direction both
+```
+
+To delete a file everywhere from such a device, delete it with the app or the API rather than
+by hand. A device with either setting does not count as a full replica (see below), because it
+does not hold everything.
+
+To free space on one device while keeping a file on the others, remove it from that device
+only:
+
+```sh
+tidefell remove-here <folder id> 2024/beach.jpg
+```
+
+The file moves to this device's [recycle bin](recycle-bin.md), marked `removed here`, and is
+deleted for good when retention expires or you empty the bin. Restoring it puts it back on
+this device only.
+
 ## Is it safe elsewhere?
 
 Every device keeps track of which full replicas, such as a NAS or an

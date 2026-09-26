@@ -10,7 +10,7 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use tidefell_sdk::types::{KnownPeer, NewFolder};
+use tidefell_sdk::types::{Direction, KnownPeer, LocalDeletes, NewFolder, SyncOptions};
 use tidefell_sdk::Client;
 
 #[derive(Parser)]
@@ -45,6 +45,14 @@ enum Command {
     /// Make a file available on this device's disk, fetching it from peers if it is a
     /// placeholder, and print where it is.
     Fetch {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder.
+        path: String,
+    },
+    /// Remove a file from this device only. It moves to this device's recycle bin, stays on
+    /// every other device, and is not downloaded again until fetched or restored.
+    RemoveHere {
         /// Folder ID.
         folder: String,
         /// Path within the folder.
@@ -116,6 +124,17 @@ enum FolderCommand {
         /// Folder ID.
         id: String,
     },
+    /// Change how a folder syncs on this device. Other devices keep their own setting.
+    Sync {
+        /// Folder ID.
+        id: String,
+        /// Whether other devices' changes are written here.
+        #[arg(long, value_enum)]
+        direction: Option<DirectionArg>,
+        /// What deleting a file here, outside Tidefell, does.
+        #[arg(long, value_enum)]
+        local_deletes: Option<LocalDeletesArg>,
+    },
     /// Change how long this device keeps a folder's deleted files. Other devices keep their
     /// own setting.
     Retention {
@@ -159,6 +178,48 @@ struct FolderOptions {
     /// with `tidefell fetch` (a partial replica).
     #[arg(long, value_name = "BYTES")]
     partial: Option<u64>,
+    /// Whether other devices' changes are written here.
+    #[arg(long, value_enum, default_value_t = DirectionArg::Both)]
+    direction: DirectionArg,
+    /// What deleting a file here, outside Tidefell, does.
+    #[arg(long, value_enum, default_value_t = LocalDeletesArg::Everywhere)]
+    local_deletes: LocalDeletesArg,
+}
+
+/// `--direction` on the command line.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DirectionArg {
+    /// Send local changes and write other devices' changes here.
+    Both,
+    /// Send local changes only.
+    SendOnly,
+}
+
+impl From<DirectionArg> for Direction {
+    fn from(d: DirectionArg) -> Self {
+        match d {
+            DirectionArg::Both => Direction::Both,
+            DirectionArg::SendOnly => Direction::SendOnly,
+        }
+    }
+}
+
+/// `--local-deletes` on the command line.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum LocalDeletesArg {
+    /// Deleting a file here deletes it on every device.
+    Everywhere,
+    /// Deleting a file here drops it from this device only.
+    ThisDevice,
+}
+
+impl From<LocalDeletesArg> for LocalDeletes {
+    fn from(d: LocalDeletesArg) -> Self {
+        match d {
+            LocalDeletesArg::Everywhere => LocalDeletes::Everywhere,
+            LocalDeletesArg::ThisDevice => LocalDeletes::ThisDevice,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -276,6 +337,10 @@ fn new_folder(
         mode: options.partial.map(|_| tidefell_sdk::types::Mode::Partial),
         budget_bytes: options.partial,
         scan_interval_secs: None,
+        sync: SyncOptions {
+            direction: options.direction.into(),
+            local_deletes: options.local_deletes.into(),
+        },
     })
 }
 
@@ -336,6 +401,25 @@ async fn run(cli: Cli) -> Result<(), String> {
                 client.scan(&id).await.map_err(e)?;
                 print(json, &(), |_| String::new());
             }
+            FolderCommand::Sync {
+                id,
+                direction,
+                local_deletes,
+            } => {
+                let current = client
+                    .folders()
+                    .await
+                    .map_err(e)?
+                    .into_iter()
+                    .find(|f| f.id == id)
+                    .ok_or_else(|| format!("no folder {id}"))?;
+                let sync = SyncOptions {
+                    direction: direction.map_or(current.sync.direction, Into::into),
+                    local_deletes: local_deletes.map_or(current.sync.local_deletes, Into::into),
+                };
+                let folder = client.set_sync(&id, sync).await.map_err(e)?;
+                print(json, &folder, |f| format!("{} {}", f.id, format::sync(f)));
+            }
             FolderCommand::Retention { id, days, yes } => {
                 let retention_days = match days {
                     Retention::Days(days) => Some(days),
@@ -368,6 +452,14 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
                 f.local_path.clone()
             })
+        }
+        Command::RemoveHere { folder, path } => {
+            client.remove_here(&folder, &path).await.map_err(e)?;
+            print(json, &(), |_| {
+                format!(
+                    "removed {path} from this device; restore it with `tidefell recycle restore`"
+                )
+            });
         }
         Command::Pair { code, name, yes } => {
             let pairing = client.pair(&code).await.map_err(e)?;

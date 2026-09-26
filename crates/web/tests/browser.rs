@@ -214,6 +214,7 @@ async fn web_peer_end_to_end() {
             members: vec![alice.id()],
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
         })
         .unwrap();
     std::fs::write(root.join("report.pdf"), b"%PDF quarterly numbers").unwrap();
@@ -409,6 +410,7 @@ async fn serve_folder(
             members: vec![alice.id()],
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
         })
         .unwrap();
     for (path, contents) in files {

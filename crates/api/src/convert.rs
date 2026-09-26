@@ -3,7 +3,8 @@
 use std::str::FromStr;
 
 use tidefell_engine::{
-    CopyInfo, Event, FileInfo, FolderInfo, PeerAddr, PeerInfo, RecycledInfo, ReplicaMode,
+    CopyInfo, Direction, Event, FileInfo, FolderInfo, LocalDeletes, PeerAddr, PeerInfo,
+    RecycledInfo, ReplicaMode, SyncOptions,
 };
 use tidefell_sdk::types as api;
 
@@ -27,6 +28,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         budget_bytes: f.mode.budget_bytes(),
         members: f.members.iter().map(ToString::to_string).collect(),
         retention_days: f.retention.days(),
+        sync: sync_options(f.sync),
         recycle_bin: api::RecycleBinSummary {
             items: f.recycle_bin.items as u64,
             bytes: f.recycle_bin.bytes,
@@ -34,6 +36,32 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         },
         configured: f.configured,
         only_here: f.only_here as u64,
+    }
+}
+
+pub(crate) fn sync_options(s: SyncOptions) -> api::SyncOptions {
+    api::SyncOptions {
+        direction: match s.direction {
+            Direction::Both => api::Direction::Both,
+            Direction::SendOnly => api::Direction::SendOnly,
+        },
+        local_deletes: match s.local_deletes {
+            LocalDeletes::Everywhere => api::LocalDeletes::Everywhere,
+            LocalDeletes::ThisDevice => api::LocalDeletes::ThisDevice,
+        },
+    }
+}
+
+pub(crate) fn engine_sync_options(s: api::SyncOptions) -> SyncOptions {
+    SyncOptions {
+        direction: match s.direction {
+            api::Direction::Both => Direction::Both,
+            api::Direction::SendOnly => Direction::SendOnly,
+        },
+        local_deletes: match s.local_deletes {
+            api::LocalDeletes::Everywhere => LocalDeletes::Everywhere,
+            api::LocalDeletes::ThisDevice => LocalDeletes::ThisDevice,
+        },
     }
 }
 
@@ -67,6 +95,7 @@ pub(crate) fn recycled(r: RecycledInfo) -> api::Recycled {
         size: r.size,
         deleted_at_ms: r.deleted_at_ms,
         expires_at_ms: r.expires_at_ms,
+        here_only: r.here_only,
     }
 }
 

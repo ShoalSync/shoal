@@ -116,9 +116,9 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
     Ok(())
 }
 
-/// Removes the chunks of `contents` from the block store unless a full replica references them
-/// or a partial replica has a file on disk that uses them.
-fn drop_unneeded_chunks(
+/// Removes the chunks of `contents` from the block store unless a replica that holds everything
+/// references them, or another folder has a file on disk that uses them.
+pub(crate) fn drop_unneeded_chunks(
     inner: &Inner,
     handle: &FolderHandle,
     contents: &[tidefell_proto::ContentHash],
@@ -134,18 +134,17 @@ fn drop_unneeded_chunks(
     let mut needed = HashSet::new();
     for other in inner.handles() {
         let state = other.lock();
-        match state.config.mode {
-            ReplicaMode::Full => needed.extend(
+        if state.config.holds_everything() {
+            needed.extend(
                 chunks
                     .iter()
                     .filter(|h| state.index.is_referenced(h))
                     .copied(),
-            ),
-            ReplicaMode::Partial { .. } => {
-                for local in state.local.values() {
-                    if let Some(manifest) = state.manifests.get(&local.content) {
-                        needed.extend(manifest.chunks.iter().map(|c| c.hash));
-                    }
+            );
+        } else {
+            for local in state.local.values() {
+                if let Some(manifest) = state.manifests.get(&local.content) {
+                    needed.extend(manifest.chunks.iter().map(|c| c.hash));
                 }
             }
         }

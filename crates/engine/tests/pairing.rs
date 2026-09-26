@@ -47,6 +47,7 @@ async fn a_new_device_pairs_then_syncs() {
                 members: vec![alice.id()],
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
+                sync: Default::default(),
             }],
         },
         laptop_key.clone(),
@@ -130,6 +131,7 @@ async fn a_new_device_pairs_then_syncs() {
             members: offer.members.clone(),
             retention: Retention::Days(offer.retention_days),
             scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
         })
         .unwrap();
 

@@ -26,6 +26,10 @@ scan_interval_secs = 10
 # mode = "partial"
 # budget_bytes = 10000000000
 # mount = "/home/me/Tidefell/Photos"
+# To only send this device's files and never write other devices' changes here, and to keep
+# files deleted here on every other device:
+# direction = "send-only"
+# local_deletes = "this-device"
 
 # Optional web peer: sign in from a browser. Create accounts with
 # `tidefelld web account add --data-dir <data_dir> --username <name>`.

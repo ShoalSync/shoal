@@ -11,7 +11,8 @@ use serde::Serialize;
 
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Event, FetchRequest, Fetched, File, Folder,
-    KnownPeer, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, RetentionUpdate, Status,
+    KnownPeer, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, RemoveHereRequest,
+    RetentionUpdate, Status, SyncOptions,
 };
 
 /// Client errors.
@@ -218,6 +219,19 @@ impl Client {
         .await
     }
 
+    /// Removes a file from this device only: it moves to this device's recycle bin and stays on
+    /// every other device.
+    pub async fn remove_here(&self, folder: &str, path: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/remove-here"),
+            Some(&RemoveHereRequest {
+                path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
     /// The full replicas that confirmed holding a file made on this device.
     pub async fn copies(&self, folder: &str, path: &str) -> Result<Vec<Copy>, Error> {
         self.call(
@@ -263,6 +277,16 @@ impl Client {
     /// A folder's recycle bin.
     pub async fn recycle_bin(&self, folder: &str) -> Result<Vec<Recycled>, Error> {
         self.get(&format!("/v1/folders/{folder}/recycle")).await
+    }
+
+    /// Changes how a folder syncs on this device.
+    pub async fn set_sync(&self, folder: &str, sync: SyncOptions) -> Result<Folder, Error> {
+        self.call(
+            Method::PUT,
+            &format!("/v1/folders/{folder}/sync"),
+            Some(&sync),
+        )
+        .await
     }
 
     /// Changes how long this device keeps a folder's deleted files; `None` or 0 keeps them

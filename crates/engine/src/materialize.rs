@@ -15,7 +15,7 @@ use tidefell_proto::{
 };
 use tracing::{debug, info, warn};
 
-use crate::config::ReplicaMode;
+use crate::config::{Direction, ReplicaMode};
 use crate::engine::{FolderHandle, Inner};
 use crate::scan::{stat, unchanged, RESERVED_DIR};
 use crate::state::LocalFile;
@@ -99,7 +99,18 @@ pub(crate) async fn materialize(
     handle: &FolderHandle,
 ) -> Result<()> {
     let (root, writes, deletes) = {
-        let state = handle.lock();
+        let mut state = handle.lock();
+        // A send-only replica never applies other devices' changes to its files (ADR 0025).
+        if state.config.sync.direction == Direction::SendOnly {
+            return Ok(());
+        }
+        // Forget dropped entries that are no longer live, so the set does not grow forever.
+        let dropped: Vec<EntryId> = state.dropped.iter().copied().collect();
+        for entry in dropped {
+            if state.meta.disk_path(&entry).is_none() {
+                state.dropped.remove(&entry);
+            }
+        }
         let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
             state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
         let mut writes = Vec::new();
@@ -123,7 +134,9 @@ pub(crate) async fn materialize(
                     let current = here.is_some_and(|(p, l)| {
                         p.as_str() == path && l.content == content && l.executable == executable
                     });
-                    if !current && (!partial || here.is_some()) {
+                    // Files dropped from this device stay off it until opened (ADR 0025).
+                    let dropped = state.dropped.contains(&version.entry);
+                    if !current && (here.is_some() || (!partial && !dropped)) {
                         writes.push(PendingWrite {
                             entry: version.entry,
                             path: path.to_owned(),
@@ -383,6 +396,7 @@ async fn write_file(
     }
     fs::rename(&tmp, &target).map_err(io_err(&target))?;
     state.used.insert(write.path.clone(), crate::now_ms());
+    state.dropped.remove(&write.entry);
     let disk = stat(&target).ok_or_else(|| Error::Io {
         path: target.clone(),
         source: std::io::Error::other("file vanished after writing"),

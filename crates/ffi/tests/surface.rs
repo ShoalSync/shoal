@@ -66,6 +66,7 @@ async fn pair_join_open_and_save() {
                     members: vec![alice.id()],
                     retention: Retention::Days(30),
                     scan_interval: Duration::from_secs(1),
+                    sync: Default::default(),
                 }],
             },
             laptop_key.clone(),
@@ -142,6 +143,10 @@ async fn pair_join_open_and_save() {
                     Some(10_000_000),
                     offer.members.clone(),
                     offer.retention_days,
+                    tidefell_ffi::SyncOptions {
+                        direction: tidefell_ffi::Direction::Both,
+                        local_deletes: tidefell_ffi::LocalDeletes::Everywhere,
+                    },
                 )
             })
             .join()

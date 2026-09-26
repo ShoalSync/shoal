@@ -9,7 +9,6 @@ use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signe
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
-use crate::config::ReplicaMode;
 use crate::engine::Inner;
 use crate::views::Event;
 
@@ -117,7 +116,9 @@ impl Backend for EngineBackend {
 
     fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {
         let handle = self.0.folder(folder).ok()?;
-        let full = matches!(handle.lock().config.mode, ReplicaMode::Full);
+        // A replica that drops files or ignores other devices' changes does not hold
+        // everything, so it never confirms copies as a full replica (ADR 0022, 0025).
+        let full = handle.lock().config.holds_everything();
         Some(full)
     }
 

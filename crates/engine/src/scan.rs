@@ -10,6 +10,7 @@ use tidefell_proto::sync::{is_valid_path, EntryKind};
 use tidefell_proto::{EntryId, Manifest, VersionVector};
 use tracing::{debug, warn};
 
+use crate::config::LocalDeletes;
 use crate::engine::{FolderHandle, Inner};
 use crate::state::{FolderState, LocalFile};
 use crate::{io_err, now_ms, random_bytes, Result};
@@ -105,6 +106,13 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, DiskStat)>) {
     }
 }
 
+fn file_content(kind: &EntryKind) -> Option<tidefell_proto::ContentHash> {
+    match kind {
+        EntryKind::File { content, .. } => Some(*content),
+        _ => None,
+    }
+}
+
 struct Changed {
     rel: String,
     manifest: Manifest,
@@ -164,14 +172,18 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
     let mut index_changed = false;
     let now = now_ms();
     for c in changed {
+        let content = c.manifest.content;
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {
             Some(entry) => entry,
+            // A file this device never had on disk here (a placeholder, a file dropped from
+            // this device, or any file of a send-only folder) is the same entry only if it has
+            // the same content. Otherwise it is a new file that happens to share the path, and
+            // both are kept (ADR 0024) instead of it replacing the other device's file.
             None => match state.meta.find_path(&c.rel) {
-                Some(v) => v.entry,
-                None => EntryId(random_bytes()?),
+                Some(v) if file_content(&v.kind) == Some(content) => v.entry,
+                _ => EntryId(random_bytes()?),
             },
         };
-        let content = c.manifest.content;
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
             state.meta.disk_path(&entry) == Some(c.rel.as_str())
                 && matches!(v.kind, EntryKind::File { content: current, executable, .. }
@@ -200,6 +212,8 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
             vector
         };
         state.used.insert(c.rel.clone(), now);
+        // A file put back by hand is on this device again.
+        state.dropped.remove(&entry);
         state.local.insert(
             c.rel,
             LocalFile {
@@ -218,6 +232,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
         .filter(|rel| !seen.contains(*rel))
         .cloned()
         .collect();
+    let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
     for rel in deleted {
         let Some(local) = state.local.remove(&rel) else {
             continue;
@@ -227,7 +242,11 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
             !matches!(v.kind, EntryKind::Tombstone)
                 && state.meta.disk_path(&local.entry) == Some(rel.as_str())
         });
-        if live_here {
+        if live_here && deletes_here_only {
+            // ADR 0025: dropped from this device only; it stays on every other device.
+            debug!(path = %rel, "dropped from this device");
+            state.dropped.insert(local.entry);
+        } else if live_here {
             let base = if local.base.iter().next().is_some() {
                 local.base.clone()
             } else {

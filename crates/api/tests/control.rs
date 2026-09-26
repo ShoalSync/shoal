@@ -6,7 +6,9 @@ use std::time::Duration;
 
 use tidefell_engine::{Engine, EngineConfig, RelayConfig};
 use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_sdk::types::{ErrorKind, Event, KnownPeer, NewFolder};
+use tidefell_sdk::types::{
+    Direction, ErrorKind, Event, KnownPeer, LocalDeletes, NewFolder, SyncOptions,
+};
 use tidefell_sdk::{Client, Error};
 
 async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
@@ -93,6 +95,7 @@ async fn control_api_end_to_end() {
             mode: None,
             budget_bytes: None,
             scan_interval_secs: Some(3600),
+            sync: Default::default(),
         })
         .await
         .unwrap();
@@ -145,6 +148,30 @@ async fn control_api_end_to_end() {
         api_error(client.restore(&created.id, &bin[0].entry).await),
         ErrorKind::NotFound
     );
+
+    // Removing a file from this device only, and sync options.
+    client.remove_here(&created.id, "a.txt").await.unwrap();
+    assert!(!root.join("a.txt").exists());
+    let bin = client.recycle_bin(&created.id).await.unwrap();
+    assert_eq!(bin.len(), 1);
+    assert!(bin[0].here_only);
+    assert_eq!(
+        api_error(client.remove_here(&created.id, "a.txt").await),
+        ErrorKind::NotFound
+    );
+    client.restore(&created.id, &bin[0].entry).await.unwrap();
+    assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"hello api");
+    let backup_only = SyncOptions {
+        direction: Direction::SendOnly,
+        local_deletes: LocalDeletes::ThisDevice,
+    };
+    let changed = client.set_sync(&created.id, backup_only).await.unwrap();
+    assert_eq!(changed.sync, backup_only);
+    let changed = client
+        .set_sync(&created.id, SyncOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(changed.sync, SyncOptions::default());
 
     // Retention and emptying the recycle bin.
     let forever = client.set_retention(&created.id, None).await.unwrap();
@@ -212,6 +239,7 @@ async fn control_api_end_to_end() {
         mode: None,
         budget_bytes: None,
         scan_interval_secs: None,
+        sync: Default::default(),
     };
     assert_eq!(
         api_error(client.add_folder(&duplicate).await),

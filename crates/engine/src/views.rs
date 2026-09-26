@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use tidefell_meta::Retention;
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 
-use crate::config::ReplicaMode;
+use crate::config::{ReplicaMode, SyncOptions};
 
 /// A synced folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +20,8 @@ pub struct FolderInfo {
     pub members: Vec<UserId>,
     /// Recycle-bin retention.
     pub retention: Retention,
+    /// How the folder syncs on this device.
+    pub sync: SyncOptions,
     /// What this replica's recycle bin holds.
     pub recycle_bin: RecycleSummary,
     /// True if the folder comes from the configuration file (and so cannot be changed or
@@ -32,9 +34,10 @@ pub struct FolderInfo {
 /// A summary of one replica's recycle bin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RecycleSummary {
-    /// Number of deleted entries.
+    /// Number of deleted entries, including files removed from this device only.
     pub items: usize,
-    /// Total size of the deleted files, in bytes.
+    /// Total size of the deleted files, in bytes. For files removed from this device only, this
+    /// is also the space emptying the bin frees here.
     pub bytes: u64,
     /// When the next item will be purged, or `None` if none will be.
     pub next_expiry_ms: Option<i64>,
@@ -91,6 +94,10 @@ pub struct RecycledInfo {
     pub deleted_at_ms: i64,
     /// When it will be purged, or `None` to keep forever.
     pub expires_at_ms: Option<i64>,
+    /// True if the file was removed from this device only (ADR 0025): other devices still
+    /// have it, and restoring it puts it back here only. Otherwise it was deleted everywhere,
+    /// and restoring it restores it everywhere.
+    pub here_only: bool,
 }
 
 /// A connected peer.

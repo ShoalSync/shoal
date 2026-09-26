@@ -40,10 +40,14 @@ mod materialize;
 pub mod pairing;
 mod runtime;
 mod scan;
+mod setaside;
 mod state;
 mod views;
 
-pub use config::{EngineConfig, FolderConfig, NewFolder, PeerAddr, ReplicaMode};
+pub use config::{
+    Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr, ReplicaMode,
+    SyncOptions,
+};
 pub use engine::{Engine, FolderStatus};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
@@ -90,6 +94,12 @@ pub enum Error {
     /// No live file has this path.
     #[error("no such file: {0}")]
     NoSuchFile(String),
+    /// A file on disk changed since the last scan, so it cannot be removed yet.
+    #[error("{0} has changes that are not recorded yet; try again after the next scan")]
+    LocalChanges(String),
+    /// Something else is already at the path a file would be restored to.
+    #[error("{0} is already taken")]
+    PathTaken(String),
     /// A file's content could not be fetched from connected peers.
     #[error("{0} is not available: no connected peer has its content")]
     Unavailable(String),

@@ -17,7 +17,7 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, ErrorKind, Event, FetchRequest, Fetched, File,
     Folder, KnownPeer, Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, RecycleBinSummary,
-    Recycled, RetentionUpdate, Status,
+    Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -42,11 +42,13 @@ type AppState = State<Arc<Engine>>;
         add_folder,
         remove_folder,
         set_retention,
+        set_sync,
         add_member,
         remove_member,
         scan,
         files,
         fetch,
+        remove_here,
         copies,
         recycle_bin,
         empty_recycle_bin,
@@ -116,9 +118,10 @@ impl From<EngineError> for ApiFailure {
     fn from(e: EngineError) -> Self {
         let (status, kind) = match &e {
             EngineError::UnknownFolder(_) => (StatusCode::NOT_FOUND, ErrorKind::NotFound),
-            EngineError::FolderExists(_) | EngineError::Configured(_) => {
-                (StatusCode::CONFLICT, ErrorKind::Conflict)
-            }
+            EngineError::FolderExists(_)
+            | EngineError::Configured(_)
+            | EngineError::LocalChanges(_)
+            | EngineError::PathTaken(_) => (StatusCode::CONFLICT, ErrorKind::Conflict),
             EngineError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorKind::BadRequest),
             EngineError::NoSuchFile(_) | EngineError::NotRecycled(_) => {
                 (StatusCode::NOT_FOUND, ErrorKind::NotFound)
@@ -229,6 +232,7 @@ pub(crate) async fn add_folder(
         members,
         retention: Retention::from_days(new.retention_days),
         scan_interval: Duration::from_secs(new.scan_interval_secs.unwrap_or(10).max(1)),
+        sync: convert::engine_sync_options(new.sync),
     })?;
     Ok((StatusCode::CREATED, Json(convert::folder(folder))))
 }
@@ -261,6 +265,23 @@ pub(crate) async fn set_retention(
         .retention_days
         .map_or(Retention::Forever, Retention::from_days);
     engine.set_retention(id, retention)?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
+/// Changes how the folder syncs on this device: whether other devices' changes are written here,
+/// and whether deleting a file here deletes it everywhere. Files already dropped from this
+/// device stay dropped.
+#[utoipa::path(put, path = "/v1/folders/{id}/sync", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = SyncOptions,
+    responses((status = 200, body = Folder), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn set_sync(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(sync): Json<SyncOptions>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.set_sync_options(id, convert::engine_sync_options(sync))?;
     Ok(Json(folder_info(&engine, id)?))
 }
 
@@ -336,6 +357,23 @@ pub(crate) async fn fetch(
     Ok(Json(Fetched {
         local_path: local.display().to_string(),
     }))
+}
+
+/// Removes a file from this device only. It moves to this device's recycle bin, stays on every
+/// other device, and is not downloaded again until fetched or restored.
+#[utoipa::path(post, path = "/v1/folders/{id}/remove-here", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = RemoveHereRequest,
+    responses((status = 204), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn remove_here(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<RemoveHereRequest>,
+) -> ApiResult<StatusCode> {
+    engine
+        .remove_here(parse("folder", &id)?, &request.path)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The full replicas that confirmed holding a file made on this device (ADR 0022). Empty
@@ -418,7 +456,8 @@ fn parse_entry(entry: &str) -> ApiResult<EntryId> {
     })
 }
 
-/// Restores a deleted entry. It reappears on every replica.
+/// Restores an entry from the recycle bin. A file deleted everywhere reappears on every
+/// replica; a file removed from this device only is put back here.
 #[utoipa::path(post, path = "/v1/folders/{id}/recycle/{entry}/restore", tag = "files",
     params(("id" = String, Path, description = "Folder ID"), ("entry" = String, Path, description = "Entry ID")),
     responses((status = 204), (status = 404, body = ApiError)))]
@@ -431,7 +470,7 @@ pub(crate) async fn restore(
     if !engine.recycle_bin(folder)?.iter().any(|r| r.entry == entry) {
         return Err(ApiFailure::not_found("entry is not in the recycle bin"));
     }
-    engine.restore(folder, entry)?;
+    engine.restore(folder, entry).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

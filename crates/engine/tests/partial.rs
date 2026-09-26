@@ -49,6 +49,7 @@ impl Device {
                 members: vec![self.user.id()],
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
+                sync: Default::default(),
             }],
         };
         let certificate = self.user.certify(self.key.id(), "test", 0);

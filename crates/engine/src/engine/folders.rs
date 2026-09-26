@@ -42,6 +42,7 @@ impl Engine {
                     mode: state.config.mode,
                     members: state.config.members.clone(),
                     retention: state.config.retention,
+                    sync: state.config.sync,
                     recycle_bin: recycle_summary(&state),
                     configured: h.configured,
                     only_here: state
@@ -102,6 +103,7 @@ impl Engine {
             members,
             retention: new.retention,
             scan_interval: new.scan_interval,
+            sync: new.sync,
         })?;
         self.folders()
             .into_iter()
@@ -154,6 +156,29 @@ impl Engine {
         self.inner.save_runtime()?;
         info!(folder = %id, ?retention, "retention changed");
         self.inner.emit(Event::FolderChanged(id));
+        Ok(())
+    }
+
+    /// Changes how `id` syncs on this device (ADR 0025). Files already dropped from this device
+    /// stay dropped. Other replicas are not affected.
+    pub fn set_sync_options(&self, id: FolderId, sync: crate::SyncOptions) -> Result<()> {
+        let _guard = self.inner.runtime_lock.lock().unwrap();
+        let handle = self.inner.folder(&id)?;
+        if handle.configured {
+            return Err(Error::Configured(id));
+        }
+        {
+            let mut state = handle.lock();
+            if state.config.sync == sync {
+                return Ok(());
+            }
+            state.config.sync = sync;
+        }
+        self.inner.save_runtime()?;
+        info!(folder = %id, ?sync, "sync options changed");
+        self.inner.emit(Event::FolderChanged(id));
+        // Sessions report the replica kind again (ADR 0022), and writes resume or stop.
+        self.inner.changed();
         Ok(())
     }
 
@@ -222,9 +247,11 @@ impl Engine {
                 .recycle_bin()
                 .iter()
                 .map(|r| r.version.path.clone())
+                .chain(state.set_aside.values().map(|s| s.path.clone()))
                 .collect(),
         };
         let partial = matches!(state.config.mode, crate::ReplicaMode::Partial { .. });
+        let send_only = state.config.sync.direction == crate::Direction::SendOnly;
         let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
         for version in state.meta.entries() {
             if !state.meta.conflicts(&version.entry).is_empty() {
@@ -240,8 +267,13 @@ impl Engine {
                     .local
                     .get(path)
                     .is_some_and(|l| l.entry == version.entry && l.content == content);
-                // Placeholders of a partial replica are not pending.
-                if !on_disk && (!partial || materialised.contains(&version.entry)) {
+                // Placeholders of a partial replica, files dropped from this device and every
+                // file of a send-only replica are not pending.
+                let dropped = state.dropped.contains(&version.entry);
+                if !on_disk
+                    && !send_only
+                    && (materialised.contains(&version.entry) || (!partial && !dropped))
+                {
                     status.pending += 1;
                 }
             }

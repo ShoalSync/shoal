@@ -2,7 +2,10 @@
 
 use std::fmt::Write as _;
 
-use tidefell_sdk::types::{Event, File, Folder, KnownPeer, Mode, Peer, Recycled, Status};
+use tidefell_sdk::types::{
+    Direction, Event, File, Folder, KnownPeer, LocalDeletes, Mode, Peer, Recycled, Status,
+    SyncOptions,
+};
 
 pub(crate) fn size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -78,6 +81,19 @@ fn only_here(f: &Folder) -> Option<String> {
     Some(note)
 }
 
+/// How a folder syncs on this device, in words.
+pub(crate) fn sync(f: &Folder) -> String {
+    let direction = match f.sync.direction {
+        Direction::Both => "sends and receives changes",
+        Direction::SendOnly => "only sends changes",
+    };
+    let deletes = match f.sync.local_deletes {
+        LocalDeletes::Everywhere => "deleting a file here deletes it everywhere",
+        LocalDeletes::ThisDevice => "deleting a file here keeps it on other devices",
+    };
+    format!("{direction}; {deletes}")
+}
+
 /// How long a folder keeps deleted files: "for 30 days" or "forever".
 pub(crate) fn retention(f: &Folder) -> String {
     f.retention_days
@@ -123,6 +139,9 @@ pub(crate) fn folders(folders: &[Folder]) -> String {
         let source = if f.configured { ", from config" } else { "" };
         let _ = writeln!(out, "{}  {}", f.id, f.path);
         let _ = writeln!(out, "    {} member(s){source}", f.members.len());
+        if f.sync != SyncOptions::default() {
+            let _ = writeln!(out, "    {}", sync(f));
+        }
         let _ = writeln!(out, "    {}", recycle_bin(f));
     }
     out.trim_end().to_string()
@@ -180,9 +199,14 @@ pub(crate) fn recycled(items: &[Recycled]) -> String {
         let expires = r.expires_at_ms.map_or("kept forever".to_string(), |t| {
             format!("purged {}", time(t))
         });
+        let what = if r.here_only {
+            "removed here"
+        } else {
+            "deleted"
+        };
         let _ = writeln!(
             out,
-            "{}  deleted {}  {:>10}  {}  ({expires})",
+            "{}  {what} {}  {:>10}  {}  ({expires})",
             r.entry,
             time(r.deleted_at_ms),
             size(r.size),
@@ -240,6 +264,7 @@ mod tests {
             budget_bytes: None,
             members: Vec::new(),
             retention_days: Some(30),
+            sync: Default::default(),
             recycle_bin: Default::default(),
             configured: false,
             only_here: 0,

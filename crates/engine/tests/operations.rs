@@ -57,6 +57,7 @@ impl Device {
             members: members.to_vec(),
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
         }
     }
 
@@ -127,7 +128,7 @@ async fn share_join_delete_restore_and_restart() {
     assert!(recycled.expires_at_ms.is_some());
 
     // Restore on b brings it back on both devices.
-    engine_b.restore(FOLDER, recycled.entry).unwrap();
+    engine_b.restore(FOLDER, recycled.entry).await.unwrap();
     eventually("restored on b", || {
         b.read("notes.txt").as_deref() == Some(b"shared notes".as_slice())
     })
@@ -194,7 +195,7 @@ async fn retention_and_emptying_the_recycle_bin() {
         engine.empty_recycle_bin(FOLDER, Some(a_txt)),
         Err(Error::NotRecycled(_))
     ));
-    assert!(engine.restore(FOLDER, a_txt).is_err());
+    assert!(engine.restore(FOLDER, a_txt).await.is_err());
     assert_eq!(engine.empty_recycle_bin(FOLDER, None).unwrap().len(), 2);
     assert_eq!(engine.folders()[0].recycle_bin, Default::default());
 
@@ -313,6 +314,7 @@ async fn created_folders_get_defaults() {
         members,
         retention: Retention::from_days(0),
         scan_interval: Duration::from_secs(3600),
+        sync: Default::default(),
     };
 
     // A new folder gets a fresh ID and this device's user as its only member.
