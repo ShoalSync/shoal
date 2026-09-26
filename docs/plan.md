@@ -227,6 +227,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   aside.
 - ADR 0028: a phone folder's files that are only on other devices can be downloaded from the
   app, and each phone folder is a read-only root of the documents provider listing them.
+- `v0.10.0` releases ADRs 0027 and 0028, with engine state format 6. The Android side of
+  ADR 0028 is tidefell/android#13.
 
 ### Phase 2 work breakdown
 
