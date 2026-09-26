@@ -219,6 +219,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   dropped from one device, and `remove_here` into the device's recycle bin, in the engine,
   configuration, API, sdk, CLI and bindings. A new file at a path whose entry was never on disk
   here is kept beside the other device's file unless its content matches.
+- `v0.9.0` releases Phase 5d step 2. `tidefell/infra` and `tidefell/site` pin it; the Android
+  pin moves with step 3, which adopts the changed bindings.
 
 ### Phase 2 work breakdown
 
