@@ -211,8 +211,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5c step 7 is implemented in this repository: `engine.rs` is split by concern
   (folders, files, the recycle bin and peers), folder defaults and the retention and mode
   conversions live once in the engine and are shared by the API, the bindings and the daemon
-  configuration, and every crate forbids unsafe code. The Android part follows in
-  `tidefell/android`. Steps 5 and 6 are not started.
+  configuration, and every crate forbids unsafe code. The Android part is tidefell/android#11 (merged):
+  view models hold each screen's state, and node and `MediaStore` work runs on
+  `Dispatchers.IO`. Steps 5 and 6 are not started.
+- Phase 5d is decided: ADR 0025 (phone folders on Android) and ADR 0026 (compatibility from
+  1.0).
 
 ### Phase 2 work breakdown
 
@@ -379,6 +382,25 @@ Each fix starts with a test that reproduces the finding and fails, then makes it
 7. **Maintainability.** Split `engine.rs`, view models and background dispatchers in the Android
    app, shared type conversions, and `unsafe_code = "forbid"` across the workspace.
 
+### Phase 5d work breakdown
+
+Phone folders (ADR 0025). Nothing has been released publicly, so nothing migrates (ADR 0026).
+
+1. **Decisions.** ADRs 0025 and 0026 and this breakdown.
+2. **Engine settings.** Per-device `direction` (`both`, `send-only`) and `local deletes`
+   (`everywhere`, `this-device`) on each folder, in the engine state, configuration, API, sdk,
+   CLI and `ffi`. Files dropped on this device are listed as on other devices and are not
+   fetched again, even for new versions, unless opened. Moving a file to the local recycle bin
+   without recording a delete. Release `v0.9.0`, and the infra, site and Android pins.
+3. **Android folders.** `tidefell/android`: All files access, the folder picker with the camera
+   folder first, the three sync options in order (backup only, two-way sync, remove after
+   backup), "Delete from all devices", clean up, and `MediaStore` announcements for files
+   written into shared storage. The camera backup and its removal notification are removed.
+4. **Exit criterion.** On the emulator: a file added to a phone folder reaches the daemon on
+   each option; deleting it on the phone leaves it on the daemon; with remove after backup it
+   moves to the phone's recycle bin only after the daemon confirms it; with two-way sync a file
+   added on the daemon appears in the phone folder.
+
 ### Phase 6 work breakdown
 
 1. **Decisions.** ADR 0023, in the Phase 5b decisions pull request.
@@ -394,4 +416,4 @@ Each fix starts with a test that reproduces the finding and fails, then makes it
 7. **Infra.** `role-storage-peer`, and a VM test of the exit criterion that also checks the
    storage peer's disk for plaintext.
 8. **Docs, site and release.** Guide pages for encrypted folders and running a storage peer.
-   Release `v0.9.0`, and the infra, site and Android pins.
+   Release `v0.10.0`, and the infra, site and Android pins.
