@@ -275,6 +275,52 @@ async fn send_only_folders_never_write_other_devices_changes() {
     engine_nas.shutdown().await;
 }
 
+/// Opening a file of a send-only folder downloads it once (ADR 0028); later versions from other
+/// devices still leave it alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn send_only_folders_download_what_is_opened() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([6; 32]);
+    let phone = Device::new(tmp.path(), "phone", 46, &alice);
+    let nas = Device::new(tmp.path(), "nas", 47, &alice);
+    nas.write("photos/old.jpg", b"from the NAS");
+    let engine_nas = nas.start().await;
+    engine_nas
+        .add_folder(nas.folder(SyncOptions::default()))
+        .unwrap();
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_phone = phone.start().await;
+    engine_phone.add_folder(phone.folder(BACKUP_ONLY)).unwrap();
+    engine_phone.connect(engine_nas.addr()).await.unwrap();
+    settle(&engine_phone, "photos/old.jpg").await;
+    assert!(phone.read("photos/old.jpg").is_none());
+
+    let opened = engine_phone.open(FOLDER, "photos/old.jpg").await.unwrap();
+    engine_phone.close(FOLDER, "photos/old.jpg").unwrap();
+    assert_eq!(opened, phone.root.join("photos/old.jpg"));
+    assert_eq!(fs::read(&opened).unwrap(), b"from the NAS");
+    assert!(on_disk(&engine_phone, "photos/old.jpg"));
+
+    // A new version on the NAS does not replace the downloaded copy, and the copy is not sent
+    // back as a change.
+    nas.write("photos/old.jpg", b"edited on the NAS");
+    engine_nas.scan(FOLDER).await.unwrap();
+    engine_phone.scan(FOLDER).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        phone.read("photos/old.jpg").as_deref(),
+        Some(b"from the NAS".as_slice())
+    );
+    assert_eq!(
+        nas.read("photos/old.jpg").as_deref(),
+        Some(b"edited on the NAS".as_slice())
+    );
+    assert_eq!(engine_nas.files(FOLDER).unwrap().len(), 1);
+
+    engine_phone.shutdown().await;
+    engine_nas.shutdown().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn removed_files_wait_in_the_recycle_bin() {
     let tmp = tempfile::tempdir().unwrap();

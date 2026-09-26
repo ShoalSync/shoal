@@ -225,6 +225,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - ADR 0027: content is kept once per device. Files on disk are no longer copied into the block
   store; chunks are read from them, and deleted files are kept for the recycle bin by moving them
   aside.
+- ADR 0028: a phone folder's files that are only on other devices can be downloaded from the
+  app, and each phone folder is a read-only root of the documents provider listing them.
 
 ### Phase 2 work breakdown
 
