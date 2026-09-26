@@ -1,26 +1,37 @@
 //! The running engine: shared state, background tasks and the public handle.
+//!
+//! The handle's operations are split by concern: [`folders`], [`files`], [`recycle`] and
+//! [`peers`].
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+mod files;
+mod folders;
+mod peers;
+mod recycle;
+
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
 use tidefell_identity::DeviceKey;
-use tidefell_net::{EndpointAddr, EndpointId, Node, NodeConfig};
+use tidefell_net::{EndpointAddr, Node, NodeConfig};
 use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed, UserId};
+use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
 use tidefell_store::BlockStore;
 use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{AbortHandle, JoinSet};
 use tracing::{debug, info, warn};
 
+pub use folders::FolderStatus;
+
 use crate::backend::EngineBackend;
 use crate::config::{EngineConfig, FolderConfig, PeerAddr};
 use crate::runtime::Runtime;
 use crate::state::FolderState;
-use crate::views::{CopyInfo, Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
+use crate::views::Event;
 use crate::{copies, evict, materialize, now_ms, scan, Error, Result};
+use peers::endpoint_addr;
+use recycle::purge;
 
 /// How often to retry pending downloads and reconnect to peers.
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -56,6 +67,8 @@ impl FolderHandle {
 pub(crate) struct Inner {
     pub(crate) key: DeviceKey,
     pub(crate) certificate: Signed<DeviceCertificate>,
+    /// The user this device belongs to, from its certificate.
+    pub(crate) user: UserId,
     pub(crate) data_dir: PathBuf,
     pub(crate) store: Mutex<BlockStore>,
     folders: RwLock<BTreeMap<FolderId, Arc<FolderHandle>>>,
@@ -128,19 +141,6 @@ impl Inner {
     }
 }
 
-/// A summary of one folder, for status displays and tests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FolderStatus {
-    /// Live files by path, with their content hash.
-    pub files: BTreeMap<String, ContentHash>,
-    /// Live files not yet written to disk on this replica.
-    pub pending: usize,
-    /// Entries with unresolved conflict copies.
-    pub conflicts: usize,
-    /// Paths of entries in the recycle bin.
-    pub recycled: Vec<String>,
-}
-
 /// A running engine.
 pub struct Engine {
     inner: Arc<Inner>,
@@ -154,19 +154,6 @@ impl std::fmt::Debug for Engine {
             .field("id", &self.id())
             .finish_non_exhaustive()
     }
-}
-
-fn endpoint_addr(peer: &PeerAddr) -> Option<EndpointAddr> {
-    let id = EndpointId::from_bytes(peer.device.as_bytes()).ok()?;
-    let mut addr = EndpointAddr::new(id);
-    if let Some(relay) = &peer.relay {
-        addr = addr.with_relay_url(relay.clone());
-    }
-    Some(
-        peer.addrs
-            .iter()
-            .fold(addr, |addr, ip| addr.with_ip_addr(*ip)),
-    )
 }
 
 fn open_folder(
@@ -212,6 +199,10 @@ impl Engine {
         certificate: Signed<DeviceCertificate>,
     ) -> Result<Self> {
         let device = key.id();
+        let user = certificate
+            .verify_certificate()
+            .map_err(|e| Error::Invalid(format!("device certificate: {e}")))?
+            .user;
         std::fs::create_dir_all(&config.data_dir).map_err(crate::io_err(&config.data_dir))?;
         let store = BlockStore::open(config.data_dir.join("blocks"))?;
         let runtime = Runtime::load(&config.data_dir)?;
@@ -236,6 +227,7 @@ impl Engine {
         let inner = Arc::new(Inner {
             key: key.clone(),
             certificate,
+            user,
             data_dir: config.data_dir.clone(),
             store: Mutex::new(store),
             folders: RwLock::new(folders),
@@ -339,6 +331,11 @@ impl Engine {
         self.inner.key.id()
     }
 
+    /// The user this device belongs to.
+    pub fn user(&self) -> UserId {
+        self.inner.user
+    }
+
     /// This device's certificate.
     pub fn certificate(&self) -> &Signed<DeviceCertificate> {
         &self.inner.certificate
@@ -370,605 +367,6 @@ impl Engine {
         run_materialize(&self.inner, &self.node, folder).await
     }
 
-    /// Purges recycle-bin items that expired at or before `now_ms`, and their unused chunks.
-    pub fn purge(&self, now_ms: i64) {
-        purge(&self.inner, now_ms);
-    }
-
-    // ---- Folders ----
-
-    /// All folders.
-    pub fn folders(&self) -> Vec<FolderInfo> {
-        self.inner
-            .folders
-            .read()
-            .unwrap()
-            .values()
-            .map(|h| {
-                let state = h.lock();
-                FolderInfo {
-                    id: state.config.id,
-                    path: state.config.path.clone(),
-                    mode: state.config.mode,
-                    members: state.config.members.clone(),
-                    retention: state.config.retention,
-                    recycle_bin: recycle_summary(&state),
-                    configured: h.configured,
-                    only_here: state
-                        .meta
-                        .entries()
-                        .filter(|v| copies::only_here(&state, self.inner.key.id(), v))
-                        .count(),
-                }
-            })
-            .collect()
-    }
-
-    /// Adds a folder at runtime: a new one (with a fresh ID) or one shared from another device.
-    /// It is remembered across restarts.
-    pub fn add_folder(&self, config: FolderConfig) -> Result<()> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        let id = config.id;
-        if self.inner.folders.read().unwrap().contains_key(&id) {
-            return Err(Error::FolderExists(id));
-        }
-        if config.members.is_empty() {
-            return Err(Error::Invalid("a folder needs at least one member".into()));
-        }
-        let handle = Arc::new(open_folder(&self.inner.data_dir, config, self.id(), false)?);
-        self.inner
-            .folders
-            .write()
-            .unwrap()
-            .insert(id, handle.clone());
-        self.inner.save_runtime()?;
-        spawn_scanner(&self.inner, id, &handle);
-        info!(folder = %id, "folder added");
-        self.inner.emit(Event::FolderAdded(id));
-        // Offer the new folder to connected peers on their next session.
-        self.inner.changed();
-        Ok(())
-    }
-
-    /// Stops syncing a folder added at runtime and forgets its metadata. Files on disk are
-    /// left in place.
-    pub fn remove_folder(&self, id: FolderId) -> Result<()> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        let handle = self.inner.folder(&id)?;
-        if handle.configured {
-            return Err(Error::Configured(id));
-        }
-        self.inner.folders.write().unwrap().remove(&id);
-        if let Some(scanner) = handle.scanner.lock().unwrap().take() {
-            scanner.abort();
-        }
-        self.inner.save_runtime()?;
-        // Taking the state lock waits for any save in progress; later saves are skipped.
-        let dir = handle.lock().mark_removed();
-        if dir.exists() {
-            std::fs::remove_dir_all(&dir).map_err(crate::io_err(&dir))?;
-        }
-        info!(folder = %id, "folder removed");
-        self.inner.emit(Event::FolderRemoved(id));
-        // Sessions stop offering the folder.
-        self.inner.changed();
-        Ok(())
-    }
-
-    /// Changes how long this replica keeps deleted files. Items past a shortened retention
-    /// are purged at the next hourly purge, not immediately. Other replicas keep their own
-    /// retention.
-    pub fn set_retention(&self, id: FolderId, retention: crate::Retention) -> Result<()> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        let handle = self.inner.folder(&id)?;
-        if handle.configured {
-            return Err(Error::Configured(id));
-        }
-        {
-            let mut state = handle.lock();
-            if state.config.retention == retention {
-                return Ok(());
-            }
-            state.set_retention(retention);
-            state.save()?;
-        }
-        self.inner.save_runtime()?;
-        info!(folder = %id, ?retention, "retention changed");
-        self.inner.emit(Event::FolderChanged(id));
-        Ok(())
-    }
-
-    fn change_members(
-        &self,
-        id: FolderId,
-        change: impl FnOnce(&mut Vec<UserId>) -> bool,
-    ) -> Result<bool> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        let handle = self.inner.folder(&id)?;
-        if handle.configured {
-            return Err(Error::Configured(id));
-        }
-        let changed = {
-            let mut state = handle.lock();
-            let mut members = state.config.members.clone();
-            let changed = change(&mut members);
-            if members.is_empty() {
-                return Err(Error::Invalid("a folder needs at least one member".into()));
-            }
-            if changed {
-                state.set_members(members);
-            }
-            changed
-        };
-        if changed {
-            self.inner.save_runtime()?;
-            self.inner.emit(Event::FolderChanged(id));
-            // Sessions re-offer folders to peers whose access changed.
-            self.inner.changed();
-        }
-        Ok(changed)
-    }
-
-    /// Lets `user`'s devices sync `folder`. Returns false if already a member.
-    pub fn add_member(&self, folder: FolderId, user: UserId) -> Result<bool> {
-        self.change_members(folder, |m| {
-            if m.contains(&user) {
-                false
-            } else {
-                m.push(user);
-                true
-            }
-        })
-    }
-
-    /// Stops `user`'s devices syncing `folder` from now on. Returns false if not a member.
-    pub fn remove_member(&self, folder: FolderId, user: UserId) -> Result<bool> {
-        self.change_members(folder, |m| {
-            let before = m.len();
-            m.retain(|u| *u != user);
-            m.len() != before
-        })
-    }
-
-    // ---- Files and the recycle bin ----
-
-    /// Live files in `folder`, sorted by path.
-    pub fn files(&self, folder: FolderId) -> Result<Vec<FileInfo>> {
-        let handle = self.inner.folder(&folder)?;
-        let state = handle.lock();
-        let mut files: Vec<FileInfo> = state
-            .meta
-            .entries()
-            .filter_map(|v| match v.kind {
-                EntryKind::File {
-                    content,
-                    size,
-                    executable,
-                } => {
-                    let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
-                    Some(FileInfo {
-                        entry: v.entry,
-                        path: path.to_owned(),
-                        size,
-                        modified_ms: v.modified_ms,
-                        executable,
-                        on_disk: state
-                            .local
-                            .get(path)
-                            .is_some_and(|l| l.entry == v.entry && l.content == content),
-                        conflicts: state.meta.conflicts(&v.entry).len(),
-                        author: v.author,
-                        confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
-                        only_here: copies::only_here(&state, self.inner.key.id(), v),
-                    })
-                }
-                _ => None,
-            })
-            .collect();
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        Ok(files)
-    }
-
-    /// The full replicas that confirmed holding the current version of `path` (ADR 0022).
-    /// Empty for files made on other devices, which are not tracked.
-    pub fn copies(&self, folder: FolderId, path: &str) -> Result<Vec<CopyInfo>> {
-        let handle = self.inner.folder(&folder)?;
-        let state = handle.lock();
-        let content = state
-            .meta
-            .find_path(path)
-            .and_then(|v| match v.kind {
-                EntryKind::File { content, .. } => Some(content),
-                _ => None,
-            })
-            .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
-        Ok(state
-            .copies
-            .get(&content)
-            .map(|devices| {
-                devices
-                    .iter()
-                    .map(|(device, at)| CopyInfo {
-                        device: *device,
-                        name: state.copy_names.get(device).cloned().unwrap_or_default(),
-                        confirmed_ms: *at,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
-    }
-
-    /// Where a live file of `folder` is on this device's disk, if its current version is there.
-    pub fn local_path(&self, folder: FolderId, path: &str) -> Result<Option<PathBuf>> {
-        let handle = self.inner.folder(&folder)?;
-        let state = handle.lock();
-        let on_disk = state.meta.find_path(path).is_some_and(|v| match v.kind {
-            EntryKind::File { content, .. } => state
-                .local
-                .get(path)
-                .is_some_and(|l| l.entry == v.entry && l.content == content),
-            _ => false,
-        });
-        Ok(on_disk.then(|| state.config.path.join(path)))
-    }
-
-    /// Makes the live file at `path` available on disk and returns where it is, fetching it
-    /// from connected peers if this replica does not have its current version (a placeholder
-    /// in a partial replica, or a file still pending in a full one). The file stays pinned,
-    /// and so is never evicted, until a matching [`Engine::close`].
-    pub async fn open(&self, folder: FolderId, path: &str) -> Result<PathBuf> {
-        let handle = self.inner.folder(&folder)?;
-        // Fetching takes the file lock itself once the content has arrived, so it is not held
-        // here while waiting on peers (ADR 0024).
-        if self.local_path(folder, path)?.is_none()
-            && !materialize::fetch_one(&self.inner, &self.node, folder, &handle, path).await?
-        {
-            return Err(Error::Unavailable(path.to_owned()));
-        }
-        let _guard = handle.fs_lock.lock().await;
-        // Evicted or replaced between fetching and pinning; rare, and the caller can retry.
-        if self.local_path(folder, path)?.is_none() {
-            return Err(Error::Unavailable(path.to_owned()));
-        }
-        *handle
-            .pins
-            .lock()
-            .unwrap()
-            .entry(path.to_owned())
-            .or_insert(0) += 1;
-        let abs = {
-            let mut state = handle.lock();
-            state.used.insert(path.to_owned(), now_ms());
-            state.config.path.join(path)
-        };
-        // Opening may have pushed a partial replica over its budget.
-        evict::evict(&self.inner, folder, &handle)?;
-        Ok(abs)
-    }
-
-    /// Releases one [`Engine::open`] of `path`.
-    pub fn close(&self, folder: FolderId, path: &str) -> Result<()> {
-        let handle = self.inner.folder(&folder)?;
-        let mut pins = handle.pins.lock().unwrap();
-        if let Some(count) = pins.get_mut(path) {
-            *count -= 1;
-            if *count == 0 {
-                pins.remove(path);
-            }
-        }
-        Ok(())
-    }
-
-    /// Replaces or creates the file at `path` with the contents of `source`, which is moved
-    /// (or copied, across filesystems) into the folder, and records the change now instead of
-    /// at the next scan.
-    pub async fn write(&self, folder: FolderId, path: &str, source: &Path) -> Result<()> {
-        if !tidefell_proto::sync::is_valid_path(path) {
-            return Err(Error::Invalid(format!("invalid path {path:?}")));
-        }
-        let handle = self.inner.folder(&folder)?;
-        {
-            let _guard = handle.fs_lock.lock().await;
-            let root = handle.lock().config.path.clone();
-            let target = root.join(path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
-            }
-            if std::fs::rename(source, &target).is_err() {
-                let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
-                std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
-                let tmp = tmp_dir.join(format!(
-                    "write-{:016x}",
-                    u64::from_le_bytes(crate::random_bytes()?)
-                ));
-                std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
-                std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
-            }
-        }
-        run_scan(&self.inner, folder).await
-    }
-
-    /// Deletes the live file at `path`, sending it to peers' recycle bins. Works on placeholders
-    /// too, which scans would otherwise never delete.
-    pub async fn delete(&self, folder: FolderId, path: &str) -> Result<()> {
-        let handle = self.inner.folder(&folder)?;
-        {
-            let _guard = handle.fs_lock.lock().await;
-            let mut state = handle.lock();
-            let entry = match state.meta.find_path(path) {
-                Some(v) if matches!(v.kind, EntryKind::File { .. }) => v.entry,
-                _ => return Err(Error::NoSuchFile(path.to_owned())),
-            };
-            let root = state.config.path.clone();
-            // A delete of content on disk that is older than a version since received must not
-            // supersede that version (ADR 0024).
-            let base = crate::scan::base_of(&state, path, entry);
-            remove_local(&mut state, &root, path)?;
-            state.meta.local_change_from(
-                self.inner.key.signing_key(),
-                entry,
-                &base,
-                path,
-                EntryKind::Tombstone,
-                now_ms(),
-            )?;
-            state.save()?;
-        }
-        self.inner.changes.send_modify(|n| *n += 1);
-        self.inner.emit(Event::FileRemoved {
-            folder,
-            path: path.to_owned(),
-        });
-        self.inner.emit(Event::FolderChanged(folder));
-        Ok(())
-    }
-
-    /// Moves the live file at `from`, or every live file under the directory `from`, to `to`.
-    /// Entries keep their identity and content, so a placeholder moves without being fetched.
-    /// A live file already at a destination is deleted first.
-    pub async fn rename(&self, folder: FolderId, from: &str, to: &str) -> Result<()> {
-        if !tidefell_proto::sync::is_valid_path(to) {
-            return Err(Error::Invalid(format!("invalid path {to:?}")));
-        }
-        if from == to {
-            return Ok(());
-        }
-        if to.starts_with(&format!("{from}/")) {
-            return Err(Error::Invalid(format!("cannot move {from:?} into itself")));
-        }
-        let handle = self.inner.folder(&folder)?;
-        {
-            let _guard = handle.fs_lock.lock().await;
-            let mut state = handle.lock();
-            let prefix = format!("{from}/");
-            // Paths are where files are on disk, which for entries that share a path is not
-            // their recorded path (ADR 0024).
-            let moves: Vec<(EntryId, String, String, EntryKind, i64)> = state
-                .meta
-                .entries()
-                .filter(|v| matches!(v.kind, EntryKind::File { .. }))
-                .filter_map(|v| {
-                    let old = state.meta.disk_path(&v.entry)?;
-                    let dest = if old == from {
-                        to.to_owned()
-                    } else {
-                        format!("{to}/{}", old.strip_prefix(&prefix)?)
-                    };
-                    Some((v.entry, old.to_owned(), dest, v.kind.clone(), v.modified_ms))
-                })
-                .collect();
-            if moves.is_empty() {
-                return Err(Error::NoSuchFile(from.to_owned()));
-            }
-            if let Some((_, _, dest, _, _)) = moves
-                .iter()
-                .find(|(_, _, dest, _, _)| !tidefell_proto::sync::is_valid_path(dest))
-            {
-                return Err(Error::Invalid(format!("invalid path {dest:?}")));
-            }
-            let root = state.config.path.clone();
-            let key = self.inner.key.signing_key();
-            let now = now_ms();
-            for (entry, old, new, kind, modified_ms) in moves {
-                // Replace whatever is at the destination.
-                let replaced = state
-                    .meta
-                    .find_path(&new)
-                    .filter(|v| v.entry != entry && matches!(v.kind, EntryKind::File { .. }))
-                    .map(|v| v.entry);
-                if let Some(replaced) = replaced {
-                    remove_local(&mut state, &root, &new)?;
-                    state
-                        .meta
-                        .local_change(key, replaced, &new, EntryKind::Tombstone, now)?;
-                }
-                if let Some(local) = state.local.remove(&old) {
-                    let (src, dst) = (root.join(&old), root.join(&new));
-                    if let Some(parent) = dst.parent() {
-                        std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
-                    }
-                    std::fs::rename(&src, &dst).map_err(crate::io_err(&src))?;
-                    state.local.insert(new.clone(), local);
-                    if let Some(used) = state.used.remove(&old) {
-                        state.used.insert(new.clone(), used);
-                    }
-                }
-                state
-                    .meta
-                    .local_change(key, entry, &new, kind, modified_ms)?;
-            }
-            state.save()?;
-        }
-        self.inner.changes.send_modify(|n| *n += 1);
-        self.inner.emit(Event::FolderChanged(folder));
-        Ok(())
-    }
-
-    /// Deleted files in `folder`'s recycle bin, most recently deleted first.
-    pub fn recycle_bin(&self, folder: FolderId) -> Result<Vec<RecycledInfo>> {
-        let handle = self.inner.folder(&folder)?;
-        let state = handle.lock();
-        let bin = state.meta.recycle_bin();
-        let mut items: Vec<RecycledInfo> = bin
-            .iter()
-            .map(|r| recycled_info(r, bin.expires_at_ms(r)))
-            .collect();
-        items.sort_by_key(|i| std::cmp::Reverse(i.deleted_at_ms));
-        Ok(items)
-    }
-
-    /// Permanently removes `entry`, or every item if `None`, from this replica's recycle bin
-    /// and frees its content. Other replicas keep their copies. Returns the removed items.
-    pub fn empty_recycle_bin(
-        &self,
-        folder: FolderId,
-        entry: Option<EntryId>,
-    ) -> Result<Vec<RecycledInfo>> {
-        let handle = self.inner.folder(&folder)?;
-        let (discarded, chunks) = {
-            let mut state = handle.lock();
-            if let Some(entry) = &entry {
-                if state.meta.recycle_bin().get(entry).is_none() {
-                    return Err(Error::NotRecycled(*entry));
-                }
-            }
-            let (discarded, chunks) = state.discard(entry.as_ref());
-            state.save()?;
-            (discarded, chunks)
-        };
-        info!(
-            folder = %folder,
-            items = discarded.len(),
-            chunks = chunks.len(),
-            "emptied recycle bin"
-        );
-        remove_chunks(&self.inner, chunks);
-        if !discarded.is_empty() {
-            self.inner.emit(Event::FolderChanged(folder));
-        }
-        Ok(discarded.iter().map(|r| recycled_info(r, None)).collect())
-    }
-
-    /// Restores a deleted entry from the recycle bin. The file reappears on every replica,
-    /// including this one once the materialiser runs.
-    pub fn restore(&self, folder: FolderId, entry: EntryId) -> Result<()> {
-        let handle = self.inner.folder(&folder)?;
-        {
-            let mut state = handle.lock();
-            state
-                .meta
-                .restore(self.inner.key.signing_key(), entry, now_ms())?;
-            state.save()?;
-        }
-        self.inner.emit(Event::FolderChanged(folder));
-        self.inner.changed();
-        Ok(())
-    }
-
-    /// A summary of `folder`.
-    pub fn status(&self, folder: FolderId) -> Result<FolderStatus> {
-        let handle = self.inner.folder(&folder)?;
-        let state = handle.lock();
-        let mut status = FolderStatus {
-            files: BTreeMap::new(),
-            pending: 0,
-            conflicts: 0,
-            recycled: state
-                .meta
-                .recycle_bin()
-                .iter()
-                .map(|r| r.version.path.clone())
-                .collect(),
-        };
-        let partial = matches!(state.config.mode, crate::ReplicaMode::Partial { .. });
-        let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
-        for version in state.meta.entries() {
-            if !state.meta.conflicts(&version.entry).is_empty() {
-                status.conflicts += 1;
-            }
-            if let EntryKind::File { content, .. } = version.kind {
-                let path = state
-                    .meta
-                    .disk_path(&version.entry)
-                    .unwrap_or(&version.path);
-                status.files.insert(path.to_owned(), content);
-                let on_disk = state
-                    .local
-                    .get(path)
-                    .is_some_and(|l| l.entry == version.entry && l.content == content);
-                // Placeholders of a partial replica are not pending.
-                if !on_disk && (!partial || materialised.contains(&version.entry)) {
-                    status.pending += 1;
-                }
-            }
-        }
-        Ok(status)
-    }
-
-    // ---- Peers ----
-
-    /// Peers with an active sync session.
-    pub fn connected_peers(&self) -> Vec<PeerInfo> {
-        let mut peers: Vec<PeerInfo> = self
-            .node
-            .peers()
-            .into_iter()
-            .map(|p| PeerInfo {
-                device: p.device(),
-                user: p.certificate().user,
-                name: p.certificate().name.clone(),
-                shared_folders: p.shared_folders().iter().copied().collect(),
-            })
-            .collect();
-        peers.sort_by_key(|p| p.device);
-        peers
-    }
-
-    /// Peers this engine keeps connected: from the configuration and added at runtime.
-    pub fn known_peers(&self) -> Vec<PeerAddr> {
-        self.inner.peers()
-    }
-
-    /// Remembers a peer to keep connected, across restarts.
-    pub fn add_peer(&self, peer: PeerAddr) -> Result<()> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        {
-            let mut peers = self.inner.runtime_peers.write().unwrap();
-            peers.retain(|p| p.device != peer.device);
-            peers.push(peer);
-        }
-        self.inner.save_runtime()
-    }
-
-    /// Forgets a peer added at runtime. Returns false if it was not one.
-    pub fn remove_peer(&self, device: DeviceId) -> Result<bool> {
-        let _guard = self.inner.runtime_lock.lock().unwrap();
-        let removed = {
-            let mut peers = self.inner.runtime_peers.write().unwrap();
-            let before = peers.len();
-            peers.retain(|p| p.device != device);
-            peers.len() != before
-        };
-        if removed {
-            self.inner.save_runtime()?;
-        }
-        Ok(removed)
-    }
-
-    /// Starts approving a new device from its pairing code (ADR 0015). Returns once the new
-    /// device has accepted the proof; show the confirmation code, then approve or decline.
-    pub async fn pair(
-        &self,
-        code: &tidefell_proto::pair::PairingCode,
-    ) -> Result<crate::pairing::PendingPairing> {
-        let session = self.node.pair(code).await?;
-        Ok(crate::pairing::PendingPairing::new(
-            session,
-            self.inner.clone(),
-            self.node.clone(),
-        ))
-    }
-
     /// Stops all tasks, saves state and closes the endpoint.
     pub async fn shutdown(mut self) {
         self.tasks.shutdown().await;
@@ -992,20 +390,6 @@ impl Engine {
             node.shutdown().await;
         }
     }
-}
-
-/// Removes the file at `path` from disk and forgets it, if this replica has it.
-fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
-    if state.local.remove(path).is_some() {
-        let abs = root.join(path);
-        match std::fs::remove_file(&abs) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(crate::io_err(&abs)(e)),
-        }
-    }
-    state.used.remove(path);
-    Ok(())
 }
 
 async fn run_scan(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
@@ -1033,68 +417,4 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
     materialize::materialize(inner, node, id, &handle).await
-}
-
-fn purge(inner: &Inner, now_ms: i64) {
-    let handles: Vec<(FolderId, Arc<FolderHandle>)> = inner
-        .folders
-        .read()
-        .unwrap()
-        .iter()
-        .map(|(id, h)| (*id, h.clone()))
-        .collect();
-    let mut orphaned = BTreeSet::new();
-    for (id, handle) in &handles {
-        let mut state = handle.lock();
-        let (purged, chunks) = state.purge(now_ms);
-        if !purged.is_empty() || !chunks.is_empty() {
-            info!(folder = %id, items = purged.len(), chunks = chunks.len(), "purged recycle bin");
-            if let Err(e) = state.save() {
-                warn!(folder = %id, error = %e, "saving after purge failed");
-            }
-        }
-        orphaned.extend(chunks);
-    }
-    remove_chunks(inner, orphaned);
-}
-
-/// Removes chunks one folder no longer references from the block store, unless another
-/// folder still uses them.
-fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto::ChunkHash>) {
-    let handles: Vec<Arc<FolderHandle>> = inner.folders.read().unwrap().values().cloned().collect();
-    let still_used = |hash: &tidefell_proto::ChunkHash| {
-        handles.iter().any(|h| h.lock().index.is_referenced(hash))
-    };
-    let mut store = inner.store.lock().unwrap();
-    for hash in chunks.into_iter().collect::<BTreeSet<_>>() {
-        if !still_used(&hash) {
-            let _ = store.remove(&hash);
-        }
-    }
-}
-
-fn recycled_size(item: &tidefell_meta::Recycled) -> u64 {
-    match item.version.kind {
-        EntryKind::File { size, .. } => size,
-        _ => 0,
-    }
-}
-
-fn recycled_info(item: &tidefell_meta::Recycled, expires_at_ms: Option<i64>) -> RecycledInfo {
-    RecycledInfo {
-        entry: item.version.entry,
-        path: item.version.path.clone(),
-        size: recycled_size(item),
-        deleted_at_ms: item.deleted_at_ms,
-        expires_at_ms,
-    }
-}
-
-fn recycle_summary(state: &FolderState) -> RecycleSummary {
-    let bin = state.meta.recycle_bin();
-    RecycleSummary {
-        items: bin.len(),
-        bytes: bin.iter().map(recycled_size).sum(),
-        next_expiry_ms: bin.next_expiry_ms(),
-    }
 }

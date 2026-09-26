@@ -64,13 +64,7 @@ impl PendingPairing {
     /// Certifies the new device as `name` with `user` (which must be this device's user) and
     /// offers it every folder here that the user is a member of.
     pub async fn approve(self, user: &UserKey, name: &str) -> Result<()> {
-        let my_user = self
-            .inner
-            .certificate
-            .verify_certificate()
-            .map_err(|e| Error::Invalid(e.to_string()))?
-            .user;
-        if user.id() != my_user {
+        if user.id() != self.inner.user {
             return Err(Error::Invalid(
                 "the user key does not belong to this device's user".into(),
             ));
@@ -85,20 +79,23 @@ impl PendingPairing {
             .iter()
             .filter_map(|h| {
                 let state = h.lock();
-                state.members.contains(&my_user).then(|| FolderOffer {
-                    id: state.config.id,
-                    name: state
-                        .config
-                        .path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| state.config.id.to_string()),
-                    members: state.config.members.clone(),
-                    retention_days: match state.config.retention {
-                        tidefell_meta::Retention::Forever => 0,
-                        tidefell_meta::Retention::Days(d) => d,
-                    },
-                })
+                state
+                    .members
+                    .contains(&self.inner.user)
+                    .then(|| FolderOffer {
+                        id: state.config.id,
+                        name: state
+                            .config
+                            .path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| state.config.id.to_string()),
+                        members: state.config.members.clone(),
+                        retention_days: match state.config.retention {
+                            tidefell_meta::Retention::Forever => 0,
+                            tidefell_meta::Retention::Days(d) => d,
+                        },
+                    })
             })
             .collect();
         let device = self.device();

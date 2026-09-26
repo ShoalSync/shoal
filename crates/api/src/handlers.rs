@@ -11,7 +11,7 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use tidefell_engine::{
-    Engine, Error as EngineError, FolderConfig, PeerAddr, ReplicaMode, Retention,
+    self as engine, Engine, Error as EngineError, PeerAddr, ReplicaMode, Retention,
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
@@ -202,27 +202,16 @@ pub(crate) async fn add_folder(
     State(engine): AppState,
     Json(new): Json<NewFolder>,
 ) -> ApiResult<(StatusCode, Json<Folder>)> {
-    let id = match &new.id {
-        Some(id) => parse::<FolderId>("folder", id)?,
-        None => {
-            let mut bytes = [0u8; 32];
-            getrandom::fill(&mut bytes).map_err(|e| ApiFailure::bad_request(e.to_string()))?;
-            FolderId(bytes)
-        }
-    };
-    let members = if new.members.is_empty() {
-        let own = engine
-            .certificate()
-            .verify_certificate()
-            .map_err(|e| ApiFailure::bad_request(e.to_string()))?
-            .user;
-        vec![own]
-    } else {
-        new.members
-            .iter()
-            .map(|m| parse::<UserId>("member", m))
-            .collect::<ApiResult<_>>()?
-    };
+    let id = new
+        .id
+        .as_deref()
+        .map(|id| parse::<FolderId>("folder", id))
+        .transpose()?;
+    let members = new
+        .members
+        .iter()
+        .map(|m| parse::<UserId>("member", m))
+        .collect::<ApiResult<_>>()?;
     let mode = match (new.mode.unwrap_or(Mode::Full), new.budget_bytes) {
         (Mode::Full, _) => ReplicaMode::Full,
         (Mode::Partial, Some(budget_bytes)) => ReplicaMode::Partial { budget_bytes },
@@ -233,18 +222,15 @@ pub(crate) async fn add_folder(
     if new.path.trim().is_empty() {
         return Err(ApiFailure::bad_request("path must not be empty"));
     }
-    engine.add_folder(FolderConfig {
+    let folder = engine.create_folder(engine::NewFolder {
         id,
         path: PathBuf::from(&new.path),
         mode,
         members,
-        retention: match new.retention_days {
-            0 => Retention::Forever,
-            days => Retention::Days(days),
-        },
+        retention: Retention::from_days(new.retention_days),
         scan_interval: Duration::from_secs(new.scan_interval_secs.unwrap_or(10).max(1)),
     })?;
-    Ok((StatusCode::CREATED, Json(folder_info(&engine, id)?)))
+    Ok((StatusCode::CREATED, Json(convert::folder(folder))))
 }
 
 /// Stops syncing a folder added at runtime. Files on disk are left in place.
@@ -271,10 +257,9 @@ pub(crate) async fn set_retention(
     Json(update): Json<RetentionUpdate>,
 ) -> ApiResult<Json<Folder>> {
     let id = parse("folder", &id)?;
-    let retention = match update.retention_days {
-        None | Some(0) => Retention::Forever,
-        Some(days) => Retention::Days(days),
-    };
+    let retention = update
+        .retention_days
+        .map_or(Retention::Forever, Retention::from_days);
     engine.set_retention(id, retention)?;
     Ok(Json(folder_info(&engine, id)?))
 }

@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use tidefell_engine::{
-    CopyInfo, Event, FileInfo, FolderInfo, PeerAddr, PeerInfo, RecycledInfo, ReplicaMode, Retention,
+    CopyInfo, Event, FileInfo, FolderInfo, PeerAddr, PeerInfo, RecycledInfo, ReplicaMode,
 };
 use tidefell_sdk::types as api;
 
@@ -16,20 +16,17 @@ pub(crate) fn parse<T: FromStr>(what: &str, value: &str) -> Result<T, ApiFailure
 }
 
 pub(crate) fn folder(f: FolderInfo) -> api::Folder {
-    let (mode, budget_bytes) = match f.mode {
-        ReplicaMode::Full => (api::Mode::Full, None),
-        ReplicaMode::Partial { budget_bytes } => (api::Mode::Partial, Some(budget_bytes)),
+    let mode = match f.mode {
+        ReplicaMode::Full => api::Mode::Full,
+        ReplicaMode::Partial { .. } => api::Mode::Partial,
     };
     api::Folder {
         id: f.id.to_string(),
         path: f.path.display().to_string(),
         mode,
-        budget_bytes,
+        budget_bytes: f.mode.budget_bytes(),
         members: f.members.iter().map(ToString::to_string).collect(),
-        retention_days: match f.retention {
-            Retention::Days(days) => Some(days),
-            Retention::Forever => None,
-        },
+        retention_days: f.retention.days(),
         recycle_bin: api::RecycleBinSummary {
             items: f.recycle_bin.items as u64,
             bytes: f.recycle_bin.bytes,

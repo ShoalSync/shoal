@@ -17,6 +17,26 @@ pub enum Retention {
     Forever,
 }
 
+impl Retention {
+    /// A retention of `days` days, where 0 means forever: the convention of the REST API, the
+    /// configuration file and the bindings.
+    pub fn from_days(days: u32) -> Self {
+        if days == 0 {
+            Self::Forever
+        } else {
+            Self::Days(days)
+        }
+    }
+
+    /// The number of days, or `None` for forever.
+    pub fn days(self) -> Option<u32> {
+        match self {
+            Self::Days(days) => Some(days),
+            Self::Forever => None,
+        }
+    }
+}
+
 /// A deleted entry: its last live version and when it was deleted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recycled {
@@ -117,5 +137,18 @@ impl RecycleBin {
             .iter()
             .filter_map(|entry| self.items.remove(entry))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Retention;
+
+    #[test]
+    fn zero_days_is_forever() {
+        assert_eq!(Retention::from_days(0), Retention::Forever);
+        assert_eq!(Retention::from_days(30), Retention::Days(30));
+        assert_eq!(Retention::Days(30).days(), Some(30));
+        assert_eq!(Retention::Forever.days(), None);
     }
 }

@@ -21,6 +21,24 @@ pub enum ReplicaMode {
     },
 }
 
+impl ReplicaMode {
+    /// A partial replica with `budget_bytes`, or a full one for `None`.
+    pub fn from_budget(budget_bytes: Option<u64>) -> Self {
+        match budget_bytes {
+            Some(budget_bytes) => Self::Partial { budget_bytes },
+            None => Self::Full,
+        }
+    }
+
+    /// The budget of a partial replica; `None` for a full one.
+    pub fn budget_bytes(self) -> Option<u64> {
+        match self {
+            Self::Full => None,
+            Self::Partial { budget_bytes } => Some(budget_bytes),
+        }
+    }
+}
+
 /// One synced folder.
 #[derive(Debug, Clone)]
 pub struct FolderConfig {
@@ -35,6 +53,25 @@ pub struct FolderConfig {
     /// Recycle-bin retention, chosen at first setup.
     pub retention: Retention,
     /// How often to rescan the folder for local changes.
+    pub scan_interval: Duration,
+}
+
+/// A folder to add at runtime, before defaults: a fresh random ID when `id` is `None`, and
+/// this device's user as the only member when `members` is empty. See
+/// [`Engine::create_folder`](crate::Engine::create_folder).
+#[derive(Debug, Clone)]
+pub struct NewFolder {
+    /// The folder's ID, to join a folder shared from another device; `None` for a new folder.
+    pub id: Option<FolderId>,
+    /// Where the folder is on disk.
+    pub path: PathBuf,
+    /// How much of the folder this replica keeps.
+    pub mode: ReplicaMode,
+    /// Users whose devices may sync the folder; empty for this device's user alone.
+    pub members: Vec<UserId>,
+    /// How long this replica keeps deleted files.
+    pub retention: Retention,
+    /// How often to scan the folder for local changes.
     pub scan_interval: Duration,
 }
 

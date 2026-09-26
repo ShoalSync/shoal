@@ -15,7 +15,6 @@ crate-type = ["cdylib", "lib"]
 
 # Dependency boundary: may depend only on `tidefell-sdk` and `tidefell-engine`.
 [dependencies]
-getrandom.workspace = true
 thiserror.workspace = true
 tidefell-engine.workspace = true
 tokio.workspace = true

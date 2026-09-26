@@ -237,10 +237,7 @@ impl Config {
                     .iter()
                     .map(|m| hex_id::<UserId>("member", m))
                     .collect::<Result<_, _>>()?,
-                retention: match f.retention_days {
-                    0 => Retention::Forever,
-                    days => Retention::Days(days),
-                },
+                retention: Retention::from_days(f.retention_days),
                 scan_interval: Duration::from_secs(f.scan_interval_secs.max(1)),
             });
         }

@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use tidefell_engine::pairing::{self, PairingEvent, PairingServer};
 use tidefell_engine::{
-    device, Engine, EngineConfig, FolderConfig, FolderId, PeerAddr, RelayConfig, ReplicaMode,
+    device, Engine, EngineConfig, FolderId, NewFolder, PeerAddr, RelayConfig, ReplicaMode,
     Retention,
 };
 
@@ -471,7 +471,6 @@ pub trait EventListener: Send + Sync {
 #[derive(uniffi::Object)]
 pub struct Node {
     engine: RwLock<Option<Arc<Engine>>>,
-    user: tidefell_engine::UserId,
 }
 
 impl Node {
@@ -484,27 +483,13 @@ impl Node {
     }
 }
 
-fn retention(days: u32) -> Retention {
-    if days == 0 {
-        Retention::Forever
-    } else {
-        Retention::Days(days)
-    }
-}
-
 fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
     Folder {
         id: f.id.to_string(),
         path: f.path.display().to_string(),
-        partial_budget: match f.mode {
-            ReplicaMode::Full => None,
-            ReplicaMode::Partial { budget_bytes } => Some(budget_bytes),
-        },
+        partial_budget: f.mode.budget_bytes(),
         members: f.members.iter().map(ToString::to_string).collect(),
-        retention_days: match f.retention {
-            Retention::Forever => 0,
-            Retention::Days(d) => d,
-        },
+        retention_days: f.retention.days().unwrap_or(0),
         recycled_files: f.recycle_bin.items as u64,
         recycled_bytes: f.recycle_bin.bytes,
         next_purge_ms: f.recycle_bin.next_expiry_ms,
@@ -531,10 +516,6 @@ impl Node {
         let data_dir = PathBuf::from(data_dir);
         let key = device::device_key(&data_dir)?;
         let certificate = device::certificate(&data_dir, &key)?.ok_or(TidefellError::NotPaired)?;
-        let user = certificate
-            .verify_certificate()
-            .map_err(|e| invalid(e.to_string()))?
-            .user;
         let config = EngineConfig {
             data_dir,
             relay: network.relay()?,
@@ -546,7 +527,6 @@ impl Node {
         let engine = on_runtime(Engine::start(config, key, certificate)).await??;
         Ok(Arc::new(Self {
             engine: RwLock::new(Some(Arc::new(engine))),
-            user,
         }))
     }
 
@@ -586,7 +566,7 @@ impl Node {
         retention_days: u32,
     ) -> Result<Folder> {
         let id: FolderId = parse("folder ID", &id)?;
-        self.add(id, path, partial_budget, members, retention_days)
+        self.add(Some(id), path, partial_budget, members, retention_days)
     }
 
     /// Creates a new folder at `path`, shared with this device's user.
@@ -596,15 +576,7 @@ impl Node {
         partial_budget: Option<u64>,
         retention_days: u32,
     ) -> Result<Folder> {
-        let mut bytes = [0u8; 32];
-        getrandom_fill(&mut bytes)?;
-        self.add(
-            FolderId(bytes),
-            path,
-            partial_budget,
-            Vec::new(),
-            retention_days,
-        )
+        self.add(None, path, partial_budget, Vec::new(), retention_days)
     }
 
     /// Changes how long this device keeps a folder's deleted files; 0 keeps them forever.
@@ -612,7 +584,7 @@ impl Node {
     pub fn set_retention(&self, folder: String, retention_days: u32) -> Result<Folder> {
         let engine = self.engine()?;
         let id: FolderId = parse("folder ID", &folder)?;
-        engine.set_retention(id, retention(retention_days))?;
+        engine.set_retention(id, Retention::from_days(retention_days))?;
         engine
             .folders()
             .into_iter()
@@ -836,7 +808,7 @@ impl Node {
 impl Node {
     fn add(
         &self,
-        id: FolderId,
+        id: Option<FolderId>,
         path: String,
         partial_budget: Option<u64>,
         members: Vec<String>,
@@ -845,38 +817,18 @@ impl Node {
         let engine = self.engine()?;
         // Adding a folder starts its scanner; foreign threads have no runtime of their own.
         let _runtime = runtime().enter();
-        let members = if members.is_empty() {
-            vec![self.user]
-        } else {
-            members
-                .iter()
-                .map(|m| parse("user ID", m))
-                .collect::<Result<_>>()?
-        };
-        engine.add_folder(FolderConfig {
+        let members = members
+            .iter()
+            .map(|m| parse("user ID", m))
+            .collect::<Result<_>>()?;
+        let folder = engine.create_folder(NewFolder {
             id,
             path: PathBuf::from(path),
-            mode: match partial_budget {
-                None => ReplicaMode::Full,
-                Some(budget_bytes) => ReplicaMode::Partial { budget_bytes },
-            },
+            mode: ReplicaMode::from_budget(partial_budget),
             members,
-            retention: retention(retention_days),
+            retention: Retention::from_days(retention_days),
             scan_interval: Duration::from_secs(30),
         })?;
-        engine
-            .folders()
-            .into_iter()
-            .find(|f| f.id == id)
-            .map(folder_record)
-            .ok_or_else(|| TidefellError::NotFound {
-                detail: format!("folder {id}"),
-            })
+        Ok(folder_record(folder))
     }
-}
-
-fn getrandom_fill(bytes: &mut [u8]) -> Result<()> {
-    getrandom::fill(bytes).map_err(|e| TidefellError::Failed {
-        detail: e.to_string(),
-    })
 }

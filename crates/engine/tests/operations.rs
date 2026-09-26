@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidefell_engine::{
-    Engine, EngineConfig, Error, Event, FolderConfig, RelayConfig, ReplicaMode, Retention,
+    Engine, EngineConfig, Error, Event, FolderConfig, NewFolder, RelayConfig, ReplicaMode,
+    Retention,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_proto::{FolderId, UserId};
@@ -293,6 +294,53 @@ async fn configured_folders_are_read_only_at_runtime() {
     assert!(matches!(
         engine.set_retention(FOLDER, Retention::Forever),
         Err(Error::Configured(_))
+    ));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn created_folders_get_defaults() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let bob = UserKey::from_seed([2; 32]);
+    let a = Device::new(tmp.path(), "a", 40, &alice);
+    let engine = a.start(Vec::new()).await;
+    assert_eq!(engine.user(), alice.id());
+    let new = |id, path: PathBuf, members: Vec<UserId>| NewFolder {
+        id,
+        path,
+        mode: ReplicaMode::from_budget(Some(1000)),
+        members,
+        retention: Retention::from_days(0),
+        scan_interval: Duration::from_secs(3600),
+    };
+
+    // A new folder gets a fresh ID and this device's user as its only member.
+    let first = engine
+        .create_folder(new(None, a.root().join("one"), Vec::new()))
+        .unwrap();
+    let second = engine
+        .create_folder(new(None, a.root().join("two"), Vec::new()))
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(first.members, vec![alice.id()]);
+    assert_eq!(first.mode, ReplicaMode::Partial { budget_bytes: 1000 });
+    assert_eq!(first.mode.budget_bytes(), Some(1000));
+    assert_eq!(ReplicaMode::from_budget(None).budget_bytes(), None);
+    assert_eq!(first.retention, Retention::Forever);
+
+    // Joining keeps the given ID and members.
+    let joined = engine
+        .create_folder(new(Some(FOLDER), a.root().join("three"), vec![bob.id()]))
+        .unwrap();
+    assert_eq!((joined.id, joined.members), (FOLDER, vec![bob.id()]));
+    assert!(matches!(
+        engine.create_folder(new(Some(FOLDER), a.root().join("four"), Vec::new())),
+        Err(Error::FolderExists(_))
+    ));
+    assert!(matches!(
+        engine.create_folder(new(None, PathBuf::new(), Vec::new())),
+        Err(Error::Invalid(_))
     ));
     engine.shutdown().await;
 }

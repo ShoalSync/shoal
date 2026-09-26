@@ -206,7 +206,13 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   (tidefell/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
   removal and is backed up again, backup runs one at a time, the sync service stops at the
   Android 15 time limit, and app data is excluded from backups and device transfer.
-- `v0.8.0` releases Phase 5c steps 2 and 3. The infra, site and Android pins follow.
+- `v0.8.0` releases Phase 5c steps 2 and 3. `tidefell/infra`, `tidefell/site` and
+  `tidefell/android` pin it.
+- Phase 5c step 7 is implemented in this repository: `engine.rs` is split by concern
+  (folders, files, the recycle bin and peers), folder defaults and the retention and mode
+  conversions live once in the engine and are shared by the API, the bindings and the daemon
+  configuration, and every crate forbids unsafe code. The Android part follows in
+  `tidefell/android`. Steps 5 and 6 are not started.
 
 ### Phase 2 work breakdown
 

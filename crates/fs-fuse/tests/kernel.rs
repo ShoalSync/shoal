@@ -63,9 +63,15 @@ impl Backend for DirBackend {
     }
 }
 
+/// True when running as root: `/proc/self` belongs to the process's effective user.
+fn is_root() -> bool {
+    use std::os::unix::fs::MetadataExt;
+    fs::metadata("/proc/self").is_ok_and(|m| m.uid() == 0)
+}
+
 fn fuse_available() -> bool {
     let usable = Path::new("/dev/fuse").exists()
-        && (unsafe { libc::geteuid() } == 0
+        && (is_root()
             || std::process::Command::new("fusermount3")
                 .arg("--version")
                 .output()

@@ -43,7 +43,7 @@ mod scan;
 mod state;
 mod views;
 
-pub use config::{EngineConfig, FolderConfig, PeerAddr, ReplicaMode};
+pub use config::{EngineConfig, FolderConfig, NewFolder, PeerAddr, ReplicaMode};
 pub use engine::{Engine, FolderStatus};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
