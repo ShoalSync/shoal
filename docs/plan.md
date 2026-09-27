@@ -119,6 +119,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | File content on disk | Kept once per device; files are the content, the block store holds the rest | ADR 0027 |
 | Other devices' files on the phone | Download action and read-only documents provider roots | ADR 0028 |
 | Features from other sync tools | Ignore patterns, watching, local discovery, version history, bandwidth limits, pins, upload links, conflict resolution | ADR 0029 |
+| Diagnostics and reporting | Local logs and crash files, detailed status, redacted diagnostics bundles, doctor, activity history, opt-in metrics; no telemetry | ADR 0030 |
 
 ## Phases
 
@@ -135,6 +136,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5c** Review fixes | The fixes from the codebase review: sync correctness and flow control (ADR 0024), Android safety, supply chain, hardening and maintainability | Every high finding has a regression test that failed before its fix; a folder with 100,000 entries completes its first sync; releases are built off shared runners and signed |
 | **5d** Phone folders | Per-device sync direction and local deletes in the engine; any folder on the phone with backup only, two-way sync and remove after backup (ADR 0025) | On an emulator, a phone folder syncs with a daemon on each option, and removal waits for the daemon's confirmed copy |
 | **5e** Features from other sync tools | Ignore patterns, watching for changes, local network discovery, version history, bandwidth limits and pause, pins on partial replicas, upload-only links, conflict resolution (ADR 0029) | See the Phase 5e breakdown |
+| **5f** Diagnostics and reporting | Logs and crash files on every platform, status and problems, diagnostics bundle and doctor, activity history, metrics, crash reports through the issue tracker (ADR 0030) | See the Phase 5f breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -458,6 +460,32 @@ file replaced by another device's edit is restored from its history; a paused fo
 nothing; a pinned directory stays on a partial replica over its budget; an upload-only link
 accepts a file without showing the directory; and a conflict survives a later edit, prompts on
 Android, and is resolved from the CLI by keeping both versions.
+
+### Phase 5f work breakdown
+
+Diagnostics and reporting (ADR 0030). It runs alongside Phase 5e. Step 2 comes first, right
+after Phase 5e step 4 (`v0.11.0`), since Android reports have no engine logs today.
+
+1. **Decisions.** ADR 0030 and this breakdown.
+2. **Logs and crashes.** The rotating JSON log file, logcat on Android, the runtime log level,
+   the recent-problems buffer, the panic hook and crash files, fatal engine-task panics, and the
+   crash notice on the next start. The Android side (the app's log calls, the uncaught-exception
+   handler, restart after a crash) is in `tidefell/android`.
+3. **Status and problems.** Peer connections, folder states, per-path problems and transfer
+   rates in the engine, API, sdk, bindings, CLI, web and Android app.
+4. **Diagnostics bundle and doctor.** The redacted bundle and its preview, `tidefell doctor`
+   and the app and web checks, and the clock in sync/1's `Hello`.
+5. **Activity history.** Who made each file's current version, and the per-folder activity
+   log, in the API, CLI, web and Android app.
+6. **Metrics.** The opt-in Prometheus endpoint and the scrape option in `tidefell/infra`.
+7. **Reporting a crash.** The pre-filled issue from the CLI, web and app, and `report_url`.
+   Release, with the infra, site and Android pins.
+
+Exit criterion: a forced panic on `tidefelld` and on Android leaves a crash file and a notice
+on the next start; a diagnostics bundle from each holds logs, status, problems and the crash,
+with no plain path or full ID unless paths were included; a folder on a read-only disk lists the
+problem in the CLI and the app; `tidefell doctor` warns about a peer whose clock is five minutes
+off; and `/metrics` counts bytes during a sync.
 
 ### Phase 6 work breakdown
 
