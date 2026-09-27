@@ -64,6 +64,20 @@ fn sample_version() -> EntryVersion {
     }
 }
 
+/// A version that has seen its author's changes 1 and 3 to 5, but not 2: made on top of a
+/// version that had not seen change 2 (ADR 0029).
+fn version_with_holes() -> EntryVersion {
+    let author = DeviceId(device_key().verifying_key().to_bytes());
+    let mut version = sample_version();
+    version.version = [(author, 1), (DeviceId([0x99; 32]), 2)]
+        .into_iter()
+        .collect();
+    for n in 3..=5 {
+        version.version.add(author, n);
+    }
+    version
+}
+
 fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
     let folder = FolderId([0x22; 32]);
     let messages = [
@@ -89,6 +103,16 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
                 epoch: 0x0123_4567_89ab_cdef,
                 up_to: 1,
                 versions: vec![Signed::sign(&sample_version(), &device_key())],
+                last: true,
+            },
+        ),
+        (
+            "index-batch-with-holes",
+            SyncMessage::IndexBatch {
+                folder,
+                epoch: 0x0123_4567_89ab_cdef,
+                up_to: 2,
+                versions: vec![Signed::sign(&version_with_holes(), &device_key())],
                 last: true,
             },
         ),
@@ -324,6 +348,43 @@ fn certificate_must_be_signed_by_its_user() {
 fn signed_entry_version_verifies() {
     let signed = Signed::sign(&sample_version(), &device_key());
     assert_eq!(signed.verify_authored().unwrap(), sample_version());
+}
+
+#[test]
+fn entry_versions_have_one_encoding() {
+    // Without holes, the encoding is the one from before vectors had holes.
+    let plain = Signed::sign(&sample_version(), &device_key());
+    assert_eq!(
+        plain.body,
+        postcard::to_stdvec(&sample_version()).unwrap()[..plain.body.len()]
+    );
+    assert_eq!(plain.verify_authored().unwrap(), sample_version());
+    let holes = Signed::sign(&version_with_holes(), &device_key());
+    assert_eq!(holes.verify_authored().unwrap(), version_with_holes());
+
+    // An empty list of holes written out, or bytes after the version, are refused.
+    for body in [
+        postcard::to_stdvec(&sample_version()).unwrap(),
+        [holes.body.clone(), vec![0]].concat(),
+    ] {
+        let signature = ed25519_dalek::Signer::sign(
+            &device_key(),
+            &tidefell_proto::signed::signing_bytes("sync/1/entry-version", &body),
+        );
+        // Signed is the signer, the body with its length, then the signature.
+        let encoded = [
+            &postcard::to_stdvec(&holes).unwrap()[..32],
+            &postcard::to_stdvec(&body).unwrap(),
+            &signature.to_bytes(),
+        ]
+        .concat();
+        let resigned: Signed<EntryVersion> = postcard::from_bytes(&encoded).unwrap();
+        // The signature is good; the encoding is not.
+        assert!(matches!(
+            resigned.verify_authored(),
+            Err(tidefell_proto::Error::Decode(_))
+        ));
+    }
 }
 
 #[test]

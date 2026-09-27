@@ -101,7 +101,7 @@ fn concurrent_edits_converge_in_any_order() {
 }
 
 #[test]
-fn local_change_resolves_conflict() {
+fn a_change_that_has_seen_every_version_resolves_a_conflict() {
     let mut b = replica(2);
     let mut c = replica(3);
     let vb = b.local_change(&key(2), E, "f", file(2), 1).unwrap();
@@ -109,7 +109,10 @@ fn local_change_resolves_conflict() {
     assert_eq!(b.apply_remote(vc, NOW).unwrap(), Applied::Conflict);
     assert_eq!(b.conflicts(&E).len(), 1);
 
-    let resolved = b.local_change(&key(2), E, "f", file(4), 3).unwrap();
+    let all = b.known_vector(&E);
+    let (resolved, _) = b
+        .local_change_from(&key(2), E, &all, "f", file(4), 3)
+        .unwrap();
     assert!(b.conflicts(&E).is_empty());
     assert_eq!(c.apply_remote(vb, NOW).unwrap(), Applied::Conflict);
     assert_eq!(c.apply_remote(resolved, NOW).unwrap(), Applied::Updated);
@@ -136,6 +139,33 @@ fn edit_beats_concurrent_delete() {
     assert_eq!(a.current(&E).unwrap().kind, file(2));
     assert_eq!(b.current(&E).unwrap().kind, file(2));
     assert!(a.recycle_bin().is_empty(), "entry is live again");
+
+    // Nothing to decide (ADR 0029), and the next edit supersedes the delete.
+    assert_eq!(a.open_conflicts(&E).count(), 0);
+    assert_eq!(b.open_conflicts(&E).count(), 0);
+    let next = a.local_change(&key(1), E, "f", file(3), 600).unwrap();
+    assert!(a.conflicts(&E).is_empty());
+    b.apply_remote(next, NOW).unwrap();
+    assert!(b.conflicts(&E).is_empty());
+}
+
+/// Deleting a file with an open conflict does not decide it: the delete supersedes only the
+/// current version, so the conflict copy, being live, becomes current (ADR 0029).
+#[test]
+fn deleting_a_conflicted_file_brings_back_the_other_version() {
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    b.apply_remote(v1, NOW).unwrap();
+    let va = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    b.local_change(&key(2), E, "f", file(3), 3).unwrap();
+    b.apply_remote(va, NOW).unwrap();
+    assert_eq!(b.current(&E).unwrap().kind, file(3));
+
+    b.local_change(&key(2), E, "f", EntryKind::Tombstone, 4)
+        .unwrap();
+    assert_eq!(b.current(&E).unwrap().kind, file(2));
+    assert_eq!(b.open_conflicts(&E).count(), 0);
 }
 
 /// A delete from a device whose clock is wrong is kept for this device's full retention, counted
@@ -446,7 +476,7 @@ fn change_to_older_content_keeps_the_newer_remote_version() {
 }
 
 #[test]
-fn local_change_from_moves_own_counter_past_earlier_versions() {
+fn a_change_on_a_stale_base_leaves_a_hole() {
     let mut a = replica(1);
     a.local_change(&key(1), E, "f", file(1), 1).unwrap();
     let second = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
@@ -455,8 +485,82 @@ fn local_change_from_moves_own_counter_past_earlier_versions() {
     let (_, third) = a
         .local_change_from(&key(1), E, &stale, "f", file(3), 3)
         .unwrap();
+    // Numbered after the second, which it has not seen (ADR 0029).
     assert_eq!(third.get(&device(1)), 3);
-    assert!(third.dominates(&second.verify_authored().unwrap().version));
+    assert!(!third.contains(&device(1), 2));
+    assert_eq!(a.conflicts(&E).len(), 1);
+    assert_eq!(a.conflicts(&E)[0].signed.body, second.body);
+}
+
+/// A and B edit apart and B's edit wins. Edits to the winner, on any device, keep A's version
+/// until the conflict is resolved (ADR 0029).
+#[test]
+fn a_conflict_lasts_through_later_edits() {
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let mut c = replica(3);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    b.apply_remote(v1.clone(), NOW).unwrap();
+    c.apply_remote(v1, NOW).unwrap();
+    let va = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    let vb = b.local_change(&key(2), E, "f", file(3), 3).unwrap();
+    a.apply_remote(vb.clone(), NOW).unwrap();
+    b.apply_remote(va.clone(), NOW).unwrap();
+    c.apply_remote(va.clone(), NOW).unwrap();
+    c.apply_remote(vb, NOW).unwrap();
+    for replica in [&a, &b, &c] {
+        assert_eq!(replica.current(&E).unwrap().kind, file(3));
+        assert_eq!(replica.open_conflicts(&E).count(), 1);
+    }
+
+    // A, whose version lost, edits the winner twice; then B and C each edit what they got.
+    let mut edits = Vec::new();
+    for n in 4..6 {
+        let base = a.current_vector(&E);
+        let (edit, _) = a
+            .local_change_from(&key(1), E, &base, "f", file(n), i64::from(n))
+            .unwrap();
+        edits.push(edit);
+    }
+    for edit in &edits {
+        b.apply_remote(edit.clone(), NOW).unwrap();
+    }
+    edits.push(b.local_change(&key(2), E, "f", file(6), 6).unwrap());
+    for edit in &edits {
+        c.apply_remote(edit.clone(), NOW).unwrap();
+    }
+    edits.push(c.local_change(&key(3), E, "f", file(7), 7).unwrap());
+    for replica in [&mut a, &mut b] {
+        for edit in &edits {
+            replica.apply_remote(edit.clone(), NOW).unwrap();
+        }
+    }
+    for replica in [&a, &b, &c] {
+        let conflicts: Vec<_> = replica.open_conflicts(&E).collect();
+        assert_eq!(conflicts.len(), 1, "A's version is still there");
+        assert_eq!(conflicts[0].signed.body, va.body);
+        assert_eq!(replica.current(&E), c.current(&E));
+    }
+}
+
+/// Two devices that make the same change apart do not conflict, and the next change supersedes
+/// both (ADR 0029).
+#[test]
+fn the_same_content_is_not_a_conflict() {
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    b.apply_remote(v1, NOW).unwrap();
+    let va = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    let vb = b.local_change(&key(2), E, "f", file(2), 3).unwrap();
+    a.apply_remote(vb, NOW).unwrap();
+    b.apply_remote(va, NOW).unwrap();
+    assert_eq!(a.conflicts(&E).len(), 1);
+    assert_eq!(a.open_conflicts(&E).count(), 0);
+    let next = a.local_change(&key(1), E, "f", file(3), 4).unwrap();
+    assert!(a.conflicts(&E).is_empty());
+    b.apply_remote(next, NOW).unwrap();
+    assert!(b.conflicts(&E).is_empty());
 }
 
 #[test]

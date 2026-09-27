@@ -34,6 +34,11 @@ pub enum Error {
     /// above it, or a local change would take this device's counter past it.
     #[error("version counter ceiling reached")]
     CounterCeiling,
+    /// A local change would leave more holes in its vector than a version may have
+    /// ([`tidefell_proto::MAX_HOLES`]): the entry has too many conflicts from this device that
+    /// are not resolved.
+    #[error("too many unresolved conflicts; resolve some first")]
+    TooManyConflicts,
     /// The entry is not in the recycle bin, or has been recreated since.
     #[error("entry is not restorable")]
     NotRestorable,

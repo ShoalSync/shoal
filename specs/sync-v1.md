@@ -71,18 +71,35 @@ body  = postcard(SyncMessage)
 
 ## Version vectors
 
-`VersionVector` is a map `DeviceId → u64` encoded as a postcard map sorted by key, with no zero
-counters. No counter may exceed 2^62; a version whose vector does is invalid. Version `a`
-supersedes `b` if every counter in `a` is ≥ the one in `b`, and at least one is greater. If
+A `VersionVector` is the set of changes to an entry that a version has seen. Each device numbers
+its changes to an entry 1, 2, 3 and so on. A vector holds, per device, the highest change seen,
+and the ranges of lower changes not seen, called holes. It is encoded as a struct of:
+
+1. a postcard map `DeviceId → u64` of the highest change seen, sorted by key, with no zero
+   counters;
+2. a list of holes, each `(DeviceId, first, last)`: an inclusive range of that device's changes
+   not seen. Holes are sorted by device and then `first`, do not overlap, are not adjacent, and
+   lie between 1 and one below that device's highest change. There are at most 64.
+
+So every vector has exactly one encoding. No counter may exceed 2^62; a version whose vector
+does, or whose holes break these rules, is invalid. In an `EntryVersion`, the vector is the last
+field; when it has no holes, the empty list (a single `0x00` byte) is left out, so such a version
+ends with the map. A body that writes out an empty list, or has bytes after the version, is
+invalid.
+
+Version `a` supersedes `b` if `a` has seen every change `b` has, and at least one more. If
 neither supersedes the other, they are concurrent (a conflict). Two versions with equal vectors
 but different encodings are also concurrent; identical encodings are the same version.
 
 Version vectors are per entry and are used only to order versions of that entry. For every
 file it has written to or scanned from disk, a replica records the vector that content
-corresponds to: its base. A device making a change sets the new vector to the merge of the
-base and the conflict copies that existed when that content was written, then increments its
-own counter. A device refuses a change that would take its counter past 2^62. A remote version
-that arrived but was not written to disk, because the local file had changed, therefore stays
+corresponds to: its base. A file written from the current version has as its base the current
+version's vector, merged with the vectors of conflict copies that have the same content. A
+device making a change sets the new vector to the base plus its next change, numbered one above
+the highest change it has made to the entry. A change of its own that the base has not seen
+stays unseen, as a hole. A device refuses a change that would take its counter past 2^62 or
+leave more than 64 holes. A remote version that arrived but was not written to disk, because
+the local file had changed, or because it lost to the current version, therefore stays
 concurrent with the new version.
 
 A device's counters are never reused, so a device's data must not be restored from a backup or
@@ -208,12 +225,17 @@ When two versions of an entry are concurrent, every replica picks the same winne
 1. A live version (anything but `Tombstone`) beats a `Tombstone`: edits win over deletes.
 2. Otherwise the higher `modified_ms` wins.
 3. Otherwise the greater `author`, compared as bytes, wins.
-4. Otherwise (the same author produced two concurrent versions, which is a bug) the greater
-   postcard encoding of the `EntryVersion` wins.
+4. Otherwise (the same author produced two concurrent versions, as a device does when it edits
+   a file whose conflict with its own version is not resolved) the greater encoding of the
+   `EntryVersion`, as signed, wins.
 
 Rule 4 also decides between two versions with equal vectors and different encodings.
 
-The loser is kept as a conflict copy until a later version supersedes both. When a
+The loser is kept as a conflict copy until a later version supersedes both. Since a change
+made on disk builds only on the content it changed, that happens when the conflict is resolved
+(ADR 0029), or when a version made from the conflict copy's own content supersedes it. A
+conflict copy with the same content as the winner is not a conflict: a change to the winner
+supersedes it too. When a
 `Tombstone` supersedes a live version, the live version moves to the recycle bin, which
 keeps it for the retention period.
 

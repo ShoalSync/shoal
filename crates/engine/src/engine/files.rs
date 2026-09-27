@@ -36,7 +36,7 @@ impl Engine {
                             .local
                             .get(path)
                             .is_some_and(|l| l.entry == v.entry && l.content == content),
-                        conflicts: state.meta.conflicts(&v.entry).len(),
+                        conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author,
                         confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
                         only_here: copies::only_here(&state, self.inner.key.id(), v),
@@ -342,25 +342,36 @@ impl Engine {
                     .filter(|v| v.entry != entry && matches!(v.kind, EntryKind::File { .. }))
                     .map(|v| v.entry);
                 if let Some(replaced) = replaced {
+                    let base = crate::scan::base_of(&state, &new, replaced);
                     remove_local(&mut state, &root, &new)?;
+                    state.meta.local_change_from(
+                        key,
+                        replaced,
+                        &base,
+                        &new,
+                        EntryKind::Tombstone,
+                        now,
+                    )?;
+                }
+                // A file on disk moves with its content, so the move builds on that content's
+                // base, which becomes the move's own vector (ADR 0029).
+                let base = crate::scan::base_of(&state, &old, entry);
+                let (_, vector) =
                     state
                         .meta
-                        .local_change(key, replaced, &new, EntryKind::Tombstone, now)?;
-                }
-                if let Some(local) = state.local.remove(&old) {
+                        .local_change_from(key, entry, &base, &new, kind, modified_ms)?;
+                if let Some(mut local) = state.local.remove(&old) {
                     let (src, dst) = (root.join(&old), root.join(&new));
                     if let Some(parent) = dst.parent() {
                         std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
                     }
                     std::fs::rename(&src, &dst).map_err(crate::io_err(&src))?;
+                    local.base = vector;
                     state.local.insert(new.clone(), local);
                     if let Some(used) = state.used.remove(&old) {
                         state.used.insert(new.clone(), used);
                     }
                 }
-                state
-                    .meta
-                    .local_change(key, entry, &new, kind, modified_ms)?;
             }
             state.save()?;
         }

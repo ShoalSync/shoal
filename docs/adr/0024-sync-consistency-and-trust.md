@@ -54,7 +54,9 @@ A misbehaving member may still disrupt a folder they belong to. The remedy is re
   A local change sets the new vector to the merge of its base and the conflict copies that
   existed when that content was written, then increments its own counter. A remote version
   that arrived but was never written, because the file had local changes, stays concurrent
-  with the new version and becomes a conflict copy.
+  with the new version and becomes a conflict copy. (ADR 0029 changes this: a change no
+  longer merges conflict copies with other content, and vectors can have holes, so conflicts
+  last until they are resolved.)
 - **Equal vectors with different content are concurrent.** Two versions of an entry whose
   vectors are equal but whose encodings differ are resolved by the existing rules; rule 4
   (the greater encoding wins) decides. Identical encodings are the same version.

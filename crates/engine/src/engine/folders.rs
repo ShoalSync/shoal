@@ -327,7 +327,7 @@ impl Engine {
         let send_only = state.config.sync.direction == crate::Direction::SendOnly;
         let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
         for version in state.meta.entries() {
-            if !state.meta.conflicts(&version.entry).is_empty() {
+            if state.meta.open_conflicts(&version.entry).next().is_some() {
                 status.conflicts += 1;
             }
             if let EntryKind::File { content, .. } = version.kind {

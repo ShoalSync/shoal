@@ -17,6 +17,16 @@ pub const SIGNATURE_DOMAIN: &[u8] = b"tidefell/sig/1\0";
 pub trait SignedKind: Serialize + DeserializeOwned {
     /// Unique, stable kind tag. Never reuse or change a tag.
     const KIND: &'static str;
+
+    /// The body to sign: the postcard encoding, unless the kind specifies another.
+    fn encode(&self) -> Vec<u8> {
+        postcard::to_stdvec(self).expect("in-memory encoding cannot fail")
+    }
+
+    /// Decodes a verified body.
+    fn decode(body: &[u8]) -> Result<Self, postcard::Error> {
+        postcard::from_bytes(body)
+    }
 }
 
 /// A signed message. The body is kept as the exact bytes that were signed.
@@ -75,7 +85,7 @@ pub fn signing_bytes(kind: &str, body: &[u8]) -> Vec<u8> {
 impl<T: SignedKind> Signed<T> {
     /// Encodes and signs `message` with `key`.
     pub fn sign(message: &T, key: &SigningKey) -> Self {
-        let body = postcard::to_stdvec(message).expect("in-memory encoding cannot fail");
+        let body = message.encode();
         let signature = key.sign(&signing_bytes(T::KIND, &body));
         Self {
             signer: PublicKey(key.verifying_key().to_bytes()),
@@ -94,7 +104,7 @@ impl<T: SignedKind> Signed<T> {
             &Signature::from_bytes(&self.signature),
         )
         .map_err(|_| Error::BadSignature)?;
-        Ok(postcard::from_bytes(&self.body)?)
+        Ok(T::decode(&self.body)?)
     }
 }
 

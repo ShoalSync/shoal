@@ -167,7 +167,7 @@ pub(crate) async fn materialize(
                             old_path: here
                                 .map(|(p, _)| (*p).clone())
                                 .filter(|p| p.as_str() != path),
-                            base: state.meta.known_vector(&version.entry),
+                            base: state.meta.current_vector(&version.entry),
                         });
                     }
                 }
@@ -243,7 +243,7 @@ pub(crate) async fn fetch_one(
                 executable,
                 modified_ms: version.modified_ms,
                 old_path,
-                base: state.meta.known_vector(&version.entry),
+                base: state.meta.current_vector(&version.entry),
             },
         )
     };

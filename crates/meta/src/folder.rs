@@ -37,6 +37,14 @@ impl Entry {
     }
 }
 
+/// True if a conflict copy of kind `copy` needs no decision beside a current version of kind
+/// `current`: it has the same content, or it is a delete that a live version beat.
+fn settled(copy: &EntryKind, current: Option<&EntryKind>) -> bool {
+    Some(copy) == current
+        || (matches!(copy, EntryKind::Tombstone)
+            && current.is_some_and(|c| !matches!(c, EntryKind::Tombstone)))
+}
+
 /// What applying a version did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Applied {
@@ -118,6 +126,16 @@ impl Folder {
             .unwrap_or_default()
     }
 
+    /// Conflict copies of `entry` that differ from its current version: those the user has to
+    /// decide about. A copy with the same content is not a conflict, and neither is a delete
+    /// that an edit beat, which stays automatic (ADR 0029).
+    pub fn open_conflicts(&self, entry: &EntryId) -> impl Iterator<Item = &StoredVersion> {
+        let current = self.current(entry).map(|v| &v.kind);
+        self.conflicts(entry)
+            .iter()
+            .filter(move |c| !settled(&c.version.kind, current))
+    }
+
     /// Current versions of all entries, including tombstones, in no particular order.
     pub fn entries(&self) -> impl Iterator<Item = &EntryVersion> {
         self.entries.values().map(|e| &e.current.version)
@@ -171,9 +189,10 @@ impl Folder {
         self.recycle.take_all()
     }
 
-    /// Records a local change built on everything this replica knows of the entry: its
-    /// current version and conflict copies. Use [`Folder::local_change_from`] when the change
-    /// was made to content on disk whose version is known.
+    /// Records a local change built on the entry's current content: see
+    /// [`Folder::current_vector`]. Conflict copies with other content stay (ADR 0029). Use
+    /// [`Folder::local_change_from`] when the change was made to content on disk whose version
+    /// is known.
     pub fn local_change(
         &mut self,
         key: &SigningKey,
@@ -182,13 +201,31 @@ impl Folder {
         kind: EntryKind,
         modified_ms: i64,
     ) -> Result<Signed<EntryVersion>> {
-        let base = self.known_vector(&entry);
+        let base = self.current_vector(&entry);
         self.local_change_from(key, entry, &base, path, kind, modified_ms)
             .map(|(signed, _)| signed)
     }
 
+    /// The vector of the entry's current content: the current version's, merged with the
+    /// conflict copies that are not open conflicts (see [`Folder::open_conflicts`]). Content
+    /// written from the current version has this base, so a change to it supersedes all of
+    /// those and no open conflict. Empty for an unknown entry.
+    pub fn current_vector(&self, entry: &EntryId) -> VersionVector {
+        let mut vector = VersionVector::new();
+        if let Some(existing) = self.entries.get(entry) {
+            let current = Some(&existing.current.version.kind);
+            for stored in existing.all() {
+                if settled(&stored.version.kind, current) {
+                    vector.merge(&stored.version.version);
+                }
+            }
+        }
+        vector
+    }
+
     /// The merge of the vectors of the entry's current version and conflict copies: the base
-    /// of content that reflects all of them. Empty for an unknown entry.
+    /// of a change that supersedes all of them, such as resolving a conflict. Empty for an
+    /// unknown entry.
     pub fn known_vector(&self, entry: &EntryId) -> VersionVector {
         let mut vector = VersionVector::new();
         if let Some(existing) = self.entries.get(entry) {
@@ -203,7 +240,9 @@ impl Folder {
     ///
     /// The new version supersedes only what `base` covers, so a remote version that arrived
     /// after that content was written stays concurrent and becomes a conflict copy instead of
-    /// being lost. This device's own counter still moves past every version it has made.
+    /// being lost. The change is numbered after every change this device has made to the entry,
+    /// and a change of this device's that `base` has not seen stays unseen: the vector has a
+    /// hole there (ADR 0029).
     /// Returns the signed version to send to peers, and its vector: the base of the content
     /// the change describes.
     pub fn local_change_from(
@@ -221,14 +260,19 @@ impl Folder {
         if !is_valid_path(path) {
             return Err(Error::InvalidPath(path.to_owned()));
         }
-        let mut version = base.clone();
-        let own = self.known_vector(&entry).get(&self.device);
-        if own > version.get(&self.device) {
-            version.merge(&[(self.device, own)].into_iter().collect());
-        }
-        version
-            .increment(self.device)
+        let own = self
+            .known_vector(&entry)
+            .get(&self.device)
+            .max(base.get(&self.device));
+        let next = own
+            .checked_add(1)
+            .filter(|&n| n <= tidefell_proto::MAX_COUNTER)
             .ok_or(Error::CounterCeiling)?;
+        let mut version = base.clone();
+        version.add(self.device, next);
+        if !version.within_ceiling() {
+            return Err(Error::TooManyConflicts);
+        }
         let new = EntryVersion {
             folder: self.id,
             entry,

@@ -1,6 +1,7 @@
 //! Deterministic conflict resolution between concurrent versions of one entry.
 
 use tidefell_proto::sync::{EntryKind, EntryVersion};
+use tidefell_proto::SignedKind;
 
 /// Ordering key for concurrent versions; the greatest key wins. See "Conflict resolution" in
 /// `specs/sync-v1.md`.
@@ -9,7 +10,8 @@ fn key(v: &EntryVersion) -> (bool, i64, [u8; 32], Vec<u8>) {
         !matches!(v.kind, EntryKind::Tombstone),
         v.modified_ms,
         *v.author.as_bytes(),
-        postcard::to_stdvec(v).expect("in-memory encoding cannot fail"),
+        // The encoding the spec defines, which a version without holes ends before the list.
+        v.encode(),
     )
 }
 

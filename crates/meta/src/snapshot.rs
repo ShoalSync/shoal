@@ -1,7 +1,8 @@
 //! On-disk snapshots of a [`Folder`].
 //!
-//! Format 1: the bytes `tidefell-meta 1\n` followed by the postcard encoding of [`Snapshot`].
-//! Versions are stored in signed form and re-verified on load.
+//! Format 2: the bytes `tidefell-meta 2\n` followed by the postcard encoding of [`Snapshot`].
+//! Versions are stored in signed form and re-verified on load. Format 1 differs only in how
+//! recycle-bin items encode their version vectors, from before vectors had holes.
 
 use std::collections::HashMap;
 use std::fs;
@@ -9,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tidefell_proto::sync::EntryVersion;
+use tidefell_proto::sync::{EntryVersion, LegacyEntryVersion};
 use tidefell_proto::{DeviceId, EntryId, FolderId, Signed};
 
 use crate::folder::{Entry, StoredVersion};
@@ -17,7 +18,10 @@ use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::{Error, Folder, Result};
 
 /// Header identifying the snapshot format.
-pub const SNAPSHOT_HEADER: &[u8] = b"tidefell-meta 1\n";
+pub const SNAPSHOT_HEADER: &[u8] = b"tidefell-meta 2\n";
+
+/// Header of format 1.
+const SNAPSHOT_HEADER_V1: &[u8] = b"tidefell-meta 1\n";
 
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
@@ -29,6 +33,38 @@ struct Snapshot {
     /// Every stored version: (entry is current, sequence, signed version).
     versions: Vec<(bool, u64, Signed<EntryVersion>)>,
     recycled: Vec<Recycled>,
+}
+
+#[derive(Deserialize)]
+struct SnapshotV1 {
+    id: FolderId,
+    device: DeviceId,
+    epoch: u64,
+    sequence: u64,
+    retention: Retention,
+    versions: Vec<(bool, u64, Signed<EntryVersion>)>,
+    recycled: Vec<(LegacyEntryVersion, i64)>,
+}
+
+impl From<SnapshotV1> for Snapshot {
+    fn from(v1: SnapshotV1) -> Self {
+        Self {
+            id: v1.id,
+            device: v1.device,
+            epoch: v1.epoch,
+            sequence: v1.sequence,
+            retention: v1.retention,
+            versions: v1.versions,
+            recycled: v1
+                .recycled
+                .into_iter()
+                .map(|(version, deleted_at_ms)| Recycled {
+                    version: version.into(),
+                    deleted_at_ms,
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Folder {
@@ -58,10 +94,15 @@ impl Folder {
 
     /// Decodes a snapshot, re-verifying every version.
     pub fn from_snapshot(bytes: &[u8]) -> Result<Self> {
-        let body = bytes
-            .strip_prefix(SNAPSHOT_HEADER)
-            .ok_or(Error::UnsupportedFormat)?;
-        let snapshot: Snapshot = postcard::from_bytes(body).map_err(Error::Snapshot)?;
+        let snapshot: Snapshot = if let Some(body) = bytes.strip_prefix(SNAPSHOT_HEADER) {
+            postcard::from_bytes(body).map_err(Error::Snapshot)?
+        } else if let Some(body) = bytes.strip_prefix(SNAPSHOT_HEADER_V1) {
+            postcard::from_bytes::<SnapshotV1>(body)
+                .map_err(Error::Snapshot)?
+                .into()
+        } else {
+            return Err(Error::UnsupportedFormat);
+        };
 
         let mut currents: HashMap<EntryId, StoredVersion> = HashMap::new();
         let mut conflicts: HashMap<EntryId, Vec<StoredVersion>> = HashMap::new();
@@ -121,5 +162,86 @@ impl Folder {
     /// Loads a snapshot written by [`Folder::save`].
     pub fn load(path: &Path) -> Result<Self> {
         Self::from_snapshot(&fs::read(path)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use ed25519_dalek::SigningKey;
+    use tidefell_proto::sync::EntryKind;
+    use tidefell_proto::{ContentHash, EntryId};
+
+    use super::*;
+
+    /// A recycle-bin item as format 1 encoded it.
+    #[derive(Serialize)]
+    struct RecycledV1 {
+        folder: FolderId,
+        entry: EntryId,
+        path: String,
+        kind: EntryKind,
+        modified_ms: i64,
+        author: DeviceId,
+        version: BTreeMap<DeviceId, u64>,
+        deleted_at_ms: i64,
+    }
+
+    #[derive(Serialize)]
+    struct SnapshotV1Out {
+        id: FolderId,
+        device: DeviceId,
+        epoch: u64,
+        sequence: u64,
+        retention: Retention,
+        versions: Vec<(bool, u64, Signed<EntryVersion>)>,
+        recycled: Vec<RecycledV1>,
+    }
+
+    #[test]
+    fn format_1_loads() {
+        let key = SigningKey::from_bytes(&[2; 32]);
+        let device = DeviceId(key.verifying_key().to_bytes());
+        let mut folder = Folder::new(FolderId([9; 32]), device, 7, Retention::Days(30));
+        let entry = EntryId([1; 16]);
+        let file = EntryKind::File {
+            content: ContentHash([3; 32]),
+            size: 1,
+            executable: false,
+        };
+        folder.local_change(&key, entry, "f", file, 1).unwrap();
+        folder
+            .local_change(&key, entry, "f", EntryKind::Tombstone, 2)
+            .unwrap();
+        let current: Snapshot =
+            postcard::from_bytes(&folder.to_snapshot()[SNAPSHOT_HEADER.len()..]).unwrap();
+        let v1 = SnapshotV1Out {
+            id: current.id,
+            device: current.device,
+            epoch: current.epoch,
+            sequence: current.sequence,
+            retention: current.retention,
+            versions: current.versions,
+            recycled: current
+                .recycled
+                .into_iter()
+                .map(|r| RecycledV1 {
+                    folder: r.version.folder,
+                    entry: r.version.entry,
+                    path: r.version.path,
+                    kind: r.version.kind,
+                    modified_ms: r.version.modified_ms,
+                    author: r.version.author,
+                    version: r.version.version.iter().map(|(d, c)| (*d, *c)).collect(),
+                    deleted_at_ms: r.deleted_at_ms,
+                })
+                .collect(),
+        };
+        let mut bytes = SNAPSHOT_HEADER_V1.to_vec();
+        bytes.extend(postcard::to_stdvec(&v1).unwrap());
+        let loaded = Folder::from_snapshot(&bytes).unwrap();
+        assert_eq!(loaded.recycle_bin(), folder.recycle_bin());
+        assert_eq!(loaded.current(&entry), folder.current(&entry));
     }
 }

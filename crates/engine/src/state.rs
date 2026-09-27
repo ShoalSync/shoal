@@ -10,6 +10,7 @@ use tidefell_chunker::ChunkIndex;
 use tidefell_identity::FolderMembers;
 use tidefell_meta::{Folder, Recycled};
 use tidefell_proto::sync::EntryKind;
+use tidefell_proto::version::LegacyVersionVector;
 use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
@@ -17,8 +18,10 @@ use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 8\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 9\n";
 /// Format 7, before pins (ADR 0029).
+/// Format 8, whose version vectors had no holes.
+const STATE_HEADER_V8: &[u8] = b"tidefell-engine-folder 8\n";
 const STATE_HEADER_V7: &[u8] = b"tidefell-engine-folder 7\n";
 /// Format 6, before version history (ADR 0029).
 const STATE_HEADER_V6: &[u8] = b"tidefell-engine-folder 6\n";
@@ -45,6 +48,60 @@ pub(crate) struct LocalFile {
     /// The version vector this content corresponds to: a local change to it builds on this
     /// (ADR 0024). Empty if unknown, for files recorded before it was kept.
     pub(crate) base: VersionVector,
+}
+
+/// [`LocalFile`] in state formats 4 to 8, whose base had no holes.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct LocalFileV8 {
+    entry: EntryId,
+    content: ContentHash,
+    size: u64,
+    mtime_ns: i128,
+    executable: bool,
+    base: LegacyVersionVector,
+}
+
+impl From<LocalFileV8> for LocalFile {
+    fn from(v8: LocalFileV8) -> Self {
+        Self {
+            entry: v8.entry,
+            content: v8.content,
+            size: v8.size,
+            mtime_ns: v8.mtime_ns,
+            executable: v8.executable,
+            base: v8.base.into(),
+        }
+    }
+}
+
+/// [`SetAside`] in state formats 5 to 8.
+#[derive(Debug, Clone, Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct SetAsideV8 {
+    path: String,
+    file: String,
+    local: LocalFileV8,
+    removed_at_ms: i64,
+}
+
+impl From<SetAsideV8> for SetAside {
+    fn from(v8: SetAsideV8) -> Self {
+        Self {
+            path: v8.path,
+            file: v8.file,
+            local: v8.local.into(),
+            removed_at_ms: v8.removed_at_ms,
+        }
+    }
+}
+
+fn upgrade_local_v8(local: Vec<(String, LocalFileV8)>) -> Vec<(String, LocalFile)> {
+    local.into_iter().map(|(p, l)| (p, l.into())).collect()
+}
+
+fn upgrade_set_aside(set_aside: Vec<(EntryId, SetAsideV8)>) -> Vec<(EntryId, SetAside)> {
+    set_aside.into_iter().map(|(e, s)| (e, s.into())).collect()
 }
 
 /// [`LocalFile`] in state formats 1 to 3, which had no base.
@@ -172,15 +229,49 @@ struct Persisted {
 
 #[derive(Deserialize)]
 #[cfg_attr(test, derive(Serialize))]
-struct PersistedV7 {
+struct PersistedV8 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV8)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
     copies: Vec<(ContentHash, DeviceId, i64)>,
     copy_names: Vec<(DeviceId, String)>,
     dropped: Vec<EntryId>,
-    set_aside: Vec<(EntryId, SetAside)>,
+    set_aside: Vec<(EntryId, SetAsideV8)>,
+    kept: Vec<(ContentHash, String)>,
+    history: Vec<(EntryId, Vec<Previous>)>,
+    pins: Vec<String>,
+}
+
+impl From<PersistedV8> for Persisted {
+    fn from(v8: PersistedV8) -> Self {
+        Self {
+            manifests: v8.manifests,
+            local: upgrade_local_v8(v8.local),
+            progress: v8.progress,
+            used: v8.used,
+            copies: v8.copies,
+            copy_names: v8.copy_names,
+            dropped: v8.dropped,
+            set_aside: upgrade_set_aside(v8.set_aside),
+            kept: v8.kept,
+            history: v8.history,
+            pins: v8.pins,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV7 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFileV8)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+    dropped: Vec<EntryId>,
+    set_aside: Vec<(EntryId, SetAsideV8)>,
     kept: Vec<(ContentHash, String)>,
     history: Vec<(EntryId, Vec<Previous>)>,
 }
@@ -189,13 +280,13 @@ impl From<PersistedV7> for Persisted {
     fn from(v7: PersistedV7) -> Self {
         Self {
             manifests: v7.manifests,
-            local: v7.local,
+            local: upgrade_local_v8(v7.local),
             progress: v7.progress,
             used: v7.used,
             copies: v7.copies,
             copy_names: v7.copy_names,
             dropped: v7.dropped,
-            set_aside: v7.set_aside,
+            set_aside: upgrade_set_aside(v7.set_aside),
             kept: v7.kept,
             history: v7.history,
             pins: Vec::new(),
@@ -207,13 +298,13 @@ impl From<PersistedV7> for Persisted {
 #[cfg_attr(test, derive(Serialize))]
 struct PersistedV6 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV8)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
     copies: Vec<(ContentHash, DeviceId, i64)>,
     copy_names: Vec<(DeviceId, String)>,
     dropped: Vec<EntryId>,
-    set_aside: Vec<(EntryId, SetAside)>,
+    set_aside: Vec<(EntryId, SetAsideV8)>,
     kept: Vec<(ContentHash, String)>,
 }
 
@@ -221,13 +312,13 @@ impl From<PersistedV6> for Persisted {
     fn from(v6: PersistedV6) -> Self {
         Self {
             manifests: v6.manifests,
-            local: v6.local,
+            local: upgrade_local_v8(v6.local),
             progress: v6.progress,
             used: v6.used,
             copies: v6.copies,
             copy_names: v6.copy_names,
             dropped: v6.dropped,
-            set_aside: v6.set_aside,
+            set_aside: upgrade_set_aside(v6.set_aside),
             kept: v6.kept,
             history: Vec::new(),
             pins: Vec::new(),
@@ -239,26 +330,26 @@ impl From<PersistedV6> for Persisted {
 #[cfg_attr(test, derive(Serialize))]
 struct PersistedV5 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV8)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
     copies: Vec<(ContentHash, DeviceId, i64)>,
     copy_names: Vec<(DeviceId, String)>,
     dropped: Vec<EntryId>,
-    set_aside: Vec<(EntryId, SetAside)>,
+    set_aside: Vec<(EntryId, SetAsideV8)>,
 }
 
 impl From<PersistedV5> for Persisted {
     fn from(v5: PersistedV5) -> Self {
         Self {
             manifests: v5.manifests,
-            local: v5.local,
+            local: upgrade_local_v8(v5.local),
             progress: v5.progress,
             used: v5.used,
             copies: v5.copies,
             copy_names: v5.copy_names,
             dropped: v5.dropped,
-            set_aside: v5.set_aside,
+            set_aside: upgrade_set_aside(v5.set_aside),
             kept: Vec::new(),
             history: Vec::new(),
             pins: Vec::new(),
@@ -270,7 +361,7 @@ impl From<PersistedV5> for Persisted {
 #[cfg_attr(test, derive(Serialize))]
 struct PersistedV4 {
     manifests: Vec<Manifest>,
-    local: Vec<(String, LocalFile)>,
+    local: Vec<(String, LocalFileV8)>,
     progress: Vec<(DeviceId, u64, u64)>,
     used: Vec<(String, i64)>,
     copies: Vec<(ContentHash, DeviceId, i64)>,
@@ -281,7 +372,7 @@ impl From<PersistedV4> for Persisted {
     fn from(v4: PersistedV4) -> Self {
         Self {
             manifests: v4.manifests,
-            local: v4.local,
+            local: upgrade_local_v8(v4.local),
             progress: v4.progress,
             used: v4.used,
             copies: v4.copies,
@@ -464,8 +555,13 @@ impl FolderState {
         let state_path = state.dir.join("state");
         if state_path.exists() {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
+            let upgrading = !bytes.starts_with(STATE_HEADER);
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V8) {
+                postcard::from_bytes::<PersistedV8>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V7) {
                 postcard::from_bytes::<PersistedV7>(body)
                     .ok()
@@ -516,8 +612,34 @@ impl FolderState {
             state.kept = persisted.kept.into_iter().collect();
             state.history = persisted.history.into_iter().collect();
             state.pins = persisted.pins.into_iter().collect();
+            if upgrading {
+                state.catch_up_bases();
+            }
         }
         Ok(state)
+    }
+
+    /// Brings bases recorded before vectors had holes up to the current version, where the file
+    /// on disk is that version. A change used to merge in everything this device had made, which
+    /// hid a base left behind by this device's own later change, such as a rename. Now such a
+    /// base would leave a hole at that change (ADR 0029). Files with other content keep their
+    /// base, so a remote version never written to disk still conflicts with their changes.
+    fn catch_up_bases(&mut self) {
+        let mut caught_up = Vec::new();
+        for (path, local) in self.local.iter() {
+            let current = self.meta.current(&local.entry).is_some_and(|v| {
+                matches!(v.kind, EntryKind::File { content, executable, .. }
+                    if content == local.content && executable == local.executable)
+            });
+            if current && self.meta.disk_path(&local.entry) == Some(path.as_str()) {
+                let mut local = local.clone();
+                local.base.merge(&self.meta.current_vector(&local.entry));
+                caught_up.push((path.clone(), local));
+            }
+        }
+        for (path, local) in caught_up {
+            self.local.insert(path, local);
+        }
     }
 
     /// Marks the folder removed and returns its state directory for deletion.
@@ -789,6 +911,97 @@ mod tests {
     }
 
     #[test]
+    fn upgrading_catches_up_bases_left_behind() {
+        use tidefell_identity::DeviceKey;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+        };
+        let key = DeviceKey::from_seed([5; 32]);
+        let file = |n: u8| EntryKind::File {
+            content: ContentHash([n; 32]),
+            size: 1,
+            executable: false,
+        };
+        let entry = EntryId([1; 16]);
+        let other = EntryId([2; 16]);
+        let mut state = FolderState::open(tmp.path(), config.clone(), key.id()).unwrap();
+        // Written at a.txt, then renamed to b.txt. An older release left the base at the first
+        // version, and its rename kept the record.
+        let (_, first) = state
+            .meta
+            .local_change_from(
+                key.signing_key(),
+                entry,
+                &VersionVector::new(),
+                "a.txt",
+                file(1),
+                1,
+            )
+            .unwrap();
+        state
+            .meta
+            .local_change(key.signing_key(), entry, "b.txt", file(1), 1)
+            .unwrap();
+        // Another file whose content on disk is older than its current version keeps its base.
+        let (_, stale) = state
+            .meta
+            .local_change_from(
+                key.signing_key(),
+                other,
+                &VersionVector::new(),
+                "c.txt",
+                file(2),
+                1,
+            )
+            .unwrap();
+        state
+            .meta
+            .local_change(key.signing_key(), other, "c.txt", file(3), 2)
+            .unwrap();
+        state.save().unwrap();
+        let legacy = |entry, content: u8, base: &VersionVector| LocalFileV8 {
+            entry,
+            content: ContentHash([content; 32]),
+            size: 1,
+            mtime_ns: 1,
+            executable: false,
+            base: LegacyVersionVector(base.iter().map(|(d, c)| (*d, *c)).collect()),
+        };
+        let v8 = PersistedV8 {
+            manifests: Vec::new(),
+            local: vec![
+                ("b.txt".into(), legacy(entry, 1, &first)),
+                ("c.txt".into(), legacy(other, 2, &stale)),
+            ],
+            progress: Vec::new(),
+            used: Vec::new(),
+            copies: Vec::new(),
+            copy_names: Vec::new(),
+            dropped: Vec::new(),
+            set_aside: Vec::new(),
+            kept: Vec::new(),
+            history: Vec::new(),
+            pins: Vec::new(),
+        };
+        let dir = tmp.path().join("folders").join(config.id.to_string());
+        let mut bytes = STATE_HEADER_V8.to_vec();
+        bytes.extend(postcard::to_stdvec(&v8).unwrap());
+        fs::write(dir.join("state"), bytes).unwrap();
+
+        let state = FolderState::open(tmp.path(), config, key.id()).unwrap();
+        assert_eq!(state.local["b.txt"].base, state.meta.current_vector(&entry));
+        assert_eq!(state.local["c.txt"].base, stale);
+    }
+
+    #[test]
     fn loads_version_4_state_and_keeps_set_aside_files() {
         let tmp = tempfile::tempdir().unwrap();
         let config = FolderConfig {
@@ -802,17 +1015,19 @@ mod tests {
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
-        let local = LocalFile {
+        let old = LocalFileV8 {
             entry: EntryId([5; 16]),
             content: ContentHash([6; 32]),
             size: 12,
             mtime_ns: 34,
             executable: false,
-            base: [(DeviceId([8; 32]), 2)].into_iter().collect(),
+            base: LegacyVersionVector([(DeviceId([8; 32]), 2)].into_iter().collect()),
         };
+        let local = LocalFile::from(old.clone());
+        assert_eq!(local.base, [(DeviceId([8; 32]), 2)].into_iter().collect());
         let v4 = PersistedV4 {
             manifests: Vec::new(),
-            local: vec![("a.txt".into(), local.clone())],
+            local: vec![("a.txt".into(), old)],
             progress: Vec::new(),
             used: Vec::new(),
             copies: Vec::new(),

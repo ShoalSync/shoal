@@ -56,6 +56,67 @@ pub struct EntryVersion {
 
 impl SignedKind for EntryVersion {
     const KIND: &'static str = "sync/1/entry-version";
+
+    /// The postcard encoding, except that a vector without holes leaves out the empty list of
+    /// holes that would end it, so such a version has the encoding it had before vectors had
+    /// holes.
+    fn encode(&self) -> Vec<u8> {
+        let mut body = postcard::to_stdvec(self).expect("in-memory encoding cannot fail");
+        if !self.version.has_holes() {
+            assert_eq!(
+                body.pop(),
+                Some(0),
+                "the empty list of holes ends the encoding"
+            );
+        }
+        body
+    }
+
+    /// Decodes either form, and refuses an empty list of holes written out, so each version has
+    /// one encoding.
+    fn decode(body: &[u8]) -> Result<Self, postcard::Error> {
+        match postcard::take_from_bytes::<Self>(body) {
+            Ok((version, rest)) if version.version.has_holes() && rest.is_empty() => Ok(version),
+            Ok(_) => Err(postcard::Error::DeserializeBadEncoding),
+            Err(_) => {
+                let mut full = body.to_vec();
+                full.push(0);
+                let (version, rest) = postcard::take_from_bytes::<Self>(&full)?;
+                if rest.is_empty() {
+                    Ok(version)
+                } else {
+                    Err(postcard::Error::DeserializeBadEncoding)
+                }
+            }
+        }
+    }
+}
+
+/// An [`EntryVersion`] as encoded before vectors had holes: engine state format 8 and meta
+/// snapshot format 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LegacyEntryVersion {
+    folder: FolderId,
+    entry: EntryId,
+    path: String,
+    kind: EntryKind,
+    modified_ms: i64,
+    author: DeviceId,
+    version: crate::version::LegacyVersionVector,
+}
+
+impl From<LegacyEntryVersion> for EntryVersion {
+    fn from(v: LegacyEntryVersion) -> Self {
+        Self {
+            folder: v.folder,
+            entry: v.entry,
+            path: v.path,
+            kind: v.kind,
+            modified_ms: v.modified_ms,
+            author: v.author,
+            version: v.version.into(),
+        }
+    }
 }
 
 /// Checks the path rules from `specs/sync-v1.md`: relative, `/`-separated, non-empty

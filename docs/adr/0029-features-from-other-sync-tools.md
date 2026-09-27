@@ -280,6 +280,30 @@ supersedes the conflict copy, which is neither recycled nor kept.
   `--keep-both`, and `tidefell status` counts conflicts. The conflict screen lists each version
   with its device, time and size, opens it read-only, and offers keep this one, keep both and
   decide later. Deciding later leaves the mark and the count.
+- Step 9 decided, first part (the sync/1 change):
+  - A version vector can have holes (dotted version vectors). With plain vectors, the device
+    whose version lost could not edit the winner without superseding its own conflict copy: its
+    counter has to move past that version, and then the new vector covers it. Now the new
+    version adds its own change to the base and leaves the lost one unseen, so the conflict
+    stays however often any device edits. Resolving fills the holes.
+  - Versions without holes encode as before, so existing versions and golden vectors are
+    unchanged. A vector may have at most 64 holes; a change that would leave more is refused
+    until conflicts are resolved.
+  - A change builds on the current version's vector, merged with conflict copies that have
+    the same content: files written to disk, scans of unchanged files, deletes, renames and
+    restores all do.
+  - Copies with the same content as the current version stay stored, so every replica
+    converges whatever order versions arrive in, but they are not counted or shown as
+    conflicts, and the next change supersedes them.
+  - A delete that an edit beat is settled the same way, so delete against edit stays
+    automatic. Deleting a file with an open conflict does not decide it: the delete supersedes
+    only the current version, so the other version comes back as the file.
+  - Engine state is format 9 and meta snapshots format 2; older ones are upgraded on load.
+    Upgrading brings the base of each file that matches its current version up to that
+    version, since the old rule hid bases that lagged behind this device's own changes, such as
+    renames, and they would now leave holes.
+  - The ALPN stays `tidefell/sync/1` (ADR 0026). A device not yet upgraded reads a version with
+    holes as one without, so on it the conflict copy is superseded as before, until it upgrades.
 - **Not done:** conflict copies are not written to disk automatically, as Dropbox and Syncthing
   do: they would clutter every device, and apps could open the wrong file. Keep both gives the
   same result when it is wanted. The winner is still chosen by modification time while a

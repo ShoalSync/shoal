@@ -58,10 +58,8 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
 /// `entry`.
 pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> VersionVector {
     match state.local.get(rel) {
-        Some(local) if local.entry == entry && local.base.iter().next().is_some() => {
-            local.base.clone()
-        }
-        _ => state.meta.known_vector(&entry),
+        Some(local) if local.entry == entry && !local.base.is_empty() => local.base.clone(),
+        _ => state.meta.current_vector(&entry),
     }
 }
 
@@ -292,7 +290,7 @@ pub(crate) fn scan(
         });
         state.add_manifest(c.manifest);
         let base = if up_to_date {
-            state.meta.known_vector(&entry)
+            state.meta.current_vector(&entry)
         } else {
             // Build on the version the file had on disk, not on versions that arrived since and
             // were never written, so those become conflict copies instead of being lost.
@@ -362,10 +360,10 @@ pub(crate) fn scan(
             debug!(path = %rel, "dropped from this device");
             state.dropped.insert(local.entry);
         } else if live_here {
-            let base = if local.base.iter().next().is_some() {
+            let base = if !local.base.is_empty() {
                 local.base.clone()
             } else {
-                state.meta.known_vector(&local.entry)
+                state.meta.current_vector(&local.entry)
             };
             state.meta.local_change_from(
                 inner.key.signing_key(),

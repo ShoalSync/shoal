@@ -195,6 +195,17 @@ async fn conflicting_edits_converge_after_restart() {
     .await;
     assert_eq!(status(&engine_a).files, status(&engine_b).files);
 
+    // a, whose edit lost, edits the winner. The conflict stays until it is resolved (ADR 0029).
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    a.write("doc.txt", b"a edits the winner");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches b", || {
+        b.read("doc.txt").as_deref() == Some(b"a edits the winner".as_slice())
+    })
+    .await;
+    assert_eq!(status(&engine_a).conflicts, 1);
+    assert_eq!(status(&engine_b).conflicts, 1);
+
     engine_b.shutdown().await;
     engine_a.shutdown().await;
 }
