@@ -66,3 +66,4 @@
   - [0031: Static analysis and fuzzing](adr/0031-static-analysis-and-fuzzing.md)
   - [0032: Transfer efficiency](adr/0032-transfer-efficiency.md)
   - [0033: File names across filesystems](adr/0033-file-names-across-filesystems.md)
+  - [0034: Metadata storage and recovery](adr/0034-metadata-storage-and-recovery.md)
