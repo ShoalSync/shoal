@@ -9,9 +9,7 @@ Tidefell ships two programs:
 ## Release binaries
 
 Each [GitHub release](https://github.com/tidefell/tidefell/releases) has archives for Linux
-(x86-64 and ARM64) and macOS (Apple silicon), each with a `.sha256` file. The macOS archive is
-built on a hosted runner and can be missing from a release when that runner is unavailable; build
-from source in that case.
+(x86-64 and ARM64), each with a `.sha256` file. On macOS, build from source (below).
 
 ```sh
 version=X.Y.Z

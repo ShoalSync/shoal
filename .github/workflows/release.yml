@@ -1,7 +1,8 @@
 name: Release
 
 # A release is a `vX.Y.Z` tag on main. Every artifact carries the workspace version (ADR 0005).
-# Jobs run on the self-hosted runner except the macOS build. A tag that already exists can be
+# Every job runs on the self-hosted runners; there are no macOS binaries until there is a
+# self-hosted Mac, since hosted macOS minutes cost money. A tag that already exists can be
 # released again from the current workflow with a manual run.
 on:
   push:
@@ -43,22 +44,15 @@ jobs:
     name: Binaries (${{ matrix.target }})
     needs: version
     runs-on: ${{ matrix.os }}
-    # The macOS build needs hosted minutes; the release goes out without it when they run out.
-    continue-on-error: ${{ matrix.optional }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
             os: self-hosted
-            optional: false
           - target: aarch64-unknown-linux-gnu
             os: self-hosted
-            optional: false
             cross: aarch64-linux-gnu
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            optional: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,11 +78,7 @@ jobs:
           mkdir "$name"
           cp target/${{ matrix.target }}/release/{tidefell,tidefelld} README.md LICENSE "$name/"
           tar -czf "$name.tar.gz" "$name"
-          if command -v sha256sum > /dev/null; then
-            sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          else
-            shasum -a 256 "$name.tar.gz" > "$name.tar.gz.sha256"
-          fi
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.target }}
