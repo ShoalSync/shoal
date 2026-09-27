@@ -266,6 +266,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - `v0.11.0` releases Phase 5e steps 2 to 4 (local discovery, ignore patterns and watching) and
   the recycle bin's local clock (tidefell/tidefell#46). The bindings' `Network` gains
   `localDiscovery`.
+- `v0.12.0` releases the rest of Phase 5e: version history, bandwidth limits and pause, pins,
+  upload-only links and conflict resolution (steps 5 to 9), with Phase 5f step 2 (logs and
+  crashes) and folder root markers (ADR 0037). sync/1 version vectors can have holes; engine
+  state is format 9 and meta snapshots format 2, upgraded on load. The Android screens follow
+  with the `v0.12.0` pin.
 - Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
   implemented in this repository; the Android side follows with the next Android pin.
 

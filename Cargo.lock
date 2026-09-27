@@ -3902,7 +3902,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-api"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "axum",
  "getrandom 0.4.3",
@@ -3919,7 +3919,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-chunker"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "fastcdc",
@@ -3929,7 +3929,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "serde",
@@ -3944,7 +3944,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-daemon"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "clap",
  "getrandom 0.4.3",
@@ -3966,7 +3966,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-engine"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "getrandom 0.4.3",
@@ -3993,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fetch"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "thiserror 2.0.20",
  "tidefell-proto",
@@ -4002,7 +4002,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-ffi"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.20",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fs-fuse"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "fuser",
  "libc",
@@ -4028,7 +4028,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-identity"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -4041,7 +4041,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-meta"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -4054,7 +4054,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-net"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "blake3",
  "iroh",
@@ -4071,7 +4071,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-proto"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "ed25519-dalek",
  "postcard",
@@ -4082,7 +4082,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-sdk"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-store"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.20",
@@ -4106,7 +4106,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-web"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "argon2",
  "askama",
@@ -5284,7 +5284,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "serde_json",
  "uniffi",
