@@ -120,6 +120,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Other devices' files on the phone | Download action and read-only documents provider roots | ADR 0028 |
 | Features from other sync tools | Ignore patterns, watching, local discovery, version history, bandwidth limits, pins, upload links, conflict resolution | ADR 0029 |
 | Diagnostics and reporting | Local logs and crash files, detailed status, redacted diagnostics bundles, doctor, activity history, opt-in metrics; no telemetry | ADR 0030 |
+| Static analysis and fuzzing | Stricter lints on peers' data, property tests, nightly fuzzing, workflow, Kotlin, shell, Nix and spelling checks | ADR 0031 |
 
 ## Phases
 
@@ -137,6 +138,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5d** Phone folders | Per-device sync direction and local deletes in the engine; any folder on the phone with backup only, two-way sync and remove after backup (ADR 0025) | On an emulator, a phone folder syncs with a daemon on each option, and removal waits for the daemon's confirmed copy |
 | **5e** Features from other sync tools | Ignore patterns, watching for changes, local network discovery, version history, bandwidth limits and pause, pins on partial replicas, upload-only links, conflict resolution (ADR 0029) | See the Phase 5e breakdown |
 | **5f** Diagnostics and reporting | Logs and crash files on every platform, status and problems, diagnostics bundle and doctor, activity history, metrics, crash reports through the issue tracker (ADR 0030) | See the Phase 5f breakdown |
+| **5g** Static analysis and fuzzing | Unused dependencies and the public API checked; stricter lints in `proto`, `net` and `store`; property tests; fuzzing; workflow, Android, shell, Nix and spelling checks in every repository (ADR 0031) | See the Phase 5g breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -486,6 +488,29 @@ on the next start; a diagnostics bundle from each holds logs, status, problems a
 with no plain path or full ID unless paths were included; a folder on a read-only disk lists the
 problem in the CLI and the app; `tidefell doctor` warns about a peer whose clock is five minutes
 off; and `/metrics` counts bytes during a sync.
+
+### Phase 5g work breakdown
+
+Static analysis and fuzzing (ADR 0031). It can run alongside Phases 5e and 5f.
+
+1. **Decisions.** ADR 0031 and this breakdown.
+2. **Dependencies and API.** `cargo machete`, with the unused dependencies it found removed,
+   and `cargo semver-checks` on `proto` and `sdk` against the last release.
+3. **Stricter lints.** The four restriction lints in the library code of `proto`, `net` and
+   `store`, with each existing site fixed or given a reason.
+4. **Property tests.** Round trips and no-panic decoding in `proto`, and convergence in `meta`.
+5. **Fuzzing.** The `fuzz/` crate and its targets, and the nightly job on `main`. Crashes found
+   become regression tests.
+6. **Workflow checks.** `actionlint` and `zizmor` in all four repositories, with or after the
+   action pinning of Phase 5c step 5.
+7. **Android.** Android Lint and `detekt` in `tidefell/android` CI, with baselines.
+8. **Smaller checks.** `shellcheck`, `statix` and `deadnix` as flake checks, and `typos`, in every
+   repository that has files for them.
+
+Exit criterion: a pull request adding an unchecked index to `proto` fails CI; the nightly job runs
+every fuzz target for ten minutes without a crash; a new Android Lint error fails the Android CI;
+an unpinned action fails `zizmor` in each repository; and `shellcheck`, `statix`, `deadnix` and
+`typos` run in every repository's CI.
 
 ### Phase 6 work breakdown
 

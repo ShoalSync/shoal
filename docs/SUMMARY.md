@@ -62,3 +62,4 @@
   - [0028: Other devices' files in phone folders](adr/0028-other-devices-files-on-the-phone.md)
   - [0029: Features from other sync tools](adr/0029-features-from-other-sync-tools.md)
   - [0030: Diagnostics and reporting](adr/0030-diagnostics-and-reporting.md)
+  - [0031: Static analysis and fuzzing](adr/0031-static-analysis-and-fuzzing.md)
