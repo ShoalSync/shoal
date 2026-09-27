@@ -67,3 +67,8 @@
   - [0032: Transfer efficiency](adr/0032-transfer-efficiency.md)
   - [0033: File names across filesystems](adr/0033-file-names-across-filesystems.md)
   - [0034: Metadata storage and recovery](adr/0034-metadata-storage-and-recovery.md)
+  - [0035: Memory at scale](adr/0035-memory-at-scale.md)
+  - [0036: Simulation testing](adr/0036-simulation-testing.md)
+  - [0037: Disk space and I/O errors](adr/0037-disk-space-and-io-errors.md)
+  - [0038: Threat model](adr/0038-threat-model.md)
+  - [0039: Android battery](adr/0039-android-battery.md)

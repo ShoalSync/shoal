@@ -125,6 +125,11 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Transfer efficiency | Files written concurrently, no manifest for single-chunk files, small files batched per request, no availability query to full replicas; wire changes wait for sync/2 | ADR 0032 |
 | File names across filesystems | NFC enforced, each folder probes its filesystem, names that fold together follow the same-path rule, unstorable names listed, not escaped | ADR 0033 |
 | Metadata storage and recovery | One transactional database per folder, written per change; `metadata_dir` for fast storage; checked on open, rebuilt per folder from disk, peers and sidecars | ADR 0034 |
+| Memory at scale | Manifests, chunk index and version bodies on disk behind a cache; memory budgets tested nightly | ADR 0035 |
+| Simulation testing | Seeded multi-device simulation over an in-memory transport, with convergence and no-loss invariants | ADR 0036 |
+| Disk space and I/O errors | Folder markers and an unavailable state, paused mass deletes, free-space floors, failed metadata writes stop applying changes | ADR 0037 |
+| Threat model | One threat model document; device revocation next; Android keys in the Keystore; relay metadata documented | ADR 0038 |
+| Android battery | Measured per release and counted on the device; usage telemetry only through its own ADR | ADR 0039 |
 
 ## Phases
 
@@ -146,6 +151,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5h** Transfer efficiency | Concurrent file writes, the single-chunk shortcut, cross-file chunk requests and direct requests to full replicas, measured before and after (ADR 0032) | See the Phase 5h breakdown |
 | **5i** File names across filesystems | NFC on the wire, filesystem probing, per-device collisions after folding, unstorable names as problems (ADR 0033) | See the Phase 5i breakdown |
 | **5j** Metadata storage | Per-folder databases, `metadata_dir`, integrity checks, per-folder rebuild with sidecars for kept files (ADR 0034) | See the Phase 5j breakdown |
+| **5k** Robustness | Memory budgets, simulation testing, folder markers, free-space floors and error handling (ADR 0035, ADR 0036, ADR 0037) | See the Phase 5k breakdown |
+| **5l** Security and battery | Threat model, Android Keystore, device revocation ADR, battery benchmark and counters (ADR 0038, ADR 0039) | See the Phase 5l breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -590,6 +597,44 @@ Exit criterion: at 100,000 entries, applying a batch of 512 versions writes less
 holds the folder lock for under 50 ms; with one folder's database corrupted, `tidefelld` starts,
 rebuilds that folder with its recycle bin and history intact, and serves the others throughout;
 and killing `tidefelld` during a first sync loses nothing when it restarts.
+
+### Phase 5k work breakdown
+
+Robustness (ADR 0035, ADR 0036, ADR 0037). Step 2 is urgent; the rest follow Phase 5j, whose
+databases they build on.
+
+1. **Decisions.** ADRs 0035, 0036 and 0037 and this breakdown.
+2. **Folder roots.** The `.tidefell/folder` marker, the `unavailable` state, no root created
+   outside create and join, and the paused mass delete. A test unmounts a folder's directory and
+   checks that no delete leaves the device.
+3. **Disk space and errors.** Free-space floors per volume, writes that wait above the floor,
+   failed metadata writes that stop applying changes, and classified file errors, all shown as
+   problems.
+4. **Memory.** Records on disk behind the cache, index batches read from the database, the
+   synthetic-folder generator and the nightly memory budgets.
+5. **Simulation.** The transport seam, the in-memory transport, the harness with its operations
+   and invariants, seed shrinking, 200 seeds per pull request and 10,000 nightly.
+
+Exit criterion: removing a folder's drive while `tidefelld` runs, and starting it before the
+drive mounts, deletes nothing anywhere; a full disk pauses downloads and resumes them when space
+returns; a synthetic full replica of 1,000,000 files and 10 TiB stays under 300 MB of resident
+memory; and 10,000 simulation seeds pass.
+
+### Phase 5l work breakdown
+
+Security and battery (ADR 0038, ADR 0039).
+
+1. **Decisions.** ADRs 0038 and 0039 and this breakdown.
+2. **Threat model.** `docs/security/threat-model.md`, and a pull request template that asks
+   whether a change affects it.
+3. **Device revocation.** Its ADR, before Phase 6.
+4. **Android keys.** The device key wrapped with an Android Keystore key, with existing keys
+   converted on upgrade, in `tidefell/android`.
+5. **Battery.** The scripted benchmark on the emulator and a device, the app's counters in the
+   diagnostics bundle, budgets from the first results, then the changes the benchmark supports.
+
+Exit criterion: the threat model covers every adversary in ADR 0038; a copy of the Android app's
+storage does not contain a usable device key; and a release's notes include its battery figures.
 
 ### Phase 6 work breakdown
 
