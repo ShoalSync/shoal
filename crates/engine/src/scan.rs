@@ -186,6 +186,8 @@ pub(crate) struct Scanned {
     pub(crate) changed: bool,
     /// The directories walked, to watch for later changes.
     pub(crate) dirs: Vec<PathBuf>,
+    /// Files whose changes conflict with a version that arrived before they were scanned.
+    pub(crate) conflicts: Vec<String>,
 }
 
 /// Scans `id` for changes since the last scan and records them: everything, or only `scope`.
@@ -269,6 +271,7 @@ pub(crate) fn scan(
     let mut state = handle.lock();
     state.ignores = ignores;
     let mut index_changed = false;
+    let mut conflicts = Vec::new();
     let now = now_ms();
     for c in changed {
         let content = c.manifest.content;
@@ -295,6 +298,7 @@ pub(crate) fn scan(
             // Build on the version the file had on disk, not on versions that arrived since and
             // were never written, so those become conflict copies instead of being lost.
             let base = base_of(&state, &c.rel, entry);
+            let open = state.meta.open_conflicts(&entry).count();
             let (_, vector) = state.meta.local_change_from(
                 inner.key.signing_key(),
                 entry,
@@ -307,6 +311,9 @@ pub(crate) fn scan(
                 },
                 (c.stat.mtime_ns / 1_000_000) as i64,
             )?;
+            if state.meta.open_conflicts(&entry).count() > open {
+                conflicts.push(c.rel.clone());
+            }
             index_changed = true;
             vector
         };
@@ -381,6 +388,7 @@ pub(crate) fn scan(
     Ok(Scanned {
         changed: index_changed,
         dirs,
+        conflicts,
     })
 }
 

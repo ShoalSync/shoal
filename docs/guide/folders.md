@@ -63,6 +63,31 @@ Folders listed in the configuration file are managed there and cannot be changed
 `tidefell`. Folders created or joined with `tidefell` are stored in the data directory and
 survive restarts.
 
+## Conflicts
+
+When two devices change the same file while they cannot reach each other, both versions are
+kept. Every device shows the same one, the later edit, and the other waits for you to decide.
+Nothing is lost until you do: later edits on any device keep the conflict open. Two devices
+that make the same change do not conflict, and neither does a delete against an edit, which
+the edit wins.
+
+```sh
+tidefell conflicts                                   # files waiting for a decision
+tidefell history <folder id> notes.txt --open conflict:<id>   # a read-only copy to compare
+tidefell resolve <folder id> notes.txt --keep conflict:<id>   # keep that version
+tidefell resolve <folder id> notes.txt --keep current         # keep the one shown now
+tidefell resolve <folder id> notes.txt --keep-both
+```
+
+Keeping one version sends the others to every device's recycle bin, where they stay restorable
+for its retention period; restoring one makes it a file of its own. Keeping both keeps the
+current version as the file and each other version beside it, named after the device that made
+it and the day, as in `notes (Laptop, 2026-09-27).txt`. `tidefell status` counts the files
+waiting in each folder, and `tidefell events` reports each new conflict.
+
+Deleting a file that has a conflict does not decide it: the other version comes back as the
+file.
+
 ## Ignoring files
 
 A `.tidefellignore` file at a folder's root lists paths this device neither sends nor writes.

@@ -46,7 +46,8 @@ The binaries are `target/release/tidefelld` and `target/release/tidefell`.
 ## Known limitations
 
 - Empty directories and symlinks are not synced.
-- Conflict copies are kept in metadata but not written to disk.
+- Conflicting versions are not written to disk until you resolve them; see
+  [Conflicts](folders.md#conflicts).
 - Placeholders of a partial replica are fetched with `tidefell fetch` or the web peer; there is
   no desktop filesystem integration yet.
 - Device certificates cannot be revoked yet.

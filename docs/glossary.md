@@ -25,8 +25,9 @@ the same pull request that introduces it.
 | **Entry** | One path in a folder's tree: a file, directory or symlink. Identified by a stable `EntryId`. |
 | **Version** | The state of an entry after one change: content, metadata and the version vector at the time. |
 | **Version vector** | A map from device to change counter, attached to every version of an entry. Used only to decide whether two versions of that entry are ordered or concurrent. |
-| **Conflict** | Two concurrent versions of the same entry. Resolved deterministically (edits win over deletes, then the later modification); the losing version is kept as a conflict copy. |
-| **Conflict copy** | A losing concurrent version, kept until a later version supersedes it. |
+| **Conflict** | Two concurrent versions of the same entry. Every replica shows the same winner (edits win over deletes, then the later modification); the losing version is kept as a conflict copy until the user resolves the conflict (ADR 0029). |
+| **Conflict copy** | A losing concurrent version, kept until the conflict is resolved. Not written to disk. One with the same content as the winner, or a delete an edit beat, needs no decision. |
+| **Resolve** | Deciding a conflict: keep one version, which sends the others to every recycle bin, or keep both, which makes each other version a file of its own. |
 | **Index** | A replica's record of the versions it holds for a folder, each numbered with an index sequence. |
 | **Index sequence** | A replica-local, increasing number assigned to each version when it is stored. Peers ask for "everything after sequence N". Unrelated to version vectors. |
 | **Epoch** | A random identifier of one replica's index. A new epoch means the index was rebuilt and peers must re-fetch it from the start. |

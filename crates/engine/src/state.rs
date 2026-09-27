@@ -619,12 +619,14 @@ impl FolderState {
         Ok(state)
     }
 
-    /// Brings bases recorded before vectors had holes up to the current version, where the file
-    /// on disk is that version. A change used to merge in everything this device had made, which
-    /// hid a base left behind by this device's own later change, such as a rename. Now such a
-    /// base would leave a hole at that change (ADR 0029). Files with other content keep their
-    /// base, so a remote version never written to disk still conflicts with their changes.
-    fn catch_up_bases(&mut self) {
+    /// Brings the base of each file on disk that is its current version up to that version's
+    /// vector (ADR 0029). The file already is that content, so it corresponds to every version
+    /// with that content and every settled delete: a resolve another device made to keep this
+    /// content, or a same-content version that arrived later, is never written, yet the next
+    /// edit here must supersede it. Bases recorded before vectors had holes also lag behind this
+    /// device's own later changes, such as renames. Files with other content keep their base,
+    /// so a remote version never written to disk still conflicts with their changes.
+    pub(crate) fn catch_up_bases(&mut self) {
         let mut caught_up = Vec::new();
         for (path, local) in self.local.iter() {
             let current = self.meta.current(&local.entry).is_some_and(|v| {
@@ -632,9 +634,12 @@ impl FolderState {
                     if content == local.content && executable == local.executable)
             });
             if current && self.meta.disk_path(&local.entry) == Some(path.as_str()) {
-                let mut local = local.clone();
-                local.base.merge(&self.meta.current_vector(&local.entry));
-                caught_up.push((path.clone(), local));
+                let vector = self.meta.current_vector(&local.entry);
+                if !local.base.dominates(&vector) {
+                    let mut local = local.clone();
+                    local.base.merge(&vector);
+                    caught_up.push((path.clone(), local));
+                }
             }
         }
         for (path, local) in caught_up {

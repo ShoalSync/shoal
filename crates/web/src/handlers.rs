@@ -243,6 +243,8 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
 #[derive(Deserialize)]
 pub(crate) struct FolderQuery {
     uploaded: Option<usize>,
+    /// A file whose conflict was just decided.
+    resolved: Option<String>,
 }
 
 pub(crate) async fn folder(
@@ -287,9 +289,13 @@ pub(crate) async fn folder(
         device_paused: state.engine.paused(),
         partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
+        conflicts: folder.conflicts,
         notice: query
             .uploaded
-            .map(|n| format!("Uploaded {n} file(s). They sync to every device.")),
+            .map(|n| format!("Uploaded {n} file(s). They sync to every device."))
+            .or(query
+                .resolved
+                .map(|p| format!("Decided {p}. Every device follows."))),
         files,
     })
 }
@@ -386,6 +392,7 @@ pub(crate) async fn recycle(
         .unwrap_or_default()
         .into_iter()
         .map(|r| pages::RecycledRow {
+            conflict: r.conflict,
             entry: r.entry.to_string(),
             path: r.path,
             size: size(r.size),
@@ -464,8 +471,10 @@ pub(crate) async fn history(
     let Ok(versions) = state.engine.versions(folder.id, &query.path) else {
         return not_found();
     };
+    // Conflicting versions have a screen of their own.
     let versions = versions
         .into_iter()
+        .filter(|v| v.kind != VersionKind::Conflict)
         .map(|v| pages::VersionRow {
             current: v.kind == VersionKind::Current,
             id: v.id,

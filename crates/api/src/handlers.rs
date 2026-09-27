@@ -18,8 +18,9 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
     File, Folder, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
-    PairRequest, Pairing, Peer, PinRequest, Problem, RecycleBinSummary, Recycled,
-    RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version, VersionKind, VersionRequest,
+    OpenedVersion, PairRequest, Pairing, Peer, PinRequest, Problem, RecycleBinSummary, Recycled,
+    RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Version, VersionKind,
+    VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -57,6 +58,8 @@ type AppState = State<Arc<Engine>>;
         copies,
         versions,
         restore_version,
+        open_version,
+        resolve,
         recycle_bin,
         empty_recycle_bin,
         discard,
@@ -110,6 +113,8 @@ type AppState = State<Arc<Engine>>;
         Version,
         VersionKind,
         VersionRequest,
+        OpenedVersion,
+        ResolveRequest,
         Limits,
         PinRequest
     ))
@@ -502,6 +507,51 @@ pub(crate) async fn restore_version(
         .ok_or_else(|| ApiFailure::bad_request("which version to restore is missing"))?;
     engine
         .restore_version(parse("folder", &id)?, &request.path, &version)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Writes a read-only copy of a previous or conflicting version on the daemon's machine, fetching
+/// a conflicting version from peers if it is not there (ADR 0029).
+#[utoipa::path(post, path = "/v1/folders/{id}/versions/open", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = VersionRequest,
+    responses((status = 200, body = OpenedVersion), (status = 400, body = ApiError),
+        (status = 404, body = ApiError)))]
+pub(crate) async fn open_version(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<VersionRequest>,
+) -> ApiResult<Json<OpenedVersion>> {
+    let version = request
+        .version
+        .ok_or_else(|| ApiFailure::bad_request("which version to open is missing"))?;
+    let file = engine
+        .open_version(parse("folder", &id)?, &request.path, &version)
+        .await?;
+    Ok(Json(OpenedVersion {
+        file: file.display().to_string(),
+    }))
+}
+
+/// Decides a conflict on a file (ADR 0029): keep one version, whose others go to every device's
+/// recycle bin, or keep both, making each other version a file of its own.
+#[utoipa::path(post, path = "/v1/folders/{id}/resolve", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = ResolveRequest,
+    responses((status = 204), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn resolve(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<ResolveRequest>,
+) -> ApiResult<StatusCode> {
+    let resolution = if request.keep == "both" {
+        engine::Resolution::KeepBoth
+    } else {
+        engine::Resolution::Keep(request.keep)
+    };
+    engine
+        .resolve(parse("folder", &id)?, &request.path, resolution)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

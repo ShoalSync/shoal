@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidefell_engine::{
-    Engine, EngineConfig, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Retention,
+    Engine, EngineConfig, Event, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Resolution,
+    Retention, VersionKind,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_proto::FolderId;
@@ -329,6 +330,220 @@ async fn files_created_at_the_same_path_are_both_kept() {
             .collect::<Vec<_>>(),
         before.iter().map(|f| f.entry).collect::<Vec<_>>()
     );
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+/// Two edits made apart conflict on both devices until one decides (ADR 0029).
+async fn conflict(dir: &Path, seeds: (u8, u8)) -> (Replica, Replica, Engine, Engine) {
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir, "a", seeds.0);
+    let b = Replica::new(dir, "b", seeds.1);
+    a.write("doc.txt", b"original");
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("initial sync", || b.read("doc.txt").is_some()).await;
+    engine_b.shutdown().await;
+
+    a.write("doc.txt", b"edit on a");
+    engine_a.scan(FOLDER).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    b.write("doc.txt", b"edit on b, later");
+    let engine_b = b.start(&user).await;
+    engine_b.scan(FOLDER).await.unwrap();
+    let mut events = engine_a.events();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("the conflict on both", || {
+        status(&engine_a).conflicts == 1 && status(&engine_b).conflicts == 1
+    })
+    .await;
+    let detected = loop {
+        match events.try_recv() {
+            Ok(Event::ConflictDetected { path, .. }) => break Some(path),
+            Ok(_) => {}
+            Err(_) => break None,
+        }
+    };
+    assert_eq!(detected.as_deref(), Some("doc.txt"));
+    (a, b, engine_a, engine_b)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keeping_one_version_bins_the_other_everywhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, engine_a, engine_b) = conflict(dir.path(), (40, 41)).await;
+    eventually("b's edit on disk", || {
+        a.read("doc.txt").as_deref() == Some(b"edit on b, later".as_slice())
+    })
+    .await;
+
+    // a opens its own version, which lost, and keeps it.
+    let versions = engine_a.versions(FOLDER, "doc.txt").unwrap();
+    assert_eq!(versions[1].kind, VersionKind::Conflict);
+    let copy = engine_a
+        .open_version(FOLDER, "doc.txt", &versions[1].id)
+        .await
+        .unwrap();
+    assert_eq!(fs::read(&copy).unwrap(), b"edit on a");
+    engine_a
+        .resolve(FOLDER, "doc.txt", Resolution::Keep(versions[1].id.clone()))
+        .await
+        .unwrap();
+    eventually("both have a's version and no conflict", || {
+        a.read("doc.txt").as_deref() == Some(b"edit on a".as_slice())
+            && b.read("doc.txt").as_deref() == Some(b"edit on a".as_slice())
+            && status(&engine_a).conflicts == 0
+            && status(&engine_b).conflicts == 0
+    })
+    .await;
+    // b's version is restorable on both, as a file of its own.
+    for engine in [&engine_a, &engine_b] {
+        let bin = engine.recycle_bin(FOLDER).unwrap();
+        assert!(
+            bin.iter().any(|r| r.conflict && r.path == "doc.txt"),
+            "{bin:?}"
+        );
+    }
+    let item = engine_b.recycle_bin(FOLDER).unwrap()[0].clone();
+    engine_b.restore(FOLDER, item.entry).await.unwrap();
+    eventually("the restored version is beside the file", || {
+        fs::read_dir(&a.root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                let name = e.file_name().to_string_lossy().into_owned();
+                name.starts_with("doc (") && fs::read(e.path()).unwrap() == b"edit on b, later"
+            })
+    })
+    .await;
+
+    // An edit after the decision is not a conflict.
+    a.write("doc.txt", b"after deciding");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches b", || {
+        b.read("doc.txt").as_deref() == Some(b"after deciding".as_slice())
+    })
+    .await;
+    assert_eq!(status(&engine_a).conflicts, 0);
+    assert_eq!(status(&engine_b).conflicts, 0);
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keeping_both_makes_a_file_of_the_other_version() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, engine_a, engine_b) = conflict(dir.path(), (42, 43)).await;
+    engine_b
+        .resolve(FOLDER, "doc.txt", Resolution::KeepBoth)
+        .await
+        .unwrap();
+    let copy_of = |replica: &Replica| {
+        fs::read_dir(&replica.root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .find(|e| e.file_name().to_string_lossy().starts_with("doc ("))
+            .map(|e| fs::read(e.path()).unwrap())
+    };
+    eventually("both have both versions", || {
+        copy_of(&a).as_deref() == Some(b"edit on a".as_slice())
+            && copy_of(&b).as_deref() == Some(b"edit on a".as_slice())
+            && a.read("doc.txt").as_deref() == Some(b"edit on b, later".as_slice())
+            && status(&engine_a).conflicts == 0
+            && status(&engine_b).conflicts == 0
+    })
+    .await;
+    assert!(engine_a.recycle_bin(FOLDER).unwrap().is_empty());
+    assert!(engine_b.recycle_bin(FOLDER).unwrap().is_empty());
+
+    // Edits after the decision, on the device that did not decide and then on the one that
+    // did, are not conflicts.
+    a.write("doc.txt", b"a edits after");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("a's edit reaches b", || {
+        b.read("doc.txt").as_deref() == Some(b"a edits after".as_slice())
+    })
+    .await;
+    assert_eq!(status(&engine_a).conflicts, 0);
+    assert_eq!(status(&engine_b).conflicts, 0);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    // An edit of the file on b, where it was decided, is not a conflict either.
+    b.write("doc.txt", b"after deciding, on b");
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches a", || {
+        a.read("doc.txt").as_deref() == Some(b"after deciding, on b".as_slice())
+    })
+    .await;
+    assert_eq!(status(&engine_a).conflicts, 0);
+    assert_eq!(status(&engine_b).conflicts, 0);
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keeping_the_current_version_then_editing_elsewhere() {
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b, engine_a, engine_b) = conflict(dir.path(), (44, 45)).await;
+
+    // b opens a's version, which only a has on disk, then keeps its own.
+    let versions = engine_b.versions(FOLDER, "doc.txt").unwrap();
+    let theirs = versions
+        .iter()
+        .find(|v| v.kind == VersionKind::Conflict)
+        .unwrap()
+        .id
+        .clone();
+    let copy = engine_b
+        .open_version(FOLDER, "doc.txt", &theirs)
+        .await
+        .unwrap();
+    assert_eq!(fs::read(&copy).unwrap(), b"edit on a");
+    engine_b
+        .resolve(FOLDER, "doc.txt", Resolution::Keep("current".into()))
+        .await
+        .unwrap();
+    eventually("the decision reaches a", || {
+        a.read("doc.txt").as_deref() == Some(b"edit on b, later".as_slice())
+            && status(&engine_a).conflicts == 0
+            && status(&engine_b).conflicts == 0
+    })
+    .await;
+
+    // a, which did not decide, edits: no new conflict.
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    a.write("doc.txt", b"a edits after");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("a's edit reaches b", || {
+        b.read("doc.txt").as_deref() == Some(b"a edits after".as_slice())
+    })
+    .await;
+    assert_eq!(status(&engine_a).conflicts, 0);
+    assert_eq!(status(&engine_b).conflicts, 0);
+
+    // a's version, which b never had on disk, is restorable from b's recycle bin.
+    let item = engine_b
+        .recycle_bin(FOLDER)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.conflict)
+        .expect("a's version is in b's recycle bin");
+    engine_b.restore(FOLDER, item.entry).await.unwrap();
+    eventually("the restored version is beside the file on b", || {
+        fs::read_dir(&b.root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .any(|e| {
+                e.file_name().to_string_lossy().starts_with("doc (")
+                    && fs::read(e.path()).unwrap() == b"edit on a"
+            })
+    })
+    .await;
 
     engine_b.shutdown().await;
     engine_a.shutdown().await;

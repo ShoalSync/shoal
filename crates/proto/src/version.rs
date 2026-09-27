@@ -144,6 +144,26 @@ impl VersionVector {
         self.set_ranges(device, &ranges);
     }
 
+    /// Removes change `n` by `device`, if seen.
+    pub fn remove(&mut self, device: DeviceId, n: u64) {
+        if !self.contains(&device, n) {
+            return;
+        }
+        let ranges: Ranges = self
+            .ranges(&device)
+            .into_iter()
+            .flat_map(|(a, b)| {
+                if a <= n && n <= b {
+                    vec![(a, n - 1), (n + 1, b)]
+                } else {
+                    vec![(a, b)]
+                }
+            })
+            .filter(|(a, b)| a <= b)
+            .collect();
+        self.set_ranges(device, &ranges);
+    }
+
     /// Adds `device`'s next change after the highest seen and returns its number, or `None`,
     /// leaving the vector unchanged, if that would pass [`MAX_COUNTER`].
     pub fn increment(&mut self, device: DeviceId) -> Option<u64> {
@@ -331,6 +351,18 @@ mod tests {
             postcard::to_stdvec(&vv(&[(1, 4), (2, 1)])).unwrap()
         );
         assert_eq!(merged.compare(&two), Causality::After);
+    }
+
+    #[test]
+    fn removing_changes() {
+        let mut v = vv(&[(1, 5), (2, 1)]);
+        v.remove(d(1), 5);
+        assert_eq!(v, vv(&[(1, 4), (2, 1)]));
+        v.remove(d(1), 2);
+        assert!(!v.contains(&d(1), 2) && v.contains(&d(1), 3));
+        v.remove(d(2), 1);
+        assert_eq!(v.get(&d(2)), 0);
+        assert!(v.within_ceiling());
     }
 
     #[test]

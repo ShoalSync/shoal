@@ -563,6 +563,8 @@ pub struct Folder {
     pub paused: bool,
     /// Total size of the files pinned on this partial replica (ADR 0029).
     pub pinned_bytes: u64,
+    /// Files with versions that conflict with the current one, waiting for a decision.
+    pub conflicts: u64,
 }
 
 /// A live file.
@@ -608,6 +610,8 @@ pub enum VersionKind {
     Current,
     /// A version kept on this device after it was replaced (ADR 0029).
     Previous,
+    /// A version made apart from the current one, waiting for a decision (ADR 0029).
+    Conflict,
 }
 
 /// One version of a file.
@@ -623,6 +627,8 @@ pub struct Version {
     pub modified_ms: i64,
     /// For the current version, the device that made it.
     pub author: Option<String>,
+    /// That device's name, as far as this device knows it.
+    pub author_name: Option<String>,
     /// For a previous version, when this device kept it.
     pub kept_ms: Option<i64>,
     /// For a previous version, when it expires; none if kept for good.
@@ -645,6 +651,9 @@ pub struct Recycled {
     /// True if it was removed from this device only: other devices still have it, and
     /// restoring it puts it back here only.
     pub here_only: bool,
+    /// True if this is a version that lost when a conflict was resolved (ADR 0029). Restoring
+    /// it makes it a file of its own beside `path`.
+    pub conflict: bool,
 }
 
 /// A connected peer.
@@ -687,6 +696,14 @@ pub enum NodeEvent {
     },
     /// A file was removed from disk (deleted, or evicted back to a placeholder).
     FileRemoved {
+        /// Folder ID.
+        folder: String,
+        /// File path.
+        path: String,
+    },
+    /// A file gained a version that conflicts with its current one (ADR 0029). The app shows a
+    /// notification that opens the file's conflict screen.
+    ConflictDetected {
         /// Folder ID.
         folder: String,
         /// File path.
@@ -736,6 +753,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         only_here: f.only_here as u64,
         paused: f.paused,
         pinned_bytes: f.pinned_bytes,
+        conflicts: f.conflicts as u64,
     }
 }
 
@@ -747,6 +765,7 @@ fn recycled_record(r: tidefell_engine::RecycledInfo) -> Recycled {
         deleted_at_ms: r.deleted_at_ms,
         expires_at_ms: r.expires_at_ms,
         here_only: r.here_only,
+        conflict: r.conflict,
     }
 }
 
@@ -962,10 +981,12 @@ impl Node {
                 kind: match v.kind {
                     tidefell_engine::VersionKind::Current => VersionKind::Current,
                     tidefell_engine::VersionKind::Previous => VersionKind::Previous,
+                    tidefell_engine::VersionKind::Conflict => VersionKind::Conflict,
                 },
                 size: v.size,
                 modified_ms: v.modified_ms,
                 author: v.author.map(|d| d.to_string()),
+                author_name: v.author_name,
                 kept_ms: v.kept_ms,
                 expires_ms: v.expires_ms,
             })
@@ -979,6 +1000,36 @@ impl Node {
             .version_file(parse("folder ID", &folder)?, &path, &version)?
             .display()
             .to_string())
+    }
+
+    /// Writes a read-only copy of a previous or conflicting version, fetching a conflicting one
+    /// from peers if needed, and returns its path (ADR 0029).
+    pub async fn open_version(
+        &self,
+        folder: String,
+        path: String,
+        version: String,
+    ) -> Result<String> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &folder)?;
+        let file =
+            on_runtime(async move { engine.open_version(folder, &path, &version).await }).await??;
+        Ok(file.display().to_string())
+    }
+
+    /// Decides a conflict on a file (ADR 0029): `keep` is the version to keep, `current` or
+    /// `conflict:<id>`, and the others go to every device's recycle bin; or `both`, which keeps
+    /// each other version as a file of its own beside it.
+    pub async fn resolve(&self, folder: String, path: String, keep: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &folder)?;
+        let resolution = if keep == "both" {
+            tidefell_engine::Resolution::KeepBoth
+        } else {
+            tidefell_engine::Resolution::Keep(keep)
+        };
+        on_runtime(async move { engine.resolve(folder, &path, resolution).await }).await??;
+        Ok(())
     }
 
     /// Makes a previous version the file's content again, on every device.
@@ -1171,6 +1222,10 @@ impl Node {
                         path,
                     },
                     E::FileRemoved { folder, path } => NodeEvent::FileRemoved {
+                        folder: folder.to_string(),
+                        path,
+                    },
+                    E::ConflictDetected { folder, path } => NodeEvent::ConflictDetected {
                         folder: folder.to_string(),
                         path,
                     },

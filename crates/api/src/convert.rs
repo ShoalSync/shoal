@@ -40,6 +40,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         unavailable: f.unavailable,
         paused: f.paused,
         pinned_bytes: f.pinned_bytes,
+        conflicts: f.conflicts as u64,
     }
 }
 
@@ -101,6 +102,7 @@ pub(crate) fn recycled(r: RecycledInfo) -> api::Recycled {
         deleted_at_ms: r.deleted_at_ms,
         expires_at_ms: r.expires_at_ms,
         here_only: r.here_only,
+        conflict: r.conflict,
     }
 }
 
@@ -140,6 +142,10 @@ pub(crate) fn event(e: Event) -> api::Event {
             folder: folder.to_string(),
             path,
         },
+        Event::ConflictDetected { folder, path } => api::Event::ConflictDetected {
+            folder: folder.to_string(),
+            path,
+        },
         Event::Crashed(message) => api::Event::Crashed { message },
     }
 }
@@ -150,10 +156,12 @@ pub(crate) fn version(v: tidefell_engine::VersionInfo) -> api::Version {
         kind: match v.kind {
             tidefell_engine::VersionKind::Current => api::VersionKind::Current,
             tidefell_engine::VersionKind::Previous => api::VersionKind::Previous,
+            tidefell_engine::VersionKind::Conflict => api::VersionKind::Conflict,
         },
         size: v.size,
         modified_ms: v.modified_ms,
         author: v.author.map(|d| d.to_string()),
+        author_name: v.author_name,
         kept_ms: v.kept_ms,
         expires_ms: v.expires_ms,
     }

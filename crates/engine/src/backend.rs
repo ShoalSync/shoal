@@ -64,13 +64,28 @@ impl Backend for EngineBackend {
             return;
         };
         let mut changed = false;
+        let mut conflicts = Vec::new();
         {
             let mut state = handle.lock();
             let now = crate::now_ms();
             for version in versions {
+                let entry = <EntryVersion as tidefell_proto::SignedKind>::decode(&version.body)
+                    .ok()
+                    .map(|v| v.entry);
+                let open = |state: &crate::state::FolderState| {
+                    entry.map_or(0, |e| state.meta.open_conflicts(&e).count())
+                };
+                let before = open(&state);
                 match state.meta.apply_remote(version, now) {
                     Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
+                }
+                if open(&state) > before {
+                    conflicts.extend(
+                        entry
+                            .and_then(|e| state.meta.disk_path(&e))
+                            .map(String::from),
+                    );
                 }
             }
             if changed {
@@ -82,6 +97,13 @@ impl Backend for EngineBackend {
         if changed {
             self.0.emit(Event::FolderChanged(*folder));
             self.0.changed();
+        }
+        for path in conflicts {
+            debug!(folder = %folder, %path, "conflict");
+            self.0.emit(Event::ConflictDetected {
+                folder: *folder,
+                path,
+            });
         }
     }
 

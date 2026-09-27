@@ -586,3 +586,157 @@ fn index_pages_resume_where_they_stopped() {
     assert_eq!(seen, (1..=10).collect::<Vec<_>>());
     assert_eq!(since, 10, "the last page reports the index's sequence");
 }
+
+/// A and B edit apart; B's version wins. Returns the three replicas, each holding both, with
+/// A's version as the open conflict.
+fn conflicted() -> (
+    Folder,
+    Folder,
+    Folder,
+    Signed<EntryVersion>,
+    Signed<EntryVersion>,
+) {
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let mut c = replica(3);
+    let v1 = a.local_change(&key(1), E, "notes.txt", file(1), 1).unwrap();
+    b.apply_remote(v1.clone(), NOW).unwrap();
+    c.apply_remote(v1, NOW).unwrap();
+    let va = a.local_change(&key(1), E, "notes.txt", file(2), 2).unwrap();
+    let vb = b.local_change(&key(2), E, "notes.txt", file(3), 3).unwrap();
+    a.apply_remote(vb.clone(), NOW).unwrap();
+    b.apply_remote(va.clone(), NOW).unwrap();
+    c.apply_remote(va.clone(), NOW).unwrap();
+    c.apply_remote(vb.clone(), NOW).unwrap();
+    (a, b, c, va, vb)
+}
+
+#[test]
+fn resolving_keeps_the_other_version_in_the_recycle_bin() {
+    let (mut a, mut b, _, va, _) = conflicted();
+    // B keeps its own version.
+    let all = b.known_vector(&E);
+    let (resolve, _) = b
+        .local_change_from(&key(2), E, &all, "notes.txt", file(3), 4)
+        .unwrap();
+    a.apply_remote(resolve, NOW + 5).unwrap();
+    let id = tidefell_meta::copy_id(&va);
+    for r in [&a, &b] {
+        assert!(r.conflicts(&E).is_empty());
+        let kept = r.recycle_bin().get(&id).expect("A's version is in the bin");
+        assert_eq!(kept.conflict_of, Some(E));
+        assert_eq!(kept.version.kind, file(2));
+        assert_eq!(kept.version.path, "notes.txt");
+    }
+
+    // Restoring it makes it a file of its own, the same on every device that does.
+    let restored = a
+        .restore_copy(&key(1), id, "notes (Laptop, 2026-09-27).txt", NOW + 6)
+        .unwrap();
+    assert!(a.recycle_bin().get(&id).is_none());
+    assert_eq!(a.current(&id).unwrap().kind, file(2));
+    b.apply_remote(restored, NOW + 7).unwrap();
+    assert!(b.recycle_bin().get(&id).is_none());
+    assert!(matches!(
+        b.restore_copy(&key(2), id, "x", NOW),
+        Err(Error::NotRestorable)
+    ));
+}
+
+#[test]
+fn editing_the_losing_version_does_not_resolve() {
+    // A still has its own version on disk and edits it: that supersedes only A's version.
+    let (mut a, mut b, _, va, _) = conflicted();
+    let own = va.verify_authored().unwrap().version;
+    let (edit, _) = a
+        .local_change_from(&key(1), E, &own, "notes.txt", file(4), 5)
+        .unwrap();
+    b.apply_remote(edit, NOW).unwrap();
+    for r in [&a, &b] {
+        assert!(r.recycle_bin().is_empty());
+        assert_eq!(r.open_conflicts(&E).count(), 1);
+    }
+}
+
+#[test]
+fn an_edit_made_before_the_resolve_survives_it() {
+    let (_, mut b, mut c, va, _) = conflicted();
+    let edit = c.local_change(&key(3), E, "notes.txt", file(5), 5).unwrap();
+    let all = b.known_vector(&E);
+    let (resolve, _) = b
+        .local_change_from(&key(2), E, &all, "notes.txt", file(3), 4)
+        .unwrap();
+    b.apply_remote(edit, NOW).unwrap();
+    c.apply_remote(resolve, NOW).unwrap();
+    for r in [&b, &c] {
+        assert!(r.recycle_bin().get(&tidefell_meta::copy_id(&va)).is_some());
+        assert_eq!(r.current(&E).unwrap().kind, file(5));
+        assert_eq!(r.open_conflicts(&E).count(), 1, "the edit and the resolve");
+    }
+}
+
+#[test]
+fn keeping_both_leaves_nothing_in_the_bin_whatever_arrives_first() {
+    let (_, mut b, _, va, _) = conflicted();
+    let id = tidefell_meta::copy_id(&va);
+    let (copy, _) = b
+        .local_change_from(
+            &key(2),
+            id,
+            &Default::default(),
+            "notes (Laptop, 2026-09-27).txt",
+            file(2),
+            2,
+        )
+        .unwrap();
+    let all = b.known_vector(&E);
+    let (resolve, _) = b
+        .local_change_from(&key(2), E, &all, "notes.txt", file(3), 4)
+        .unwrap();
+    assert!(b.recycle_bin().is_empty());
+    for order in [[&copy, &resolve], [&resolve, &copy]] {
+        let (mut a, ..) = conflicted();
+        for v in order {
+            a.apply_remote(v.clone(), NOW).unwrap();
+        }
+        assert!(a.recycle_bin().is_empty());
+        assert_eq!(a.current(&id).unwrap().kind, file(2));
+        assert!(a.conflicts(&E).is_empty());
+    }
+}
+
+#[test]
+fn keeping_the_other_version_bins_the_winner() {
+    let (mut a, mut b, _, _, vb) = conflicted();
+    let all = a.known_vector(&E);
+    let (resolve, _) = a
+        .local_change_from(&key(1), E, &all, "notes.txt", file(2), 4)
+        .unwrap();
+    b.apply_remote(resolve, NOW).unwrap();
+    let id = tidefell_meta::copy_id(&vb);
+    for r in [&a, &b] {
+        assert_eq!(r.current(&E).unwrap().kind, file(2));
+        assert_eq!(r.recycle_bin().get(&id).unwrap().version.kind, file(3));
+    }
+}
+
+#[test]
+fn ordinary_edits_bin_nothing() {
+    // An edit beats a delete, then the next edit supersedes both.
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    b.apply_remote(v1, NOW).unwrap();
+    let delete = a
+        .local_change(&key(1), E, "f", EntryKind::Tombstone, 2)
+        .unwrap();
+    let edit = b.local_change(&key(2), E, "f", file(2), 3).unwrap();
+    a.apply_remote(edit, NOW).unwrap();
+    b.apply_remote(delete, NOW).unwrap();
+    let next = b.local_change(&key(2), E, "f", file(3), 4).unwrap();
+    a.apply_remote(next, NOW).unwrap();
+    for r in [&a, &b] {
+        assert!(r.conflicts(&E).is_empty());
+        assert!(r.recycle_bin().is_empty());
+    }
+}

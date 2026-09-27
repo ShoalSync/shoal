@@ -11,6 +11,7 @@
 //! [`WebConfig::secure_cookies`] is turned off for local testing.
 
 mod accounts;
+mod conflicts;
 mod format;
 mod handlers;
 mod pages;
@@ -105,6 +106,9 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         )
         .route("/folders/{id}/recycle", get(handlers::recycle))
         .route("/folders/{id}/history", get(handlers::history))
+        .route("/folders/{id}/conflict", get(conflicts::conflict))
+        .route("/folders/{id}/conflict/open", get(conflicts::open))
+        .route("/folders/{id}/resolve", post(conflicts::resolve))
         .route("/folders/{id}/pause", post(handlers::pause_folder))
         .route("/folders/{id}/pin", post(handlers::pin))
         .route("/folders/{id}/unpin", post(handlers::unpin))

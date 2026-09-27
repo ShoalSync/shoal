@@ -3,6 +3,7 @@
 //! The handle's operations are split by concern: [`folders`], [`files`], [`recycle`] and
 //! [`peers`].
 
+mod conflicts;
 mod files;
 mod folders;
 mod history;
@@ -23,6 +24,7 @@ use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{AbortHandle, JoinSet};
 use tracing::{debug, error, info, warn};
 
+pub use conflicts::Resolution;
 pub use folders::FolderStatus;
 
 use crate::backend::EngineBackend;
@@ -712,6 +714,9 @@ async fn run_scan(
     if scanned.changed {
         inner.changes.send_modify(|n| *n += 1);
         inner.emit(Event::FolderChanged(id));
+    }
+    for path in scanned.conflicts {
+        inner.emit(Event::ConflictDetected { folder: id, path });
     }
     Ok(scanned.dirs)
 }

@@ -130,6 +130,7 @@ pub(crate) fn infos(state: &FolderState) -> impl Iterator<Item = RecycledInfo> +
         deleted_at_ms: item.removed_at_ms,
         expires_at_ms: expires_at_ms(state, item),
         here_only: true,
+        conflict: false,
     })
 }
 

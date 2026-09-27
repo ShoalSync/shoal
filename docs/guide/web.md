@@ -41,6 +41,9 @@ the daemon.
   recorded at once and sync to every device like any other change. Empty directories are not
   synced, so a directory appears once a file is uploaded into it.
 - Open a folder's recycle bin and restore deleted files.
+- Decide conflicts: a folder with files changed on more than one device says so, and each such
+  file has a *conflict: decide* link. Its page lists the versions with their device and time,
+  opens each one, and keeps one or both. See [Conflicts](folders.md#conflicts).
 - Share a file or directory through a link, if share links are turned on (see below).
 - Admins: add and remove accounts, and see and revoke everyone's share links.
 

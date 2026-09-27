@@ -37,14 +37,18 @@ impl Retention {
     }
 }
 
-/// A deleted entry: its last live version and when it was deleted.
+/// A deleted entry: its last live version and when it was deleted. Or a version that lost when
+/// a conflict was resolved (ADR 0029), kept as if it were its own deleted entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recycled {
-    /// The last live version before the delete.
+    /// The last live version before the delete. For a version that lost a conflict, that
+    /// version with `entry` set to the ID it is kept under ([`crate::copy_id`]).
     pub version: EntryVersion,
     /// When this device recorded the delete, in milliseconds since the Unix epoch by its own
     /// clock. Retention counts from here.
     pub deleted_at_ms: i64,
+    /// For a version that lost a conflict, the entry it was a version of.
+    pub conflict_of: Option<EntryId>,
 }
 
 /// Deleted entries of one folder, by entry.

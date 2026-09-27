@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Conflict · {{ path }} · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/folders/{{ id }}">← {{ name }}</a></p>
+<h1>{{ path }}</h1>
+<p>This file was changed on more than one device while they could not reach each other. Every device shows the first version below until you decide. Nothing is lost in the meantime.</p>
+<table>
+  <thead><tr><th>Version</th><th>Device</th><th>Modified</th><th class="num">Size</th><th></th></tr></thead>
+  <tbody>
+  {% for v in versions %}
+    <tr>
+      <td>{% if v.current %}Shown now{% else %}Other version{% endif %}</td>
+      <td>{{ v.device }}</td>
+      <td>{{ v.modified }}</td>
+      <td class="num">{{ v.size }}</td>
+      <td>
+        {% if v.current %}<a class="tag" href="/folders/{{ id }}/download?path={{ path_query }}" hx-boost="false">open</a>{% else %}<a class="tag" href="/folders/{{ id }}/conflict/open?path={{ path_query }}&amp;version={{ v.version_query }}" hx-boost="false">open</a>{% endif %}
+        <form method="post" action="/folders/{{ id }}/resolve" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="path" value="{{ path }}">
+          <input type="hidden" name="keep" value="{{ v.id }}">
+          <button type="submit">Keep this one</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Keeping one version sends the others to every device's recycle bin, where they can be restored for a while.</p>
+<form method="post" action="/folders/{{ id }}/resolve" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="path" value="{{ path }}">
+  <input type="hidden" name="keep" value="both">
+  <button type="submit">Keep both</button>
+</form>
+<span class="muted">The version shown now stays as the file; each other one becomes a file beside it, named after its device and day.</span>
+<p><a href="/folders/{{ id }}">Decide later</a></p>
+{% endblock %}

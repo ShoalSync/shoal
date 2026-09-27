@@ -906,3 +906,130 @@ async fn share_links_are_off_by_default() {
         StatusCode::NOT_FOUND
     );
 }
+
+/// A second device of alice's with the same folder, started on `root`.
+async fn laptop(tmp: &std::path::Path) -> Engine {
+    let alice = UserKey::from_seed([1; 32]);
+    let key = DeviceKey::from_seed([4; 32]);
+    Engine::start(
+        EngineConfig {
+            data_dir: tmp.join("laptop-data"),
+            relay: RelayConfig::Disabled,
+            address_lookup: false,
+            local_discovery: false,
+            watch: false,
+            limits: Default::default(),
+            bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+            peers: Vec::new(),
+            folders: vec![FolderConfig {
+                id: FOLDER,
+                path: tmp.join("laptop"),
+                mode: ReplicaMode::Full,
+                members: vec![alice.id()],
+                retention: Retention::Days(30),
+                scan_interval: Duration::from_secs(3600),
+                sync: Default::default(),
+            }],
+        },
+        key.clone(),
+        alice.certify(key.id(), "laptop", 0),
+    )
+    .await
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn deciding_a_conflict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = WebConfig {
+        secure_cookies: false,
+        share_links: false,
+    };
+    let (engine, root, addr) = serve_folder(tmp.path(), &[("doc.txt", b"original")], config).await;
+    let laptop_root = tmp.path().join("laptop");
+    let other = laptop(tmp.path()).await;
+    other.connect(engine.addr()).await.unwrap();
+    eventually("the laptop has the file", || {
+        std::fs::read(laptop_root.join("doc.txt")).is_ok()
+    })
+    .await;
+    other.shutdown().await;
+
+    // Both edit apart; the laptop's edit is later and wins.
+    std::fs::write(root.join("doc.txt"), b"edit on the server").unwrap();
+    engine.scan(FOLDER).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    std::fs::write(laptop_root.join("doc.txt"), b"edit on the laptop").unwrap();
+    let other = laptop(tmp.path()).await;
+    other.scan(FOLDER).await.unwrap();
+    other.connect(engine.addr()).await.unwrap();
+    eventually("the conflict reaches the server", || {
+        engine
+            .files(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "doc.txt" && f.conflicts == 1)
+    })
+    .await;
+
+    let mut alice = Browser::new(addr);
+    alice.login("alice", "alice password 1").await;
+    let folder = alice.get(&format!("/folders/{FOLDER}")).await;
+    assert!(
+        folder.body.contains("wait for you to decide"),
+        "{}",
+        folder.body
+    );
+    assert!(folder.body.contains("conflict: decide"));
+    let page = alice
+        .get(&format!("/folders/{FOLDER}/conflict?path=doc.txt"))
+        .await;
+    assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+    assert!(
+        page.body.contains("laptop") && page.body.contains("web"),
+        "{}",
+        page.body
+    );
+    // The server's own version lost; it can be opened before deciding.
+    let marker = "version=conflict%3A";
+    let start = page.body.find(marker).expect("an other version") + "version=".len();
+    let end = start + page.body[start..].find('"').unwrap();
+    let version = page.body[start..end].to_string();
+    let opened = alice
+        .get(&format!(
+            "/folders/{FOLDER}/conflict/open?path=doc.txt&version={version}"
+        ))
+        .await;
+    assert_eq!(opened.body, "edit on the server");
+
+    let decided = alice
+        .post(
+            &format!("/folders/{FOLDER}/resolve"),
+            &[
+                ("csrf", &page.csrf()),
+                ("path", "doc.txt"),
+                ("keep", "both"),
+            ],
+        )
+        .await;
+    assert_eq!(decided.status, StatusCode::SEE_OTHER, "{}", decided.body);
+    assert!(decided.location().contains("resolved=doc.txt"));
+    eventually("both versions are files on the laptop", || {
+        std::fs::read_dir(&laptop_root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|e| {
+                e.file_name().to_string_lossy().starts_with("doc (web, ")
+                    && std::fs::read(e.path()).unwrap() == b"edit on the server"
+            })
+    })
+    .await;
+    let folder = alice.get(&format!("/folders/{FOLDER}")).await;
+    assert!(!folder.body.contains("wait for you to decide"));
+    // Decided: the conflict page goes back to the folder.
+    let page = alice
+        .get(&format!("/folders/{FOLDER}/conflict?path=doc.txt"))
+        .await;
+    assert_eq!(page.status, StatusCode::SEE_OTHER);
+    other.shutdown().await;
+}

@@ -261,7 +261,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   the `v0.12.0` pin. Steps 6 (bandwidth limits and pause) and 7 (pins) are implemented; their
   Android settings and screens follow with the `v0.12.0` pin. Step 8 (upload-only links) is
   implemented. Step 9's sync/1 change, version vectors with holes so conflicts last until
-  they are resolved, is implemented; resolving and prompting follow.
+  they are resolved, is implemented, and so are resolving, the conflict event, the CLI and the web screens;
+  the Android notification and screen follow with the `v0.12.0` pin.
 - `v0.11.0` releases Phase 5e steps 2 to 4 (local discovery, ignore patterns and watching) and
   the recycle bin's local clock (tidefell/tidefell#46). The bindings' `Network` gains
   `localDiscovery`.

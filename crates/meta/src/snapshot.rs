@@ -61,6 +61,7 @@ impl From<SnapshotV1> for Snapshot {
                 .map(|(version, deleted_at_ms)| Recycled {
                     version: version.into(),
                     deleted_at_ms,
+                    conflict_of: None,
                 })
                 .collect(),
         }

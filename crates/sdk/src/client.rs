@@ -11,9 +11,9 @@ use serde::Serialize;
 
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
-    Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing,
-    Peer, PinRequest, Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
-    Version, VersionRequest,
+    Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, OpenedVersion,
+    PairRequest, Pairing, Peer, PinRequest, Problem, Recycled, RemoveHereRequest, ResolveRequest,
+    RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
 };
 
 /// Client errors.
@@ -361,6 +361,39 @@ impl Client {
             Some(&VersionRequest {
                 path: path.to_owned(),
                 version: Some(version.to_owned()),
+            }),
+        )
+        .await
+    }
+
+    /// Writes a read-only copy of a previous or conflicting version on the daemon's machine and
+    /// returns its path.
+    pub async fn open_version(
+        &self,
+        folder: &str,
+        path: &str,
+        version: &str,
+    ) -> Result<OpenedVersion, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/versions/open"),
+            Some(&VersionRequest {
+                path: path.to_owned(),
+                version: Some(version.to_owned()),
+            }),
+        )
+        .await
+    }
+
+    /// Decides a conflict on a file: `keep` is the version to keep, `current` or
+    /// `conflict:<id>`, or `both`.
+    pub async fn resolve(&self, folder: &str, path: &str, keep: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/resolve"),
+            Some(&ResolveRequest {
+                path: path.to_owned(),
+                keep: keep.to_owned(),
             }),
         )
         .await

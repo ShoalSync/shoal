@@ -13,7 +13,7 @@
   <tbody>
   {% for r in items %}
     <tr>
-      <td>{{ r.path }}</td>
+      <td>{{ r.path }}{% if r.conflict %} <span class="tag" title="Restoring it makes it a file of its own beside this one">other version, not kept</span>{% endif %}</td>
       <td class="num">{{ r.size }}</td>
       <td>{{ r.deleted }}</td>
       <td>{{ r.expires }}</td>

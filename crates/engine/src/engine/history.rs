@@ -13,8 +13,8 @@ use crate::{Error, Result};
 const DAY_MS: i64 = 86_400_000;
 
 impl Engine {
-    /// The versions of the live file at `path`: the current one first, then the previous
-    /// versions kept on this device, newest first.
+    /// The versions of the live file at `path`: the current one first, then those that
+    /// conflict with it, then the previous versions kept on this device, newest first.
     pub fn versions(&self, folder: FolderId, path: &str) -> Result<Vec<VersionInfo>> {
         let handle = self.inner.folder(&folder)?;
         let state = handle.lock();
@@ -33,6 +33,7 @@ impl Engine {
             size,
             modified_ms: current.modified_ms,
             author: Some(current.author),
+            author_name: Some(self.device_name(&state, &current.author)),
             kept_ms: None,
             expires_ms: None,
         }];
@@ -49,9 +50,28 @@ impl Engine {
             size: v.size,
             modified_ms: v.modified_ms,
             author: None,
+            author_name: None,
             kept_ms: Some(v.kept_ms),
             expires_ms: days.map(|d| v.kept_ms + i64::from(d) * DAY_MS),
         }));
+        // Versions waiting for a decision come right after the current one (ADR 0029).
+        let conflicts = state.meta.open_conflicts(&current.entry).filter_map(|s| {
+            let EntryKind::File { size, .. } = s.version.kind else {
+                return None;
+            };
+            Some(VersionInfo {
+                id: super::conflicts::conflict_version_id(s),
+                kind: VersionKind::Conflict,
+                size,
+                modified_ms: s.version.modified_ms,
+                author: Some(s.version.author),
+                author_name: Some(self.device_name(&state, &s.version.author)),
+                kept_ms: None,
+                expires_ms: None,
+            })
+        });
+        let conflicts: Vec<VersionInfo> = conflicts.collect();
+        out.splice(1..1, conflicts);
         Ok(out)
     }
 

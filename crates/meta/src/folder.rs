@@ -37,6 +37,18 @@ impl Entry {
     }
 }
 
+/// The entry ID under which the version `signed` is kept once it loses a conflict: in the
+/// recycle bin, and as its own file when both are kept or it is restored (ADR 0029). Derived
+/// from the version, so every replica, and every device that keeps both, uses the same ID.
+pub fn copy_id(signed: &Signed<EntryVersion>) -> EntryId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"tidefell conflict copy\n");
+    hasher.update(&signed.body);
+    let mut id = [0; 16];
+    id.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
+    EntryId(id)
+}
+
 /// True if a conflict copy of kind `copy` needs no decision beside a current version of kind
 /// `current`: it has the same content, or it is a delete that a live version beat.
 fn settled(copy: &EntryKind, current: Option<&EntryKind>) -> bool {
@@ -330,6 +342,33 @@ impl Folder {
         self.local_change(key, entry, &old.path, old.kind, now_ms)
     }
 
+    /// Restores a version kept in the recycle bin after it lost a conflict, as a new file at
+    /// `path`, and returns the signed version to send to peers. `path` is normally
+    /// `<stem> (<device>, <date>)<extension>` beside the file it was a version of.
+    pub fn restore_copy(
+        &mut self,
+        key: &SigningKey,
+        id: EntryId,
+        path: &str,
+        now_ms: i64,
+    ) -> Result<Signed<EntryVersion>> {
+        let item = match self.recycle.get(&id) {
+            Some(item) if item.conflict_of.is_some() && !self.entries.contains_key(&id) => {
+                item.clone()
+            }
+            _ => return Err(Error::NotRestorable),
+        };
+        let (signed, _) = self.local_change_from(
+            key,
+            id,
+            &VersionVector::new(),
+            path,
+            item.version.kind,
+            now_ms,
+        )?;
+        Ok(signed)
+    }
+
     /// At most `limit` versions stored after `since`, in sequence order, for an index
     /// response. If `epoch` is not this index's epoch, starts from the beginning. Also returns
     /// the `up_to` value to send: the sequence of the last version returned if more follow,
@@ -368,8 +407,34 @@ impl Folder {
 
         let mut survivors = Vec::new();
         let mut superseded = Vec::new();
+        let mut lost = Vec::new();
         if let Some(existing) = existing {
             let previous_current = existing.current.version.clone();
+            // The versions still undecided: the current version and its open conflicts.
+            let open: Vec<Vec<u8>> = existing
+                .all()
+                .filter(|s| {
+                    s.version == previous_current
+                        || !settled(&s.version.kind, Some(&previous_current.kind))
+                })
+                .map(|s| s.signed.body.clone())
+                .collect();
+            // What the new version was made from: its vector without its own change.
+            let mut made_from = version.version.clone();
+            made_from.remove(version.author, version.version.get(&version.author));
+            // A version's line: it and the versions with its content, or deletes. A change made
+            // from within that line is an edit of it; one that has seen more decided between it
+            // and something else.
+            let line = |kind: &EntryKind| {
+                let mut vector = VersionVector::new();
+                for s in existing.all() {
+                    if s.version.kind == *kind || matches!(s.version.kind, EntryKind::Tombstone) {
+                        vector.merge(&s.version.version);
+                    }
+                }
+                vector
+            };
+            let live = !matches!(version.kind, EntryKind::Tombstone);
             // Known if a stored version is later, or is this very version. Equal vectors with
             // different content are concurrent (ADR 0024).
             let known = existing.all().any(|s| {
@@ -380,8 +445,25 @@ impl Folder {
                 self.entries.insert(entry_id, existing);
                 return Applied::Stale;
             }
+            // An undecided version with other content that a live version replaces after
+            // seeing more than its line lost a conflict (ADR 0029). It goes to the recycle bin.
+            let lines: Vec<(Vec<u8>, VersionVector)> = existing
+                .all()
+                .map(|s| (s.signed.body.clone(), line(&s.version.kind)))
+                .collect();
             for stored in std::iter::once(existing.current).chain(existing.conflicts) {
                 if version.version.compare(&stored.version.version) == Causality::After {
+                    let decided = live
+                        && open.contains(&stored.signed.body)
+                        && stored.version.kind != version.kind
+                        && !matches!(stored.version.kind, EntryKind::Tombstone)
+                        && lines
+                            .iter()
+                            .find(|(body, _)| *body == stored.signed.body)
+                            .is_some_and(|(_, line)| !line.dominates(&made_from));
+                    if decided {
+                        lost.push(stored.clone());
+                    }
                     superseded.push(stored.version);
                 } else {
                     survivors.push(stored);
@@ -398,6 +480,7 @@ impl Folder {
                     self.recycle.insert(Recycled {
                         version: removed.clone(),
                         deleted_at_ms: recorded_ms,
+                        conflict_of: None,
                     });
                 }
             }
@@ -415,6 +498,20 @@ impl Folder {
 
         if !matches!(current.version.kind, EntryKind::Tombstone) {
             self.recycle.remove(&entry_id);
+        }
+        for stored in lost {
+            let id = copy_id(&stored.signed);
+            // Kept both: the copy is, or was, an entry of its own.
+            if self.entries.contains_key(&id) || id == entry_id {
+                continue;
+            }
+            let mut version = stored.version;
+            version.entry = id;
+            self.recycle.insert(Recycled {
+                version,
+                deleted_at_ms: recorded_ms,
+                conflict_of: Some(entry_id),
+            });
         }
         let conflicted = !survivors.is_empty();
         self.entries.insert(

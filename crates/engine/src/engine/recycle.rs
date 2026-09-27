@@ -96,9 +96,18 @@ impl Engine {
         }
         {
             let mut state = handle.lock();
-            state
+            let lost_conflict = state
                 .meta
-                .restore(self.inner.key.signing_key(), entry, now_ms())?;
+                .recycle_bin()
+                .get(&entry)
+                .is_some_and(|r| r.conflict_of.is_some());
+            if lost_conflict {
+                self.restore_copy(&mut state, entry)?;
+            } else {
+                state
+                    .meta
+                    .restore(self.inner.key.signing_key(), entry, now_ms())?;
+            }
             state.save()?;
         }
         self.inner.emit(Event::FolderChanged(folder));
@@ -166,6 +175,7 @@ fn recycled_info(item: &tidefell_meta::Recycled, expires_at_ms: Option<i64>) -> 
         deleted_at_ms: item.deleted_at_ms,
         expires_at_ms,
         here_only: false,
+        conflict: item.conflict_of.is_some(),
     }
 }
 
@@ -177,6 +187,7 @@ fn set_aside_info(item: &crate::state::SetAside, expires_at_ms: Option<i64>) -> 
         deleted_at_ms: item.removed_at_ms,
         expires_at_ms,
         here_only: true,
+        conflict: false,
     }
 }
 

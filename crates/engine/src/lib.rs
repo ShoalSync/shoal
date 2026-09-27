@@ -56,7 +56,7 @@ pub use config::{
     Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr, ReplicaMode,
     SyncOptions,
 };
-pub use engine::{Engine, FolderStatus};
+pub use engine::{Engine, FolderStatus, Resolution};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
 pub use tidefell_net::{Limits, RelayConfig, RelayUrl, MIN_BYTES_PER_SEC};

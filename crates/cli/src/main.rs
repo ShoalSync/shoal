@@ -121,15 +121,43 @@ enum Command {
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
-    /// List a file's previous versions kept on this device, or restore one.
+    /// List a file's versions: conflicting ones and previous ones kept on this device.
     History {
         /// Folder ID.
         folder: String,
         /// Path within the folder.
         path: String,
         /// Make this version (`previous:…`, from the list) the file's content again.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "open")]
         restore: Option<String>,
+        /// Write a read-only copy of this version (`previous:…` or `conflict:…`) and print
+        /// where.
+        #[arg(long)]
+        open: Option<String>,
+    },
+    /// List files with conflicting versions waiting for a decision, in one folder or all.
+    Conflicts {
+        /// Folder ID; all folders if left out.
+        folder: Option<String>,
+    },
+    /// Decide a conflict: keep one version, or keep both.
+    Resolve {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder.
+        path: String,
+        /// The version to keep (`current` or `conflict:…`, from `tidefell conflicts`). The
+        /// others go to every device's recycle bin.
+        #[arg(
+            long,
+            required_unless_present = "keep_both",
+            conflicts_with = "keep_both"
+        )]
+        keep: Option<String>,
+        /// Keep the current version as the file, and each other version as a file of its own
+        /// beside it.
+        #[arg(long)]
+        keep_both: bool,
     },
     /// Add a new device to your user from the pairing code it shows. The daemon must hold
     /// your user key.
@@ -456,7 +484,59 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::History {
             folder,
             path,
+            open: Some(version),
+            ..
+        } => {
+            let opened = client
+                .open_version(&folder, &path, &version)
+                .await
+                .map_err(e)?;
+            print(json, &opened, |o| o.file.clone());
+        }
+        Command::Conflicts { folder } => {
+            let folders = match folder {
+                Some(folder) => vec![folder],
+                None => client
+                    .folders()
+                    .await
+                    .map_err(e)?
+                    .into_iter()
+                    .map(|f| f.id)
+                    .collect(),
+            };
+            let mut conflicts = Vec::new();
+            for folder in folders {
+                for file in client.files(&folder).await.map_err(e)? {
+                    if file.conflicts > 0 {
+                        let versions = client.versions(&folder, &file.path).await.map_err(e)?;
+                        conflicts.push(format::Conflict {
+                            folder: folder.clone(),
+                            path: file.path,
+                            versions,
+                        });
+                    }
+                }
+            }
+            print(json, &conflicts, |c| format::conflicts(c));
+        }
+        Command::Resolve {
+            folder,
+            path,
+            keep,
+            keep_both,
+        } => {
+            let keep = if keep_both {
+                "both".to_owned()
+            } else {
+                keep.unwrap_or_default()
+            };
+            client.resolve(&folder, &path, &keep).await.map_err(e)?;
+        }
+        Command::History {
+            folder,
+            path,
             restore: Some(version),
+            ..
         } => {
             client
                 .restore_version(&folder, &path, &version)
@@ -467,6 +547,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             folder,
             path,
             restore: None,
+            open: None,
         } => {
             print(
                 json,

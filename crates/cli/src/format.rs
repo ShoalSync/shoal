@@ -81,6 +81,9 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if let Some(note) = pinned(f) {
                 let _ = write!(out, "\n    {note}");
             }
+            if let Some(note) = conflict_note(f) {
+                let _ = write!(out, "\n    {note}");
+            }
             if let Some(reason) = &f.unavailable {
                 let _ = write!(out, "\n    unavailable, not syncing: {reason}");
             }
@@ -134,6 +137,15 @@ pub(crate) fn sync(f: &Folder) -> String {
 pub(crate) fn retention(f: &Folder) -> String {
     f.retention_days
         .map_or("forever".to_string(), |d| format!("for {d} days"))
+}
+
+fn conflict_note(f: &Folder) -> Option<String> {
+    (f.conflicts > 0).then(|| {
+        format!(
+            "{} file(s) with conflicts waiting for a decision: tidefell conflicts {}",
+            f.conflicts, f.id
+        )
+    })
 }
 
 /// A one-line summary of a folder's recycle bin on this device.
@@ -296,6 +308,7 @@ pub(crate) fn event(e: &Event) -> String {
         Event::FolderChanged { folder } => format!("folder changed    {folder}"),
         Event::FileUpdated { folder, path } => format!("file updated      {folder}  {path}"),
         Event::FileRemoved { folder, path } => format!("file removed      {folder}  {path}"),
+        Event::ConflictDetected { folder, path } => format!("conflict          {folder}  {path}"),
         Event::Crashed { message } => format!("engine stopped    {message}"),
     }
 }
@@ -308,6 +321,16 @@ pub(crate) fn versions(versions: &[Version]) -> String {
                 "current                    {}  {:>10}",
                 time(v.modified_ms),
                 size(v.size)
+            ),
+            VersionKind::Conflict => format!(
+                "{}  {}  {:>10}  conflicts, from {}",
+                v.id,
+                time(v.modified_ms),
+                size(v.size),
+                v.author_name
+                    .as_deref()
+                    .or(v.author.as_deref())
+                    .unwrap_or("another device")
             ),
             VersionKind::Previous => {
                 let expires = v.expires_ms.map_or("kept for good".to_owned(), |ms| {
@@ -324,6 +347,44 @@ pub(crate) fn versions(versions: &[Version]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A file with versions that conflict, for `tidefell conflicts`.
+#[derive(serde::Serialize)]
+pub(crate) struct Conflict {
+    pub(crate) folder: String,
+    pub(crate) path: String,
+    pub(crate) versions: Vec<Version>,
+}
+
+pub(crate) fn conflicts(conflicts: &[Conflict]) -> String {
+    if conflicts.is_empty() {
+        return "no conflicts".into();
+    }
+    conflicts
+        .iter()
+        .map(|c| {
+            let waiting: Vec<Version> = c
+                .versions
+                .iter()
+                .filter(|v| v.kind != VersionKind::Previous)
+                .cloned()
+                .collect();
+            format!(
+                "{} {}\n{}\n  decide with: tidefell resolve {} {:?} --keep <version> (or --keep-both)",
+                c.folder,
+                c.path,
+                versions(&waiting)
+                    .lines()
+                    .map(|l| format!("  {l}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                c.folder,
+                c.path
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 pub(crate) fn crashes(crashes: &[Crash]) -> String {
@@ -401,6 +462,7 @@ mod tests {
             unavailable: None,
             paused: false,
             pinned_bytes: 0,
+            conflicts: 0,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

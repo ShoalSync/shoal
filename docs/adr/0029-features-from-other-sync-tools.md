@@ -304,6 +304,27 @@ supersedes the conflict copy, which is neither recycled nor kept.
     renames, and they would now leave holes.
   - The ALPN stays `tidefell/sync/1` (ADR 0026). A device not yet upgraded reads a version with
     holes as one without, so on it the conflict copy is superseded as before, until it upgrades.
+- Step 9 decided, second part (resolving):
+  - Resolving writes one version that has seen every conflicting version. A replica that
+    stores a version replacing an undecided version with other content, where the new version
+    was made from more than that version's line (it, versions with its content, and deletes),
+    treats it as lost: it goes to that replica's recycle bin. An edit of one of the versions is
+    not a decision, and an edit made before the decision arrived does not stop the others from
+    being kept.
+  - A lost version is kept under an ID derived from its signed form, the same on every device,
+    and marked as a lost conflict in recycle-bin listings. Restoring it makes it a file of its
+    own named like keep both. Keep both creates the other versions under the same IDs, so no
+    device keeps them in the recycle bin too.
+  - The winner a keep replaces on disk goes to the recycle bin's storage, which serves its
+    content to other devices, rather than to version history.
+  - `open_version` writes a read-only copy of a previous or conflicting version into the
+    folder's reserved directory, fetching a conflicting one from peers.
+  - The API has `POST /v1/folders/{id}/versions/open` and `POST /v1/folders/{id}/resolve`,
+    `conflict:<id>` versions in `versions`, `ConflictDetected` in the event stream, and a
+    `conflicts` count on folders. The CLI has `tidefell conflicts`, `tidefell resolve` and
+    `tidefell history --open`. The web marks the folder and the file, and its conflict screen
+    lists each version with its device, time and size, opens it, and keeps one or both. The
+    Android notification and screen come with the `v0.12.0` pin.
 - **Not done:** conflict copies are not written to disk automatically, as Dropbox and Syncthing
   do: they would clutter every device, and apps could open the wrong file. Keep both gives the
   same result when it is wanted. The winner is still chosen by modification time while a

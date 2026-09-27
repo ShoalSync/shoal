@@ -53,11 +53,15 @@ pub(crate) struct Folder {
     /// A partial replica here, which can pin files (ADR 0029); their total size.
     pub(crate) partial: bool,
     pub(crate) pinned_size: String,
+    /// Files with conflicting versions waiting for a decision (ADR 0029).
+    pub(crate) conflicts: usize,
     pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
 }
 
 pub(crate) struct RecycledRow {
+    /// A version that lost a conflict, rather than a deleted file (ADR 0029).
+    pub(crate) conflict: bool,
     pub(crate) entry: String,
     pub(crate) path: String,
     pub(crate) size: String,
@@ -75,6 +79,29 @@ pub(crate) struct Recycle {
     pub(crate) name: String,
     pub(crate) notice: Option<String>,
     pub(crate) items: Vec<RecycledRow>,
+}
+
+pub(crate) struct ConflictRow {
+    pub(crate) current: bool,
+    pub(crate) id: String,
+    pub(crate) version_query: String,
+    pub(crate) device: String,
+    pub(crate) modified: String,
+    pub(crate) size: String,
+}
+
+/// A file's conflicting versions (ADR 0029).
+#[derive(Template)]
+#[template(path = "conflict.html")]
+pub(crate) struct Conflict {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) path_query: String,
+    pub(crate) versions: Vec<ConflictRow>,
 }
 
 pub(crate) struct AccountRow {

@@ -115,6 +115,8 @@ pub(crate) async fn materialize(
 ) -> Result<()> {
     let (root, writes, deletes) = {
         let mut state = handle.lock();
+        // Files already on disk as their current version correspond to it (ADR 0029).
+        state.catch_up_bases();
         // A send-only replica never applies other devices' changes to its files (ADR 0025).
         if state.config.sync.direction == Direction::SendOnly {
             return Ok(());
@@ -336,51 +338,9 @@ async fn write_file(
     root: &Path,
     write: &PendingWrite,
 ) -> Result<bool> {
-    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
+    let Some(manifest) = fetch_content(inner, node, handle, id, write).await? else {
         return Ok(false);
     };
-
-    let peers: Vec<DeviceId> = node
-        .peers()
-        .into_iter()
-        .filter(|p| p.shared_folders().contains(&id))
-        .map(|p| p.device())
-        .collect();
-    // Chunks already here, in the block store or in any file on disk, are not fetched.
-    let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
-    if manifest.chunks.iter().any(|c| !store_has(&c.hash)) {
-        inner.fetching.lock().unwrap().insert(manifest.content);
-        let source = Arc::new(PeerSource {
-            node: node.clone(),
-            folder: id,
-            inner: inner.clone(),
-        });
-        let download = fetch(
-            source,
-            &manifest,
-            &peers,
-            store_has,
-            Config::default(),
-            |hash, data| {
-                inner
-                    .store
-                    .lock()
-                    .unwrap()
-                    .put_verified(hash, &data)
-                    .map_err(|e| e.to_string())
-            },
-        );
-        // Pausing the folder stops the download: dropping it cancels the requests in flight.
-        let fetched = tokio::select! {
-            fetched = download => fetched.map_err(|e| e.to_string()),
-            () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
-        };
-        if let Err(e) = fetched {
-            inner.fetching.lock().unwrap().remove(&manifest.content);
-            debug!(path = %write.path, error = %e, "content not available yet");
-            return Ok(false);
-        }
-    }
     // Assembled below; the chunks stay in the block store until the next compaction.
     let _fetched = Fetching(inner, manifest.content);
 
@@ -431,7 +391,13 @@ async fn write_file(
     let mut placed = false;
     if let Some(existing) = state.local.get(&write.path).cloned() {
         if existing.content != write.content {
+            // A version that lost a conflict is kept for the recycle bin, which serves its
+            // content to other devices, rather than only as this device's history (ADR 0029).
+            let in_bin = state.meta.recycle_bin().iter().any(|r| {
+                matches!(r.version.kind, EntryKind::File { content, .. } if content == existing.content)
+            });
             let needed = existing.entry != write.entry
+                || in_bin
                 || state
                     .meta
                     .conflicts(&write.entry)
@@ -484,6 +450,115 @@ async fn write_file(
         }
     }
     Ok(true)
+}
+
+/// Writes the content of `version`, a file version that need not be current, to `dest` as a
+/// read-only file, fetching what is missing from connected peers (ADR 0029). Returns false if
+/// the content is not available.
+pub(crate) async fn write_copy(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    handle: &FolderHandle,
+    id: FolderId,
+    version: &tidefell_proto::sync::EntryVersion,
+    dest: &Path,
+) -> Result<bool> {
+    let EntryKind::File {
+        content,
+        size,
+        executable,
+    } = version.kind
+    else {
+        return Ok(false);
+    };
+    let write = PendingWrite {
+        entry: version.entry,
+        path: version.path.clone(),
+        content,
+        size,
+        executable,
+        modified_ms: version.modified_ms,
+        old_path: None,
+        base: VersionVector::new(),
+    };
+    let Some(manifest) = fetch_content(inner, node, handle, id, &write).await? else {
+        return Ok(false);
+    };
+    let _fetched = Fetching(inner, manifest.content);
+    let tmp = dest.with_extension("part");
+    match assemble(inner, handle, &manifest, &tmp, &write) {
+        Ok(true) => {}
+        Ok(false) => {
+            let _ = fs::remove_file(&tmp);
+            handle.lock().remove_manifest(&write.content);
+            return Ok(false);
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            return Err(e);
+        }
+    }
+    let mut permissions = fs::metadata(&tmp).map_err(io_err(&tmp))?.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&tmp, permissions).map_err(io_err(&tmp))?;
+    fs::rename(&tmp, dest).map_err(io_err(dest))?;
+    Ok(true)
+}
+
+/// Fetches the chunks of `write`'s content that are not here yet, and returns its manifest, or
+/// `None` if the content is not available from connected peers.
+async fn fetch_content(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    handle: &FolderHandle,
+    id: FolderId,
+    write: &PendingWrite,
+) -> Result<Option<Manifest>> {
+    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
+        return Ok(None);
+    };
+    let peers: Vec<DeviceId> = node
+        .peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&id))
+        .map(|p| p.device())
+        .collect();
+    // Chunks already here, in the block store or in any file on disk, are not fetched.
+    let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
+    if manifest.chunks.iter().any(|c| !store_has(&c.hash)) {
+        inner.fetching.lock().unwrap().insert(manifest.content);
+        let source = Arc::new(PeerSource {
+            node: node.clone(),
+            folder: id,
+            inner: inner.clone(),
+        });
+        let download = fetch(
+            source,
+            &manifest,
+            &peers,
+            store_has,
+            Config::default(),
+            |hash, data| {
+                inner
+                    .store
+                    .lock()
+                    .unwrap()
+                    .put_verified(hash, &data)
+                    .map_err(|e| e.to_string())
+            },
+        );
+        // Pausing the folder stops the download: dropping it cancels the requests in flight.
+        let fetched = tokio::select! {
+            fetched = download => fetched.map_err(|e| e.to_string()),
+            () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
+        };
+        if let Err(e) = fetched {
+            inner.fetching.lock().unwrap().remove(&manifest.content);
+            debug!(path = %write.path, error = %e, "content not available yet");
+            return Ok(None);
+        }
+    }
+    Ok(Some(manifest))
 }
 
 /// Forgets that a content is being downloaded when dropped.

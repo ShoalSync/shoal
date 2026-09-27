@@ -112,6 +112,9 @@ pub struct Folder {
     /// Total size of the files pinned on this partial replica; not counted against the budget.
     #[serde(default)]
     pub pinned_bytes: u64,
+    /// Files with versions that conflict with the current one, waiting for a decision.
+    #[serde(default)]
+    pub conflicts: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.
@@ -263,6 +266,10 @@ pub struct Recycled {
     /// restoring it puts it back here only.
     #[serde(default)]
     pub here_only: bool,
+    /// True if this is a version that lost when a conflict was resolved (ADR 0029). Restoring
+    /// it makes it a file of its own beside `path`.
+    #[serde(default)]
+    pub conflict: bool,
 }
 
 /// A peer with an active sync session.
@@ -319,6 +326,13 @@ pub enum Event {
     },
     /// A file was removed from disk.
     FileRemoved {
+        /// Folder ID.
+        folder: String,
+        /// File path.
+        path: String,
+    },
+    /// A file gained a version that conflicts with its current one (ADR 0029).
+    ConflictDetected {
         /// Folder ID.
         folder: String,
         /// File path.
@@ -440,6 +454,23 @@ pub struct VersionRequest {
     pub version: Option<String>,
 }
 
+/// Decides a conflict on a file (ADR 0029).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ResolveRequest {
+    /// Path within the folder.
+    pub path: String,
+    /// The version to keep, `current` or `conflict:<id>`, or `both` to keep the current version
+    /// as the file and each other version as a file of its own beside it.
+    pub keep: String,
+}
+
+/// A read-only copy of a version, on the daemon's machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct OpenedVersion {
+    /// The copy's path.
+    pub file: String,
+}
+
 /// Which kind of version a [`Version`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -448,12 +479,14 @@ pub enum VersionKind {
     Current,
     /// A version kept on this device after it was replaced (ADR 0029).
     Previous,
+    /// A version made apart from the current one, waiting for a decision (ADR 0029).
+    Conflict,
 }
 
 /// One version of a file (ADR 0029).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Version {
-    /// Identifies the version: `current`, or `previous:<id>`.
+    /// Identifies the version: `current`, `previous:<id>` or `conflict:<id>`.
     pub id: String,
     /// Which kind it is.
     pub kind: VersionKind,
@@ -461,9 +494,12 @@ pub struct Version {
     pub size: u64,
     /// Modification time, in milliseconds since the Unix epoch.
     pub modified_ms: i64,
-    /// For the current version, the device that made it.
+    /// For the current version and conflicts, the device that made it.
     #[serde(default)]
     pub author: Option<String>,
+    /// That device's name, as far as the daemon knows it.
+    #[serde(default)]
+    pub author_name: Option<String>,
     /// For a previous version, when this device kept it.
     #[serde(default)]
     pub kept_ms: Option<i64>,

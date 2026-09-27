@@ -41,6 +41,8 @@ pub struct FolderInfo {
     /// Total size of the pinned files on a partial replica (ADR 0029), on disk or still to be
     /// fetched; they do not count against the budget.
     pub pinned_bytes: u64,
+    /// Files with versions that conflict with the current one, waiting for a decision (ADR 0029).
+    pub conflicts: usize,
 }
 
 /// A summary of one replica's recycle bin.
@@ -112,6 +114,9 @@ pub struct RecycledInfo {
     /// have it, and restoring it puts it back here only. Otherwise it was deleted everywhere,
     /// and restoring it restores it everywhere.
     pub here_only: bool,
+    /// True if this is a version that lost when a conflict was resolved, rather than a deleted
+    /// file (ADR 0029). Restoring it makes it a file of its own beside `path`.
+    pub conflict: bool,
 }
 
 /// A connected peer.
@@ -150,6 +155,14 @@ pub enum Event {
         /// The file's path.
         path: String,
     },
+    /// A file gained a version that conflicts with its current one, and the user has to decide
+    /// which to keep (ADR 0029).
+    ConflictDetected {
+        /// The folder.
+        folder: FolderId,
+        /// The file's path.
+        path: String,
+    },
     /// A task panicked and the engine stopped working (ADR 0030).
     Crashed(String),
 }
@@ -161,13 +174,16 @@ pub enum VersionKind {
     Current,
     /// A version kept on this device after the engine replaced it (ADR 0029).
     Previous,
+    /// A version made apart from the current one, waiting for the user to decide (ADR 0029).
+    Conflict,
 }
 
 /// One version of a file (ADR 0029).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VersionInfo {
-    /// Identifies the version for [`crate::Engine::restore_version`]: `current`, or
-    /// `previous:<id>`.
+    /// Identifies the version for [`crate::Engine::restore_version`],
+    /// [`crate::Engine::open_version`] and [`crate::Engine::resolve`]: `current`,
+    /// `previous:<id>` or `conflict:<id>`.
     pub id: String,
     /// Which kind it is.
     pub kind: VersionKind,
@@ -175,8 +191,10 @@ pub struct VersionInfo {
     pub size: u64,
     /// Modification time, in milliseconds since the Unix epoch.
     pub modified_ms: i64,
-    /// For the current version, the device that made it.
+    /// For the current version and conflicts, the device that made it.
     pub author: Option<DeviceId>,
+    /// That device's name, as far as this device knows it.
+    pub author_name: Option<String>,
     /// For a previous version, when this device kept it.
     pub kept_ms: Option<i64>,
     /// For a previous version, when it expires, if the folder's retention is not forever.

@@ -65,6 +65,11 @@ impl Engine {
                         })
                         .map(|(_, size)| size)
                         .sum(),
+                    conflicts: state
+                        .meta
+                        .entries()
+                        .filter(|v| state.meta.open_conflicts(&v.entry).next().is_some())
+                        .count(),
                     paused: self
                         .inner
                         .paused
