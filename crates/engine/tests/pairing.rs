@@ -40,6 +40,7 @@ async fn a_new_device_pairs_then_syncs() {
             address_lookup: false,
             local_discovery: false,
             watch: false,
+            limits: Default::default(),
             bind: localhost(),
             peers: Vec::new(),
             folders: vec![FolderConfig {
@@ -115,6 +116,7 @@ async fn a_new_device_pairs_then_syncs() {
             address_lookup: false,
             local_discovery: false,
             watch: false,
+            limits: Default::default(),
             bind: localhost(),
             peers: Vec::new(),
             folders: Vec::new(),

@@ -188,6 +188,12 @@ fn blobs_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("replica-request", BlobsMessage::ReplicaRequest { folder }),
         ("replica", BlobsMessage::Replica { full: true }),
+        (
+            "busy",
+            BlobsMessage::Busy {
+                retry_after_ms: 2500,
+            },
+        ),
     ];
     messages
         .into_iter()

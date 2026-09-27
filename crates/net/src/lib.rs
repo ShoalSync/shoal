@@ -8,6 +8,7 @@
 mod backend;
 mod blobs;
 mod frame_io;
+mod limits;
 mod node;
 mod pair;
 mod sync;
@@ -15,6 +16,7 @@ mod sync;
 pub use backend::{Backend, IndexPage};
 pub use blobs::ChunkResult;
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
+pub use limits::{Limits, MIN_BYTES_PER_SEC};
 pub use node::{Node, NodeConfig, PeerHandle, RelayConfig};
 pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
 

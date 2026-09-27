@@ -17,6 +17,7 @@ use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
+use crate::limits::{Limits, RateLimiter};
 use crate::sync::{self, Peer};
 use crate::{Error, Result};
 
@@ -45,6 +46,8 @@ pub struct NodeConfig {
     pub address_lookup: bool,
     /// Announce and find known devices' addresses on the local network with mDNS.
     pub local_discovery: bool,
+    /// Upload and download limits for file content (ADR 0029).
+    pub limits: Limits,
     /// Local socket address to bind; `None` picks one.
     pub bind: Option<SocketAddr>,
 }
@@ -191,6 +194,7 @@ pub struct Node {
     backend: Arc<dyn Backend>,
     peers: Peers,
     blob_conns: Mutex<HashMap<EndpointId, Connection>>,
+    limiter: Arc<RateLimiter>,
 }
 
 impl std::fmt::Debug for Node {
@@ -208,6 +212,7 @@ impl Node {
             bind_endpoint(&config, vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()]).await?;
 
         let peers: Peers = Arc::default();
+        let limiter = Arc::new(RateLimiter::new(config.limits));
         let router = Router::builder(endpoint.clone())
             .accept(
                 ALPN_SYNC_V1,
@@ -220,6 +225,7 @@ impl Node {
                 ALPN_BLOBS_V1,
                 BlobsProtocol {
                     backend: backend.clone(),
+                    limiter: limiter.clone(),
                 },
             )
             .spawn();
@@ -229,7 +235,19 @@ impl Node {
             backend,
             peers,
             blob_conns: Mutex::default(),
+            limiter,
         })
+    }
+
+    /// The upload and download limits in force.
+    pub fn limits(&self) -> Limits {
+        self.limiter.limits()
+    }
+
+    /// Changes the upload and download limits. Rates below [`crate::MIN_BYTES_PER_SEC`] are
+    /// raised to it.
+    pub fn set_limits(&self, limits: Limits) {
+        self.limiter.set(limits);
     }
 
     /// This device's ID (the endpoint's public key).
@@ -294,7 +312,14 @@ impl Node {
         chunks: &[ChunkHash],
     ) -> Result<Vec<ChunkResult>> {
         let conn = self.blob_conn(peer.into()).await?;
-        blobs::fetch_chunks(&conn, self.backend.certificate(), folder, chunks).await
+        blobs::fetch_chunks(
+            &conn,
+            &self.limiter,
+            self.backend.certificate(),
+            folder,
+            chunks,
+        )
+        .await
     }
 
     /// Asks a peer which chunks of `content` it holds: `(chunk_count, bitmap)`.

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_fetch::{fetch, ChunkSource, Config, FetchError};
+use tidefell_fetch::{fetch, ChunkSource, Config, FetchError, Fetched};
 use tidefell_proto::{ChunkHash, ChunkRef, ContentHash, Manifest};
 
 fn h(n: u8) -> ChunkHash {
@@ -24,6 +24,8 @@ struct Sim {
     failures: HashMap<&'static str, AtomicU32>,
     /// Peers that claim chunks but answer Missing.
     liars: Vec<&'static str>,
+    /// Requests a peer answers with one chunk and then Busy.
+    busy: HashMap<&'static str, AtomicU32>,
     requests: Mutex<BTreeMap<&'static str, usize>>,
 }
 
@@ -38,11 +40,7 @@ impl ChunkSource for Sim {
         Ok(self.holdings.get(peer).cloned().unwrap_or_default())
     }
 
-    async fn fetch(
-        &self,
-        peer: &&'static str,
-        chunks: &[ChunkHash],
-    ) -> Result<Vec<(ChunkHash, Vec<u8>)>, String> {
+    async fn fetch(&self, peer: &&'static str, chunks: &[ChunkHash]) -> Result<Fetched, String> {
         *self.requests.lock().unwrap().entry(peer).or_default() += 1;
         tokio::time::sleep(Duration::from_millis(10)).await;
         if let Some(left) = self.failures.get(peer) {
@@ -52,14 +50,28 @@ impl ChunkSource for Sim {
             }
         }
         if self.liars.contains(peer) {
-            return Ok(Vec::new());
+            return Ok(Fetched::default());
         }
         let held = &self.holdings[peer];
-        Ok(chunks
+        let mut sent: Vec<(ChunkHash, Vec<u8>)> = chunks
             .iter()
             .filter(|c| held.contains(c))
             .map(|c| (*c, c.0[..1].to_vec()))
-            .collect())
+            .collect();
+        if let Some(left) = self.busy.get(peer) {
+            if left.load(Ordering::SeqCst) > 0 {
+                left.fetch_sub(1, Ordering::SeqCst);
+                sent.truncate(1);
+                return Ok(Fetched {
+                    chunks: sent,
+                    busy_for: Some(Duration::from_secs(1)),
+                });
+            }
+        }
+        Ok(Fetched {
+            chunks: sent,
+            busy_for: None,
+        })
     }
 }
 
@@ -185,4 +197,33 @@ async fn nothing_to_do_when_complete() {
     .await
     .unwrap();
     assert_eq!(report.chunks, 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_busy_peer_is_asked_again_later_not_dropped() {
+    // More Busy answers than the failures that would drop a peer.
+    let mut sim = Sim::default();
+    sim.holdings.insert("a", (1..=10).map(h).collect());
+    sim.busy.insert("a", AtomicU32::new(6));
+    let sim = Arc::new(sim);
+    let mut got = Vec::new();
+    let start = tokio::time::Instant::now();
+    let report = fetch(
+        sim.clone(),
+        &manifest(10),
+        &["a"],
+        |_| false,
+        Config::default(),
+        |hash, _| {
+            got.push(hash);
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 10);
+    got.sort();
+    assert_eq!(got, (1..=10).map(h).collect::<Vec<_>>());
+    // Busy answers made the fetcher wait before asking again, instead of failing.
+    assert!(start.elapsed() >= Duration::from_secs(2));
 }

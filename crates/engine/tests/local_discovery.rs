@@ -24,6 +24,7 @@ async fn start(dir: &Path, key: &DeviceKey, user: &UserKey, peers: Vec<PeerAddr>
         address_lookup: false,
         local_discovery: true,
         watch: false,
+        limits: Default::default(),
         bind: Some(SocketAddr::from(([0, 0, 0, 0], 0))),
         peers,
         folders: vec![FolderConfig {

@@ -46,6 +46,18 @@ enum Command {
         #[arg(long)]
         dismiss: bool,
     },
+    /// Show the upload and download limits, or change them until the daemon restarts.
+    Limits {
+        /// Most KiB/s to send; 0 for no limit.
+        #[arg(long)]
+        upload: Option<u64>,
+        /// Most KiB/s to receive; 0 for no limit.
+        #[arg(long)]
+        download: Option<u64>,
+        /// Also limit traffic to devices on the local network.
+        #[arg(long)]
+        limit_local: Option<bool>,
+    },
     /// Show the daemon's log level, or change it until the daemon restarts.
     LogLevel {
         /// A level filter, such as `debug` or `info,tidefell_net=debug`.
@@ -430,6 +442,27 @@ async fn run(cli: Cli) -> Result<(), String> {
                 &client.versions(&folder, &path).await.map_err(e)?,
                 |v| format::versions(v),
             );
+        }
+        Command::Limits {
+            upload,
+            download,
+            limit_local,
+        } => {
+            let mut limits = client.limits().await.map_err(e)?;
+            let rate = |kib: u64| (kib > 0).then_some(kib);
+            if upload.is_some() || download.is_some() || limit_local.is_some() {
+                if let Some(kib) = upload {
+                    limits.upload_kib_per_sec = rate(kib);
+                }
+                if let Some(kib) = download {
+                    limits.download_kib_per_sec = rate(kib);
+                }
+                if let Some(on) = limit_local {
+                    limits.limit_local = on;
+                }
+                limits = client.set_limits(&limits).await.map_err(e)?;
+            }
+            print(json, &limits, format::limits);
         }
         Command::LogLevel { level } => {
             let settings = match level {

@@ -85,4 +85,10 @@ pub enum BlobsMessage {
         /// True if the responder keeps every file of the folder, false for a partial replica.
         full: bool,
     },
+    /// The responder is at its upload limit (ADR 0029). It sends no more chunks for this
+    /// request; ask again for the rest after `retry_after_ms`, or ask another peer.
+    Busy {
+        /// Milliseconds to wait before asking this responder again.
+        retry_after_ms: u32,
+    },
 }

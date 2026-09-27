@@ -7,7 +7,7 @@ use std::time::Duration;
 use tidefell_engine::{Engine, EngineConfig, RelayConfig};
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_sdk::types::{
-    Direction, ErrorKind, Event, KnownPeer, LocalDeletes, NewFolder, SyncOptions,
+    Direction, ErrorKind, Event, KnownPeer, Limits, LocalDeletes, NewFolder, SyncOptions,
 };
 use tidefell_sdk::{Client, Error};
 
@@ -42,6 +42,7 @@ async fn control_api_end_to_end() {
                 address_lookup: false,
                 local_discovery: false,
                 watch: false,
+                limits: Default::default(),
                 bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
                 peers: Vec::new(),
                 folders: Vec::new(),
@@ -70,6 +71,22 @@ async fn control_api_end_to_end() {
             "control socket is private to the daemon user"
         );
     }
+
+    // Limits change until restart; below 64 KiB/s they are raised to it.
+    assert_eq!(client.limits().await.unwrap(), Limits::default());
+    let set = client
+        .set_limits(&Limits {
+            upload_kib_per_sec: Some(16),
+            download_kib_per_sec: Some(4096),
+            limit_local: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(set.upload_kib_per_sec, Some(64));
+    assert_eq!(set.download_kib_per_sec, Some(4096));
+    assert_eq!(client.limits().await.unwrap(), set);
+    assert_eq!(engine.limits().upload, Some(64 * 1024));
+    client.set_limits(&Limits::default()).await.unwrap();
 
     let status = client.status().await.unwrap();
     assert_eq!(status.device, key.id().to_string());
@@ -284,6 +301,7 @@ async fn control_api_end_to_end() {
         "/v1/log/problems",
         "/v1/crashes",
         "/v1/crashes/dismiss",
+        "/v1/limits",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }
@@ -306,6 +324,7 @@ async fn logging_through_the_api() {
                 address_lookup: false,
                 local_discovery: false,
                 watch: false,
+                limits: Default::default(),
                 bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
                 peers: Vec::new(),
                 folders: Vec::new(),

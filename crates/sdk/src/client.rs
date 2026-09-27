@@ -11,8 +11,8 @@ use serde::Serialize;
 
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
-    Folder, KnownPeer, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing, Peer,
-    Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version,
+    Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing,
+    Peer, Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version,
     VersionRequest,
 };
 
@@ -168,6 +168,16 @@ impl Client {
     /// The daemon's most recent warnings and errors, oldest first.
     pub async fn problems(&self) -> Result<Vec<Problem>, Error> {
         self.get("/v1/log/problems").await
+    }
+
+    /// The daemon's upload and download limits.
+    pub async fn limits(&self) -> Result<Limits, Error> {
+        self.get("/v1/limits").await
+    }
+
+    /// Changes the daemon's upload and download limits until it restarts.
+    pub async fn set_limits(&self, limits: &Limits) -> Result<Limits, Error> {
+        self.call(Method::PUT, "/v1/limits", Some(limits)).await
     }
 
     /// Crashes recorded on the daemon's device, oldest first.

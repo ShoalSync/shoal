@@ -130,6 +130,7 @@ pub async fn start_pairing(
             relay,
             address_lookup,
             local_discovery,
+            limits: Default::default(),
             bind,
         },
         name.to_owned(),

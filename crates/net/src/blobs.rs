@@ -1,6 +1,7 @@
 //! `tidefell/blobs/1`: chunk and availability requests. See `specs/blobs-v1.md`.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
@@ -9,6 +10,7 @@ use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::{ChunkHash, ContentHash, FolderId, Signed};
 
 use crate::backend::Backend;
+use crate::limits::RateLimiter;
 use crate::sync::verify_peer;
 use crate::{frame_io, Error, Result};
 
@@ -19,12 +21,16 @@ pub enum ChunkResult {
     Found(ChunkHash, Vec<u8>),
     /// The peer does not hold the chunk.
     Missing(ChunkHash),
+    /// The peer is at its upload limit and sent none of the chunks that follow in the request;
+    /// ask again after this long, or ask another peer (ADR 0029). Always last.
+    Busy(Duration),
 }
 
 /// Serves blobs/1 requests from a [`Backend`].
 #[derive(Clone)]
 pub(crate) struct BlobsProtocol {
     pub(crate) backend: Arc<dyn Backend>,
+    pub(crate) limiter: Arc<RateLimiter>,
 }
 
 impl std::fmt::Debug for BlobsProtocol {
@@ -37,9 +43,10 @@ impl ProtocolHandler for BlobsProtocol {
     async fn accept(&self, conn: Connection) -> std::result::Result<(), AcceptError> {
         while let Ok((send, recv)) = conn.accept_bi().await {
             let backend = self.backend.clone();
+            let limiter = self.limiter.clone();
             let conn = conn.clone();
             tokio::spawn(async move {
-                if let Err(e) = serve_stream(&conn, backend.as_ref(), send, recv).await {
+                if let Err(e) = serve_stream(&conn, backend.as_ref(), &limiter, send, recv).await {
                     tracing::debug!(error = %e, "blobs request failed");
                 }
             });
@@ -51,6 +58,7 @@ impl ProtocolHandler for BlobsProtocol {
 async fn serve_stream(
     conn: &Connection,
     backend: &dyn Backend,
+    limiter: &RateLimiter,
     mut send: SendStream,
     mut recv: RecvStream,
 ) -> Result<()> {
@@ -75,8 +83,28 @@ async fn serve_stream(
                 return reject(&mut send, BlobsErrorCode::NotAMember).await;
             }
             for hash in chunks {
+                if let Err(retry_after) = limiter.upload_busy(conn) {
+                    let retry_after_ms = u32::try_from(retry_after.as_millis()).unwrap_or(u32::MAX);
+                    frame_io::write(&mut send, &BlobsMessage::Busy { retry_after_ms }).await?;
+                    break;
+                }
                 let reply = match backend.chunk(&folder, &hash) {
-                    Some(data) => BlobsMessage::Chunk { hash, data },
+                    Some(data) => match limiter.upload(conn, data.len()) {
+                        Ok(wait) => {
+                            if !wait.is_zero() {
+                                tokio::time::sleep(wait).await;
+                            }
+                            BlobsMessage::Chunk { hash, data }
+                        }
+                        // Sending more would miss the requester's deadline: stop here.
+                        Err(retry_after) => {
+                            let retry_after_ms =
+                                u32::try_from(retry_after.as_millis()).unwrap_or(u32::MAX);
+                            frame_io::write(&mut send, &BlobsMessage::Busy { retry_after_ms })
+                                .await?;
+                            break;
+                        }
+                    },
                     None => BlobsMessage::Missing { hash },
                 };
                 frame_io::write(&mut send, &reply).await?;
@@ -150,6 +178,7 @@ async fn open_stream(
 /// Requests chunks. Every returned chunk has been checked against its hash.
 pub(crate) async fn fetch_chunks(
     conn: &Connection,
+    limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,
     chunks: &[ChunkHash],
@@ -175,7 +204,18 @@ pub(crate) async fn fetch_chunks(
                 if blake3::hash(&data).as_bytes() != hash.as_bytes() {
                     return Err(Error::Corrupt(hash));
                 }
+                // Waiting before the next read lets flow control slow the sender down.
+                let wait = limiter.download(conn, data.len());
                 results.push(ChunkResult::Found(hash, data));
+                if !wait.is_zero() {
+                    tokio::time::sleep(wait).await;
+                }
+            }
+            BlobsMessage::Busy { retry_after_ms } => {
+                results.push(ChunkResult::Busy(Duration::from_millis(
+                    retry_after_ms.into(),
+                )));
+                return Ok(results);
             }
             BlobsMessage::Missing { hash } if hash == *expected => {
                 results.push(ChunkResult::Missing(hash));

@@ -220,6 +220,17 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
         }
     }
 
+    /// `peer` was at its upload limit and did not send `chunks` (ADR 0029). They return to the
+    /// queue, and the peer is asked again no sooner than `until`, without counting a failure.
+    pub fn busy(&mut self, peer: &P, chunks: &[ChunkHash], until: Instant) {
+        for hash in chunks {
+            self.release(peer, hash);
+        }
+        if let Some(state) = self.peers.get_mut(peer) {
+            state.available_at = Some(state.available_at.map_or(until, |at| at.max(until)));
+        }
+    }
+
     /// A request to `peer` failed at `now`. Its chunks return to the queue and the peer backs
     /// off, or is dropped after too many consecutive failures.
     pub fn failed(&mut self, peer: &P, chunks: &[ChunkHash], now: Instant) {

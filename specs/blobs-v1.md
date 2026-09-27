@@ -41,6 +41,7 @@ data.
 | 6 | `Error` | `code: BlobsErrorCode` |
 | 7 | `ReplicaRequest` | `folder: FolderId` |
 | 8 | `Replica` | `full: bool` |
+| 9 | `Busy` | `retry_after_ms: u32` |
 
 `BlobsErrorCode` variants: `0 NotAMember`, `1 UnknownFolder`, `2 TooManyChunks`,
 `3 ProtocolViolation`.
@@ -50,6 +51,14 @@ data.
 **Chunks.** Requester: `Hello`, `Request`. Responder: for each requested hash, in request order,
 either `Chunk` or `Missing`; or a single `Error`. The requester hashes each `Chunk.data` with
 BLAKE3 and discards it, and treats the peer as faulty, if it does not equal `hash`.
+
+A responder with an upload limit may send `Busy` in place of any `Chunk` or `Missing`, and then
+closes the stream: it serves no more of this request. The requester keeps the chunks it already
+received, and asks for the rest from another peer, or from this one no sooner than
+`retry_after_ms` later. `Busy` is not a failure and says nothing about which chunks the
+responder holds. It keeps every chunk within the requester's deadline even when the responder
+throttles its uploads (ADR 0029). `Busy` was added to blobs/1 after its first release. A
+requester from before then cannot decode it, and handles it like any failed request.
 
 **Availability.** Requester: `Hello`, `AvailabilityRequest`. Responder: `Availability` or
 `Error`. `bitmap` has `ceil(chunk_count / 8)` bytes; bit `i` of byte `i / 8` (least significant

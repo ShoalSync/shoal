@@ -7,7 +7,9 @@ use std::time::Duration;
 
 use tidefell_identity::{DeviceKey, FolderMembers, UserKey};
 use tidefell_meta::{Folder, Retention};
-use tidefell_net::{Backend, ChunkResult, IndexPage, Node, NodeConfig, RelayConfig};
+use tidefell_net::{
+    Backend, ChunkResult, IndexPage, Limits, Node, NodeConfig, RelayConfig, MIN_BYTES_PER_SEC,
+};
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::sync::{EntryKind, EntryVersion};
 use tidefell_proto::{
@@ -127,6 +129,7 @@ impl TestBackend {
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,
+            limits: Default::default(),
             bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
         }
     }
@@ -379,6 +382,7 @@ fn new_device_config(seed: u8) -> NodeConfig {
         relay: RelayConfig::Disabled,
         address_lookup: false,
         local_discovery: false,
+        limits: Default::default(),
         bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
     }
 }
@@ -572,4 +576,146 @@ async fn a_peer_that_never_answers_cannot_hold_a_connect() {
     accepting.abort();
     node.shutdown().await;
     silent.close().await;
+}
+
+/// `count` files of `size` bytes of distinct data on `backend`, one chunk each; their hashes.
+fn chunky_files(backend: &TestBackend, count: u8, size: usize) -> Vec<ChunkHash> {
+    (0..count)
+        .map(|n| {
+            let data: Vec<u8> = (0..size).map(|i| (i as u8) ^ n.wrapping_mul(31)).collect();
+            backend.write_file(n + 1, &format!("f{n}.bin"), &data);
+            ChunkHash(*blake3::hash(&data).as_bytes())
+        })
+        .collect()
+}
+
+fn limited(backend: &TestBackend, limits: Limits) -> NodeConfig {
+    NodeConfig {
+        limits,
+        ..backend.config()
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sender_over_its_upload_limit_answers_busy() {
+    let alice = UserKey::from_seed([110; 32]);
+    let a = TestBackend::new(1, &alice, &[&alice]);
+    let b = TestBackend::new(2, &alice, &[&alice]);
+    // Four requests of 256 KiB chunks at the lowest limit queue 16 seconds of sending at once,
+    // more than the backlog may hold.
+    let chunks = chunky_files(&a, 12, 256 * 1024);
+    let limits = Limits {
+        upload: Some(MIN_BYTES_PER_SEC),
+        download: None,
+        // Loopback is local, which is otherwise not limited.
+        limit_local: true,
+    };
+    let node_a = Node::spawn(limited(&a, limits), a.clone()).await.unwrap();
+    let node_b = Node::spawn(b.config(), b.clone()).await.unwrap();
+    assert_eq!(node_a.limits(), limits);
+
+    // A single request is served chunk by chunk, each within its deadline. Several at once
+    // build a backlog the sender cannot clear in time, so it answers the rest with Busy.
+    let fetch = |group: &'static [usize]| {
+        let wanted: Vec<ChunkHash> = group.iter().map(|&i| chunks[i]).collect();
+        let (node_b, addr) = (&node_b, node_a.addr());
+        async move { node_b.fetch_chunks(addr, FOLDER, &wanted).await.unwrap() }
+    };
+    let (r1, r2, r3, r4) = tokio::join!(
+        fetch(&[0, 1, 2]),
+        fetch(&[3, 4, 5]),
+        fetch(&[6, 7, 8]),
+        fetch(&[9, 10, 11])
+    );
+    let results: Vec<ChunkResult> = [r1, r2, r3, r4].concat();
+    let found = results
+        .iter()
+        .filter(|r| matches!(r, ChunkResult::Found(..)))
+        .count();
+    let busy = results
+        .iter()
+        .filter(|r| matches!(r, ChunkResult::Busy(wait) if !wait.is_zero()))
+        .count();
+    assert!(
+        busy >= 1,
+        "no request was told the sender is busy; {found} found"
+    );
+    assert!(
+        (1..12).contains(&found),
+        "sent {found} before becoming busy"
+    );
+
+    // Without a limit, everything comes at once.
+    node_a.set_limits(Limits::default());
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let results = node_b
+        .fetch_chunks(node_a.addr(), FOLDER, &chunks)
+        .await
+        .unwrap();
+    assert!(results.iter().all(|r| matches!(r, ChunkResult::Found(..))));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_receiver_paces_its_downloads() {
+    let alice = UserKey::from_seed([111; 32]);
+    let a = TestBackend::new(1, &alice, &[&alice]);
+    let b = TestBackend::new(2, &alice, &[&alice]);
+    let chunks = chunky_files(&a, 3, 128 * 1024);
+    let node_a = Node::spawn(a.config(), a.clone()).await.unwrap();
+    let limits = Limits {
+        upload: None,
+        download: Some(MIN_BYTES_PER_SEC),
+        limit_local: true,
+    };
+    let node_b = Node::spawn(limited(&b, limits), b.clone()).await.unwrap();
+    let start = std::time::Instant::now();
+    let results = node_b
+        .fetch_chunks(node_a.addr(), FOLDER, &chunks)
+        .await
+        .unwrap();
+    assert!(results.iter().all(|r| matches!(r, ChunkResult::Found(..))));
+    // 384 KiB at 64 KiB/s: the reads after the first two chunks wait about four seconds.
+    assert!(
+        start.elapsed() >= Duration::from_secs(3),
+        "{:?}",
+        start.elapsed()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn concurrent_requests_to_a_limited_sender_never_time_out() {
+    let alice = UserKey::from_seed([112; 32]);
+    let a = TestBackend::new(1, &alice, &[&alice]);
+    let b = TestBackend::new(2, &alice, &[&alice]);
+    let chunks = chunky_files(&a, 12, 256 * 1024);
+    let limits = Limits {
+        upload: Some(MIN_BYTES_PER_SEC),
+        download: None,
+        limit_local: true,
+    };
+    let node_a = Node::spawn(limited(&a, limits), a.clone()).await.unwrap();
+    let node_b = Arc::new(Node::spawn(b.config(), b.clone()).await.unwrap());
+    // Twelve single-chunk requests at once: the sender admits what it can send in time and
+    // turns the rest away, so every request ends in a clean answer, none in a timeout.
+    let mut tasks = tokio::task::JoinSet::new();
+    for hash in chunks {
+        let (node_b, addr) = (node_b.clone(), node_a.addr());
+        tasks.spawn(async move { node_b.fetch_chunks(addr, FOLDER, &[hash]).await });
+    }
+    let (mut found, mut busy) = (0, 0);
+    while let Some(result) = tasks.join_next().await {
+        match result
+            .unwrap()
+            .expect("no request may fail or time out")
+            .as_slice()
+        {
+            [ChunkResult::Found(..)] => found += 1,
+            [ChunkResult::Busy(wait)] => {
+                assert!(*wait >= Duration::from_secs(1));
+                busy += 1;
+            }
+            other => panic!("unexpected answer: {} results", other.len()),
+        }
+    }
+    assert!(found >= 1 && busy >= 1, "found {found}, busy {busy}");
 }

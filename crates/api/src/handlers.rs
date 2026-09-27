@@ -17,9 +17,9 @@ use tidefell_engine::{
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
-    File, Folder, KnownPeer, LogLevel, LogSettings, Mode, NewFolder, NewMember, PairRequest,
-    Pairing, Peer, Problem, RecycleBinSummary, Recycled, RemoveHereRequest, RetentionUpdate,
-    Status, SyncOptions, Version, VersionKind, VersionRequest,
+    File, Folder, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
+    PairRequest, Pairing, Peer, Problem, RecycleBinSummary, Recycled, RemoveHereRequest,
+    RetentionUpdate, Status, SyncOptions, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -70,7 +70,9 @@ type AppState = State<Arc<Engine>>;
         set_log_level,
         problems,
         crashes,
-        dismiss_crashes
+        dismiss_crashes,
+        limits,
+        set_limits
     ),
     components(schemas(
         Status,
@@ -100,7 +102,8 @@ type AppState = State<Arc<Engine>>;
         Crash,
         Version,
         VersionKind,
-        VersionRequest
+        VersionRequest,
+        Limits
     ))
 )]
 pub struct ApiDoc;
@@ -703,4 +706,35 @@ pub(crate) async fn dismiss_crashes(State(engine): AppState) -> ApiResult<Status
         )
     })?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+fn limits_view(l: tidefell_engine::Limits) -> Limits {
+    Limits {
+        upload_kib_per_sec: l.upload.map(|b| b / 1024),
+        download_kib_per_sec: l.download.map(|b| b / 1024),
+        limit_local: l.limit_local,
+    }
+}
+
+/// The upload and download limits in force.
+#[utoipa::path(get, path = "/v1/limits", tag = "device",
+    responses((status = 200, body = Limits)))]
+pub(crate) async fn limits(State(engine): AppState) -> Json<Limits> {
+    Json(limits_view(engine.limits()))
+}
+
+/// Changes the upload and download limits until the daemon restarts. Limits below 64 KiB/s are
+/// raised to it.
+#[utoipa::path(put, path = "/v1/limits", tag = "device", request_body = Limits,
+    responses((status = 200, body = Limits)))]
+pub(crate) async fn set_limits(
+    State(engine): AppState,
+    Json(limits): Json<Limits>,
+) -> Json<Limits> {
+    engine.set_limits(tidefell_engine::Limits {
+        upload: limits.upload_kib_per_sec.map(|k| k * 1024),
+        download: limits.download_kib_per_sec.map(|k| k * 1024),
+        limit_local: limits.limit_local,
+    });
+    Json(limits_view(engine.limits()))
 }

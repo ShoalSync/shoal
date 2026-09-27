@@ -6,6 +6,11 @@ data_dir = "/var/lib/tidefell"
 # every `scan_interval_secs`.
 watch = true
 
+# [limits]
+# upload_kib_per_sec = 2048      # unlimited if unset; at least 64
+# download_kib_per_sec = 8192
+# limit_local = false            # traffic to devices on the local network is not limited
+
 [log]
 # "info", "debug", or per module such as "info,tidefell_net=debug". RUST_LOG overrides it.
 level = "info"

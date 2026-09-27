@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tidefell_meta::Retention;
-use tidefell_net::{RelayConfig, RelayUrl};
+use tidefell_net::{Limits, RelayConfig, RelayUrl};
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
 /// How much of a folder a replica keeps.
@@ -145,6 +145,8 @@ pub struct EngineConfig {
     /// Watch folders for changes, with a full scan hourly, instead of scanning each folder on
     /// its interval (ADR 0029). Folders that cannot be watched are scanned on their interval.
     pub watch: bool,
+    /// Upload and download limits for file content (ADR 0029).
+    pub limits: Limits,
     /// Local socket to bind; `None` picks one.
     pub bind: Option<SocketAddr>,
     /// Peers to keep connected.

@@ -39,6 +39,10 @@
     {
       "frame": "020801",
       "name": "replica"
+    },
+    {
+      "frame": "0309c413",
+      "name": "busy"
     }
   ]
 }

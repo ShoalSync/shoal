@@ -165,6 +165,30 @@ by amending this ADR.
   app, and stays paused across restarts. A paused folder still scans, so local changes are
   recorded, but it transfers nothing.
 - Time-of-day schedules are left for later.
+- Step 6 decided, for limits:
+  - **What is limited.** File content only: blobs/1 chunks. Indexes and manifests are small
+    next to content and are not held back.
+  - **One bucket each way for the whole device.** Every connection shares it. A sender waits
+    before each chunk. A receiver counts each chunk after it arrives and waits before reading
+    the next, so QUIC flow control slows the sender, and the wait never counts against the
+    request's deadline. The lowest limit is 64 KiB/s, at which a 1 MiB chunk still arrives
+    well within its deadline. Lower values are raised to it.
+  - **Busy.** ADR 0024 bounds every chunk by a deadline, and several requests at once could
+    queue more than a throttled sender can send in time. blobs/1 gains `Busy
+    { retry_after_ms }`: a sender whose upload backlog is over 10 seconds stops serving the
+    request with it. The backlog is checked and reserved under one lock, so concurrent requests
+    cannot together overshoot it, and it is checked before a chunk is read from disk. The delay
+    is until the backlog has drained to half, and at least a second, so requesters do not storm
+    a busy sender. The requester keeps what arrived, and asks for the rest from another peer or
+    from this one after the delay. A peer that is busy is not counted as failing. Changing the
+    limits starts both directions afresh.
+  - **Local peers.** A connection counts as local when its selected path is a direct private,
+    link-local, loopback or unique-local address. Carrier-grade NAT addresses (100.64.0.0/10),
+    as overlay networks such as Tailscale use, can be anywhere and are limited.
+  - **Where they are set.** `tidefelld`'s `[limits]` section (`upload_kib_per_sec`,
+    `download_kib_per_sec`, `limit_local`) sets them. `PUT /v1/limits`, `tidefell limits` and
+    the bindings' `setLimits` change them until restart, as the log level does. The Android app
+    keeps its own setting.
 
 ### Keeping files on a partial device
 

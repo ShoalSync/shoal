@@ -56,7 +56,7 @@ pub use config::{
 pub use engine::{Engine, FolderStatus};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
-pub use tidefell_net::{RelayConfig, RelayUrl};
+pub use tidefell_net::{Limits, RelayConfig, RelayUrl, MIN_BYTES_PER_SEC};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{

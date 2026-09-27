@@ -37,6 +37,24 @@ pub struct Config {
     /// Logging (ADR 0030).
     #[serde(default)]
     pub log: Log,
+    /// Upload and download limits for file content (ADR 0029).
+    #[serde(default)]
+    pub limits: Limits,
+}
+
+/// Upload and download limits. The lowest limit is 64 KiB/s; lower values are raised to it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Limits {
+    /// Most KiB per second to send to other devices. Unlimited if unset.
+    #[serde(default)]
+    pub upload_kib_per_sec: Option<u64>,
+    /// Most KiB per second to receive from other devices. Unlimited if unset.
+    #[serde(default)]
+    pub download_kib_per_sec: Option<u64>,
+    /// Also limit traffic to devices on the local network, which is not limited by default.
+    #[serde(default)]
+    pub limit_local: bool,
 }
 
 /// Logging settings.
@@ -328,6 +346,11 @@ impl Config {
             address_lookup: self.network.address_lookup,
             local_discovery: self.network.local_discovery,
             watch: self.watch,
+            limits: tidefell_engine::Limits {
+                upload: self.limits.upload_kib_per_sec.map(|k| k * 1024),
+                download: self.limits.download_kib_per_sec.map(|k| k * 1024),
+                limit_local: self.limits.limit_local,
+            },
             bind: self.network.bind,
             peers,
             folders,
@@ -376,6 +399,23 @@ mod tests {
         assert_eq!(engine.folders.len(), 1);
         assert_eq!(engine.folders[0].retention, Retention::Days(30));
         assert_eq!(engine.folders[0].sync, SyncOptions::default());
+    }
+
+    #[test]
+    fn reads_limits() {
+        let config = parse(EXAMPLE).unwrap();
+        assert_eq!(
+            config.to_engine().unwrap().limits,
+            tidefell_engine::Limits::default()
+        );
+        let text = EXAMPLE.replace(
+            "[log]\n",
+            "[limits]\nupload_kib_per_sec = 512\nlimit_local = true\n\n[log]\n",
+        );
+        let limits = parse(&text).unwrap().to_engine().unwrap().limits;
+        assert_eq!(limits.upload, Some(512 * 1024));
+        assert_eq!(limits.download, None);
+        assert!(limits.limit_local);
     }
 
     #[test]

@@ -371,6 +371,7 @@ impl Engine {
                     relay: config.relay.clone(),
                     address_lookup: config.address_lookup,
                     local_discovery: config.local_discovery,
+                    limits: config.limits,
                     bind: config.bind,
                 },
                 Arc::new(EngineBackend(inner.clone())),
@@ -515,6 +516,17 @@ impl Engine {
     /// Whether this device announces itself and finds known devices on the local network.
     pub fn local_discovery(&self) -> bool {
         self.local_discovery
+    }
+
+    /// The upload and download limits in force (ADR 0029).
+    pub fn limits(&self) -> crate::Limits {
+        self.node.limits()
+    }
+
+    /// Changes the upload and download limits until the engine stops. Rates below
+    /// [`crate::MIN_BYTES_PER_SEC`] are raised to it.
+    pub fn set_limits(&self, limits: crate::Limits) {
+        self.node.set_limits(limits);
     }
 
     /// Addresses peers can use to reach this engine.

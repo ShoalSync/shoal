@@ -448,3 +448,18 @@ pub struct Version {
     #[serde(default)]
     pub expires_ms: Option<i64>,
 }
+
+/// Upload and download limits for file content, in KiB per second (ADR 0029). Changes through the
+/// API last until the daemon restarts; the configuration sets them for good.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Limits {
+    /// Most KiB per second sent to other devices; none for no limit. At least 64.
+    #[serde(default)]
+    pub upload_kib_per_sec: Option<u64>,
+    /// Most KiB per second received from other devices; none for no limit. At least 64.
+    #[serde(default)]
+    pub download_kib_per_sec: Option<u64>,
+    /// Also limit traffic to devices on the local network.
+    #[serde(default)]
+    pub limit_local: bool,
+}

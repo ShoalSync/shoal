@@ -35,6 +35,7 @@ impl Replica {
             address_lookup: false,
             local_discovery: false,
             watch,
+            limits: Default::default(),
             bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
             peers: Vec::new(),
             folders: vec![FolderConfig {

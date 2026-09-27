@@ -16,5 +16,5 @@
 mod driver;
 mod scheduler;
 
-pub use driver::{fetch, ChunkSource, FetchError, FetchReport};
+pub use driver::{fetch, ChunkSource, FetchError, FetchReport, Fetched};
 pub use scheduler::{Config, Request, Scheduler};

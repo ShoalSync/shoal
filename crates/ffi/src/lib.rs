@@ -228,6 +228,17 @@ pub struct Problem {
     pub fields: HashMap<String, String>,
 }
 
+/// Upload and download limits for file content, in bytes per second (ADR 0029).
+#[derive(Debug, Clone, Copy, uniffi::Record)]
+pub struct Limits {
+    /// Most bytes per second sent; none for no limit. At least 64 KiB/s.
+    pub upload: Option<u64>,
+    /// Most bytes per second received; none for no limit. At least 64 KiB/s.
+    pub download: Option<u64>,
+    /// Also limit traffic to devices on the local network.
+    pub limit_local: bool,
+}
+
 /// A crash recorded in `<data_dir>/crashes/`.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Crash {
@@ -745,6 +756,7 @@ impl Node {
             local_discovery: network.local_discovery,
             // The app triggers its own scans (ADR 0025).
             watch: false,
+            limits: Default::default(),
             bind: network.bind()?,
             peers: Vec::new(),
             folders: Vec::new(),
@@ -892,6 +904,26 @@ impl Node {
                 confirmed_ms: c.confirmed_ms,
             })
             .collect())
+    }
+
+    /// The upload and download limits in force.
+    pub fn limits(&self) -> Result<Limits> {
+        let l = self.engine()?.limits();
+        Ok(Limits {
+            upload: l.upload,
+            download: l.download,
+            limit_local: l.limit_local,
+        })
+    }
+
+    /// Changes the upload and download limits until the node stops.
+    pub fn set_limits(&self, limits: Limits) -> Result<()> {
+        self.engine()?.set_limits(tidefell_engine::Limits {
+            upload: limits.upload,
+            download: limits.download,
+            limit_local: limits.limit_local,
+        });
+        Ok(())
     }
 
     /// The versions of a file: the current one, then those kept on this device, newest first.

@@ -3,8 +3,8 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Crash, Direction, Event, File, Folder, KnownPeer, LocalDeletes, LogSettings, Mode, Peer,
-    Problem, Recycled, Status, SyncOptions, Version, VersionKind,
+    Crash, Direction, Event, File, Folder, KnownPeer, Limits, LocalDeletes, LogSettings, Mode,
+    Peer, Problem, Recycled, Status, SyncOptions, Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -310,6 +310,20 @@ pub(crate) fn crashes(crashes: &[Crash]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+pub(crate) fn limits(l: &Limits) -> String {
+    let rate = |r: Option<u64>| r.map_or("no limit".to_owned(), |k| format!("{k} KiB/s"));
+    format!(
+        "upload:   {}\ndownload: {}\nlocal network: {}",
+        rate(l.upload_kib_per_sec),
+        rate(l.download_kib_per_sec),
+        if l.limit_local {
+            "limited"
+        } else {
+            "not limited"
+        }
+    )
 }
 
 pub(crate) fn log_settings(l: &LogSettings) -> String {

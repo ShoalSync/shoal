@@ -61,19 +61,21 @@ impl ChunkSource for PeerSource {
         &self,
         peer: &DeviceId,
         chunks: &[ChunkHash],
-    ) -> std::result::Result<Vec<(ChunkHash, Vec<u8>)>, String> {
+    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
         let results = self
             .node
             .fetch_chunks(endpoint(peer)?, self.folder, chunks)
             .await
             .map_err(|e| e.to_string())?;
-        Ok(results
-            .into_iter()
-            .filter_map(|r| match r {
-                ChunkResult::Found(hash, data) => Some((hash, data)),
-                ChunkResult::Missing(_) => None,
-            })
-            .collect())
+        let mut fetched = tidefell_fetch::Fetched::default();
+        for result in results {
+            match result {
+                ChunkResult::Found(hash, data) => fetched.chunks.push((hash, data)),
+                ChunkResult::Missing(_) => {}
+                ChunkResult::Busy(wait) => fetched.busy_for = Some(wait),
+            }
+        }
+        Ok(fetched)
     }
 }
 

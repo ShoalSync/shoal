@@ -5,6 +5,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::hash::Hash;
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidefell_proto::{ChunkHash, Manifest};
 use tokio::task::{JoinError, JoinSet};
@@ -25,12 +26,23 @@ pub trait ChunkSource: Send + Sync + 'static {
     ) -> impl Future<Output = Result<Vec<ChunkHash>, String>> + Send;
 
     /// Requests `chunks` from `peer`. Returns data for each chunk the peer has; chunks absent
-    /// from the result are treated as missing. Implementations must verify each chunk's hash.
+    /// from the result are treated as missing, unless the peer said it is busy. Implementations
+    /// must verify each chunk's hash.
     fn fetch(
         &self,
         peer: &Self::Peer,
         chunks: &[ChunkHash],
-    ) -> impl Future<Output = Result<Vec<(ChunkHash, Vec<u8>)>, String>> + Send;
+    ) -> impl Future<Output = Result<Fetched, String>> + Send;
+}
+
+/// What a peer sent for a request.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Fetched {
+    /// The chunks it sent, verified.
+    pub chunks: Vec<(ChunkHash, Vec<u8>)>,
+    /// Set if the peer was at its upload limit and stopped before the rest (ADR 0029): the rest
+    /// are not missing, and the peer may be asked again after this long.
+    pub busy_for: Option<Duration>,
 }
 
 /// Why a fetch did not complete.
@@ -89,7 +101,7 @@ pub async fn fetch<S: ChunkSource>(
         }
     }
 
-    type Outcome<P> = (Request<P>, Result<Vec<(ChunkHash, Vec<u8>)>, String>);
+    type Outcome<P> = (Request<P>, Result<Fetched, String>);
     let mut requests: JoinSet<Outcome<S::Peer>> = JoinSet::new();
     loop {
         if scheduler.is_complete() {
@@ -128,8 +140,18 @@ pub async fn fetch<S: ChunkSource>(
             continue;
         };
         match result {
-            Ok(chunks) => {
-                let mut delivered: BTreeMap<ChunkHash, Vec<u8>> = chunks.into_iter().collect();
+            Ok(fetched) => {
+                let mut delivered: BTreeMap<ChunkHash, Vec<u8>> =
+                    fetched.chunks.into_iter().collect();
+                if let Some(wait) = fetched.busy_for {
+                    let rest: Vec<ChunkHash> = request
+                        .chunks
+                        .iter()
+                        .filter(|h| !delivered.contains_key(*h))
+                        .copied()
+                        .collect();
+                    scheduler.busy(&request.peer, &rest, (Instant::now() + wait).into_std());
+                }
                 for hash in &request.chunks {
                     match delivered.remove(hash) {
                         Some(data) => {
@@ -139,6 +161,7 @@ pub async fn fetch<S: ChunkSource>(
                             sink(*hash, data).map_err(FetchError::Sink)?;
                             scheduler.received(&request.peer, hash);
                         }
+                        None if fetched.busy_for.is_some() => {}
                         None => scheduler.missing(&request.peer, hash),
                     }
                 }
