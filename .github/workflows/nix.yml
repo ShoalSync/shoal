@@ -16,12 +16,13 @@ concurrency:
 
 jobs:
   build:
-    name: nix build
+    # Formatting, clippy, the tests, the crate boundaries, the MSRV build, the package and the
+    # NixOS module. The compiled dependencies are their own derivation, kept in the runner's Nix
+    # store until Cargo.lock changes.
+    name: nix flake check
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@v16
-      - name: Check flake
+      - name: Check
         run: nix flake check --print-build-logs
-      - name: Build
-        run: nix build .#tidefell --print-build-logs

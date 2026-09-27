@@ -33,7 +33,9 @@ Mark breaking changes with `!` (for example `feat(proto)!:`) and a `BREAKING CHA
 
 ## CI gates
 
-A pull request can merge only when CI is green. Run the same checks locally first:
+A pull request can merge only when CI is green. `nix flake check` runs formatting, clippy, the
+tests, the crate boundaries and the MSRV build the way CI does, reusing compiled dependencies
+until `Cargo.lock` changes. Without Nix, run the same checks with cargo:
 
 ```sh
 cargo fmt --all --check

@@ -20,36 +20,23 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
-  check:
-    name: fmt, clippy, test
+  # Formatting, clippy, the tests, the crate boundaries and the MSRV build run in the Nix
+  # workflow (`nix flake check`), which keeps the compiled dependencies between runs. The FUSE
+  # tests need /dev/fuse, which the Nix sandbox does not have, so they run here.
+  fuse:
+    name: FUSE tests
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/cargo-target
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test
         # The FUSE mount tests must run, not skip, on the self-hosted runner.
         env:
           TIDEFELL_REQUIRE_FUSE: "1"
-        run: cargo test --workspace --locked
-      - name: Crate boundaries
-        run: cargo xtask check-deps
-
-  msrv:
-    name: MSRV (1.91)
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@1.91
-      - name: Build
-        run: cargo +1.91 build --workspace --all-targets --locked
+        run: |
+          cargo test --locked --package tidefell-fs-fuse --test kernel
+          cargo test --locked --package tidefell-daemon --test mount
 
   # Dependency and public API checks. Kept in one job, under its original name, because one
   # runner serves every repository.

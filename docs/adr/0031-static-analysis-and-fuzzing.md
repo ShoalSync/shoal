@@ -55,8 +55,8 @@ with a large cleanup, and every new finding fails CI.
   - pairing codes;
   - engine state files, which may be truncated or corrupted on disk.
 - A scheduled job on `main` runs each target for ten minutes every night, on a pinned nightly
-  toolchain used for nothing else. It does not run on pull requests, because one runner serves
-  every repository.
+  toolchain used for nothing else. It does not run on pull requests, because three self-hosted
+  runners on one machine serve every repository.
 - A crash becomes a regression test in the crate it hit, and its input joins the corpus.
 
 ### Workflow checks

@@ -1,10 +1,25 @@
 {
   description = "Tidefell: open-source peer-to-peer file sync";
 
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Builds the dependencies once per Cargo.lock as their own derivation, so a change to
+    # Tidefell's own code rebuilds only its crates.
+    crane.url = "github:ipetkov/crane";
+    # The MSRV toolchain for the MSRV check.
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      crane,
+      rust-overlay,
+    }:
     let
       systems = [
         "x86_64-linux"
@@ -14,13 +29,13 @@
       ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
       workspace = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package;
-    in
-    {
-      packages = forAllSystems (pkgs: rec {
-        # `tidefelld` and `tidefell` binaries. The version is the workspace version (ADR 0005).
-        tidefell = pkgs.rustPlatform.buildRustPackage {
-          pname = "tidefell";
-          inherit (workspace) version;
+
+      # The Rust builds of one system. Every check and the package share `cargoArtifacts`, the
+      # compiled dependencies.
+      rust =
+        pkgs:
+        let
+          craneLib = crane.mkLib pkgs;
           src = pkgs.lib.fileset.toSource {
             root = ./.;
             fileset = pkgs.lib.fileset.unions [
@@ -32,47 +47,99 @@
               ./specs
             ];
           };
-          cargoLock.lockFile = ./Cargo.lock;
-          cargoBuildFlags = [
-            "--package"
-            "tidefell-daemon"
-            "--package"
-            "tidefell-cli"
-          ];
-          # The CI test job runs the workspace tests; building the package does not repeat them.
-          doCheck = false;
-          meta = {
-            description = "Open-source peer-to-peer file sync";
-            homepage = "https://github.com/tidefell/tidefell";
-            license = pkgs.lib.licenses.agpl3Only;
-            mainProgram = "tidefell";
+          # crane links each vendored crate from its own store path. askama (in uniffi_bindgen)
+          # resolves template paths relative to a crate's real directory, which breaks through
+          # the link, so uniffi_bindgen is copied instead.
+          cargoVendorDir =
+            let
+              vendored = craneLib.vendorCargoDeps { inherit src; };
+            in
+            pkgs.runCommandLocal "vendor-cargo-deps" { } ''
+              mkdir -p $out
+              for registry in ${vendored}/*/; do
+                name=$(basename "$registry")
+                mkdir "$out/$name"
+                for crate in "$registry"*; do
+                  case "$(basename "$crate")" in
+                    uniffi_bindgen-*) cp -rL "$crate" "$out/$name/" ;;
+                    *) ln -s "$(readlink -f "$crate")" "$out/$name/" ;;
+                  esac
+                done
+              done
+              sed "s|${vendored}|$out|g" ${vendored}/config.toml > $out/config.toml
+            '';
+          commonArgs = {
+            pname = "tidefell";
+            inherit (workspace) version;
+            # Everything a build or test reads.
+            inherit src cargoVendorDir;
+            strictDeps = true;
+          };
+          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          # Checks produce nothing but their success.
+          check =
+            lib: args:
+            lib (
+              commonArgs
+              // {
+                inherit cargoArtifacts;
+                doInstallCargoArtifacts = false;
+              }
+              // args
+            );
+
+          msrvLib = (crane.mkLib pkgs).overrideToolchain (
+            p: (p.extend rust-overlay.overlays.default).rust-bin.stable."${workspace.rust-version}.0".minimal
+          );
+          msrvArtifacts = msrvLib.buildDepsOnly commonArgs;
+        in
+        {
+          # `tidefelld` and `tidefell` binaries. The version is the workspace version (ADR 0005).
+          package = craneLib.buildPackage (
+            commonArgs
+            // {
+              inherit cargoArtifacts;
+              cargoExtraArgs = "--locked --package tidefell-daemon --package tidefell-cli";
+              # The test check runs the tests; building the package does not repeat them.
+              doCheck = false;
+              meta = {
+                description = "Open-source peer-to-peer file sync";
+                homepage = "https://github.com/tidefell/tidefell";
+                license = pkgs.lib.licenses.agpl3Only;
+                mainProgram = "tidefell";
+              };
+            }
+          );
+          checks = {
+            fmt = craneLib.cargoFmt { inherit (commonArgs) pname version src; };
+            clippy = check craneLib.cargoClippy {
+              cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
+            };
+            # The sandbox has no network interface for multicast (ADR 0029) and no FUSE device;
+            # the FUSE tests skip here and run in CI's FUSE job.
+            test = check craneLib.cargoTest {
+              cargoTestExtraArgs = "--workspace -- --skip devices_on_one_network_find_each_other";
+            };
+            crate-boundaries = check craneLib.mkCargoDerivation {
+              pnameSuffix = "-crate-boundaries";
+              # Release, like the shared dependencies.
+              buildPhaseCargoCommand = "cargo run --release --locked --package xtask -- check-deps";
+              installPhaseCommand = "mkdir -p $out";
+            };
+            msrv = msrvLib.cargoBuild (
+              commonArgs
+              // {
+                cargoArtifacts = msrvArtifacts;
+                cargoExtraArgs = "--locked --workspace --all-targets";
+                doInstallCargoArtifacts = false;
+                installPhaseCommand = "mkdir -p $out";
+              }
+            );
           };
         };
-        default = tidefell;
-      });
-
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          packages = with pkgs; [
-            cargo
-            rustc
-            clippy
-            rustfmt
-            cargo-deny
-            mdbook
-          ];
-        };
-      });
-
-      nixosModules = rec {
-        tidefelld = import ./nix/module.nix {
-          defaultPackage = pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
-        };
-        default = tidefelld;
-      };
 
       # Evaluates the NixOS module and builds its systemd unit and checked configuration.
-      checks.x86_64-linux.nixos-module =
+      nixosModuleCheck =
         let
           system = nixpkgs.lib.nixosSystem {
             system = "x86_64-linux";
@@ -113,6 +180,45 @@
           grep -qx 'ReadWritePaths=/srv/tidefell/photos' "$unit"
           touch $out
         '';
+    in
+    {
+      packages = forAllSystems (pkgs: rec {
+        tidefell = (rust pkgs).package;
+        default = tidefell;
+      });
+
+      # `nix flake check` runs these: formatting, clippy, the tests, the crate boundaries, the MSRV
+      # build and the package, all sharing the compiled dependencies, and the NixOS module.
+      checks = forAllSystems (
+        pkgs:
+        (rust pkgs).checks
+        // {
+          package = self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
+        }
+        // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          nixos-module = nixosModuleCheck;
+        }
+      );
+
+      devShells = forAllSystems (pkgs: {
+        default = pkgs.mkShell {
+          packages = with pkgs; [
+            cargo
+            rustc
+            clippy
+            rustfmt
+            cargo-deny
+            mdbook
+          ];
+        };
+      });
+
+      nixosModules = rec {
+        tidefelld = import ./nix/module.nix {
+          defaultPackage = pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
+        };
+        default = tidefelld;
+      };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };

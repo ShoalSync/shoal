@@ -474,9 +474,11 @@ mod tests {
         let crashes = crashes(dir.path());
         assert_eq!(crashes.len(), 1);
         let crash = &crashes[0];
-        assert_eq!(crash.message, "boom in a test");
         assert!(!crash.seen);
+        // Other tests in this process may panic on purpose first, in which case theirs is the
+        // file's headline and both of these follow it.
         let text = fs::read_to_string(&crash.file).unwrap();
+        assert!(text.contains("message: boom in a test"), "{text}");
         assert!(text.contains("location: "), "{text}");
         assert!(text.contains("backtrace:"), "{text}");
         assert!(
