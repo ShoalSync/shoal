@@ -38,6 +38,7 @@ pub mod device;
 pub mod diagnostics;
 mod engine;
 mod evict;
+mod history;
 mod ignores;
 mod materialize;
 pub mod pairing;
@@ -58,7 +59,10 @@ pub use tidefell_meta::Retention;
 pub use tidefell_net::{RelayConfig, RelayUrl};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
-pub use views::{CopyInfo, Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo};
+pub use views::{
+    CopyInfo, Event, FileInfo, FolderInfo, PeerInfo, RecycleSummary, RecycledInfo, VersionInfo,
+    VersionKind,
+};
 
 /// Engine errors.
 #[derive(Debug, thiserror::Error)]

@@ -79,6 +79,11 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))
         .route("/v1/folders/{id}/remove-here", post(handlers::remove_here))
         .route("/v1/folders/{id}/copies", post(handlers::copies))
+        .route("/v1/folders/{id}/versions", post(handlers::versions))
+        .route(
+            "/v1/folders/{id}/versions/restore",
+            post(handlers::restore_version),
+        )
         .route(
             "/v1/folders/{id}/recycle",
             get(handlers::recycle_bin).delete(handlers::empty_recycle_bin),

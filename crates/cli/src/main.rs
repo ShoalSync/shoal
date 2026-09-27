@@ -78,6 +78,16 @@ enum Command {
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
+    /// List a file's previous versions kept on this device, or restore one.
+    History {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder.
+        path: String,
+        /// Make this version (`previous:…`, from the list) the file's content again.
+        #[arg(long)]
+        restore: Option<String>,
+    },
     /// Add a new device to your user from the pairing code it shows. The daemon must hold
     /// your user key.
     Pair {
@@ -399,6 +409,27 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &client.crashes().await.map_err(e)?, |c| {
                 format::crashes(c)
             });
+        }
+        Command::History {
+            folder,
+            path,
+            restore: Some(version),
+        } => {
+            client
+                .restore_version(&folder, &path, &version)
+                .await
+                .map_err(e)?;
+        }
+        Command::History {
+            folder,
+            path,
+            restore: None,
+        } => {
+            print(
+                json,
+                &client.versions(&folder, &path).await.map_err(e)?,
+                |v| format::versions(v),
+            );
         }
         Command::LogLevel { level } => {
             let settings = match level {

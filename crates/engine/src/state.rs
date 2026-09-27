@@ -13,10 +13,13 @@ use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
+use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 6\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 7\n";
+/// Format 6, before version history (ADR 0029).
+const STATE_HEADER_V6: &[u8] = b"tidefell-engine-folder 6\n";
 /// Before deleted files were kept on disk instead of in the block store (ADR 0027).
 const STATE_HEADER_V5: &[u8] = b"tidefell-engine-folder 5\n";
 /// Before files could be dropped from this device only or set aside (ADR 0025).
@@ -161,6 +164,38 @@ struct Persisted {
     dropped: Vec<EntryId>,
     set_aside: Vec<(EntryId, SetAside)>,
     kept: Vec<(ContentHash, String)>,
+    history: Vec<(EntryId, Vec<Previous>)>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV6 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFile)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+    dropped: Vec<EntryId>,
+    set_aside: Vec<(EntryId, SetAside)>,
+    kept: Vec<(ContentHash, String)>,
+}
+
+impl From<PersistedV6> for Persisted {
+    fn from(v6: PersistedV6) -> Self {
+        Self {
+            manifests: v6.manifests,
+            local: v6.local,
+            progress: v6.progress,
+            used: v6.used,
+            copies: v6.copies,
+            copy_names: v6.copy_names,
+            dropped: v6.dropped,
+            set_aside: v6.set_aside,
+            kept: v6.kept,
+            history: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -188,6 +223,7 @@ impl From<PersistedV5> for Persisted {
             dropped: v5.dropped,
             set_aside: v5.set_aside,
             kept: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -215,6 +251,7 @@ impl From<PersistedV4> for Persisted {
             dropped: Vec::new(),
             set_aside: Vec::new(),
             kept: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -242,6 +279,7 @@ impl From<PersistedV3> for Persisted {
             dropped: Vec::new(),
             set_aside: Vec::new(),
             kept: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -267,6 +305,7 @@ impl From<PersistedV2> for Persisted {
             dropped: Vec::new(),
             set_aside: Vec::new(),
             kept: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -291,6 +330,7 @@ impl From<PersistedV1> for Persisted {
             dropped: Vec::new(),
             set_aside: Vec::new(),
             kept: Vec::new(),
+            history: Vec::new(),
         }
     }
 }
@@ -321,6 +361,9 @@ pub(crate) struct FolderState {
     /// directory instead of being copied into the block store, by content: the file name there
     /// (ADR 0027). Removed once nothing references the content.
     pub(crate) kept: BTreeMap<ContentHash, String>,
+    /// Previous versions of entries that the engine replaced on this device (ADR 0029), newest
+    /// first after each purge.
+    pub(crate) history: BTreeMap<EntryId, Vec<Previous>>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
     dir: PathBuf,
@@ -361,6 +404,7 @@ impl FolderState {
             dropped: BTreeSet::new(),
             set_aside: BTreeMap::new(),
             kept: BTreeMap::new(),
+            history: BTreeMap::new(),
             ignores,
             dir,
             removed: false,
@@ -370,6 +414,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V6) {
+                postcard::from_bytes::<PersistedV6>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V5) {
                 postcard::from_bytes::<PersistedV5>(body)
                     .ok()
@@ -410,6 +458,7 @@ impl FolderState {
             state.dropped = persisted.dropped.into_iter().collect();
             state.set_aside = persisted.set_aside.into_iter().collect();
             state.kept = persisted.kept.into_iter().collect();
+            state.history = persisted.history.into_iter().collect();
         }
         Ok(state)
     }
@@ -456,6 +505,7 @@ impl FolderState {
                 .map(|(e, s)| (*e, s.clone()))
                 .collect(),
             kept: self.kept.iter().map(|(c, f)| (*c, f.clone())).collect(),
+            history: self.history.iter().map(|(e, v)| (*e, v.clone())).collect(),
         };
         let mut bytes = STATE_HEADER.to_vec();
         bytes.extend(postcard::to_stdvec(&persisted).expect("in-memory encoding cannot fail"));
@@ -488,7 +538,7 @@ impl FolderState {
     }
 
     /// Content hashes still needed: current versions, conflict copies and recycle-bin items.
-    fn referenced_contents(&self) -> std::collections::HashSet<ContentHash> {
+    pub(crate) fn referenced_contents(&self) -> std::collections::HashSet<ContentHash> {
         let mut out = std::collections::HashSet::new();
         let mut add = |kind: &EntryKind| {
             if let EntryKind::File { content, .. } = kind {
@@ -504,6 +554,7 @@ impl FolderState {
         for item in self.meta.recycle_bin().iter() {
             add(&item.version.kind);
         }
+        out.extend(self.history.values().flatten().map(|v| v.content));
         out
     }
 
@@ -517,6 +568,7 @@ impl FolderState {
     /// chunks no longer referenced by this folder.
     pub(crate) fn purge(&mut self, now_ms: i64) -> (Vec<Recycled>, Vec<tidefell_proto::ChunkHash>) {
         let purged = self.meta.purge_expired(now_ms);
+        crate::history::purge(self, now_ms);
         (purged, self.release_unreferenced())
     }
 

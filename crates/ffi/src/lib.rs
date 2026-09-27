@@ -582,6 +582,34 @@ pub struct Copy {
     pub confirmed_ms: i64,
 }
 
+/// Which kind of version a [`Version`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum VersionKind {
+    /// The version the folder has now.
+    Current,
+    /// A version kept on this device after it was replaced (ADR 0029).
+    Previous,
+}
+
+/// One version of a file.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Version {
+    /// Identifies the version: `current`, or `previous:<id>`.
+    pub id: String,
+    /// Which kind it is.
+    pub kind: VersionKind,
+    /// Size in bytes.
+    pub size: u64,
+    /// Modification time, milliseconds since the Unix epoch.
+    pub modified_ms: i64,
+    /// For the current version, the device that made it.
+    pub author: Option<String>,
+    /// For a previous version, when this device kept it.
+    pub kept_ms: Option<i64>,
+    /// For a previous version, when it expires; none if kept for good.
+    pub expires_ms: Option<i64>,
+}
+
 /// A deleted file in the recycle bin.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Recycled {
@@ -864,6 +892,49 @@ impl Node {
                 confirmed_ms: c.confirmed_ms,
             })
             .collect())
+    }
+
+    /// The versions of a file: the current one, then those kept on this device, newest first.
+    pub fn versions(&self, folder: String, path: String) -> Result<Vec<Version>> {
+        Ok(self
+            .engine()?
+            .versions(parse("folder ID", &folder)?, &path)?
+            .into_iter()
+            .map(|v| Version {
+                id: v.id,
+                kind: match v.kind {
+                    tidefell_engine::VersionKind::Current => VersionKind::Current,
+                    tidefell_engine::VersionKind::Previous => VersionKind::Previous,
+                },
+                size: v.size,
+                modified_ms: v.modified_ms,
+                author: v.author.map(|d| d.to_string()),
+                kept_ms: v.kept_ms,
+                expires_ms: v.expires_ms,
+            })
+            .collect())
+    }
+
+    /// The file holding a previous version, to open read-only.
+    pub fn version_file(&self, folder: String, path: String, version: String) -> Result<String> {
+        Ok(self
+            .engine()?
+            .version_file(parse("folder ID", &folder)?, &path, &version)?
+            .display()
+            .to_string())
+    }
+
+    /// Makes a previous version the file's content again, on every device.
+    pub async fn restore_version(
+        &self,
+        folder: String,
+        path: String,
+        version: String,
+    ) -> Result<()> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.restore_version(folder, &path, &version).await }).await??;
+        Ok(())
     }
 
     /// Makes a file available on disk, fetching a placeholder from peers, and returns its

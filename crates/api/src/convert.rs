@@ -139,3 +139,18 @@ pub(crate) fn event(e: Event) -> api::Event {
         Event::Crashed(message) => api::Event::Crashed { message },
     }
 }
+
+pub(crate) fn version(v: tidefell_engine::VersionInfo) -> api::Version {
+    api::Version {
+        id: v.id,
+        kind: match v.kind {
+            tidefell_engine::VersionKind::Current => api::VersionKind::Current,
+            tidefell_engine::VersionKind::Previous => api::VersionKind::Previous,
+        },
+        size: v.size,
+        modified_ms: v.modified_ms,
+        author: v.author.map(|d| d.to_string()),
+        kept_ms: v.kept_ms,
+        expires_ms: v.expires_ms,
+    }
+}

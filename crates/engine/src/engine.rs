@@ -5,6 +5,7 @@
 
 mod files;
 mod folders;
+mod history;
 mod peers;
 mod recycle;
 
@@ -198,6 +199,8 @@ fn open_folder(
     configured: bool,
 ) -> Result<FolderHandle> {
     std::fs::create_dir_all(&config.path).map_err(crate::io_err(&config.path))?;
+    // Before the first scan, which would otherwise record the file as deleted.
+    crate::history::recover(&config.path);
     Ok(FolderHandle {
         state: Mutex::new(FolderState::open(data_dir, config, device)?),
         fs_lock: tokio::sync::Mutex::new(()),

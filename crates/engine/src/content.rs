@@ -69,6 +69,17 @@ fn sources(state: &FolderState, hash: &ChunkHash) -> Vec<Source> {
                 len,
             });
         }
+        // Previous versions are read for restoring them here, but never count as held for
+        // other devices (see `has_chunk`): history is thinned and would lose a confirmed copy.
+        for version in state.history.values().flatten() {
+            if version.content == *content {
+                out.push(Source {
+                    path: crate::history::history_dir(root).join(&version.file),
+                    offset,
+                    len,
+                });
+            }
+        }
     }
     out
 }
@@ -114,17 +125,22 @@ pub(crate) fn has_chunk(inner: &Inner, state: &FolderState, hash: &ChunkHash) ->
 
 /// Takes the file at `abs`, unchanged since it was recorded with `content`, off the folder
 /// without losing its content: it is moved into the reserved directory for the recycle bin,
-/// unless the content is already on disk elsewhere, in which case it is deleted. The caller has
+/// unless the content is already on disk elsewhere, in which case it is deleted. If `new` is
+/// given, it takes the file's place with no moment where the path is missing. The caller has
 /// already forgotten it in `state.local`.
 pub(crate) fn keep_deleted(
     state: &mut FolderState,
     abs: &Path,
     content: ContentHash,
+    new: Option<&Path>,
 ) -> Result<()> {
     let elsewhere =
         state.local.paths_with(&content).next().is_some() || state.kept.contains_key(&content);
     if elsewhere {
-        return fs::remove_file(abs).map_err(io_err(abs));
+        return match new {
+            Some(new) => fs::rename(new, abs).map_err(io_err(abs)),
+            None => fs::remove_file(abs).map_err(io_err(abs)),
+        };
     }
     let dir = kept_dir(&state.config.path);
     fs::create_dir_all(&dir).map_err(io_err(&dir))?;
@@ -134,7 +150,11 @@ pub(crate) fn keep_deleted(
         fs::write(&nomedia, b"").map_err(io_err(&nomedia))?;
     }
     let name = format!("{content}-{:016x}", u64::from_le_bytes(random_bytes()?));
-    fs::rename(abs, dir.join(&name)).map_err(io_err(abs))?;
+    match new {
+        Some(new) => crate::history::swap_in(&state.config.path, new, abs, &dir.join(&name))
+            .map_err(io_err(abs))?,
+        None => fs::rename(abs, dir.join(&name)).map_err(io_err(abs))?,
+    }
     state.kept.insert(content, name);
     Ok(())
 }

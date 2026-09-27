@@ -190,7 +190,9 @@ pub(super) fn recycle_summary(state: &FolderState) -> RecycleSummary {
     RecycleSummary {
         items: bin.len() + state.set_aside.len(),
         bytes: bin.iter().map(recycled_size).sum::<u64>()
-            + state.set_aside.values().map(|s| s.local.size).sum::<u64>(),
+            + state.set_aside.values().map(|s| s.local.size).sum::<u64>()
+            // Previous versions take space like the recycle bin, and expire with it (ADR 0029).
+            + state.history.values().flatten().map(|v| v.size).sum::<u64>(),
         next_expiry_ms: match (bin.next_expiry_ms(), set_aside_expiry) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),

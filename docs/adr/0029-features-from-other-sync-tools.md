@@ -129,6 +129,32 @@ by amending this ADR.
   every device like any edit. Nothing is rewound on other devices.
 - Versions are listed per file in the API, CLI, web and Android app. History stays on its
   device and is not synced. Engine state format 7 records it.
+- Step 5 decided:
+  - **What is kept.** A previous version is kept when the engine writes another device's
+    version over a file, when a moved entry leaves an old path with different content, and when
+    a file is saved through the engine (a mount, a web upload, the documents provider) over a
+    recorded one. The file moves to `.tidefell/history/`.
+  - **Never missing.** The new file takes the old one's place with no moment where the path is
+    missing, which a scan would record as a delete. On Linux this is an atomic exchange. Where
+    that is not supported, the old file is hard-linked aside first. On filesystems with
+    neither, such as FAT and Android's shared storage, a marker lets the next start put the old
+    file back before the first scan. ADR 0027's move aside uses the same exchange.
+  - **Checked.** A file changed since it was recorded is chunked again, so a version is always
+    kept under its real content.
+  - **Retention.** History ages by this device's clock, from when the version was kept. Within
+    the folder's retention, every version from the last day is kept, then the newest one per UTC
+    day. With retention forever, one version a day of each edited file is kept for good.
+  - **Not a copy for anyone else.** Previous versions never count as holding a file for other
+    devices (blobs/1 availability, ADR 0022): history is thinned, so it must not stand in for a
+    confirmed copy. A thinned version whose content a conflict copy, a recycle-bin item or
+    another entry still needs is handed to the kept files instead of deleted.
+  - **Restoring** copies the version and saves it through the engine, so the file it replaces
+    becomes a previous version in turn.
+  - **Where it shows.** `versions(folder, path)` lists the current version and the previous
+    ones. Their IDs are `current` and `previous:<id>`, leaving room for the conflict versions of
+    step 9. They are in the API (`POST /v1/folders/{id}/versions` and `.../versions/restore`),
+    `tidefell history`, a history page per file in the web, and the bindings. The Android
+    screen comes with the `v0.12.0` pin.
 
 ### Bandwidth limits and pause
 

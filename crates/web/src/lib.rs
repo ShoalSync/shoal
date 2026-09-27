@@ -97,6 +97,11 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         .route("/s/{token}", get(sharing::link).post(sharing::unlock_link))
         .route("/s/{token}/download", get(sharing::link_download))
         .route("/folders/{id}/recycle", get(handlers::recycle))
+        .route("/folders/{id}/history", get(handlers::history))
+        .route(
+            "/folders/{id}/history/restore",
+            post(handlers::restore_version),
+        )
         .route(
             "/folders/{id}/recycle/{entry}/restore",
             post(handlers::restore),

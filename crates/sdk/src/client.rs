@@ -12,7 +12,8 @@ use serde::Serialize;
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
     Folder, KnownPeer, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing, Peer,
-    Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
+    Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version,
+    VersionRequest,
 };
 
 /// Client errors.
@@ -260,6 +261,37 @@ impl Client {
             &format!("/v1/folders/{folder}/remove-here"),
             Some(&RemoveHereRequest {
                 path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// The versions of a file: the current one, then those kept on this device, newest first.
+    pub async fn versions(&self, folder: &str, path: &str) -> Result<Vec<Version>, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/versions"),
+            Some(&VersionRequest {
+                path: path.to_owned(),
+                version: None,
+            }),
+        )
+        .await
+    }
+
+    /// Makes a previous version of a file its content again, on every device.
+    pub async fn restore_version(
+        &self,
+        folder: &str,
+        path: &str,
+        version: &str,
+    ) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/versions/restore"),
+            Some(&VersionRequest {
+                path: path.to_owned(),
+                version: Some(version.to_owned()),
             }),
         )
         .await

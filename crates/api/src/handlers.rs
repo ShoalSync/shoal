@@ -19,7 +19,7 @@ use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
     File, Folder, KnownPeer, LogLevel, LogSettings, Mode, NewFolder, NewMember, PairRequest,
     Pairing, Peer, Problem, RecycleBinSummary, Recycled, RemoveHereRequest, RetentionUpdate,
-    Status, SyncOptions,
+    Status, SyncOptions, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -52,6 +52,8 @@ type AppState = State<Arc<Engine>>;
         fetch,
         remove_here,
         copies,
+        versions,
+        restore_version,
         recycle_bin,
         empty_recycle_bin,
         discard,
@@ -95,7 +97,10 @@ type AppState = State<Arc<Engine>>;
         LogSettings,
         LogLevel,
         Problem,
-        Crash
+        Crash,
+        Version,
+        VersionKind,
+        VersionRequest
     ))
 )]
 pub struct ApiDoc;
@@ -407,6 +412,45 @@ pub(crate) async fn copies(
             .map(convert::copy)
             .collect(),
     ))
+}
+
+/// The versions of a file: the current one first, then those kept on this device, newest first
+/// (ADR 0029).
+#[utoipa::path(post, path = "/v1/folders/{id}/versions", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = VersionRequest,
+    responses((status = 200, body = [Version]), (status = 404, body = ApiError)))]
+pub(crate) async fn versions(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<VersionRequest>,
+) -> ApiResult<Json<Vec<Version>>> {
+    Ok(Json(
+        engine
+            .versions(parse("folder", &id)?, &request.path)?
+            .into_iter()
+            .map(convert::version)
+            .collect(),
+    ))
+}
+
+/// Makes a previous version the file's content again, as a new version on every device.
+#[utoipa::path(post, path = "/v1/folders/{id}/versions/restore", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = VersionRequest,
+    responses((status = 204), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn restore_version(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<VersionRequest>,
+) -> ApiResult<StatusCode> {
+    let version = request
+        .version
+        .ok_or_else(|| ApiFailure::bad_request("which version to restore is missing"))?;
+    engine
+        .restore_version(parse("folder", &id)?, &request.path, &version)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The folder's recycle bin, most recently deleted first.

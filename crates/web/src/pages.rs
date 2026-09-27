@@ -151,3 +151,25 @@ pub(crate) struct LinkPassword {
     pub(crate) token: String,
     pub(crate) error: Option<String>,
 }
+
+pub(crate) struct VersionRow {
+    pub(crate) id: String,
+    pub(crate) current: bool,
+    pub(crate) size: String,
+    pub(crate) modified: String,
+    pub(crate) kept: String,
+    pub(crate) expires: String,
+}
+
+#[derive(Template)]
+#[template(path = "history.html")]
+pub(crate) struct History {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) path: String,
+    pub(crate) notice: Option<String>,
+    pub(crate) versions: Vec<VersionRow>,
+}

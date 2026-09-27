@@ -429,16 +429,13 @@ mod tests {
         // At a level above warnings, warnings still reach the problems list, not the file.
         set_log_level("error").unwrap();
         tracing::warn!("quiet in the file");
-        assert_eq!(
-            recent_problems().last().unwrap().message,
-            "quiet in the file"
-        );
+        // Other tests in this process log too, so problems are found by message.
+        let found = |message: &str| recent_problems().into_iter().find(|p| p.message == message);
+        assert!(found("quiet in the file").is_some());
         set_log_level("debug").unwrap();
 
-        let problems = recent_problems();
-        let problem = &problems[problems.len() - 2];
+        let problem = found("cannot write").unwrap();
         assert_eq!(problem.level, "WARN");
-        assert_eq!(problem.message, "cannot write");
         assert_eq!(
             problem.fields.get("path").map(String::as_str),
             Some("a/b.txt")

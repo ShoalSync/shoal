@@ -58,6 +58,28 @@ Files removed from one device only with `tidefell remove-here` wait in that devi
 bin too, listed as `removed here`. Other devices still have them. Restoring one puts it back on
 this device only, and emptying the bin frees the space it took here.
 
+## Previous versions
+
+When a file is replaced by another device's edit, this device keeps the version it had. The
+same goes for a file you replace by saving through Tidefell: in a mounted folder, by uploading
+in the browser, or from the Android file picker. Previous versions stay on the device that kept
+them and are not synced.
+
+```sh
+tidefell history <folder id> notes/todo.txt                 # the current version, then earlier ones
+tidefell history <folder id> notes/todo.txt --restore previous:1a2b…
+```
+
+Restoring makes that version the file's content again on every device, and the version it
+replaces is kept in turn. In the browser, each file has a **history** link.
+
+Previous versions share the folder's retention with the recycle bin, and their size counts
+toward it. Every version from the last day is kept, then one per day. With a retention of 0,
+which keeps deleted files forever, one version a day of every edited file is kept for good.
+
+A file edited in place on this device, by an editor, leaves nothing behind here. The other
+devices keep that version when your edit replaces their copies.
+
 ## Emptying the recycle bin
 
 To free space on one device without waiting for retention, delete files from its recycle bin

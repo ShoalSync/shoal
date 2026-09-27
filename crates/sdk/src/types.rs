@@ -406,3 +406,45 @@ pub struct Crash {
     /// Whether the user has already been told.
     pub seen: bool,
 }
+
+/// A file whose versions are wanted, or one of them to restore.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct VersionRequest {
+    /// Path within the folder.
+    pub path: String,
+    /// The version to restore; unused when listing.
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+/// Which kind of version a [`Version`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum VersionKind {
+    /// The version the folder has now.
+    Current,
+    /// A version kept on this device after it was replaced (ADR 0029).
+    Previous,
+}
+
+/// One version of a file (ADR 0029).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Version {
+    /// Identifies the version: `current`, or `previous:<id>`.
+    pub id: String,
+    /// Which kind it is.
+    pub kind: VersionKind,
+    /// Size in bytes.
+    pub size: u64,
+    /// Modification time, in milliseconds since the Unix epoch.
+    pub modified_ms: i64,
+    /// For the current version, the device that made it.
+    #[serde(default)]
+    pub author: Option<String>,
+    /// For a previous version, when this device kept it.
+    #[serde(default)]
+    pub kept_ms: Option<i64>,
+    /// For a previous version, when it expires; none if the folder keeps deleted files forever.
+    #[serde(default)]
+    pub expires_ms: Option<i64>,
+}

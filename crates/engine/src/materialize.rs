@@ -257,7 +257,7 @@ fn remove_if_unchanged(
     let abs = root.join(path);
     if unchanged(&abs, &local) {
         // Moved aside, not copied, so the recycle bin keeps the content (ADR 0027).
-        crate::content::keep_deleted(&mut state, &abs, local.content)?;
+        crate::content::keep_deleted(&mut state, &abs, local.content, None)?;
         info!(folder = %id, path, "deleted");
         inner.emit(Event::FileRemoved {
             folder: id,
@@ -402,24 +402,33 @@ async fn write_file(
     }
     // The file there may be the only copy on this device of content still needed: another
     // entry's, about to move to its own path (ADR 0024), or a conflict copy. Move it aside
-    // rather than overwrite it (ADR 0027).
+    // rather than overwrite it (ADR 0027). An older version of this entry goes into its history
+    // (ADR 0029). Either way the new file takes its place with no moment where the path is
+    // missing.
+    let mut placed = false;
     if let Some(existing) = state.local.get(&write.path).cloned() {
-        let needed = existing.content != write.content
-            && (existing.entry != write.entry
+        if existing.content != write.content {
+            let needed = existing.entry != write.entry
                 || state
                     .meta
                     .conflicts(&write.entry)
                     .iter()
-                    .any(|c| matches!(c.version.kind, EntryKind::File { content, .. } if content == existing.content)));
-        if needed {
-            state.local.remove(&write.path);
-            crate::content::keep_deleted(&mut state, &target, existing.content)?;
+                    .any(|c| matches!(c.version.kind, EntryKind::File { content, .. } if content == existing.content));
+            if needed {
+                state.local.remove(&write.path);
+                crate::content::keep_deleted(&mut state, &target, existing.content, Some(&tmp))?;
+            } else {
+                crate::history::keep(&mut state, &write.path, &existing, Some(&tmp))?;
+            }
+            placed = true;
         }
     }
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(io_err(parent))?;
+    if !placed {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(io_err(parent))?;
+        }
+        fs::rename(&tmp, &target).map_err(io_err(&target))?;
     }
-    fs::rename(&tmp, &target).map_err(io_err(&target))?;
     state.used.insert(write.path.clone(), crate::now_ms());
     state.dropped.remove(&write.entry);
     let disk = stat(&target).ok_or_else(|| Error::Io {
@@ -442,7 +451,12 @@ async fn write_file(
         if let Some(local) = state.local.remove(old) {
             let abs = root.join(old);
             if unchanged(&abs, &local) {
-                let _ = fs::remove_file(&abs);
+                if local.content == write.content {
+                    let _ = fs::remove_file(&abs);
+                } else {
+                    // Moved and changed: the old content is a previous version (ADR 0029).
+                    crate::history::keep(&mut state, old, &local, None)?;
+                }
             }
         }
     }

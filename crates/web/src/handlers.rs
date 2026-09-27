@@ -11,7 +11,7 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Form;
 use serde::Deserialize;
-use tidefell_engine::FolderInfo;
+use tidefell_engine::{FolderInfo, VersionKind};
 use tidefell_proto::{EntryId, FolderId, UserId};
 
 use crate::format::{query_value, size, time};
@@ -433,6 +433,93 @@ pub(crate) async fn restore(
         "/folders/{}/recycle?restored={}",
         folder.id,
         query_value(&item.path)
+    ))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct HistoryQuery {
+    path: String,
+    #[serde(default)]
+    restored: bool,
+}
+
+/// A file's versions: the current one and those this server kept when it was replaced.
+pub(crate) async fn history(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    let Ok(versions) = state.engine.versions(folder.id, &query.path) else {
+        return not_found();
+    };
+    let versions = versions
+        .into_iter()
+        .map(|v| pages::VersionRow {
+            current: v.kind == VersionKind::Current,
+            id: v.id,
+            size: size(v.size),
+            modified: time(v.modified_ms),
+            kept: v.kept_ms.map_or(String::new(), time),
+            expires: v.expires_ms.map_or("never".into(), time),
+        })
+        .collect();
+    render(pages::History {
+        username: session.username,
+        admin: session.admin,
+        csrf: session.csrf,
+        id: folder.id.to_string(),
+        name: folder_name(&folder),
+        notice: query
+            .restored
+            .then(|| "Restored. The file changes back on every device.".to_owned()),
+        path: query.path,
+        versions,
+    })
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RestoreVersionForm {
+    csrf: String,
+    path: String,
+    version: String,
+}
+
+pub(crate) async fn restore_version(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<RestoreVersionForm>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = check_csrf(&session, &form.csrf) {
+        return response;
+    }
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    if let Err(e) = state
+        .engine
+        .restore_version(folder.id, &form.path, &form.version)
+        .await
+    {
+        tracing::warn!(error = %e, "restoring a version failed");
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Restore failed",
+            &e.to_string(),
+        );
+    }
+    tracing::info!(user = %session.username, folder = %folder.id, path = %form.path, "restored a version from the web");
+    Redirect::to(&format!(
+        "/folders/{}/history?path={}&restored=true",
+        folder.id,
+        query_value(&form.path)
     ))
     .into_response()
 }

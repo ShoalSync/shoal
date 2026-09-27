@@ -492,6 +492,46 @@ async fn uploads_and_share_links() {
     );
     let files = engine.files(FOLDER).unwrap();
     assert!(files.iter().any(|f| f.path == "notes/2026/todo.txt"));
+
+    // Uploading over a file keeps the earlier version, which the history page restores
+    // (ADR 0029).
+    let page = alice
+        .upload(
+            &upload,
+            &[("csrf", &csrf), ("dir", "notes/2026")],
+            &[("file", "todo.txt", b"buy oat milk")],
+        )
+        .await;
+    assert_eq!(page.status, StatusCode::SEE_OTHER, "{}", page.body);
+    assert_eq!(
+        std::fs::read(root.join("notes/2026/todo.txt")).unwrap(),
+        b"buy oat milk"
+    );
+    let history = alice
+        .get(&format!(
+            "/folders/{FOLDER}/history?path=notes%2F2026%2Ftodo.txt"
+        ))
+        .await;
+    assert!(history.body.contains("Earlier"), "{}", history.body);
+    let earlier = engine.versions(FOLDER, "notes/2026/todo.txt").unwrap()[1]
+        .id
+        .clone();
+    let restored = alice
+        .post(
+            &format!("/folders/{FOLDER}/history/restore"),
+            &[
+                ("csrf", &history.csrf()),
+                ("path", "notes/2026/todo.txt"),
+                ("version", &earlier),
+            ],
+        )
+        .await;
+    assert_eq!(restored.status, StatusCode::SEE_OTHER, "{}", restored.body);
+    assert!(restored.location().contains("restored=true"));
+    assert_eq!(
+        std::fs::read(root.join("notes/2026/todo.txt")).unwrap(),
+        b"buy milk"
+    );
     let page = alice
         .get(&format!("/folders/{FOLDER}?uploaded=2"))
         .await

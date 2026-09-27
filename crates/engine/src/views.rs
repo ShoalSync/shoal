@@ -142,3 +142,32 @@ pub enum Event {
     /// A task panicked and the engine stopped working (ADR 0030).
     Crashed(String),
 }
+
+/// Which kind of version a [`VersionInfo`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionKind {
+    /// The version the folder has now.
+    Current,
+    /// A version kept on this device after the engine replaced it (ADR 0029).
+    Previous,
+}
+
+/// One version of a file (ADR 0029).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionInfo {
+    /// Identifies the version for [`crate::Engine::restore_version`]: `current`, or
+    /// `previous:<id>`.
+    pub id: String,
+    /// Which kind it is.
+    pub kind: VersionKind,
+    /// Size in bytes.
+    pub size: u64,
+    /// Modification time, in milliseconds since the Unix epoch.
+    pub modified_ms: i64,
+    /// For the current version, the device that made it.
+    pub author: Option<DeviceId>,
+    /// For a previous version, when this device kept it.
+    pub kept_ms: Option<i64>,
+    /// For a previous version, when it expires, if the folder's retention is not forever.
+    pub expires_ms: Option<i64>,
+}

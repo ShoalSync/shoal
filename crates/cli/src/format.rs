@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
     Crash, Direction, Event, File, Folder, KnownPeer, LocalDeletes, LogSettings, Mode, Peer,
-    Problem, Recycled, Status, SyncOptions,
+    Problem, Recycled, Status, SyncOptions, Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -270,6 +270,32 @@ pub(crate) fn event(e: &Event) -> String {
         Event::FileRemoved { folder, path } => format!("file removed      {folder}  {path}"),
         Event::Crashed { message } => format!("engine stopped    {message}"),
     }
+}
+
+pub(crate) fn versions(versions: &[Version]) -> String {
+    versions
+        .iter()
+        .map(|v| match v.kind {
+            VersionKind::Current => format!(
+                "current                    {}  {:>10}",
+                time(v.modified_ms),
+                size(v.size)
+            ),
+            VersionKind::Previous => {
+                let expires = v.expires_ms.map_or("kept for good".to_owned(), |ms| {
+                    format!("until {}", time(ms))
+                });
+                format!(
+                    "{}  {}  {:>10}  replaced {}, {expires}",
+                    v.id,
+                    time(v.modified_ms),
+                    size(v.size),
+                    time(v.kept_ms.unwrap_or_default())
+                )
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub(crate) fn crashes(crashes: &[Crash]) -> String {

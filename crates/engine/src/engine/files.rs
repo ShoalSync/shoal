@@ -155,15 +155,36 @@ impl Engine {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
             }
-            if std::fs::rename(source, &target).is_err() {
-                let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
-                std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
-                let tmp = tmp_dir.join(format!(
-                    "write-{:016x}",
-                    u64::from_le_bytes(crate::random_bytes()?)
-                ));
-                std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
-                std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
+            // The recorded file being replaced, if it has no changes of its own: it becomes a
+            // previous version (ADR 0029). Its record stays, so the scan below sees an edit.
+            let replaced = handle
+                .lock()
+                .local
+                .get(path)
+                .filter(|l| crate::scan::unchanged(&target, l))
+                .cloned();
+            let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
+            let tmp = tmp_dir.join(format!(
+                "write-{:016x}",
+                u64::from_le_bytes(crate::random_bytes()?)
+            ));
+            match replaced {
+                Some(recorded) => {
+                    // The new content goes next to the folder first, so the swap is one
+                    // filesystem's rename.
+                    std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
+                    if std::fs::rename(source, &tmp).is_err() {
+                        std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
+                    }
+                    crate::history::keep(&mut handle.lock(), path, &recorded, Some(&tmp))?;
+                }
+                None => {
+                    if std::fs::rename(source, &target).is_err() {
+                        std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
+                        std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
+                        std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
+                    }
+                }
             }
         }
         // Only the saved file's directory needs a look.
@@ -297,7 +318,7 @@ fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> 
     if let Some(local) = state.local.remove(path) {
         let abs = root.join(path);
         if crate::scan::unchanged(&abs, &local) {
-            crate::content::keep_deleted(state, &abs, local.content)?;
+            crate::content::keep_deleted(state, &abs, local.content, None)?;
         } else {
             match std::fs::remove_file(&abs) {
                 Ok(()) => {}
