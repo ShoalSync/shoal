@@ -26,6 +26,11 @@ pub struct Config {
     /// Folders to sync.
     #[serde(default)]
     pub folders: Vec<Folder>,
+    /// Watch folders for changes and scan only where something changed, with a full scan every
+    /// hour. Folders that cannot be watched, such as on a network filesystem, are scanned every
+    /// `scan_interval_secs` instead (ADR 0029).
+    #[serde(default = "default_true")]
+    pub watch: bool,
     /// Serve the web peer. Omit to disable it.
     #[serde(default)]
     pub web: Option<Web>,
@@ -293,6 +298,7 @@ impl Config {
             relay,
             address_lookup: self.network.address_lookup,
             local_discovery: self.network.local_discovery,
+            watch: self.watch,
             bind: self.network.bind,
             peers,
             folders,

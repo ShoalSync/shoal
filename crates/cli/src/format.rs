@@ -65,6 +65,12 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if let Some(note) = only_here(f) {
                 let _ = write!(out, "\n    {note}");
             }
+            if let Some(reason) = &f.watch_error {
+                let _ = write!(
+                    out,
+                    "\n    not watched for changes ({reason}): scanned on its interval"
+                );
+            }
         }
     }
     out
@@ -272,6 +278,7 @@ mod tests {
             recycle_bin: Default::default(),
             configured: false,
             only_here: 0,
+            watch_error: None,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

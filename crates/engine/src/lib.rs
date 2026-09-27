@@ -45,6 +45,7 @@ mod scan;
 mod setaside;
 mod state;
 mod views;
+mod watch;
 
 pub use config::{
     Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr, ReplicaMode,

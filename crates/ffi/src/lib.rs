@@ -592,6 +592,8 @@ impl Node {
             relay: network.relay()?,
             address_lookup: network.address_lookup,
             local_discovery: network.local_discovery,
+            // The app triggers its own scans (ADR 0025).
+            watch: false,
             bind: network.bind()?,
             peers: Vec::new(),
             folders: Vec::new(),

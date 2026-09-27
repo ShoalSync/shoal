@@ -142,6 +142,9 @@ pub struct EngineConfig {
     pub address_lookup: bool,
     /// Announce and find known devices on the local network with mDNS (ADR 0029).
     pub local_discovery: bool,
+    /// Watch folders for changes, with a full scan hourly, instead of scanning each folder on
+    /// its interval (ADR 0029). Folders that cannot be watched are scanned on their interval.
+    pub watch: bool,
     /// Local socket to bind; `None` picks one.
     pub bind: Option<SocketAddr>,
     /// Peers to keep connected.

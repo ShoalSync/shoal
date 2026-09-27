@@ -50,6 +50,7 @@ impl Engine {
                         .entries()
                         .filter(|v| copies::only_here(&state, self.inner.key.id(), v))
                         .count(),
+                    watch_error: h.watch_error.lock().unwrap().clone(),
                 }
             })
             .collect()

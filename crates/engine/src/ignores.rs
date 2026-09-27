@@ -32,7 +32,11 @@ const DEFAULTS: &[&str] = &[
 
 /// A folder's ignore patterns on this device.
 #[derive(Debug, Clone)]
-pub(crate) struct Ignores(Gitignore);
+pub(crate) struct Ignores {
+    patterns: Gitignore,
+    /// The folder-relative files the ignore file includes.
+    includes: Vec<String>,
+}
 
 impl Ignores {
     /// The built-in defaults and the patterns in `root`'s ignore file, with its `#include`
@@ -42,6 +46,7 @@ impl Ignores {
         for line in DEFAULTS {
             add(&mut builder, line);
         }
+        let mut includes = Vec::new();
         if let Ok(text) = fs::read_to_string(root.join(IGNORE_FILE)) {
             for line in text.lines() {
                 let Some(include) = line.strip_prefix("#include ") else {
@@ -49,6 +54,7 @@ impl Ignores {
                     continue;
                 };
                 let include = include.trim();
+                includes.push(include.to_owned());
                 match is_valid_path(include).then(|| fs::read_to_string(root.join(include))) {
                     Some(Ok(text)) => text.lines().for_each(|line| add(&mut builder, line)),
                     _ => {
@@ -58,7 +64,7 @@ impl Ignores {
             }
         }
         match builder.build() {
-            Ok(patterns) => Self(patterns),
+            Ok(patterns) => Self { patterns, includes },
             Err(e) => {
                 warn!(folder = %root.display(), error = %e, "ignore patterns not applied");
                 Self::defaults(root)
@@ -72,12 +78,26 @@ impl Ignores {
         for line in DEFAULTS {
             add(&mut builder, line);
         }
-        Self(builder.build().expect("the defaults are valid patterns"))
+        Self {
+            patterns: builder.build().expect("the defaults are valid patterns"),
+            includes: Vec::new(),
+        }
     }
 
     /// Whether the folder-relative `path`, or a directory it is in, is ignored.
     pub(crate) fn is_ignored(&self, path: &str, is_dir: bool) -> bool {
-        path == IGNORE_FILE || self.0.matched_path_or_any_parents(path, is_dir).is_ignore()
+        path == IGNORE_FILE
+            || self
+                .patterns
+                .matched_path_or_any_parents(path, is_dir)
+                .is_ignore()
+    }
+}
+
+impl Ignores {
+    /// Whether `path` is the ignore file or a file it includes.
+    pub(crate) fn is_pattern_file(&self, path: &str) -> bool {
+        path == IGNORE_FILE || self.includes.iter().any(|i| i == path)
     }
 }
 

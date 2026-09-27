@@ -93,6 +93,9 @@ pub struct Folder {
     /// device may hold their only copy.
     #[serde(default)]
     pub only_here: u64,
+    /// Why the folder is scanned on an interval instead of watched for changes, if it is.
+    #[serde(default)]
+    pub watch_error: Option<String>,
 }
 
 /// A summary of one device's recycle bin for a folder.

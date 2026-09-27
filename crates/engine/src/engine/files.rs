@@ -6,6 +6,7 @@ use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{EntryId, FolderId};
 
 use super::{run_scan, Engine};
+use crate::scan::Scope;
 use crate::state::FolderState;
 use crate::views::{CopyInfo, Event, FileInfo};
 use crate::{copies, evict, materialize, now_ms, Error, Result};
@@ -165,7 +166,12 @@ impl Engine {
                 std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
             }
         }
-        run_scan(&self.inner, folder, Some(path.to_owned())).await
+        // Only the saved file's directory needs a look.
+        let mut scope = Scope::default();
+        scope.add(path.rsplit_once('/').map_or("", |(dir, _)| dir), false);
+        run_scan(&self.inner, folder, Some(scope), Some(path.to_owned()))
+            .await
+            .map(drop)
     }
 
     /// Deletes the live file at `path`, sending it to peers' recycle bins. Works on placeholders

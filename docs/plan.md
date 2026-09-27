@@ -243,7 +243,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   ADR 0028 is tidefell/android#13.
 - Phase 5e is decided: ADR 0029 (features from other sync tools) and its breakdown below. Step 2
   (local network discovery) is implemented in this repository; the Android multicast lock
-  follows with the `v0.11.0` pin. Step 3 (ignore patterns) is implemented.
+  follows with the `v0.11.0` pin. Steps 3 (ignore patterns) and 4 (watching) are implemented.
 
 ### Phase 2 work breakdown
 

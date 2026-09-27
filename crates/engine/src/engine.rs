@@ -27,14 +27,18 @@ pub use folders::FolderStatus;
 use crate::backend::EngineBackend;
 use crate::config::{EngineConfig, FolderConfig, PeerAddr};
 use crate::runtime::Runtime;
+use crate::scan::Scope;
 use crate::state::FolderState;
 use crate::views::Event;
+use crate::watch::{FolderWatch, Wanted};
 use crate::{copies, evict, materialize, now_ms, scan, Error, Result};
 use peers::endpoint_addr;
 use recycle::purge;
 
 /// How often to retry pending downloads and reconnect to peers.
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
+/// How often a watched folder is scanned in full anyway, in case the watch missed a change.
+const SAFETY_SCAN: Duration = Duration::from_secs(3600);
 /// How often to purge expired recycle-bin items.
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
 /// How often to ask full replicas about files that have no confirmed copy yet (ADR 0022).
@@ -48,6 +52,8 @@ pub(crate) struct FolderHandle {
     /// True if the folder comes from the configuration file.
     configured: bool,
     scanner: Mutex<Option<AbortHandle>>,
+    /// Why the folder is not watched for changes and is scanned on its interval instead.
+    pub(crate) watch_error: Mutex<Option<String>>,
     /// Paths opened by front-ends, with how many times; never evicted while open.
     pins: Mutex<HashMap<String, usize>>,
 }
@@ -81,6 +87,8 @@ pub(crate) struct Inner {
     events: broadcast::Sender<Event>,
     /// Serialises changes to the folder set and their persistence.
     runtime_lock: Mutex<()>,
+    /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
+    watch: bool,
 }
 
 impl Inner {
@@ -171,20 +179,71 @@ fn open_folder(
         fs_lock: tokio::sync::Mutex::new(()),
         configured,
         scanner: Mutex::new(None),
+        watch_error: Mutex::new(None),
         pins: Mutex::new(HashMap::new()),
     })
 }
 
 fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
-    let interval = handle.lock().config.scan_interval;
+    let (interval, root) = {
+        let state = handle.lock();
+        (state.config.scan_interval, state.config.path.clone())
+    };
     let task = {
         let inner = inner.clone();
         tokio::spawn(async move {
-            loop {
-                if let Err(e) = run_scan(&inner, id, None).await {
-                    warn!(folder = %id, error = %e, "scan failed");
+            // Watched before the first scan, so nothing changed during it is missed.
+            let mut watch = if inner.watch {
+                match FolderWatch::new(&root) {
+                    Ok(watch) => Some(watch),
+                    Err(e) => {
+                        not_watched(&inner, id, e);
+                        None
+                    }
                 }
-                tokio::time::sleep(interval).await;
+            } else {
+                None
+            };
+            let mut wanted = Wanted::Full;
+            loop {
+                let scope = match &wanted {
+                    Wanted::Full => None,
+                    Wanted::Scope(scope) => Some(scope.clone()),
+                };
+                match run_scan(&inner, id, scope, None).await {
+                    Ok(dirs) => {
+                        if let Some(w) = &mut watch {
+                            if let Err(e) = w.add(&dirs) {
+                                not_watched(&inner, id, e);
+                                watch = None;
+                            }
+                        }
+                    }
+                    Err(e) => warn!(folder = %id, error = %e, "scan failed"),
+                }
+                wanted = match &mut watch {
+                    Some(w) => {
+                        let ignores = match inner.folder(&id) {
+                            Ok(handle) => handle.lock().ignores.clone(),
+                            Err(_) => return,
+                        };
+                        tokio::select! {
+                            next = w.next(&ignores) => match next {
+                                Some(wanted) => wanted,
+                                None => {
+                                    not_watched(&inner, id, "the watch stopped".into());
+                                    watch = None;
+                                    Wanted::Full
+                                }
+                            },
+                            () = tokio::time::sleep(SAFETY_SCAN) => Wanted::Full,
+                        }
+                    }
+                    None => {
+                        tokio::time::sleep(interval).await;
+                        Wanted::Full
+                    }
+                };
             }
         })
     };
@@ -241,6 +300,7 @@ impl Engine {
             materialize: Notify::new(),
             events: broadcast::channel(256).0,
             runtime_lock: Mutex::new(()),
+            watch: config.watch,
         });
 
         let node = Arc::new(
@@ -384,7 +444,7 @@ impl Engine {
 
     /// Scans `folder` for local changes now.
     pub async fn scan(&self, folder: FolderId) -> Result<()> {
-        run_scan(&self.inner, folder, None).await
+        run_scan(&self.inner, folder, None, None).await.map(drop)
     }
 
     /// Materialises remote changes to `folder` now.
@@ -417,20 +477,35 @@ impl Engine {
     }
 }
 
-/// Scans `id`. `saved` is a path just written through the engine, recorded even if ignored.
-async fn run_scan(inner: &Arc<Inner>, id: FolderId, saved: Option<String>) -> Result<()> {
+/// Records that folder `id` is scanned on its interval instead of watched, and why.
+fn not_watched(inner: &Inner, id: FolderId, reason: String) {
+    warn!(folder = %id, reason = %reason, "not watching for changes; scanning on an interval");
+    if let Ok(handle) = inner.folder(&id) {
+        *handle.watch_error.lock().unwrap() = Some(reason);
+    }
+}
+
+/// Scans `id`, or only `scope` of it. `saved` is a path just written through the engine,
+/// recorded even if ignored. Returns the directories walked.
+async fn run_scan(
+    inner: &Arc<Inner>,
+    id: FolderId,
+    scope: Option<Scope>,
+    saved: Option<String>,
+) -> Result<Vec<PathBuf>> {
     let handle = inner.folder(&id)?;
     let _guard = handle.fs_lock.lock().await;
     let (inner2, handle2) = (inner.clone(), handle.clone());
-    let changed =
-        tokio::task::spawn_blocking(move || scan::scan(&inner2, &handle2, saved.as_deref()))
-            .await
-            .expect("scan task panicked")?;
-    if changed {
+    let scanned = tokio::task::spawn_blocking(move || {
+        scan::scan(&inner2, &handle2, scope.as_ref(), saved.as_deref())
+    })
+    .await
+    .expect("scan task panicked")?;
+    if scanned.changed {
         inner.changes.send_modify(|n| *n += 1);
         inner.emit(Event::FolderChanged(id));
     }
-    Ok(())
+    Ok(scanned.dirs)
 }
 
 async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {

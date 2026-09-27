@@ -29,6 +29,9 @@ pub struct FolderInfo {
     pub configured: bool,
     /// Live files made on this device that no full replica has confirmed yet (ADR 0022).
     pub only_here: usize,
+    /// Why the folder is scanned on its interval instead of watched for changes, if it is
+    /// (ADR 0029).
+    pub watch_error: Option<String>,
 }
 
 /// A summary of one replica's recycle bin.

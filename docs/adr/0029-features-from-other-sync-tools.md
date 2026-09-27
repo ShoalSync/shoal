@@ -75,6 +75,28 @@ by amending this ADR.
   events. If a watch cannot be set up, for example because the inotify watch limit is reached,
   the folder falls back to its polling interval and `tidefell status` says why.
 - The Android app keeps its own triggers (ADR 0025) for now.
+- Step 4 decided:
+  - `tidefelld`'s `watch` setting turns watching on, and it is on by default. The engine takes a
+    `watch` flag. The bindings leave it off.
+  - Each directory a scan walks gets its own non-recursive watch. So `.tidefell/`, ignored
+    directories and symlinks are never watched, and a directory created or moved in is watched
+    when the scan of its parent walks it.
+  - A change rescans its directory. A new directory is walked in full. A path that is gone
+    rescans everything recorded under it.
+  - A scan records a delete only for a file that no longer exists on disk.
+  - Changes wait at most five seconds to settle, so a file written continuously is still picked
+    up. The following need a full scan: more than 4096 changed paths, a change to the ignore
+    file or a file it includes, and a lost event queue.
+  - A folder on a network or FUSE filesystem is not watched, because other machines' changes are
+    not reported there. The same goes for a folder with such a filesystem mounted on a
+    directory inside it, which is found by its device ID. It is scanned on its interval, and
+    `watch_error` in the API and `tidefell status` says so.
+  - That list is Linux's. There, inotify reports only changes made through this machine: SMB's
+    `CHANGE_NOTIFY`, NFSv4.1 directory notifications and the FUSE protocol's invalidations do
+    not reach it. Other platforms differ. Windows's `ReadDirectoryChangesW` works on SMB
+    shares, because it uses `CHANGE_NOTIFY`, so the Windows client can watch them. The macOS
+    and Windows clients decide their own lists.
+  - A file saved through the engine rescans only its own directory.
 
 ### Local network discovery
 

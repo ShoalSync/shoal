@@ -15,6 +15,7 @@ This example shows every section:
 | Key | Meaning |
 | --- | --- |
 | `data_dir` | Keys, certificates, metadata, the block store and the control socket. |
+| `watch` | Watch folders for changes and scan only where something changed, with a full scan every hour. On by default. A folder that cannot be watched, such as one on or containing a network filesystem mount (NFS, SMB, FUSE), or past the system's watch limit, is scanned every `scan_interval_secs` instead, and `tidefell status` says why. |
 | `network.relay` | `{ mode = "default" }` (public iroh relays), `{ mode = "custom", urls = [...] }` or `{ mode = "disabled" }`. |
 | `network.address_lookup` | Publish and resolve device addresses via DNS. |
 | `network.local_discovery` | Announce this device and find your other devices on the local network with mDNS, so they connect directly, even with no internet access. On by default; it only finds devices this one already knows. |

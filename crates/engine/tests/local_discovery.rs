@@ -23,6 +23,7 @@ async fn start(dir: &Path, key: &DeviceKey, user: &UserKey, peers: Vec<PeerAddr>
         relay: RelayConfig::Disabled,
         address_lookup: false,
         local_discovery: true,
+        watch: false,
         bind: Some(SocketAddr::from(([0, 0, 0, 0], 0))),
         peers,
         folders: vec![FolderConfig {

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tidefell_chunker::{chunk_reader, Params};
 use tidefell_proto::sync::{is_valid_path, EntryKind};
@@ -69,7 +69,59 @@ pub(crate) fn unchanged(path: &Path, local: &LocalFile) -> bool {
     stat(path).is_some_and(|s| s.size == local.size && s.mtime_ns == local.mtime_ns)
 }
 
-fn walk(root: &Path, dir: &Path, ignores: &Ignores, out: &mut Vec<(String, DiskStat)>) {
+/// The part of a folder a scan looks at: folder-relative directories (`""` is the root), each
+/// with or without everything below it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Scope(BTreeSet<(String, bool)>);
+
+impl Scope {
+    /// The directory `dir` itself, and everything below it if `recursive`.
+    pub(crate) fn add(&mut self, dir: &str, recursive: bool) {
+        self.0.insert((dir.to_owned(), recursive));
+    }
+
+    /// Whether the file at `path` is in the scope.
+    pub(crate) fn contains(&self, path: &str) -> bool {
+        let parent = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+        self.0.iter().any(|(dir, recursive)| {
+            parent == dir
+                || (*recursive
+                    && (path == dir || dir.is_empty() || path.starts_with(&format!("{dir}/"))))
+        })
+    }
+}
+
+/// Files and directories under `dir`, all the way down if `recursive`, skipping the reserved
+/// directory, ignored paths, symlinks and special files.
+struct Walk<'a> {
+    root: &'a Path,
+    ignores: &'a Ignores,
+    files: Vec<(String, DiskStat)>,
+    dirs: Vec<PathBuf>,
+}
+
+impl Walk<'_> {
+    fn dir(&mut self, dir: &Path, recursive: bool) {
+        self.dirs.push(dir.to_owned());
+        walk(
+            self.root,
+            dir,
+            self.ignores,
+            recursive,
+            &mut self.files,
+            &mut self.dirs,
+        );
+    }
+}
+
+fn walk(
+    root: &Path,
+    dir: &Path,
+    ignores: &Ignores,
+    recursive: bool,
+    out: &mut Vec<(String, DiskStat)>,
+    dirs: &mut Vec<PathBuf>,
+) {
     let Ok(entries) = fs::read_dir(dir) else {
         warn!(dir = %dir.display(), "cannot read directory");
         return;
@@ -100,7 +152,10 @@ fn walk(root: &Path, dir: &Path, ignores: &Ignores, out: &mut Vec<(String, DiskS
             continue;
         }
         if file_type.is_dir() {
-            walk(root, &path, ignores, out);
+            if recursive {
+                dirs.push(path.clone());
+                walk(root, &path, ignores, true, out, dirs);
+            }
         } else {
             if !is_valid_path(&rel) {
                 warn!(path = %rel, "skipping path that cannot be synced");
@@ -126,17 +181,54 @@ struct Changed {
     stat: DiskStat,
 }
 
-/// Scans `id` for changes since the last scan and records them. `saved` is a file written
-/// through the engine, recorded even if it is ignored. Returns true if the index changed.
-pub(crate) fn scan(inner: &Inner, handle: &FolderHandle, saved: Option<&str>) -> Result<bool> {
+/// What a scan found.
+#[derive(Debug, Default)]
+pub(crate) struct Scanned {
+    /// Whether the index changed.
+    pub(crate) changed: bool,
+    /// The directories walked, to watch for later changes.
+    pub(crate) dirs: Vec<PathBuf>,
+}
+
+/// Scans `id` for changes since the last scan and records them: everything, or only `scope`.
+/// `saved` is a file written through the engine, recorded even if it is ignored.
+pub(crate) fn scan(
+    inner: &Inner,
+    handle: &FolderHandle,
+    scope: Option<&Scope>,
+    saved: Option<&str>,
+) -> Result<Scanned> {
     let (root, known) = {
         let state = handle.lock();
         (state.config.path.clone(), state.local.clone())
     };
 
     let ignores = Ignores::load(&root);
-    let mut found = Vec::new();
-    walk(&root, &root, &ignores, &mut found);
+    let mut walker = Walk {
+        root: &root,
+        ignores: &ignores,
+        files: Vec::new(),
+        dirs: Vec::new(),
+    };
+    match scope {
+        None => walker.dir(&root, true),
+        Some(scope) => {
+            for (dir, recursive) in &scope.0 {
+                let abs = root.join(dir);
+                let reserved = dir == RESERVED_DIR || dir.starts_with(&format!("{RESERVED_DIR}/"));
+                if abs.is_dir() && !reserved && (dir.is_empty() || !ignores.is_ignored(dir, true)) {
+                    walker.dir(&abs, *recursive);
+                }
+            }
+        }
+    }
+    let Walk {
+        files: mut found,
+        dirs,
+        ..
+    } = walker;
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found.dedup_by(|a, b| a.0 == b.0);
     if let Some(rel) = saved.filter(|rel| *rel != IGNORE_FILE && ignores.is_ignored(rel, false)) {
         if let Some(stat) = stat(&root.join(rel)) {
             found.push((rel.to_owned(), stat));
@@ -236,10 +328,16 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle, saved: Option<&str>) ->
         );
     }
 
-    // A path that became ignored after it synced keeps its entry: nothing is deleted.
+    // A path that became ignored after it synced keeps its entry: nothing is deleted. Only
+    // files in the scope that are verifiably gone are.
     let deleted: Vec<String> = known
         .keys()
-        .filter(|rel| !seen.contains(*rel) && !state.ignores.is_ignored(rel, false))
+        .filter(|rel| {
+            !seen.contains(*rel)
+                && scope.is_none_or(|s| s.contains(rel))
+                && !state.ignores.is_ignored(rel, false)
+                && fs::symlink_metadata(root.join(rel)).is_err()
+        })
         .cloned()
         .collect();
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
@@ -275,5 +373,56 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle, saved: Option<&str>) ->
     }
 
     state.save()?;
-    Ok(index_changed)
+    Ok(Scanned {
+        changed: index_changed,
+        dirs,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_alone_covers_its_own_files() {
+        let mut scope = Scope::default();
+        scope.add("photos", false);
+        assert!(scope.contains("photos/a.jpg"));
+        assert!(!scope.contains("photos/2024/b.jpg"));
+        assert!(!scope.contains("photos.txt"));
+        assert!(!scope.contains("photosx/a.jpg"));
+        assert!(!scope.contains("other/a.jpg"));
+    }
+
+    #[test]
+    fn the_root_alone_covers_only_top_level_files() {
+        let mut scope = Scope::default();
+        scope.add("", false);
+        assert!(scope.contains("a.txt"));
+        assert!(!scope.contains("dir/a.txt"));
+    }
+
+    #[test]
+    fn a_recursive_directory_covers_everything_below() {
+        let mut scope = Scope::default();
+        scope.add("photos", true);
+        assert!(scope.contains("photos/a.jpg"));
+        assert!(scope.contains("photos/2024/06/b.jpg"));
+        assert!(!scope.contains("photosx/a.jpg"));
+        assert!(!scope.contains("a.jpg"));
+        let mut all = Scope::default();
+        all.add("", true);
+        assert!(all.contains("a/b/c.txt"));
+    }
+
+    #[test]
+    fn nothing_outside_every_scope() {
+        let mut scope = Scope::default();
+        scope.add("a", false);
+        scope.add("b/c", true);
+        for path in ["x.txt", "a/b/x.txt", "b/x.txt", "b/cd/x.txt", "c/x.txt"] {
+            assert!(!scope.contains(path), "{path}");
+        }
+        assert!(!Scope::default().contains("x.txt"));
+    }
 }
