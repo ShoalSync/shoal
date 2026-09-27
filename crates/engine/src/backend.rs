@@ -58,8 +58,9 @@ impl Backend for EngineBackend {
         let mut changed = false;
         {
             let mut state = handle.lock();
+            let now = crate::now_ms();
             for version in versions {
-                match state.meta.apply_remote(version) {
+                match state.meta.apply_remote(version, now) {
                     Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
                 }

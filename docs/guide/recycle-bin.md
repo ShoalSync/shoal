@@ -35,7 +35,9 @@ the file.
 
 Retention is set per folder when it is created or joined (`--retention-days`, or
 `retention_days` in the configuration). Entries older than that are purged, and their chunks
-are released. A retention of 0 keeps deleted files forever.
+are released. A retention of 0 keeps deleted files forever. Age counts from when this device
+recorded the delete, by its own clock, so a device whose clock is wrong cannot make the others
+purge its deletes early.
 
 Retention belongs to each device, not to the folder: a phone can keep deleted files for a day
 while a NAS keeps them for a year. Change it for a folder added with the CLI or API with:

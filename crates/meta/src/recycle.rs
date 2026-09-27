@@ -42,7 +42,8 @@ impl Retention {
 pub struct Recycled {
     /// The last live version before the delete.
     pub version: EntryVersion,
-    /// Modification time of the tombstone, in milliseconds since the Unix epoch.
+    /// When this device recorded the delete, in milliseconds since the Unix epoch by its own
+    /// clock. Retention counts from here.
     pub deleted_at_ms: i64,
 }
 

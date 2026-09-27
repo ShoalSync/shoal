@@ -169,7 +169,7 @@ impl Backend for TestBackend {
         {
             let mut folder = self.folder.lock().unwrap();
             for v in versions {
-                if let Ok(applied) = folder.apply_remote(v) {
+                if let Ok(applied) = folder.apply_remote(v, 0) {
                     changed |= applied != tidefell_meta::Applied::Stale;
                 }
             }

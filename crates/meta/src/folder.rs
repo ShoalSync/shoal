@@ -240,12 +240,20 @@ impl Folder {
         };
         let signed = Signed::sign(&new, key);
         let vector = new.version.clone();
-        self.store(new, signed.clone());
+        self.store(new, signed.clone(), modified_ms);
         Ok((signed, vector))
     }
 
-    /// Verifies and applies a version received from a peer.
-    pub fn apply_remote(&mut self, signed: Signed<EntryVersion>) -> Result<Applied> {
+    /// Verifies and applies a version received from a peer at `received_ms`, this device's time.
+    /// An entry the version deletes enters the recycle bin at `received_ms`, not at the
+    /// tombstone's modification time, which comes from the deleting device's clock: retention
+    /// belongs to each device (ADR 0021), and a device with a wrong clock must not make every
+    /// other device purge its deletes early or late.
+    pub fn apply_remote(
+        &mut self,
+        signed: Signed<EntryVersion>,
+        received_ms: i64,
+    ) -> Result<Applied> {
         let version = signed.verify_authored()?;
         if version.folder != self.id {
             return Err(Error::WrongFolder);
@@ -256,7 +264,7 @@ impl Folder {
         if !version.version.within_ceiling() {
             return Err(Error::CounterCeiling);
         }
-        Ok(self.store(version, signed))
+        Ok(self.store(version, signed, received_ms))
     }
 
     /// Restores a deleted entry from the recycle bin as a new local change.
@@ -301,8 +309,14 @@ impl Folder {
         (out, self.sequence)
     }
 
-    /// Adds a verified version, keeping only versions no other version supersedes.
-    fn store(&mut self, version: EntryVersion, signed: Signed<EntryVersion>) -> Applied {
+    /// Adds a verified version, recorded on this device at `recorded_ms`, keeping only versions
+    /// no other version supersedes.
+    fn store(
+        &mut self,
+        version: EntryVersion,
+        signed: Signed<EntryVersion>,
+        recorded_ms: i64,
+    ) -> Applied {
         let entry_id = version.entry;
         self.layout.take();
         let existing = self.entries.remove(&entry_id);
@@ -339,7 +353,7 @@ impl Folder {
                 if let Some(removed) = removed {
                     self.recycle.insert(Recycled {
                         version: removed.clone(),
-                        deleted_at_ms: version.modified_ms,
+                        deleted_at_ms: recorded_ms,
                     });
                 }
             }

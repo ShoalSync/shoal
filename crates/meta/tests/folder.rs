@@ -5,6 +5,8 @@ use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 const DAY_MS: i64 = 86_400_000;
+/// When the replica under test receives remote versions, by its own clock.
+const NOW: i64 = 1_000;
 
 fn key(n: u8) -> SigningKey {
     SigningKey::from_bytes(&[n; 32])
@@ -57,10 +59,10 @@ fn remote_updates_and_stale_versions() {
     let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
     let v2 = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
 
-    assert_eq!(b.apply_remote(v1.clone()).unwrap(), Applied::New);
-    assert_eq!(b.apply_remote(v2.clone()).unwrap(), Applied::Updated);
-    assert_eq!(b.apply_remote(v1).unwrap(), Applied::Stale);
-    assert_eq!(b.apply_remote(v2).unwrap(), Applied::Stale);
+    assert_eq!(b.apply_remote(v1.clone(), NOW).unwrap(), Applied::New);
+    assert_eq!(b.apply_remote(v2.clone(), NOW).unwrap(), Applied::Updated);
+    assert_eq!(b.apply_remote(v1, NOW).unwrap(), Applied::Stale);
+    assert_eq!(b.apply_remote(v2, NOW).unwrap(), Applied::Stale);
     assert_eq!(b.current(&E).unwrap().kind, file(2));
 }
 
@@ -71,8 +73,8 @@ fn concurrent_edits_converge_in_any_order() {
 
     let mut b = replica(2);
     let mut c = replica(3);
-    b.apply_remote(base.clone()).unwrap();
-    c.apply_remote(base.clone()).unwrap();
+    b.apply_remote(base.clone(), NOW).unwrap();
+    c.apply_remote(base.clone(), NOW).unwrap();
     let from_b = b.local_change(&key(2), E, "f", file(2), 200).unwrap();
     let from_c = c.local_change(&key(3), E, "f", file(3), 300).unwrap();
 
@@ -85,7 +87,7 @@ fn concurrent_edits_converge_in_any_order() {
     for order in orders {
         let mut r = replica(4);
         for v in order {
-            r.apply_remote((*v).clone()).unwrap();
+            r.apply_remote((*v).clone(), NOW).unwrap();
         }
         let current = r.current(&E).unwrap().clone();
         let conflicts: Vec<_> = r.conflicts(&E).iter().map(|s| s.version.clone()).collect();
@@ -104,13 +106,13 @@ fn local_change_resolves_conflict() {
     let mut c = replica(3);
     let vb = b.local_change(&key(2), E, "f", file(2), 1).unwrap();
     let vc = c.local_change(&key(3), E, "f", file(3), 2).unwrap();
-    assert_eq!(b.apply_remote(vc).unwrap(), Applied::Conflict);
+    assert_eq!(b.apply_remote(vc, NOW).unwrap(), Applied::Conflict);
     assert_eq!(b.conflicts(&E).len(), 1);
 
     let resolved = b.local_change(&key(2), E, "f", file(4), 3).unwrap();
     assert!(b.conflicts(&E).is_empty());
-    assert_eq!(c.apply_remote(vb).unwrap(), Applied::Conflict);
-    assert_eq!(c.apply_remote(resolved).unwrap(), Applied::Updated);
+    assert_eq!(c.apply_remote(vb, NOW).unwrap(), Applied::Conflict);
+    assert_eq!(c.apply_remote(resolved, NOW).unwrap(), Applied::Updated);
     assert!(c.conflicts(&E).is_empty());
     assert_eq!(c.current(&E).unwrap().kind, file(4));
 }
@@ -120,7 +122,7 @@ fn edit_beats_concurrent_delete() {
     let mut a = replica(1);
     let base = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
     let mut b = replica(2);
-    b.apply_remote(base).unwrap();
+    b.apply_remote(base, NOW).unwrap();
 
     // a deletes later than b edits, but the edit still wins.
     let delete = a
@@ -129,11 +131,35 @@ fn edit_beats_concurrent_delete() {
     let edit = b.local_change(&key(2), E, "f", file(2), 100).unwrap();
     assert!(a.recycle_bin().get(&E).is_some());
 
-    assert_eq!(a.apply_remote(edit).unwrap(), Applied::Conflict);
-    assert_eq!(b.apply_remote(delete).unwrap(), Applied::Conflict);
+    assert_eq!(a.apply_remote(edit, NOW).unwrap(), Applied::Conflict);
+    assert_eq!(b.apply_remote(delete, NOW).unwrap(), Applied::Conflict);
     assert_eq!(a.current(&E).unwrap().kind, file(2));
     assert_eq!(b.current(&E).unwrap().kind, file(2));
     assert!(a.recycle_bin().is_empty(), "entry is live again");
+}
+
+/// A delete from a device whose clock is wrong is kept for this device's full retention, counted
+/// from when this device received it (ADR 0021).
+#[test]
+fn remote_deletes_expire_by_this_devices_clock() {
+    let received = 400 * DAY_MS;
+    for deleting_clock in [0, received + 365 * DAY_MS] {
+        let mut a = replica(1);
+        let mut b = replica(2);
+        let create = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+        b.apply_remote(create, received - DAY_MS).unwrap();
+        let delete = a
+            .local_change(&key(1), E, "f", EntryKind::Tombstone, deleting_clock)
+            .unwrap();
+        b.apply_remote(delete, received).unwrap();
+
+        assert_eq!(b.recycle_bin().get(&E).unwrap().deleted_at_ms, received);
+        assert!(
+            b.purge_expired(received + 30 * DAY_MS - 1).is_empty(),
+            "kept for 30 days from receipt, deleting clock {deleting_clock}"
+        );
+        assert_eq!(b.purge_expired(received + 30 * DAY_MS).len(), 1);
+    }
 }
 
 #[test]
@@ -144,7 +170,7 @@ fn tombstone_for_unknown_entry_is_kept() {
         .local_change(&key(1), E, "f", EntryKind::Tombstone, 2)
         .unwrap();
     let mut b = replica(2);
-    assert_eq!(b.apply_remote(delete).unwrap(), Applied::New);
+    assert_eq!(b.apply_remote(delete, NOW).unwrap(), Applied::New);
     assert_eq!(b.current(&E).unwrap().kind, EntryKind::Tombstone);
     assert!(b.recycle_bin().is_empty());
 }
@@ -180,7 +206,10 @@ fn rejects_invalid_remote_versions() {
         .local_change(&key(1), E, "f", file(1), 1)
         .unwrap();
     let mut b = replica(2);
-    assert!(matches!(b.apply_remote(foreign), Err(Error::WrongFolder)));
+    assert!(matches!(
+        b.apply_remote(foreign, NOW),
+        Err(Error::WrongFolder)
+    ));
 
     // A version whose author is not the signer.
     let forged = EntryVersion {
@@ -193,7 +222,7 @@ fn rejects_invalid_remote_versions() {
         version: [(device(1), 1)].into_iter().collect(),
     };
     let signed = Signed::sign(&forged, &key(3));
-    assert!(matches!(b.apply_remote(signed), Err(Error::Proto(_))));
+    assert!(matches!(b.apply_remote(signed, NOW), Err(Error::Proto(_))));
 
     let traversal = EntryVersion {
         path: "../etc/passwd".into(),
@@ -201,7 +230,10 @@ fn rejects_invalid_remote_versions() {
         ..forged
     };
     let signed = Signed::sign(&traversal, &key(3));
-    assert!(matches!(b.apply_remote(signed), Err(Error::InvalidPath(_))));
+    assert!(matches!(
+        b.apply_remote(signed, NOW),
+        Err(Error::InvalidPath(_))
+    ));
 
     let mut a = replica(1);
     assert!(matches!(
@@ -247,7 +279,7 @@ fn discarding_empties_the_local_recycle_bin() {
         );
     }
     for version in &sent {
-        b.apply_remote(version.clone()).unwrap();
+        b.apply_remote(version.clone(), NOW).unwrap();
     }
     assert_eq!(a.recycle_bin().next_expiry_ms(), Some(31 * DAY_MS));
 
@@ -259,7 +291,7 @@ fn discarding_empties_the_local_recycle_bin() {
 
     // A peer re-sending the delete does not bring it back.
     for version in &sent {
-        a.apply_remote(version.clone()).unwrap();
+        a.apply_remote(version.clone(), NOW).unwrap();
     }
     assert!(a.recycle_bin().get(&E).is_none());
 
@@ -279,7 +311,7 @@ fn snapshot_round_trip() {
     let mut c = replica(3);
     b.local_change(&key(2), E, "f", file(2), 1).unwrap();
     let vc = c.local_change(&key(3), E, "f", file(3), 2).unwrap();
-    b.apply_remote(vc).unwrap();
+    b.apply_remote(vc, NOW).unwrap();
     let e2 = EntryId([2; 16]);
     b.local_change(&key(2), e2, "g", file(5), 1).unwrap();
     b.local_change(&key(2), e2, "g", EntryKind::Tombstone, 9)
@@ -331,11 +363,14 @@ fn equal_vectors_with_different_content_converge() {
     let second = version_with(1, EntryKind::Symlink { target: "x".into() }, 5, &[(1, 1)]);
 
     let mut r1 = replica(2);
-    assert_eq!(r1.apply_remote(first.clone()).unwrap(), Applied::New);
-    assert_eq!(r1.apply_remote(second.clone()).unwrap(), Applied::Conflict);
+    assert_eq!(r1.apply_remote(first.clone(), NOW).unwrap(), Applied::New);
+    assert_eq!(
+        r1.apply_remote(second.clone(), NOW).unwrap(),
+        Applied::Conflict
+    );
     let mut r2 = replica(3);
-    r2.apply_remote(second.clone()).unwrap();
-    r2.apply_remote(first.clone()).unwrap();
+    r2.apply_remote(second.clone(), NOW).unwrap();
+    r2.apply_remote(first.clone(), NOW).unwrap();
 
     assert_eq!(
         r1.current(&E),
@@ -345,7 +380,7 @@ fn equal_vectors_with_different_content_converge() {
     assert_eq!(r1.conflicts(&E).len(), 1);
     assert_eq!(r2.conflicts(&E).len(), 1);
     // The identical version is still recognised as known.
-    assert_eq!(r1.apply_remote(first).unwrap(), Applied::Stale);
+    assert_eq!(r1.apply_remote(first, NOW).unwrap(), Applied::Stale);
 }
 
 #[test]
@@ -354,12 +389,15 @@ fn counters_have_a_ceiling() {
     let mut b = replica(2);
     // A peer may not send a counter above the ceiling, for any device.
     let over = version_with(1, file(1), 1, &[(1, 1), (2, ceiling + 1)]);
-    assert!(matches!(b.apply_remote(over), Err(Error::CounterCeiling)));
+    assert!(matches!(
+        b.apply_remote(over, NOW),
+        Err(Error::CounterCeiling)
+    ));
     assert!(b.current(&E).is_none());
 
     // At the ceiling a device refuses to make another change instead of wrapping or panicking.
     let at = version_with(1, file(1), 1, &[(1, 1), (2, ceiling)]);
-    assert_eq!(b.apply_remote(at).unwrap(), Applied::New);
+    assert_eq!(b.apply_remote(at, NOW).unwrap(), Applied::New);
     assert!(matches!(
         b.local_change(&key(2), E, "f", file(2), 2),
         Err(Error::CounterCeiling)
@@ -390,10 +428,10 @@ fn change_to_older_content_keeps_the_newer_remote_version() {
     let mut a = replica(1);
     let mut b = replica(2);
     let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
-    b.apply_remote(v1.clone()).unwrap();
+    b.apply_remote(v1.clone(), NOW).unwrap();
     let on_disk = b.known_vector(&E);
     let v2 = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
-    b.apply_remote(v2.clone()).unwrap();
+    b.apply_remote(v2.clone(), NOW).unwrap();
 
     let (edit, _) = b
         .local_change_from(&key(2), E, &on_disk, "f", file(3), 3)
@@ -403,7 +441,7 @@ fn change_to_older_content_keeps_the_newer_remote_version() {
     assert_eq!(b.conflicts(&E)[0].version.kind, file(2));
 
     // A sees the same conflict.
-    assert_eq!(a.apply_remote(edit).unwrap(), Applied::Conflict);
+    assert_eq!(a.apply_remote(edit, NOW).unwrap(), Applied::Conflict);
     assert_eq!(a.current(&E), b.current(&E));
 }
 
