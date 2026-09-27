@@ -13,7 +13,6 @@ workspace = true
 [dependencies]
 axum.workspace = true
 getrandom.workspace = true
-serde_json.workspace = true
 tidefell-engine.workspace = true
 tidefell-identity.workspace = true
 tidefell-proto.workspace = true

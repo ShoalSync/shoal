@@ -41,18 +41,47 @@ jobs:
       - name: Build
         run: cargo +1.91 build --workspace --all-targets --locked
 
+  # Dependency and public API checks. Kept in one job, under its original name, because one
+  # runner serves every repository.
   deny:
     name: cargo-deny
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The API check compares with the last release tag.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       # The action runs in a container; installing the binary avoids needing Docker on the runner.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny,cargo-machete,cargo-semver-checks
       - name: Check
         run: cargo deny --all-features check
+      - name: Unused dependencies
+        run: cargo machete
+      - name: Public API (proto, sdk)
+        # Compatibility starts at 1.0 (ADR 0026): before then, breaking changes since the last
+        # release are reported in the job summary and do not fail the job.
+        run: |
+          baseline=$(git describe --tags --abbrev=0 --match 'v*')
+          version=$(cargo pkgid --package tidefell-sdk | sed 's/.*[#@]//')
+          status=0
+          cargo semver-checks --color never --baseline-rev "$baseline" \
+            --package tidefell-proto --package tidefell-sdk > semver.txt 2>&1 || status=$?
+          cat semver.txt
+          {
+            echo "### Public API of proto and sdk since $baseline"
+            echo '```'
+            tail -n 60 semver.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            case "$version" in
+              0.*) echo "::warning::proto or sdk changed incompatibly since $baseline; allowed before 1.0" ;;
+              *) exit "$status" ;;
+            esac
+          fi
 
   kotlin:
     name: Kotlin bindings (JVM)

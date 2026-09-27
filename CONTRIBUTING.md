@@ -39,7 +39,12 @@ A pull request can merge only when CI is green. Run the same checks locally firs
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo deny --all-features check
+cargo machete
 ```
+
+CI also runs `cargo semver-checks` on `proto` and `sdk` against the last release. Before 1.0 it
+only reports breaking changes in the job summary (ADR 0026); from 1.0 they fail the check.
 
 ## Reporting security issues
 

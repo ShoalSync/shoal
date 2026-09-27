@@ -3806,7 +3806,6 @@ version = "0.10.0"
 dependencies = [
  "axum",
  "getrandom 0.4.3",
- "serde_json",
  "tempfile",
  "tidefell-engine",
  "tidefell-identity",
@@ -3905,7 +3904,6 @@ dependencies = [
  "thiserror 2.0.20",
  "tidefell-engine",
  "tokio",
- "tracing",
  "tracing-subscriber",
  "uniffi",
 ]

@@ -56,7 +56,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 
    `cargo-deny` enforces licenses and advisories for third-party dependencies.
 2. **One public surface.** `sdk` is the only API for third parties. `ffi` exposes `sdk` types plus
-   engine lifecycle and nothing else. `cargo-semver-checks` runs on `proto` and `sdk`.
+   engine lifecycle and nothing else. `cargo-semver-checks` runs on `proto` and `sdk` against the
+   last release: it reports breaking changes before 1.0 and fails on them from 1.0 (ADR 0026).
 3. **Spec-first wire changes.** A pull request that changes a wire message updates
    `specs/<alpn>.md` in the same pull request. `specs/vectors/*.json` holds golden encodings;
    `proto` tests decode them, and Android later runs the same vectors through the FFI. A test

@@ -37,7 +37,7 @@ A change that affects a downstream repository is tracked by one issue here, labe
 - **Decisions** that affect more than one crate or repository get an ADR in `docs/adr/`.
 - **Checks before pushing:** `cargo fmt --all --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`,
-  `cargo xtask check-deps`.
+  `cargo xtask check-deps`, `cargo machete`.
 - **MSRV** is 1.91; CI builds on it. Do not use newer language or library features.
 - **Commits:** Conventional Commits; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
