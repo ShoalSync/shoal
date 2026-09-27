@@ -123,6 +123,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Diagnostics and reporting | Local logs and crash files, detailed status, redacted diagnostics bundles, doctor, activity history, opt-in metrics; no telemetry | ADR 0030 |
 | Static analysis and fuzzing | Stricter lints on peers' data, property tests, nightly fuzzing, workflow, Kotlin, shell, Nix and spelling checks | ADR 0031 |
 | Transfer efficiency | Files written concurrently, no manifest for single-chunk files, small files batched per request, no availability query to full replicas; wire changes wait for sync/2 | ADR 0032 |
+| File names across filesystems | NFC enforced, each folder probes its filesystem, names that fold together follow the same-path rule, unstorable names listed, not escaped | ADR 0033 |
 
 ## Phases
 
@@ -142,6 +143,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5f** Diagnostics and reporting | Logs and crash files on every platform, status and problems, diagnostics bundle and doctor, activity history, metrics, crash reports through the issue tracker (ADR 0030) | See the Phase 5f breakdown |
 | **5g** Static analysis and fuzzing | Unused dependencies and the public API checked; stricter lints in `proto`, `net` and `store`; property tests; fuzzing; workflow, Android, shell, Nix and spelling checks in every repository (ADR 0031) | See the Phase 5g breakdown |
 | **5h** Transfer efficiency | Concurrent file writes, the single-chunk shortcut, cross-file chunk requests and direct requests to full replicas, measured before and after (ADR 0032) | See the Phase 5h breakdown |
+| **5i** File names across filesystems | NFC on the wire, filesystem probing, per-device collisions after folding, unstorable names as problems (ADR 0033) | See the Phase 5i breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -539,6 +541,28 @@ Transfer efficiency (ADR 0032). Engine changes only; sync/1 and blobs/1 are unch
 
 Exit criterion: with a 100 ms delay per request, 1,000 files of 2 KB sync at least five times
 faster than the step 2 baseline, the 256 MiB file no slower, and every file is intact.
+
+### Phase 5i work breakdown
+
+File names across filesystems (ADR 0033). It comes before the macOS, iOS and Windows clients
+(Phases 7 and 8), and first because phone folders already use case-insensitive storage.
+
+1. **Decisions.** ADR 0033 and this breakdown.
+2. **Reproduce.** An emulator test in `tidefell/android`: a daemon shares `Photo.jpg` and
+   `photo.jpg` with different content into a phone folder in shared storage, and a name with `:`
+   into one on a FAT image. Record what happens today.
+3. **NFC.** The scanner normalises names and remembers the on-disk spelling; sync/1 rejects
+   paths that are not NFC.
+4. **Probing.** Case and normalisation sensitivity, refused characters and names, and name length
+   per folder, in `tidefell doctor` and the API.
+5. **Collisions and refused names.** The same-path rule applied after each device's folding,
+   case-only directories merged, refused names listed as problems with a rename offered, and
+   case-only renames recorded. An engine test runs with a simulated case-insensitive, FAT-like
+   folder.
+
+Exit criterion: on the emulator, `Photo.jpg` and `photo.jpg` both survive in a phone folder
+under distinct names while the daemon keeps both paths unchanged, and a name with `:` is listed
+as a problem instead of failing on every pass.
 
 ### Phase 6 work breakdown
 

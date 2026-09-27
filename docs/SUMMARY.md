@@ -65,3 +65,4 @@
   - [0030: Diagnostics and reporting](adr/0030-diagnostics-and-reporting.md)
   - [0031: Static analysis and fuzzing](adr/0031-static-analysis-and-fuzzing.md)
   - [0032: Transfer efficiency](adr/0032-transfer-efficiency.md)
+  - [0033: File names across filesystems](adr/0033-file-names-across-filesystems.md)
