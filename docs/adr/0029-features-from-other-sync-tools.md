@@ -72,6 +72,11 @@ by amending this ADR.
   It announces this device's endpoint ID on the local network, so it can be turned off:
   `local_discovery` in the configuration, the API and the bindings, on by default. On Android
   the app holds a multicast lock while it syncs.
+- Step 2 decided: devices announce the mDNS service `tidefell`, apart from other iroh
+  applications. The setting is read at start: `tidefelld`'s `network.local_discovery` and the
+  bindings' `Network.local_discovery` set it, and `GET /v1/status` and `tidefell status` report
+  it. On a network without multicast the device logs a warning and syncs without local
+  discovery. `tidefelld pair --no-relay` turns it off with the relay and address lookup.
 
 ### Version history
 

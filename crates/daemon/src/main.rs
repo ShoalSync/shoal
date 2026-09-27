@@ -47,7 +47,7 @@ enum Command {
         /// The name to suggest for this device.
         #[arg(long)]
         name: String,
-        /// Use no relay and no address lookup: only direct connections, e.g. on a LAN.
+        /// Use no relay, address lookup or local discovery: only direct connections.
         #[arg(long)]
         no_relay: bool,
         /// Local socket address to listen on while pairing.
@@ -270,7 +270,7 @@ async fn pair(
     } else {
         tidefell_engine::RelayConfig::Default
     };
-    let mut server = pairing::start_pairing(&key, relay, !no_relay, bind, name)
+    let mut server = pairing::start_pairing(&key, relay, !no_relay, !no_relay, bind, name)
         .await
         .map_err(|e| e.to_string())?;
     println!("device: {}", key.id());

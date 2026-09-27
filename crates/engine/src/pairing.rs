@@ -120,6 +120,7 @@ pub async fn start_pairing(
     key: &DeviceKey,
     relay: RelayConfig,
     address_lookup: bool,
+    local_discovery: bool,
     bind: Option<SocketAddr>,
     name: &str,
 ) -> Result<PairingServer> {
@@ -128,6 +129,7 @@ pub async fn start_pairing(
             secret_key: key.seed(),
             relay,
             address_lookup,
+            local_discovery,
             bind,
         },
         name.to_owned(),

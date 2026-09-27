@@ -176,6 +176,7 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
         user: certificate.user.to_string(),
         name: certificate.name,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        local_discovery: engine.local_discovery(),
     }))
 }
 

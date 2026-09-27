@@ -21,6 +21,7 @@ fn network() -> Network {
     Network {
         relay: Relay::Disabled,
         address_lookup: false,
+        local_discovery: false,
         bind: Some("127.0.0.1:0".into()),
     }
 }
@@ -57,6 +58,7 @@ async fn pair_join_open_and_save() {
                 data_dir: tmp.path().join("laptop/data"),
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
+                local_discovery: false,
                 bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
                 peers: Vec::new(),
                 folders: vec![FolderConfig {

@@ -131,6 +131,8 @@ pub struct Network {
     pub relay: Relay,
     /// Publish and resolve addresses through DNS, so peers can be dialed by ID alone.
     pub address_lookup: bool,
+    /// Announce this device and find known devices on the local network with mDNS.
+    pub local_discovery: bool,
     /// Local socket to listen on, e.g. `0.0.0.0:0`; `None` picks one.
     pub bind: Option<String>,
 }
@@ -246,12 +248,11 @@ impl Pairing {
             return Err(invalid("this device is already paired"));
         }
         let (relay, bind) = (network.relay()?, network.bind()?);
-        let lookup = network.address_lookup;
-        let server =
-            on_runtime(
-                async move { pairing::start_pairing(&key, relay, lookup, bind, &name).await },
-            )
-            .await??;
+        let (lookup, local) = (network.address_lookup, network.local_discovery);
+        let server = on_runtime(async move {
+            pairing::start_pairing(&key, relay, lookup, local, bind, &name).await
+        })
+        .await??;
         Ok(Arc::new(Self {
             data_dir,
             code: server.code().to_text(),
@@ -590,6 +591,7 @@ impl Node {
             data_dir,
             relay: network.relay()?,
             address_lookup: network.address_lookup,
+            local_discovery: network.local_discovery,
             bind: network.bind()?,
             peers: Vec::new(),
             folders: Vec::new(),

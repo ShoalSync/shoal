@@ -43,6 +43,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 iroh = "1.2"
+iroh-mdns-address-lookup = "0.5"
 libc = "0.2"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 proptest = "1"

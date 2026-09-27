@@ -38,6 +38,7 @@ impl Device {
                     data_dir: data.clone(),
                     relay: RelayConfig::Disabled,
                     address_lookup: false,
+                    local_discovery: false,
                     bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
                     peers: Vec::new(),
                     folders: Vec::new(),
@@ -231,6 +232,7 @@ async fn pair_approves_a_new_device() {
     let mut server = pairing::start_pairing(
         &phone_key,
         RelayConfig::Disabled,
+        false,
         false,
         Some(SocketAddr::from(([127, 0, 0, 1], 0))),
         "Pixel",

@@ -102,6 +102,7 @@ data_dir = "{data}"
 [network]
 relay = {{ mode = "disabled" }}
 address_lookup = false
+local_discovery = false
 bind = "127.0.0.1:{port}"
 
 [[network.peers]]

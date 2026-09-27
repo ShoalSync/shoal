@@ -7,17 +7,21 @@ use std::sync::{Arc, Mutex};
 use iroh::endpoint::{presets, Connection};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey};
+use iroh_mdns_address_lookup::MdnsAddressLookup;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::{
     ChunkHash, ContentHash, DeviceId, FolderId, Manifest, ALPN_BLOBS_V1, ALPN_SYNC_V1,
 };
 use tokio::sync::oneshot;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::backend::Backend;
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
 use crate::sync::{self, Peer};
 use crate::{Error, Result};
+
+/// The mDNS service Tidefell devices announce, apart from other iroh applications.
+const MDNS_SERVICE: &str = "tidefell";
 
 /// Which relay servers to use when direct connections fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +43,8 @@ pub struct NodeConfig {
     pub relay: RelayConfig,
     /// Publish and resolve addresses through DNS/pkarr, so peers can be dialed by ID alone.
     pub address_lookup: bool,
+    /// Announce and find known devices' addresses on the local network with mDNS.
+    pub local_discovery: bool,
     /// Local socket address to bind; `None` picks one.
     pub bind: Option<SocketAddr>,
 }
@@ -156,7 +162,26 @@ pub(crate) async fn bind_endpoint(config: &NodeConfig, alpns: Vec<Vec<u8>>) -> R
             .bind_addr(addr)
             .map_err(|e| Error::Bind(e.to_string()))?;
     }
-    builder.bind().await.map_err(|e| Error::Bind(e.to_string()))
+    let endpoint = builder
+        .bind()
+        .await
+        .map_err(|e| Error::Bind(e.to_string()))?;
+    if config.local_discovery {
+        // Added after binding, so a network without multicast leaves the device syncing
+        // without local discovery instead of failing to start.
+        match MdnsAddressLookup::builder()
+            .service_name(MDNS_SERVICE)
+            .build(endpoint.id())
+        {
+            Ok(mdns) => {
+                if let Ok(lookup) = endpoint.address_lookup() {
+                    lookup.add(mdns);
+                }
+            }
+            Err(e) => warn!(error = %e, "local discovery is unavailable"),
+        }
+    }
+    Ok(endpoint)
 }
 
 /// A running Tidefell peer endpoint.

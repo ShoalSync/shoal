@@ -38,6 +38,7 @@ async fn a_new_device_pairs_then_syncs() {
             data_dir: tmp.path().join("laptop/data"),
             relay: RelayConfig::Disabled,
             address_lookup: false,
+            local_discovery: false,
             bind: localhost(),
             peers: Vec::new(),
             folders: vec![FolderConfig {
@@ -62,6 +63,7 @@ async fn a_new_device_pairs_then_syncs() {
     let mut server = pairing::start_pairing(
         &phone_key,
         RelayConfig::Disabled,
+        false,
         false,
         localhost(),
         "Pixel",
@@ -110,6 +112,7 @@ async fn a_new_device_pairs_then_syncs() {
             data_dir: phone_data,
             relay: RelayConfig::Disabled,
             address_lookup: false,
+            local_discovery: false,
             bind: localhost(),
             peers: Vec::new(),
             folders: Vec::new(),

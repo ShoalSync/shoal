@@ -51,8 +51,12 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
 
 pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
     let mut out = format!(
-        "device:  {}\nuser:    {}\nname:    {}\nversion: {}",
-        s.device, s.user, s.name, s.version
+        "device:  {}\nuser:    {}\nname:    {}\nversion: {}\nlocal discovery: {}",
+        s.device,
+        s.user,
+        s.name,
+        s.version,
+        if s.local_discovery { "on" } else { "off" }
     );
     if !folders.is_empty() {
         out.push_str("\nfolders:");

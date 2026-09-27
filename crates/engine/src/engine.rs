@@ -148,6 +148,7 @@ pub struct Engine {
     inner: Arc<Inner>,
     node: Arc<Node>,
     tasks: JoinSet<()>,
+    local_discovery: bool,
 }
 
 impl std::fmt::Debug for Engine {
@@ -248,6 +249,7 @@ impl Engine {
                     secret_key: key.seed(),
                     relay: config.relay.clone(),
                     address_lookup: config.address_lookup,
+                    local_discovery: config.local_discovery,
                     bind: config.bind,
                 },
                 Arc::new(EngineBackend(inner.clone())),
@@ -336,7 +338,12 @@ impl Engine {
                 }
             });
         }
-        Ok(Self { inner, node, tasks })
+        Ok(Self {
+            inner,
+            node,
+            tasks,
+            local_discovery: config.local_discovery,
+        })
     }
 
     /// This device's ID.
@@ -352,6 +359,11 @@ impl Engine {
     /// This device's certificate.
     pub fn certificate(&self) -> &Signed<DeviceCertificate> {
         &self.inner.certificate
+    }
+
+    /// Whether this device announces itself and finds known devices on the local network.
+    pub fn local_discovery(&self) -> bool {
+        self.local_discovery
     }
 
     /// Addresses peers can use to reach this engine.

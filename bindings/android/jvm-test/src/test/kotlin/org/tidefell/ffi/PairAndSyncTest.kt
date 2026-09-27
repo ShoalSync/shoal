@@ -22,7 +22,8 @@ import kotlinx.coroutines.runBlocking
  */
 class PairAndSyncTest {
     private val bin = JFile(System.getProperty("tidefell.bin"))
-    private val network = Network(relay = Relay.Disabled, addressLookup = false, bind = "127.0.0.1:0")
+    private val network =
+        Network(relay = Relay.Disabled, addressLookup = false, localDiscovery = false, bind = "127.0.0.1:0")
 
     private fun run(vararg args: String): String {
         val process = ProcessBuilder(*args).redirectErrorStream(true).start()
@@ -67,6 +68,7 @@ class PairAndSyncTest {
                 [network]
                 relay = { mode = "disabled" }
                 address_lookup = false
+                local_discovery = false
                 bind = "127.0.0.1:${freePort()}"
 
                 [[folders]]

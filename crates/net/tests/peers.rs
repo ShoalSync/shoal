@@ -126,6 +126,7 @@ impl TestBackend {
             secret_key: self.key.seed(),
             relay: RelayConfig::Disabled,
             address_lookup: false,
+            local_discovery: false,
             bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
         }
     }
@@ -377,6 +378,7 @@ fn new_device_config(seed: u8) -> NodeConfig {
         secret_key: [seed; 32],
         relay: RelayConfig::Disabled,
         address_lookup: false,
+        local_discovery: false,
         bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
     }
 }

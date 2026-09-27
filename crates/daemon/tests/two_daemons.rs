@@ -64,6 +64,7 @@ data_dir = "{data}"
 [network]
 relay = {{ mode = "disabled" }}
 address_lookup = false
+local_discovery = false
 bind = "127.0.0.1:{port}"
 
 [[network.peers]]
@@ -294,6 +295,7 @@ data_dir = "{data}"
 [network]
 relay = {{ mode = "disabled" }}
 address_lookup = false
+local_discovery = false
 bind = "127.0.0.1:{port}"
 
 [[folders]]
@@ -384,6 +386,7 @@ data_dir = "{data}"
 [network]
 relay = {{ mode = "disabled" }}
 address_lookup = false
+local_discovery = false
 bind = "127.0.0.1:{port}"
 "#,
         data = b.dir.join("data").display(),

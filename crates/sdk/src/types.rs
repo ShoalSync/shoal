@@ -17,6 +17,8 @@ pub struct Status {
     pub name: String,
     /// Daemon version.
     pub version: String,
+    /// Whether this device announces itself and finds known devices on the local network.
+    pub local_discovery: bool,
 }
 
 /// Full or partial replica.

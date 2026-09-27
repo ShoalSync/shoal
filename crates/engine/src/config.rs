@@ -140,6 +140,8 @@ pub struct EngineConfig {
     pub relay: RelayConfig,
     /// Publish and resolve addresses through DNS/pkarr.
     pub address_lookup: bool,
+    /// Announce and find known devices on the local network with mDNS (ADR 0029).
+    pub local_discovery: bool,
     /// Local socket to bind; `None` picks one.
     pub bind: Option<SocketAddr>,
     /// Peers to keep connected.

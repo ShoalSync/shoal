@@ -57,6 +57,10 @@ pub struct Network {
     /// Publish this device's addresses and resolve peers through DNS/pkarr.
     #[serde(default = "default_true")]
     pub address_lookup: bool,
+    /// Announce this device and find known devices on the local network with mDNS, so they
+    /// connect directly without internet access (ADR 0029).
+    #[serde(default = "default_true")]
+    pub local_discovery: bool,
     /// Local UDP socket to bind, e.g. "0.0.0.0:7777". Chosen automatically if unset.
     #[serde(default)]
     pub bind: Option<SocketAddr>,
@@ -70,6 +74,7 @@ impl Default for Network {
         Self {
             relay: Relay::default(),
             address_lookup: true,
+            local_discovery: true,
             bind: None,
             peers: Vec::new(),
         }
@@ -287,6 +292,7 @@ impl Config {
             data_dir: self.data_dir.clone(),
             relay,
             address_lookup: self.network.address_lookup,
+            local_discovery: self.network.local_discovery,
             bind: self.network.bind,
             peers,
             folders,
