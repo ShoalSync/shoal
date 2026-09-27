@@ -34,6 +34,7 @@ pub(crate) struct FileRow {
     pub(crate) on_disk: bool,
     pub(crate) conflicts: usize,
     pub(crate) only_here: bool,
+    pub(crate) pinned: bool,
 }
 
 #[derive(Template)]
@@ -49,6 +50,9 @@ pub(crate) struct Folder {
     /// Syncing of this folder is paused; `device_paused` if the whole server is.
     pub(crate) paused: bool,
     pub(crate) device_paused: bool,
+    /// A partial replica here, which can pin files (ADR 0029); their total size.
+    pub(crate) partial: bool,
+    pub(crate) pinned_size: String,
     pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
 }

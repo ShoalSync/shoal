@@ -401,3 +401,75 @@ async fn delete_and_rename_work_on_placeholders() {
     engine_laptop.shutdown().await;
     engine_nas.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pinned_directory_stays_over_the_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([3; 32]);
+    let full = Device::new(dir.path(), "full", 40, &user, ReplicaMode::Full);
+    let partial = Device::new(
+        dir.path(),
+        "partial",
+        41,
+        &user,
+        ReplicaMode::Partial { budget_bytes: 10 },
+    );
+    fs::create_dir_all(full.root().join("keep")).unwrap();
+    full.write("keep/a.txt", &[b'a'; 100]);
+    full.write("keep/b.txt", &[b'b'; 100]);
+    full.write("other.txt", &[b'o'; 100]);
+    let engine_full = full.start().await;
+    engine_full.scan(FOLDER).await.unwrap();
+    let engine = partial.start().await;
+    engine.connect(engine_full.addr()).await.unwrap();
+    eventually("the partial replica lists every file", || {
+        engine.files(FOLDER).unwrap().len() == 3
+    })
+    .await;
+    assert!(
+        partial.read("keep/a.txt").is_none(),
+        "placeholders until pinned"
+    );
+
+    // Pinned files arrive without being opened.
+    engine.pin(FOLDER, "keep/").await.unwrap();
+    eventually("the pinned directory is fetched", || {
+        partial.read("keep/a.txt").is_some() && partial.read("keep/b.txt").is_some()
+    })
+    .await;
+    assert_eq!(engine.pins(FOLDER).unwrap(), ["keep"]);
+    assert_eq!(engine.folders()[0].pinned_bytes, 200);
+    let pinned: Vec<bool> = engine
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .map(|f| f.pinned)
+        .collect();
+    assert_eq!(pinned, [true, true, false]);
+
+    // An ordinary file opened and closed is evicted to the 10-byte budget; the pinned ones,
+    // 200 bytes, stay.
+    engine.open(FOLDER, "other.txt").await.unwrap();
+    engine.close(FOLDER, "other.txt").unwrap();
+    engine.pin(FOLDER, "keep").await.unwrap();
+    eventually("the ordinary file is evicted", || {
+        partial.read("other.txt").is_none()
+    })
+    .await;
+    assert!(partial.read("keep/a.txt").is_some());
+    assert!(partial.read("keep/b.txt").is_some());
+
+    // Pins are kept across a restart, and unpinning lets them be evicted.
+    engine.shutdown().await;
+    let engine = partial.start().await;
+    assert_eq!(engine.pins(FOLDER).unwrap(), ["keep"]);
+    engine.unpin(FOLDER, "keep").await.unwrap();
+    assert!(partial.read("keep/a.txt").is_none() || partial.read("keep/b.txt").is_none());
+    assert!(engine.unpin(FOLDER, "keep").await.is_err());
+
+    // A full replica keeps every file already.
+    assert!(matches!(
+        engine_full.pin(FOLDER, "keep").await,
+        Err(Error::Invalid(_))
+    ));
+}

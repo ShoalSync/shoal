@@ -124,6 +124,16 @@ exceed the budget, the least recently used ones become placeholders again. A fil
 device is only removed once a full replica has confirmed holding it (see below), so without a
 full replica the folder can grow past its budget.
 
+To keep a file or a whole directory on the device, for use offline, pin it:
+
+```sh
+tidefell pin <folder id> 2024/holiday     # fetched now, kept up to date, never evicted
+tidefell pins <folder id>
+tidefell unpin <folder id> 2024/holiday
+```
+
+Pinned files do not count against the budget; `tidefell status` shows how much they take.
+
 ## Send-only folders and deletes that stay on one device
 
 Two settings change how a folder syncs on one device. Other devices keep their own.

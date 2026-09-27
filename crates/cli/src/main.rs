@@ -98,6 +98,26 @@ enum Command {
         /// Path within the folder.
         path: String,
     },
+    /// Keep a file or directory on this partial replica: fetched now, never evicted, and not
+    /// counted against the budget.
+    Pin {
+        /// Folder ID.
+        folder: String,
+        /// Path within the folder: a file, or a directory and everything below it.
+        path: String,
+    },
+    /// Remove a pin; what it covered may then be evicted.
+    Unpin {
+        /// Folder ID.
+        folder: String,
+        /// The pinned path.
+        path: String,
+    },
+    /// List the paths pinned on this device.
+    Pins {
+        /// Folder ID.
+        folder: String,
+    },
     /// Browse and restore deleted files.
     #[command(subcommand)]
     Recycle(RecycleCommand),
@@ -572,6 +592,24 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
                 f.local_path.clone()
             })
+        }
+        Command::Pin { folder, path } => {
+            client.pin(&folder, &path).await.map_err(e)?;
+            print(json, &(), |_| {
+                format!("pinned {path}; it is fetched and kept on this device")
+            });
+        }
+        Command::Unpin { folder, path } => {
+            client.unpin(&folder, &path).await.map_err(e)?;
+        }
+        Command::Pins { folder } => {
+            print(json, &client.pins(&folder).await.map_err(e)?, |p| {
+                if p.is_empty() {
+                    "nothing pinned".into()
+                } else {
+                    p.join("\n")
+                }
+            });
         }
         Command::RemoveHere { folder, path } => {
             client.remove_here(&folder, &path).await.map_err(e)?;

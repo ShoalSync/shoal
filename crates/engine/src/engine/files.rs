@@ -40,6 +40,7 @@ impl Engine {
                         author: v.author,
                         confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
                         only_here: copies::only_here(&state, self.inner.key.id(), v),
+                        pinned: crate::pins::is_pinned(&state.pins, path),
                     })
                 }
                 _ => None,
@@ -110,12 +111,13 @@ impl Engine {
             return Err(Error::Unavailable(path.to_owned()));
         }
         let _guard = handle.disk().await?;
-        // Evicted or replaced between fetching and pinning; rare, and the caller can retry.
+        // Evicted or replaced between fetching and holding it open; rare, and the caller can
+        // retry.
         if self.local_path(folder, path)?.is_none() {
             return Err(Error::Unavailable(path.to_owned()));
         }
         *handle
-            .pins
+            .open
             .lock()
             .unwrap()
             .entry(path.to_owned())
@@ -130,14 +132,66 @@ impl Engine {
         Ok(abs)
     }
 
+    /// Pins the file or directory at `path` on a partial replica (ADR 0029): what it covers is
+    /// fetched in the background, kept up to date and never evicted, and does not count against
+    /// the folder's budget. Pins are this device's own and are not synced.
+    pub async fn pin(&self, folder: FolderId, path: &str) -> Result<()> {
+        let path = path.trim_end_matches('/');
+        if !tidefell_proto::sync::is_valid_path(path) {
+            return Err(Error::Invalid(format!("invalid path {path:?}")));
+        }
+        let handle = self.inner.folder(&folder)?;
+        {
+            let _guard = handle.disk().await?;
+            let mut state = handle.lock();
+            if !matches!(state.config.mode, crate::ReplicaMode::Partial { .. }) {
+                return Err(Error::Invalid(
+                    "only a partial replica can pin files; a full replica keeps every file".into(),
+                ));
+            }
+            state.pins.insert(path.to_owned());
+            state.save()?;
+        }
+        self.inner.emit(Event::FolderChanged(folder));
+        // Fetch what is pinned now rather than at the next pass.
+        self.inner.changed();
+        Ok(())
+    }
+
+    /// Removes the pin at `path`. The files it covered become ordinary cached files again, and
+    /// may be evicted to keep the folder within its budget.
+    pub async fn unpin(&self, folder: FolderId, path: &str) -> Result<()> {
+        let path = path.trim_end_matches('/');
+        let handle = self.inner.folder(&folder)?;
+        {
+            let _guard = handle.disk().await?;
+            let mut state = handle.lock();
+            if !state.pins.remove(path) {
+                return Err(Error::Invalid(format!("{path:?} is not pinned")));
+            }
+            state.save()?;
+            drop(state);
+            evict::evict(&self.inner, folder, &handle)?;
+        }
+        self.inner.emit(Event::FolderChanged(folder));
+        Ok(())
+    }
+
+    /// The paths pinned on this device, in order.
+    pub fn pins(&self, folder: FolderId) -> Result<Vec<String>> {
+        let handle = self.inner.folder(&folder)?;
+        let pins = handle.lock().pins.iter().cloned().collect();
+        Ok(pins)
+    }
+
     /// Releases one [`Engine::open`] of `path`.
     pub fn close(&self, folder: FolderId, path: &str) -> Result<()> {
         let handle = self.inner.folder(&folder)?;
-        let mut pins = handle.pins.lock().unwrap();
-        if let Some(count) = pins.get_mut(path) {
+        let mut open = handle.open.lock().unwrap();
+        if let Some(count) = open.get_mut(path) {
             *count -= 1;
             if *count == 0 {
-                pins.remove(path);
+                open.remove(path);
             }
         }
         Ok(())

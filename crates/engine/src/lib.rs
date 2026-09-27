@@ -43,6 +43,7 @@ mod history;
 mod ignores;
 mod materialize;
 pub mod pairing;
+mod pins;
 mod root;
 mod runtime;
 mod scan;

@@ -16,6 +16,7 @@ the same pull request that introduces it.
 | **Full replica** | A replica that stores every chunk of every live file, and keeps recycle-bin contents until retention expires. Typically a NAS or server. |
 | **Partial replica** | A replica that stores all metadata but only some chunks. Missing content is fetched on demand. |
 | **Placeholder** | A file that is visible in a partial replica's file system but whose content is not stored locally. Opening it fetches the content on demand. |
+| **Pin** | A file or directory a partial replica keeps on disk (ADR 0029): fetched in the background, kept up to date and never evicted, and not counted against the budget. Pins are per device. Not to be confused with a file *held open*, which is only kept while in use. |
 | **Materialised** | A partial replica's file whose content has been fetched and written to disk. Eviction turns it back into a placeholder. |
 | **Mount point** | The directory where `tidefelld` shows a folder through FUSE. Opening a placeholder there fetches it; the folder's own directory is then only backing storage. |
 | **Chunk** | A contiguous piece of file content produced by FastCDC. Identified by its BLAKE3 hash (`ChunkHash`). Chunks are content-addressed and deduplicated. |

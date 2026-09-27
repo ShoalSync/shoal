@@ -99,6 +99,8 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         .route("/folders/{id}/recycle", get(handlers::recycle))
         .route("/folders/{id}/history", get(handlers::history))
         .route("/folders/{id}/pause", post(handlers::pause_folder))
+        .route("/folders/{id}/pin", post(handlers::pin))
+        .route("/folders/{id}/unpin", post(handlers::unpin))
         .route("/folders/{id}/resume", post(handlers::resume_folder))
         .route("/pause", post(handlers::pause_device))
         .route("/resume", post(handlers::resume_device))

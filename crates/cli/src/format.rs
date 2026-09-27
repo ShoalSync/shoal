@@ -78,6 +78,9 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if let Some(note) = only_here(f) {
                 let _ = write!(out, "\n    {note}");
             }
+            if let Some(note) = pinned(f) {
+                let _ = write!(out, "\n    {note}");
+            }
             if let Some(reason) = &f.unavailable {
                 let _ = write!(out, "\n    unavailable, not syncing: {reason}");
             }
@@ -134,6 +137,15 @@ pub(crate) fn retention(f: &Folder) -> String {
 }
 
 /// A one-line summary of a folder's recycle bin on this device.
+fn pinned(f: &Folder) -> Option<String> {
+    (f.pinned_bytes > 0).then(|| {
+        format!(
+            "{} pinned, kept here outside the budget",
+            size(f.pinned_bytes)
+        )
+    })
+}
+
 fn recycle_bin(f: &Folder) -> String {
     let bin = &f.recycle_bin;
     if bin.items == 0 {
@@ -198,6 +210,9 @@ pub(crate) fn files(files: &[File]) -> String {
     let mut out = String::new();
     for f in files {
         let mut notes = Vec::new();
+        if f.pinned {
+            notes.push("pinned".to_string());
+        }
         if !f.on_disk {
             notes.push("pending".to_string());
         }
@@ -385,6 +400,7 @@ mod tests {
             watch_error: None,
             unavailable: None,
             paused: false,
+            pinned_bytes: 0,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

@@ -17,7 +17,9 @@ use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 7\n";
+const STATE_HEADER: &[u8] = b"tidefell-engine-folder 8\n";
+/// Format 7, before pins (ADR 0029).
+const STATE_HEADER_V7: &[u8] = b"tidefell-engine-folder 7\n";
 /// Format 6, before version history (ADR 0029).
 const STATE_HEADER_V6: &[u8] = b"tidefell-engine-folder 6\n";
 /// Before deleted files were kept on disk instead of in the block store (ADR 0027).
@@ -165,6 +167,40 @@ struct Persisted {
     set_aside: Vec<(EntryId, SetAside)>,
     kept: Vec<(ContentHash, String)>,
     history: Vec<(EntryId, Vec<Previous>)>,
+    pins: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct PersistedV7 {
+    manifests: Vec<Manifest>,
+    local: Vec<(String, LocalFile)>,
+    progress: Vec<(DeviceId, u64, u64)>,
+    used: Vec<(String, i64)>,
+    copies: Vec<(ContentHash, DeviceId, i64)>,
+    copy_names: Vec<(DeviceId, String)>,
+    dropped: Vec<EntryId>,
+    set_aside: Vec<(EntryId, SetAside)>,
+    kept: Vec<(ContentHash, String)>,
+    history: Vec<(EntryId, Vec<Previous>)>,
+}
+
+impl From<PersistedV7> for Persisted {
+    fn from(v7: PersistedV7) -> Self {
+        Self {
+            manifests: v7.manifests,
+            local: v7.local,
+            progress: v7.progress,
+            used: v7.used,
+            copies: v7.copies,
+            copy_names: v7.copy_names,
+            dropped: v7.dropped,
+            set_aside: v7.set_aside,
+            kept: v7.kept,
+            history: v7.history,
+            pins: Vec::new(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -194,6 +230,7 @@ impl From<PersistedV6> for Persisted {
             set_aside: v6.set_aside,
             kept: v6.kept,
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -224,6 +261,7 @@ impl From<PersistedV5> for Persisted {
             set_aside: v5.set_aside,
             kept: Vec::new(),
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -252,6 +290,7 @@ impl From<PersistedV4> for Persisted {
             set_aside: Vec::new(),
             kept: Vec::new(),
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -280,6 +319,7 @@ impl From<PersistedV3> for Persisted {
             set_aside: Vec::new(),
             kept: Vec::new(),
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -306,6 +346,7 @@ impl From<PersistedV2> for Persisted {
             set_aside: Vec::new(),
             kept: Vec::new(),
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -331,6 +372,7 @@ impl From<PersistedV1> for Persisted {
             set_aside: Vec::new(),
             kept: Vec::new(),
             history: Vec::new(),
+            pins: Vec::new(),
         }
     }
 }
@@ -364,6 +406,9 @@ pub(crate) struct FolderState {
     /// Previous versions of entries that the engine replaced on this device (ADR 0029), newest
     /// first after each purge.
     pub(crate) history: BTreeMap<EntryId, Vec<Previous>>,
+    /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
+    /// and everything below them.
+    pub(crate) pins: BTreeSet<String>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
     dir: PathBuf,
@@ -411,6 +456,7 @@ impl FolderState {
             set_aside: BTreeMap::new(),
             kept: BTreeMap::new(),
             history: BTreeMap::new(),
+            pins: BTreeSet::new(),
             ignores,
             dir,
             removed: false,
@@ -420,6 +466,10 @@ impl FolderState {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
             let persisted: Persisted = if let Some(body) = bytes.strip_prefix(STATE_HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V7) {
+                postcard::from_bytes::<PersistedV7>(body)
+                    .ok()
+                    .map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(STATE_HEADER_V6) {
                 postcard::from_bytes::<PersistedV6>(body)
                     .ok()
@@ -465,6 +515,7 @@ impl FolderState {
             state.set_aside = persisted.set_aside.into_iter().collect();
             state.kept = persisted.kept.into_iter().collect();
             state.history = persisted.history.into_iter().collect();
+            state.pins = persisted.pins.into_iter().collect();
         }
         Ok(state)
     }
@@ -512,6 +563,7 @@ impl FolderState {
                 .collect(),
             kept: self.kept.iter().map(|(c, f)| (*c, f.clone())).collect(),
             history: self.history.iter().map(|(e, v)| (*e, v.clone())).collect(),
+            pins: self.pins.iter().cloned().collect(),
         };
         let mut bytes = STATE_HEADER.to_vec();
         bytes.extend(postcard::to_stdvec(&persisted).expect("in-memory encoding cannot fail"));

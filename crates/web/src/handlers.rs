@@ -268,6 +268,7 @@ pub(crate) async fn folder(
             on_disk: f.on_disk,
             conflicts: f.conflicts,
             only_here: f.only_here,
+            pinned: f.pinned,
         })
         .collect();
     render(pages::Folder {
@@ -284,6 +285,8 @@ pub(crate) async fn folder(
         share_links: state.config.share_links,
         paused: folder.paused,
         device_paused: state.engine.paused(),
+        partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
+        pinned_size: size(folder.pinned_bytes),
         notice: query
             .uploaded
             .map(|n| format!("Uploaded {n} file(s). They sync to every device.")),
@@ -525,6 +528,61 @@ pub(crate) async fn restore_version(
         query_value(&form.path)
     ))
     .into_response()
+}
+
+// ---- Pins (ADR 0029) ----
+
+#[derive(Deserialize)]
+pub(crate) struct PinForm {
+    csrf: String,
+    path: String,
+}
+
+async fn set_pin(
+    state: &AppState,
+    headers: &HeaderMap,
+    id: &str,
+    form: &PinForm,
+    pin: bool,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = check_csrf(&session, &form.csrf) {
+        return response;
+    }
+    let Some(folder) = visible_folder(state, &session, id) else {
+        return not_found();
+    };
+    let result = if pin {
+        state.engine.pin(folder.id, &form.path).await
+    } else {
+        state.engine.unpin(folder.id, &form.path).await
+    };
+    if let Err(e) = result {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Could not change the pin",
+            &e.to_string(),
+        );
+    }
+    Redirect::to(&format!("/folders/{}", folder.id)).into_response()
+}
+
+pub(crate) async fn pin(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<PinForm>,
+) -> Response {
+    set_pin(&state, &headers, &id, &form, true).await
+}
+
+pub(crate) async fn unpin(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<PinForm>,
+) -> Response {
+    set_pin(&state, &headers, &id, &form, false).await
 }
 
 // ---- Pausing (ADR 0029) ----

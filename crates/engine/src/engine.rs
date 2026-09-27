@@ -60,8 +60,8 @@ pub(crate) struct FolderHandle {
     /// Why the folder's root cannot be used (ADR 0037): no scans, writes or deletes until it is
     /// back.
     pub(crate) unavailable: Mutex<Option<String>>,
-    /// Paths opened by front-ends, with how many times; never evicted while open.
-    pins: Mutex<HashMap<String, usize>>,
+    /// Paths held open by front-ends, with how many times; never evicted while open.
+    open: Mutex<HashMap<String, usize>>,
 }
 
 impl FolderHandle {
@@ -102,9 +102,9 @@ impl FolderHandle {
         Ok(guard)
     }
 
-    /// Paths currently open.
-    pub(crate) fn pinned(&self) -> HashSet<String> {
-        self.pins.lock().unwrap().keys().cloned().collect()
+    /// Paths currently held open.
+    pub(crate) fn open_paths(&self) -> HashSet<String> {
+        self.open.lock().unwrap().keys().cloned().collect()
     }
 }
 
@@ -273,7 +273,7 @@ fn open_folder(
         scanner: Mutex::new(None),
         watch_error: Mutex::new(None),
         unavailable: Mutex::new(unavailable),
-        pins: Mutex::new(HashMap::new()),
+        open: Mutex::new(HashMap::new()),
     })
 }
 

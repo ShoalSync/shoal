@@ -109,6 +109,9 @@ pub struct Folder {
     /// Syncing of this folder is paused; see also [`Status::paused`].
     #[serde(default)]
     pub paused: bool,
+    /// Total size of the files pinned on this partial replica; not counted against the budget.
+    #[serde(default)]
+    pub pinned_bytes: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.
@@ -157,6 +160,13 @@ pub struct NewFolder {
     pub sync: SyncOptions,
 }
 
+/// A file or directory to pin or unpin on a partial replica (ADR 0029).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PinRequest {
+    /// Path within the folder: a file, or a directory and everything below it.
+    pub path: String,
+}
+
 /// A file to remove from this device only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RemoveHereRequest {
@@ -199,6 +209,9 @@ pub struct File {
     /// holding it yet.
     #[serde(default)]
     pub only_here: bool,
+    /// Pinned on this device (ADR 0029): kept on disk and never evicted.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// A file whose confirmed copies are wanted.

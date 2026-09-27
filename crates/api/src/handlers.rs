@@ -18,8 +18,8 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
     File, Folder, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
-    PairRequest, Pairing, Peer, Problem, RecycleBinSummary, Recycled, RemoveHereRequest,
-    RetentionUpdate, Status, SyncOptions, Version, VersionKind, VersionRequest,
+    PairRequest, Pairing, Peer, PinRequest, Problem, RecycleBinSummary, Recycled,
+    RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -51,6 +51,9 @@ type AppState = State<Arc<Engine>>;
         files,
         fetch,
         remove_here,
+        pin,
+        unpin,
+        pins,
         copies,
         versions,
         restore_version,
@@ -107,7 +110,8 @@ type AppState = State<Arc<Engine>>;
         Version,
         VersionKind,
         VersionRequest,
-        Limits
+        Limits,
+        PinRequest
     ))
 )]
 pub struct ApiDoc;
@@ -401,6 +405,46 @@ pub(crate) async fn remove_here(
         .remove_here(parse("folder", &id)?, &request.path)
         .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Pins a file or directory on a partial replica (ADR 0029): fetched in the background, kept up
+/// to date and never evicted, and not counted against the budget.
+#[utoipa::path(post, path = "/v1/folders/{id}/pin", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = PinRequest,
+    responses((status = 204), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn pin(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<PinRequest>,
+) -> ApiResult<StatusCode> {
+    engine.pin(parse("folder", &id)?, &request.path).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Removes a pin. What it covered may then be evicted to keep the folder within its budget.
+#[utoipa::path(post, path = "/v1/folders/{id}/unpin", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = PinRequest,
+    responses((status = 204), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn unpin(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<PinRequest>,
+) -> ApiResult<StatusCode> {
+    engine.unpin(parse("folder", &id)?, &request.path).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The paths pinned on this device.
+#[utoipa::path(get, path = "/v1/folders/{id}/pins", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = [String]), (status = 404, body = ApiError)))]
+pub(crate) async fn pins(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<String>>> {
+    Ok(Json(engine.pins(parse("folder", &id)?)?))
 }
 
 /// The full replicas that confirmed holding a file made on this device (ADR 0022). Empty

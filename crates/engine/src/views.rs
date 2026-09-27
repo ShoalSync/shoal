@@ -38,6 +38,9 @@ pub struct FolderInfo {
     /// Syncing of this folder is paused (ADR 0029). The whole device may be paused as well; see
     /// [`crate::Engine::paused`].
     pub paused: bool,
+    /// Total size of the pinned files on a partial replica (ADR 0029), on disk or still to be
+    /// fetched; they do not count against the budget.
+    pub pinned_bytes: u64,
 }
 
 /// A summary of one replica's recycle bin.
@@ -77,6 +80,8 @@ pub struct FileInfo {
     /// True if this device made the current version and no full replica has confirmed it:
     /// this device may hold the only copy.
     pub only_here: bool,
+    /// Pinned on this device (ADR 0029): kept on disk and never evicted.
+    pub pinned: bool,
 }
 
 /// A full replica that confirmed holding a file's content (ADR 0022).

@@ -9,6 +9,7 @@ use tracing::{debug, info};
 
 use crate::config::ReplicaMode;
 use crate::engine::{FolderHandle, Inner};
+use crate::pins::is_pinned;
 use crate::scan::unchanged;
 use crate::views::Event;
 use crate::Result;
@@ -31,23 +32,29 @@ fn has_confirmed_copy(handle: &FolderHandle, content: &tidefell_proto::ContentHa
         .is_some_and(|devices| !devices.is_empty())
 }
 
-/// Evicts least recently used, unpinned files of partial folder `id` until its materialised
-/// files fit its budget. Callers hold the folder's `fs_lock`.
+/// Evicts least recently used files of partial folder `id` until its materialised files fit
+/// its budget. Pinned files (ADR 0029) are never evicted and do not count against the budget;
+/// files held open are not evicted either. Callers hold the folder's `fs_lock`.
 pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> Result<()> {
     let (root, budget, mut usage, candidates) = {
         let state = handle.lock();
         let ReplicaMode::Partial { budget_bytes } = state.config.mode else {
             return Ok(());
         };
-        let usage: u64 = state.local.values().map(|l| l.size).sum();
+        let usage: u64 = state
+            .local
+            .iter()
+            .filter(|(path, _)| !is_pinned(&state.pins, path))
+            .map(|(_, l)| l.size)
+            .sum();
         if usage <= budget_bytes {
             return Ok(());
         }
-        let pinned = handle.pinned();
+        let open = handle.open_paths();
         let mut candidates: Vec<(i64, Candidate)> = state
             .local
             .iter()
-            .filter(|(path, _)| !pinned.contains(*path))
+            .filter(|(path, _)| !open.contains(*path) && !is_pinned(&state.pins, path))
             .map(|(path, local)| {
                 let authored_here = state.meta.current(&local.entry).is_none_or(|v| {
                     v.author == inner.key.id()
@@ -87,7 +94,10 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
         let Some(local) = state.local.get(&candidate.path).cloned() else {
             continue;
         };
-        if local.content != candidate.content || handle.pinned().contains(&candidate.path) {
+        if local.content != candidate.content
+            || handle.open_paths().contains(&candidate.path)
+            || is_pinned(&state.pins, &candidate.path)
+        {
             continue;
         }
         let abs = root.join(&candidate.path);

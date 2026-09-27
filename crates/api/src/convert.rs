@@ -39,6 +39,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         watch_error: f.watch_error,
         unavailable: f.unavailable,
         paused: f.paused,
+        pinned_bytes: f.pinned_bytes,
     }
 }
 
@@ -80,6 +81,7 @@ pub(crate) fn file(f: FileInfo) -> api::File {
         author: f.author.to_string(),
         confirmed_copies: f.confirmed_copies as u64,
         only_here: f.only_here,
+        pinned: f.pinned,
     }
 }
 

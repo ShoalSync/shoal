@@ -210,6 +210,19 @@ by amending this ADR.
   kept up to date and never evicted. They do not count against the folder's budget, which
   applies to everything else; the app and web show their total size.
 - Pins are per device and set from the CLI, the web and the Android app.
+- Step 7 decided:
+  - Pins are stored in the folder's engine state (format 8), so configuration-file folders
+    can have them too. A pin covers its path and everything below it.
+  - Pins go by path. A file renamed out of a pinned directory is no longer pinned.
+  - Materialise also writes pinned placeholders on a partial replica. Eviction skips pinned
+    files and leaves them out of the budget. Pinning starts the fetch at once, and unpinning
+    evicts at once if the folder is then over budget.
+  - A full replica refuses to pin, since it keeps every file.
+  - The engine's old "pinned while open" is renamed "held open", so "pin" means only this.
+  - They are in the API (`POST /v1/folders/{id}/pin` and `.../unpin`, `GET .../pins`,
+    `pinned` on files, `pinned_bytes` on folders), `tidefell pin`, `unpin` and `pins`, per-file
+    buttons and a directory form in the web, and the bindings. The Android screen comes with
+    the `v0.12.0` pin.
 
 ### Upload-only share links
 

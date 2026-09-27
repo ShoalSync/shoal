@@ -12,8 +12,8 @@ use serde::Serialize;
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
     Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing,
-    Peer, Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions, Version,
-    VersionRequest,
+    Peer, PinRequest, Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
+    Version, VersionRequest,
 };
 
 /// Client errors.
@@ -291,6 +291,35 @@ impl Client {
             }),
         )
         .await
+    }
+
+    /// Pins a file or directory on a partial replica: kept on disk and never evicted.
+    pub async fn pin(&self, folder: &str, path: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/pin"),
+            Some(&PinRequest {
+                path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// Removes a pin.
+    pub async fn unpin(&self, folder: &str, path: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/unpin"),
+            Some(&PinRequest {
+                path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// The paths pinned on this device.
+    pub async fn pins(&self, folder: &str) -> Result<Vec<String>, Error> {
+        self.get(&format!("/v1/folders/{folder}/pins")).await
     }
 
     /// Removes a file from this device only: it moves to this device's recycle bin and stays on

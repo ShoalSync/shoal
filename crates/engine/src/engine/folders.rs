@@ -52,6 +52,19 @@ impl Engine {
                         .count(),
                     watch_error: h.watch_error.lock().unwrap().clone(),
                     unavailable: h.unavailable.lock().unwrap().clone(),
+                    pinned_bytes: state
+                        .meta
+                        .entries()
+                        .filter_map(|v| match v.kind {
+                            EntryKind::File { size, .. } => Some((v, size)),
+                            _ => None,
+                        })
+                        .filter(|(v, _)| {
+                            let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
+                            crate::pins::is_pinned(&state.pins, path)
+                        })
+                        .map(|(_, size)| size)
+                        .sum(),
                     paused: self
                         .inner
                         .paused
@@ -333,7 +346,9 @@ impl Engine {
                 if !on_disk
                     && !send_only
                     && !state.ignores.is_ignored(path, false)
-                    && (materialised.contains(&version.entry) || (!partial && !dropped))
+                    && (materialised.contains(&version.entry)
+                        || (partial && crate::pins::is_pinned(&state.pins, path))
+                        || (!partial && !dropped))
                 {
                     status.pending += 1;
                 }

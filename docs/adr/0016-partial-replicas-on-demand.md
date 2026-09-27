@@ -18,9 +18,9 @@ opened, and stay within a storage budget.
   fetch), assembles and verifies the file into the folder's directory, marks it materialised,
   and returns its path. It also gains `write(folder, path, source)`, which moves new content
   into place and records the change without waiting for the next scan.
-- A partial replica's byte budget counts its materialised files. Opened files are pinned while
-  in use. After each fetch and on a timer, the engine evicts the least recently used unpinned
-  files until the folder fits its budget: an evicted file is removed from disk, if unchanged,
+- A partial replica's byte budget counts its materialised files. Opened files are held while
+  in use. After each fetch and on a timer, the engine evicts the least recently used files not
+  held open until the folder fits its budget: an evicted file is removed from disk, if unchanged,
   becomes a placeholder again, and its chunks leave the block store unless another folder still
   needs them.
 - A file whose current version was made on this device is evicted only once a connected peer

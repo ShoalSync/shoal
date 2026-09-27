@@ -153,7 +153,10 @@ pub(crate) async fn materialize(
                     // ignored paths are never written (ADR 0029).
                     let dropped = state.dropped.contains(&version.entry);
                     let ignored = state.ignores.is_ignored(path, false);
-                    if !current && !ignored && (here.is_some() || (!partial && !dropped)) {
+                    // A partial replica also keeps its pinned files (ADR 0029).
+                    let pinned = partial && crate::pins::is_pinned(&state.pins, path);
+                    if !current && !ignored && (here.is_some() || pinned || (!partial && !dropped))
+                    {
                         writes.push(PendingWrite {
                             entry: version.entry,
                             path: path.to_owned(),

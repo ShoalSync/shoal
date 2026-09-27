@@ -561,6 +561,8 @@ pub struct Folder {
     pub only_here: u64,
     /// Syncing of this folder is paused (ADR 0029).
     pub paused: bool,
+    /// Total size of the files pinned on this partial replica (ADR 0029).
+    pub pinned_bytes: u64,
 }
 
 /// A live file.
@@ -584,6 +586,8 @@ pub struct File {
     /// True if this device made it and no full replica has confirmed holding it yet, so this
     /// device may hold the only copy.
     pub only_here: bool,
+    /// Pinned on this device (ADR 0029): kept on disk and never evicted.
+    pub pinned: bool,
 }
 
 /// A full replica that confirmed holding a file.
@@ -731,6 +735,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         next_purge_ms: f.recycle_bin.next_expiry_ms,
         only_here: f.only_here as u64,
         paused: f.paused,
+        pinned_bytes: f.pinned_bytes,
     }
 }
 
@@ -906,6 +911,7 @@ impl Node {
                 conflicts: f.conflicts as u32,
                 confirmed_copies: f.confirmed_copies as u32,
                 only_here: f.only_here,
+                pinned: f.pinned,
             })
             .collect())
     }
@@ -1071,6 +1077,28 @@ impl Node {
         let entry = parse("entry ID", &entry)?;
         on_runtime(async move { engine.restore(folder, entry).await }).await??;
         Ok(())
+    }
+
+    /// Pins a file or directory on this partial replica (ADR 0029): fetched in the background,
+    /// kept up to date, never evicted, and not counted against the budget.
+    pub async fn pin(&self, folder: String, path: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.pin(folder, &path).await }).await??;
+        Ok(())
+    }
+
+    /// Removes a pin; what it covered may then be evicted.
+    pub async fn unpin(&self, folder: String, path: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.unpin(folder, &path).await }).await??;
+        Ok(())
+    }
+
+    /// The paths pinned on this device.
+    pub fn pins(&self, folder: String) -> Result<Vec<String>> {
+        Ok(self.engine()?.pins(parse("folder ID", &folder)?)?)
     }
 
     /// Removes a file from this device only (ADR 0025). It moves to this device's recycle bin,

@@ -17,6 +17,16 @@
   <a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a>
   {% if share_links %} · <a href="/folders/{{ id }}/share">Share the whole folder</a>{% endif %}
 </p>
+{% if partial %}
+<details>
+  <summary>Keep a directory on this server ({{ pinned_size }} kept)</summary>
+  <form method="post" action="/folders/{{ id }}/pin">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Directory <input name="path" placeholder="e.g. photos/2026" required></label>
+    <button type="submit">Keep here</button>
+  </form>
+</details>
+{% endif %}
 <details>
   <summary>Upload files</summary>
   <form method="post" action="/folders/{{ id }}/upload" enctype="multipart/form-data" hx-boost="false">
@@ -39,6 +49,13 @@
         {% if f.conflicts > 0 %}<span class="tag warn">{{ f.conflicts }} conflict(s)</span>{% endif %}
         {% if f.only_here %}<span class="tag warn" title="Made on this server; no full replica has confirmed holding it yet">only on this server</span>{% endif %}
         <a class="tag" href="/folders/{{ id }}/history?path={{ f.path_query }}">history</a>
+        {% if partial %}
+        <form method="post" action="/folders/{{ id }}/{% if f.pinned %}unpin{% else %}pin{% endif %}" class="inline">
+          <input type="hidden" name="csrf" value="{{ csrf }}">
+          <input type="hidden" name="path" value="{{ f.path }}">
+          <button type="submit" class="tag">{% if f.pinned %}unpin{% else %}keep here{% endif %}</button>
+        </form>
+        {% endif %}
         {% if share_links %}<a class="tag" href="/folders/{{ id }}/share?path={{ f.path_query }}">share</a>{% endif %}
       </td>
       <td class="num">{{ f.size }}</td>
