@@ -22,6 +22,7 @@ pub(crate) struct Folders {
     pub(crate) admin: bool,
     pub(crate) csrf: String,
     pub(crate) share_links: bool,
+    pub(crate) paused: bool,
     pub(crate) folders: Vec<FolderRow>,
 }
 
@@ -45,6 +46,9 @@ pub(crate) struct Folder {
     pub(crate) name: String,
     pub(crate) recycled: usize,
     pub(crate) share_links: bool,
+    /// Syncing of this folder is paused; `device_paused` if the whole server is.
+    pub(crate) paused: bool,
+    pub(crate) device_paused: bool,
     pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
 }

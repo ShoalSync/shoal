@@ -2,6 +2,13 @@
 {% block nav %}{% include "nav.html" %}{% endblock %}
 {% block content %}
 <h1>Folders</h1>
+{% if paused %}<p class="notice">Syncing on this server is paused.</p>{% endif %}
+{% if admin %}
+<form method="post" action="/{% if paused %}resume{% else %}pause{% endif %}" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">{% if paused %}Resume syncing{% else %}Pause all syncing on this server{% endif %}</button>
+</form>
+{% endif %}
 {% if share_links %}<p><a href="/shares">Your share links</a></p>{% endif %}
 {% if folders.is_empty() %}
 <p class="muted">No folders on this server are shared with your user.</p>

@@ -52,9 +52,65 @@ impl Engine {
                         .count(),
                     watch_error: h.watch_error.lock().unwrap().clone(),
                     unavailable: h.unavailable.lock().unwrap().clone(),
+                    paused: self
+                        .inner
+                        .paused
+                        .read()
+                        .unwrap()
+                        .1
+                        .contains(&state.config.id),
                 }
             })
             .collect()
+    }
+
+    /// Pauses syncing of `folder`, or of the whole device if `None` (ADR 0029). A paused folder
+    /// still scans, so local changes are recorded, but nothing is sent or received for it. It
+    /// stays paused across restarts.
+    pub fn pause(&self, folder: Option<FolderId>) -> Result<()> {
+        self.set_paused(folder, true)
+    }
+
+    /// Resumes syncing of `folder`, or of the whole device if `None`.
+    pub fn resume(&self, folder: Option<FolderId>) -> Result<()> {
+        self.set_paused(folder, false)
+    }
+
+    /// Whether syncing is paused for the whole device.
+    pub fn paused(&self) -> bool {
+        self.inner.paused.read().unwrap().0
+    }
+
+    fn set_paused(&self, folder: Option<FolderId>, paused: bool) -> Result<()> {
+        let _guard = self.inner.runtime_lock.lock().unwrap();
+        if let Some(id) = folder {
+            self.inner.folder(&id)?;
+        }
+        {
+            let mut state = self.inner.paused.write().unwrap();
+            match folder {
+                None => state.0 = paused,
+                Some(id) if paused => {
+                    state.1.insert(id);
+                }
+                Some(id) => {
+                    state.1.remove(&id);
+                }
+            }
+        }
+        self.inner.save_runtime()?;
+        info!(folder = ?folder, paused, "sync pause changed");
+        match folder {
+            Some(id) => self.inner.emit(Event::FolderChanged(id)),
+            None => {
+                for id in self.inner.folder_ids() {
+                    self.inner.emit(Event::FolderChanged(id));
+                }
+            }
+        }
+        // Sessions offer or withdraw the folders; materialising picks up again on resume.
+        self.inner.changed();
+        Ok(())
     }
 
     /// Adds a folder at runtime: a new one (with a fresh ID) or one shared from another device.
@@ -122,6 +178,8 @@ impl Engine {
             return Err(Error::Configured(id));
         }
         self.inner.folders.write().unwrap().remove(&id);
+        // A folder joined again later starts unpaused.
+        self.inner.paused.write().unwrap().1.remove(&id);
         if let Some(scanner) = handle.scanner.lock().unwrap().take() {
             scanner.abort();
         }

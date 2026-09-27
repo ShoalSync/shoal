@@ -58,6 +58,9 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         s.version,
         if s.local_discovery { "on" } else { "off" }
     );
+    if s.paused {
+        out.push_str("\nsyncing paused on this device: `tidefell resume` to continue");
+    }
     if let Some(c) = &s.crash {
         let _ = write!(
             out,
@@ -77,6 +80,13 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             }
             if let Some(reason) = &f.unavailable {
                 let _ = write!(out, "\n    unavailable, not syncing: {reason}");
+            }
+            if f.paused {
+                let _ = write!(
+                    out,
+                    "\n    syncing paused: `tidefell resume {}` to continue",
+                    f.id
+                );
             }
             if let Some(reason) = &f.watch_error {
                 let _ = write!(
@@ -374,6 +384,7 @@ mod tests {
             only_here: 0,
             watch_error: None,
             unavailable: None,
+            paused: false,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

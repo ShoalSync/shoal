@@ -9,7 +9,7 @@ mod history;
 mod peers;
 mod recycle;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
@@ -130,6 +130,8 @@ pub(crate) struct Inner {
     watch: bool,
     /// Set once a task panics: the engine has stopped working (ADR 0030).
     failure: watch::Sender<Option<String>>,
+    /// Syncing paused for the whole device, and for these folders (ADR 0029).
+    paused: RwLock<(bool, BTreeSet<FolderId>)>,
 }
 
 impl Inner {
@@ -173,6 +175,12 @@ impl Inner {
     }
 
     /// Signals peers that the index changed and wakes the materialiser.
+    /// Whether `folder` transfers nothing: it, or the whole device, is paused (ADR 0029).
+    pub(crate) fn is_paused(&self, folder: &FolderId) -> bool {
+        let paused = self.paused.read().unwrap();
+        paused.0 || paused.1.contains(folder)
+    }
+
     pub(crate) fn changed(&self) {
         self.changes.send_modify(|n| *n += 1);
         self.materialize.notify_one();
@@ -196,6 +204,7 @@ impl Inner {
     /// Writes runtime folders and peers. Callers hold `runtime_lock`.
     fn save_runtime(&self) -> Result<()> {
         let folders = self.folders.read().unwrap();
+        let (paused, paused_folders) = self.paused.read().unwrap().clone();
         let runtime = Runtime {
             folders: folders
                 .values()
@@ -209,6 +218,8 @@ impl Inner {
                 .iter()
                 .map(Into::into)
                 .collect(),
+            paused,
+            paused_folders: paused_folders.into_iter().collect(),
         };
         runtime.save(&self.data_dir)
     }
@@ -434,6 +445,7 @@ impl Engine {
             runtime_lock: Mutex::new(()),
             watch: config.watch,
             failure: watch::channel(None).0,
+            paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
         });
 
         let node = Arc::new(
@@ -462,7 +474,12 @@ impl Engine {
             tasks.spawn(supervised(inner.clone(), "materialise", async move {
                 loop {
                     for id in inner.folder_ids() {
-                        match run_materialize(&inner, &node, id).await {
+                        // Eviction is local disk work and carries on while paused.
+                        let result = match inner.is_paused(&id) {
+                            true => Ok(()),
+                            false => run_materialize(&inner, &node, id).await,
+                        };
+                        match result {
                             Ok(())
                             | Err(Error::UnknownFolder(_) | Error::FolderUnavailable(..)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "materialise failed"),
@@ -519,7 +536,11 @@ impl Engine {
             tasks.spawn(supervised(inner.clone(), "confirm", async move {
                 loop {
                     tokio::time::sleep(CONFIRM_INTERVAL).await;
-                    for id in inner.folder_ids() {
+                    for id in inner
+                        .folder_ids()
+                        .into_iter()
+                        .filter(|id| !inner.is_paused(id))
+                    {
                         let Ok(handle) = inner.folder(&id) else {
                             continue;
                         };

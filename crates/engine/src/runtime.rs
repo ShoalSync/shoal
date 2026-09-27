@@ -3,9 +3,11 @@
 //! Folders and peers from the configuration file are not stored here; they are re-applied at
 //! every start and cannot be removed at runtime.
 //!
-//! Format (version 3): the bytes `tidefell-engine-runtime 3\n` followed by the postcard
-//! encoding of [`Runtime`]. Version 2 had no folder sync options, and version 1 no peer relays
-//! either; both are still read.
+//! Pause (ADR 0029) is stored here for every folder, configured ones included.
+//!
+//! Format (version 4): the bytes `tidefell-engine-runtime 4\n` followed by the postcard
+//! encoding of [`Runtime`]. Version 3 had no pause, version 2 no folder sync options, and
+//! version 1 no peer relays either; all are still read.
 
 use std::fs;
 use std::io::Write;
@@ -20,7 +22,8 @@ use tidefell_proto::{DeviceId, FolderId, UserId};
 use crate::config::{Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions};
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 3\n";
+const HEADER: &[u8] = b"tidefell-engine-runtime 4\n";
+const HEADER_V3: &[u8] = b"tidefell-engine-runtime 3\n";
 const HEADER_V2: &[u8] = b"tidefell-engine-runtime 2\n";
 const HEADER_V1: &[u8] = b"tidefell-engine-runtime 1\n";
 
@@ -28,6 +31,28 @@ const HEADER_V1: &[u8] = b"tidefell-engine-runtime 1\n";
 pub(crate) struct Runtime {
     pub(crate) folders: Vec<StoredFolder>,
     pub(crate) peers: Vec<StoredPeer>,
+    /// Syncing is paused for the whole device.
+    pub(crate) paused: bool,
+    /// Folders whose syncing is paused, configured ones included.
+    pub(crate) paused_folders: Vec<FolderId>,
+}
+
+/// [`Runtime`] in format 3, before pause.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct RuntimeV3 {
+    folders: Vec<StoredFolder>,
+    peers: Vec<StoredPeer>,
+}
+
+impl From<RuntimeV3> for Runtime {
+    fn from(v3: RuntimeV3) -> Self {
+        Self {
+            folders: v3.folders,
+            peers: v3.peers,
+            ..Self::default()
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +116,7 @@ impl From<RuntimeV2> for Runtime {
         Self {
             folders: v2.folders.into_iter().map(Into::into).collect(),
             peers: v2.peers,
+            ..Self::default()
         }
     }
 }
@@ -122,6 +148,7 @@ impl From<RuntimeV1> for Runtime {
                     relay: None,
                 })
                 .collect(),
+            ..Self::default()
         }
     }
 }
@@ -210,6 +237,8 @@ impl Runtime {
         match fs::read(&path) {
             Ok(bytes) => if let Some(body) = bytes.strip_prefix(HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(HEADER_V3) {
+                postcard::from_bytes::<RuntimeV3>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V2) {
                 postcard::from_bytes::<RuntimeV2>(body).ok().map(Into::into)
             } else {
@@ -307,5 +336,28 @@ mod tests {
         runtime.save(tmp.path()).unwrap();
         let reloaded: FolderConfig = Runtime::load(tmp.path()).unwrap().folders[0].clone().into();
         assert_eq!(reloaded.sync, folder.sync);
+    }
+
+    #[test]
+    fn reads_version_3_as_not_paused_and_keeps_pause() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v3 = RuntimeV3 {
+            folders: Vec::new(),
+            peers: Vec::new(),
+        };
+        let mut bytes = HEADER_V3.to_vec();
+        bytes.extend(postcard::to_stdvec(&v3).unwrap());
+        fs::write(path(tmp.path()), bytes).unwrap();
+
+        let mut runtime = Runtime::load(tmp.path()).unwrap();
+        assert!(!runtime.paused);
+        assert!(runtime.paused_folders.is_empty());
+
+        runtime.paused = true;
+        runtime.paused_folders = vec![FolderId([9; 32])];
+        runtime.save(tmp.path()).unwrap();
+        let reloaded = Runtime::load(tmp.path()).unwrap();
+        assert!(reloaded.paused);
+        assert_eq!(reloaded.paused_folders, vec![FolderId([9; 32])]);
     }
 }

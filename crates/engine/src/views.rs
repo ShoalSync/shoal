@@ -35,6 +35,9 @@ pub struct FolderInfo {
     /// Why the folder's root cannot be used, if it cannot, as when its drive is not mounted:
     /// nothing is scanned, written or deleted there until it is back (ADR 0037).
     pub unavailable: Option<String>,
+    /// Syncing of this folder is paused (ADR 0029). The whole device may be paused as well; see
+    /// [`crate::Engine::paused`].
+    pub paused: bool,
 }
 
 /// A summary of one replica's recycle bin.

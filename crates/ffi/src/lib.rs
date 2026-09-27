@@ -88,7 +88,7 @@ impl From<tidefell_engine::Error> for TidefellError {
         let detail = e.to_string();
         match e {
             E::UnknownFolder(_) | E::NoSuchFile(_) | E::NotRecycled(_) => Self::NotFound { detail },
-            E::Unavailable(_) | E::Net(_) => Self::Unavailable { detail },
+            E::Unavailable(_) | E::Net(_) | E::Paused(_) => Self::Unavailable { detail },
             E::Invalid(_)
             | E::FolderExists(_)
             | E::Configured(_)
@@ -471,6 +471,8 @@ pub struct DeviceStatus {
     pub user: String,
     /// Its name.
     pub name: String,
+    /// Syncing is paused for the whole device (ADR 0029).
+    pub paused: bool,
 }
 
 /// Whether other devices' changes are written to this device (ADR 0025).
@@ -557,6 +559,8 @@ pub struct Folder {
     /// Live files made on this device that no full replica has confirmed holding yet
     /// (ADR 0022).
     pub only_here: u64,
+    /// Syncing of this folder is paused (ADR 0029).
+    pub paused: bool,
 }
 
 /// A live file.
@@ -726,6 +730,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         recycled_bytes: f.recycle_bin.bytes,
         next_purge_ms: f.recycle_bin.next_expiry_ms,
         only_here: f.only_here as u64,
+        paused: f.paused,
     }
 }
 
@@ -792,7 +797,21 @@ impl Node {
             device: engine.id().to_string(),
             user: certificate.user.to_string(),
             name: certificate.name,
+            paused: engine.paused(),
         })
+    }
+
+    /// Pauses syncing of `folder`, or of the whole device if none. It stays paused across
+    /// restarts; folders still scan, but nothing is sent or received.
+    pub fn pause(&self, folder: Option<String>) -> Result<()> {
+        let folder = folder.map(|f| parse("folder ID", &f)).transpose()?;
+        Ok(self.engine()?.pause(folder)?)
+    }
+
+    /// Resumes syncing of `folder`, or of the whole device if none.
+    pub fn resume(&self, folder: Option<String>) -> Result<()> {
+        let folder = folder.map(|f| parse("folder ID", &f)).transpose()?;
+        Ok(self.engine()?.resume(folder)?)
     }
 
     /// All folders.

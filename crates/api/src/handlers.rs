@@ -72,7 +72,11 @@ type AppState = State<Arc<Engine>>;
         crashes,
         dismiss_crashes,
         limits,
-        set_limits
+        set_limits,
+        pause,
+        resume,
+        pause_folder,
+        resume_folder
     ),
     components(schemas(
         Status,
@@ -147,7 +151,8 @@ impl From<EngineError> for ApiFailure {
             }
             EngineError::Unavailable(_)
             | EngineError::FolderUnavailable(..)
-            | EngineError::Net(_) => (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable),
+            | EngineError::Net(_)
+            | EngineError::Paused(_) => (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, ErrorKind::Internal),
         };
         Self(
@@ -197,6 +202,7 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
         version: env!("CARGO_PKG_VERSION").to_string(),
         local_discovery: engine.local_discovery(),
         crash: crashes_on(&engine).into_iter().rfind(|c| !c.seen),
+        paused: engine.paused(),
     }))
 }
 
@@ -737,4 +743,45 @@ pub(crate) async fn set_limits(
         limit_local: limits.limit_local,
     });
     Json(limits_view(engine.limits()))
+}
+
+/// Pauses syncing of the whole device (ADR 0029). Folders still scan; nothing is sent or
+/// received until it resumes, across restarts.
+#[utoipa::path(post, path = "/v1/pause", tag = "device", responses((status = 204)))]
+pub(crate) async fn pause(State(engine): AppState) -> ApiResult<StatusCode> {
+    engine.pause(None)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Resumes syncing of the whole device. Folders paused on their own stay paused.
+#[utoipa::path(post, path = "/v1/resume", tag = "device", responses((status = 204)))]
+pub(crate) async fn resume(State(engine): AppState) -> ApiResult<StatusCode> {
+    engine.resume(None)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Pauses syncing of one folder. It still scans; nothing is sent or received for it.
+#[utoipa::path(post, path = "/v1/folders/{id}/pause", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = Folder), (status = 404, body = ApiError)))]
+pub(crate) async fn pause_folder(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.pause(Some(id))?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
+/// Resumes syncing of one folder.
+#[utoipa::path(post, path = "/v1/folders/{id}/resume", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = Folder), (status = 404, body = ApiError)))]
+pub(crate) async fn resume_folder(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.resume(Some(id))?;
+    Ok(Json(folder_info(&engine, id)?))
 }

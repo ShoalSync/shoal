@@ -91,6 +91,18 @@ build/
 - A file you save through Tidefell itself, in a [mounted folder](mounting.md), by uploading in
   the browser or from the Android file picker, is synced even at an ignored path.
 
+## Pausing and limiting
+
+```sh
+tidefell pause <folder id>     # or `tidefell pause` for every folder on this device
+tidefell resume <folder id>
+tidefell limits --upload 1024 --download 4096    # KiB/s until the daemon restarts; 0 for none
+```
+
+A paused folder still notices your changes, but sends and receives nothing until you resume it,
+even across restarts. Limits are set for good in the [configuration](configuration.md)'s
+`[limits]` section. Traffic to your devices on the same network is not limited unless you ask.
+
 ## Partial replicas
 
 A device with little space can keep only some of a folder's files. Add `--partial <bytes>` when

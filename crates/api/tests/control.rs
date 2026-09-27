@@ -88,6 +88,16 @@ async fn control_api_end_to_end() {
     assert_eq!(engine.limits().upload, Some(64 * 1024));
     client.set_limits(&Limits::default()).await.unwrap();
 
+    // Pausing the device is reported in status and survives in the engine until resumed.
+    client.pause(None).await.unwrap();
+    assert!(client.status().await.unwrap().paused);
+    client.resume(None).await.unwrap();
+    assert!(!client.status().await.unwrap().paused);
+    assert_eq!(
+        api_error(client.pause(Some(&"ab".repeat(32))).await),
+        ErrorKind::NotFound
+    );
+
     let status = client.status().await.unwrap();
     assert_eq!(status.device, key.id().to_string());
     assert_eq!(status.user, user.id().to_string());
@@ -302,6 +312,8 @@ async fn control_api_end_to_end() {
         "/v1/crashes",
         "/v1/crashes/dismiss",
         "/v1/limits",
+        "/v1/pause",
+        "/v1/folders/{id}/pause",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }

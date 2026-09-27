@@ -100,7 +100,11 @@ impl Engine {
         let handle = self.inner.folder(&folder)?;
         // Fetching takes the file lock itself once the content has arrived, so it is not held
         // here while waiting on peers (ADR 0024).
-        if self.local_path(folder, path)?.is_none()
+        let local = self.local_path(folder, path)?;
+        if local.is_none() && self.inner.is_paused(&folder) {
+            return Err(Error::Paused(folder));
+        }
+        if local.is_none()
             && !materialize::fetch_one(&self.inner, &self.node, folder, &handle, path).await?
         {
             return Err(Error::Unavailable(path.to_owned()));

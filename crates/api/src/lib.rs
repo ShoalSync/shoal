@@ -116,6 +116,10 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             "/v1/limits",
             get(handlers::limits).put(handlers::set_limits),
         )
+        .route("/v1/pause", post(handlers::pause))
+        .route("/v1/resume", post(handlers::resume))
+        .route("/v1/folders/{id}/pause", post(handlers::pause_folder))
+        .route("/v1/folders/{id}/resume", post(handlers::resume_folder))
         .route("/v1/crashes/dismiss", post(handlers::dismiss_crashes))
         .route("/v1/openapi.json", get(handlers::openapi))
         .with_state(state)

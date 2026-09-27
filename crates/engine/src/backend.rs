@@ -19,14 +19,22 @@ impl Backend for EngineBackend {
         self.0.certificate.clone()
     }
 
+    /// Paused folders are not offered, so peers exchange nothing for them (ADR 0029).
     fn folders(&self) -> Vec<FolderId> {
-        self.0.folder_ids()
+        self.0
+            .folder_ids()
+            .into_iter()
+            .filter(|id| !self.0.is_paused(id))
+            .collect()
     }
 
+    /// Nothing of a paused folder is served, content included.
     fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool {
-        self.0
-            .folder(folder)
-            .is_ok_and(|h| h.lock().members.contains(&peer.user))
+        !self.0.is_paused(folder)
+            && self
+                .0
+                .folder(folder)
+                .is_ok_and(|h| h.lock().members.contains(&peer.user))
     }
 
     fn index_since(

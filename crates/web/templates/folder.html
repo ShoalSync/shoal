@@ -6,6 +6,13 @@
 <h1>{{ name }}</h1>
 <p class="muted mono">{{ id }}</p>
 {% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if paused || device_paused %}<p class="notice">Syncing {% if device_paused %}on this server{% else %}of this folder{% endif %} is paused. Changes here are recorded and sent when it resumes.</p>{% endif %}
+{% if admin %}
+<form method="post" action="/folders/{{ id }}/{% if paused %}resume{% else %}pause{% endif %}" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit">{% if paused %}Resume syncing this folder{% else %}Pause syncing this folder{% endif %}</button>
+</form>
+{% endif %}
 <p>
   <a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a>
   {% if share_links %} · <a href="/folders/{{ id }}/share">Share the whole folder</a>{% endif %}

@@ -38,6 +38,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         only_here: f.only_here as u64,
         watch_error: f.watch_error,
         unavailable: f.unavailable,
+        paused: f.paused,
     }
 }
 

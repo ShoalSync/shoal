@@ -22,6 +22,9 @@ pub struct Status {
     /// The most recent crash the user has not been told about yet (ADR 0030).
     #[serde(default)]
     pub crash: Option<Crash>,
+    /// Syncing is paused for the whole device (ADR 0029).
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// Full or partial replica.
@@ -103,6 +106,9 @@ pub struct Folder {
     /// Nothing is scanned, written or deleted there until it is back.
     #[serde(default)]
     pub unavailable: Option<String>,
+    /// Syncing of this folder is paused; see also [`Status::paused`].
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// A summary of one device's recycle bin for a folder.

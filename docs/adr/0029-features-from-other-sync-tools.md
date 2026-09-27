@@ -189,6 +189,20 @@ by amending this ADR.
     `download_kib_per_sec`, `limit_local`) sets them. `PUT /v1/limits`, `tidefell limits` and
     the bindings' `setLimits` change them until restart, as the log level does. The Android app
     keeps its own setting.
+- Step 6 decided, for pause:
+  - **Stored for every folder.** The engine's runtime state (format 4) keeps the device flag and
+    the paused folders, configuration-file folders included, so pause survives restarts
+    everywhere.
+  - **Nothing moves.** A paused folder is not offered to peers, so no index or manifest is
+    exchanged. Its chunks are not served. It is not materialised, and a download already running
+    for it is cancelled. Its copies are not confirmed. Eviction, which is local disk work, carries
+    on. A folder removed and joined again starts unpaused. Opening a file that is not on this device fails with "paused". It still scans,
+    so local changes are recorded and are sent once it resumes. Pausing the device does the
+    same for every folder.
+  - **Where it shows.** `POST /v1/pause`, `/v1/resume` and `/v1/folders/{id}/pause` and
+    `.../resume`, `paused` in the status and folder views, `tidefell pause [folder]` and
+    `tidefell resume [folder]`, and the bindings. In the web, only administrators can pause,
+    since it affects everyone using the server.
 
 ### Keeping files on a partial device
 

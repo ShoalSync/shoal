@@ -26,6 +26,17 @@ use crate::{io_err, random_bytes, Error, Result};
 struct PeerSource {
     node: Arc<Node>,
     folder: FolderId,
+    /// To stop a fetch already running once its folder is paused (ADR 0029).
+    inner: Arc<Inner>,
+}
+
+impl PeerSource {
+    fn check_paused(&self) -> std::result::Result<(), String> {
+        match self.inner.is_paused(&self.folder) {
+            true => Err(format!("syncing of folder {} is paused", self.folder)),
+            false => Ok(()),
+        }
+    }
 }
 
 fn endpoint(peer: &DeviceId) -> std::result::Result<EndpointId, String> {
@@ -40,6 +51,7 @@ impl ChunkSource for PeerSource {
         peer: &DeviceId,
         manifest: &Manifest,
     ) -> std::result::Result<Vec<ChunkHash>, String> {
+        self.check_paused()?;
         let (count, bitmap) = self
             .node
             .availability(endpoint(peer)?, self.folder, manifest.content)
@@ -62,6 +74,7 @@ impl ChunkSource for PeerSource {
         peer: &DeviceId,
         chunks: &[ChunkHash],
     ) -> std::result::Result<tidefell_fetch::Fetched, String> {
+        self.check_paused()?;
         let results = self
             .node
             .fetch_chunks(endpoint(peer)?, self.folder, chunks)
@@ -337,8 +350,9 @@ async fn write_file(
         let source = Arc::new(PeerSource {
             node: node.clone(),
             folder: id,
+            inner: inner.clone(),
         });
-        let fetched = fetch(
+        let download = fetch(
             source,
             &manifest,
             &peers,
@@ -352,8 +366,12 @@ async fn write_file(
                     .put_verified(hash, &data)
                     .map_err(|e| e.to_string())
             },
-        )
-        .await;
+        );
+        // Pausing the folder stops the download: dropping it cancels the requests in flight.
+        let fetched = tokio::select! {
+            fetched = download => fetched.map_err(|e| e.to_string()),
+            () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
+        };
         if let Err(e) = fetched {
             inner.fetching.lock().unwrap().remove(&manifest.content);
             debug!(path = %write.path, error = %e, "content not available yet");
@@ -507,6 +525,16 @@ fn assemble(
     let mtime = UNIX_EPOCH + Duration::from_millis(write.modified_ms.max(0) as u64);
     file.set_modified(mtime).map_err(io_err(tmp))?;
     Ok(true)
+}
+
+/// Resolves once `folder`, or the whole device, is paused (ADR 0029).
+async fn until_paused(inner: &Inner, folder: FolderId) {
+    let mut changes = inner.changes.subscribe();
+    while !inner.is_paused(&folder) {
+        if changes.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 #[cfg(test)]

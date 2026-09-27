@@ -170,6 +170,36 @@ impl Client {
         self.get("/v1/log/problems").await
     }
 
+    /// Pauses syncing of `folder`, or of the whole device if `None`.
+    pub async fn pause(&self, folder: Option<&str>) -> Result<(), Error> {
+        match folder {
+            Some(id) => self
+                .call::<Folder>(
+                    Method::POST,
+                    &format!("/v1/folders/{id}/pause"),
+                    None::<&()>,
+                )
+                .await
+                .map(drop),
+            None => self.call(Method::POST, "/v1/pause", None::<&()>).await,
+        }
+    }
+
+    /// Resumes syncing of `folder`, or of the whole device if `None`.
+    pub async fn resume(&self, folder: Option<&str>) -> Result<(), Error> {
+        match folder {
+            Some(id) => self
+                .call::<Folder>(
+                    Method::POST,
+                    &format!("/v1/folders/{id}/resume"),
+                    None::<&()>,
+                )
+                .await
+                .map(drop),
+            None => self.call(Method::POST, "/v1/resume", None::<&()>).await,
+        }
+    }
+
     /// The daemon's upload and download limits.
     pub async fn limits(&self) -> Result<Limits, Error> {
         self.get("/v1/limits").await

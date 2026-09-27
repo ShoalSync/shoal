@@ -46,6 +46,17 @@ enum Command {
         #[arg(long)]
         dismiss: bool,
     },
+    /// Pause syncing of a folder, or of the whole device. Folders still scan; nothing is sent or
+    /// received until you resume, across restarts.
+    Pause {
+        /// Folder ID; the whole device if omitted.
+        folder: Option<String>,
+    },
+    /// Resume syncing of a folder, or of the whole device.
+    Resume {
+        /// Folder ID; the whole device if omitted.
+        folder: Option<String>,
+    },
     /// Show the upload and download limits, or change them until the daemon restarts.
     Limits {
         /// Most KiB/s to send; 0 for no limit.
@@ -443,6 +454,8 @@ async fn run(cli: Cli) -> Result<(), String> {
                 |v| format::versions(v),
             );
         }
+        Command::Pause { folder } => client.pause(folder.as_deref()).await.map_err(e)?,
+        Command::Resume { folder } => client.resume(folder.as_deref()).await.map_err(e)?,
         Command::Limits {
             upload,
             download,

@@ -235,6 +235,7 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
         admin: session.admin,
         csrf: session.csrf,
         share_links: state.config.share_links,
+        paused: state.engine.paused(),
         folders: rows,
     })
 }
@@ -281,6 +282,8 @@ pub(crate) async fn folder(
             .map(|v| v.len())
             .unwrap_or(0),
         share_links: state.config.share_links,
+        paused: folder.paused,
+        device_paused: state.engine.paused(),
         notice: query
             .uploaded
             .map(|n| format!("Uploaded {n} file(s). They sync to every device.")),
@@ -522,6 +525,81 @@ pub(crate) async fn restore_version(
         query_value(&form.path)
     ))
     .into_response()
+}
+
+// ---- Pausing (ADR 0029) ----
+
+/// Pauses or resumes syncing of a folder, or of the whole server. Administrators only, since it
+/// affects everyone using this server.
+async fn set_paused(
+    state: &AppState,
+    headers: &HeaderMap,
+    folder: Option<&str>,
+    form: &CsrfForm,
+    paused: bool,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session).or_else(|| check_csrf(&session, &form.csrf)) {
+        return response;
+    }
+    let target = match folder {
+        Some(id) => match visible_folder(state, &session, id) {
+            Some(folder) => Some(folder.id),
+            None => return not_found(),
+        },
+        None => None,
+    };
+    let result = if paused {
+        state.engine.pause(target)
+    } else {
+        state.engine.resume(target)
+    };
+    if let Err(e) = result {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not change syncing",
+            &e.to_string(),
+        );
+    }
+    tracing::info!(user = %session.username, folder = ?target, paused, "sync pause changed from the web");
+    match target {
+        Some(id) => Redirect::to(&format!("/folders/{id}")).into_response(),
+        None => Redirect::to("/").into_response(),
+    }
+}
+
+pub(crate) async fn pause_folder(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    set_paused(&state, &headers, Some(&id), &form, true).await
+}
+
+pub(crate) async fn resume_folder(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    set_paused(&state, &headers, Some(&id), &form, false).await
+}
+
+pub(crate) async fn pause_device(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    set_paused(&state, &headers, None, &form, true).await
+}
+
+pub(crate) async fn resume_device(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Form(form): Form<CsrfForm>,
+) -> Response {
+    set_paused(&state, &headers, None, &form, false).await
 }
 
 // ---- Account administration ----

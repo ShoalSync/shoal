@@ -113,6 +113,9 @@ pub enum Error {
     /// A task panicked and the engine stopped working (ADR 0030).
     #[error("the engine stopped after an internal error: {0}")]
     Crashed(String),
+    /// Syncing is paused for the folder or the whole device (ADR 0029).
+    #[error("syncing of folder {0} is paused")]
+    Paused(tidefell_proto::FolderId),
     /// A file's content could not be fetched from connected peers.
     #[error("{0} is not available: no connected peer has its content")]
     Unavailable(String),
