@@ -52,6 +52,19 @@ by amending this ADR.
   device is listed as on other devices, like a file dropped from this device (ADR 0025), and
   not written. A path that becomes ignored after it synced keeps its entry: this device stops
   sending changes to it, and nothing is deleted.
+- Step 3 decided:
+  - The patterns are read again at every scan. `#include` works one level deep: an included
+    file's own `#include` lines are comments. `.tidefellignore` is never synced, even with a `!`
+    pattern.
+  - The built-in defaults also cover `._*`, `.Spotlight-V100/`, `.Trashes/`, `.fseventsd/`,
+    `ehthumbs.db`, `$RECYCLE.BIN/` and `*.swo`.
+  - Other devices' deletes of an ignored path are not applied either.
+  - Patterns govern scans and what the engine writes from other devices. A file saved through
+    the engine (a mounted folder, a web upload, the documents provider) is an explicit save and
+    is recorded even at an ignored path. A mount shows only recorded files, so otherwise a
+    download saved as `.part` and then renamed would fail there.
+  - A replica with ignore patterns still answers as a full replica: copies are confirmed per
+    file from the chunks it holds (ADR 0022), so it never confirms a file it ignores.
 
 ### Watching for changes
 

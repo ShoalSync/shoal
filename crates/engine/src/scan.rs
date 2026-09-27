@@ -12,6 +12,7 @@ use tracing::{debug, warn};
 
 use crate::config::LocalDeletes;
 use crate::engine::{FolderHandle, Inner};
+use crate::ignores::{Ignores, IGNORE_FILE};
 use crate::state::{FolderState, LocalFile};
 use crate::{io_err, now_ms, random_bytes, Result};
 
@@ -68,7 +69,7 @@ pub(crate) fn unchanged(path: &Path, local: &LocalFile) -> bool {
     stat(path).is_some_and(|s| s.size == local.size && s.mtime_ns == local.mtime_ns)
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, DiskStat)>) {
+fn walk(root: &Path, dir: &Path, ignores: &Ignores, out: &mut Vec<(String, DiskStat)>) {
     let Ok(entries) = fs::read_dir(dir) else {
         warn!(dir = %dir.display(), "cannot read directory");
         return;
@@ -81,19 +82,26 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, DiskStat)>) {
         if dir == root && entry.file_name() == RESERVED_DIR {
             continue;
         }
+        if !file_type.is_dir() && !file_type.is_file() {
+            // Symlinks and special files are not synced yet.
+            continue;
+        }
+        let rel = path
+            .strip_prefix(root)
+            .expect("walked paths are under root");
+        let Some(rel) = rel
+            .to_str()
+            .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
+        else {
+            warn!(path = %path.display(), "skipping non-UTF-8 path");
+            continue;
+        };
+        if ignores.is_ignored(&rel, file_type.is_dir()) {
+            continue;
+        }
         if file_type.is_dir() {
-            walk(root, &path, out);
-        } else if file_type.is_file() {
-            let rel = path
-                .strip_prefix(root)
-                .expect("walked paths are under root");
-            let Some(rel) = rel
-                .to_str()
-                .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
-            else {
-                warn!(path = %path.display(), "skipping non-UTF-8 path");
-                continue;
-            };
+            walk(root, &path, ignores, out);
+        } else {
             if !is_valid_path(&rel) {
                 warn!(path = %rel, "skipping path that cannot be synced");
                 continue;
@@ -102,7 +110,6 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, DiskStat)>) {
                 out.push((rel, stat));
             }
         }
-        // Symlinks and special files are not synced yet.
     }
 }
 
@@ -119,16 +126,22 @@ struct Changed {
     stat: DiskStat,
 }
 
-/// Scans `id` for changes since the last scan and records them. Returns true if the index
-/// changed.
-pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
+/// Scans `id` for changes since the last scan and records them. `saved` is a file written
+/// through the engine, recorded even if it is ignored. Returns true if the index changed.
+pub(crate) fn scan(inner: &Inner, handle: &FolderHandle, saved: Option<&str>) -> Result<bool> {
     let (root, known) = {
         let state = handle.lock();
         (state.config.path.clone(), state.local.clone())
     };
 
+    let ignores = Ignores::load(&root);
     let mut found = Vec::new();
-    walk(&root, &root, &mut found);
+    walk(&root, &root, &ignores, &mut found);
+    if let Some(rel) = saved.filter(|rel| *rel != IGNORE_FILE && ignores.is_ignored(rel, false)) {
+        if let Some(stat) = stat(&root.join(rel)) {
+            found.push((rel.to_owned(), stat));
+        }
+    }
 
     let mut seen = BTreeSet::new();
     let mut changed = Vec::new();
@@ -164,6 +177,7 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
     }
 
     let mut state = handle.lock();
+    state.ignores = ignores;
     let mut index_changed = false;
     let now = now_ms();
     for c in changed {
@@ -222,9 +236,10 @@ pub(crate) fn scan(inner: &Inner, handle: &FolderHandle) -> Result<bool> {
         );
     }
 
+    // A path that became ignored after it synced keeps its entry: nothing is deleted.
     let deleted: Vec<String> = known
         .keys()
-        .filter(|rel| !seen.contains(*rel))
+        .filter(|rel| !seen.contains(*rel) && !state.ignores.is_ignored(rel, false))
         .cloned()
         .collect();
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;

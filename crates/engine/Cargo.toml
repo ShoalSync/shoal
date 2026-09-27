@@ -14,6 +14,7 @@ workspace = true
 # Platform front-ends depend on the engine, never the other way round.
 [dependencies]
 getrandom.workspace = true
+ignore.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true

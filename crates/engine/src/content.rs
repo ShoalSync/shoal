@@ -199,8 +199,13 @@ fn store_only(state: &FolderState) -> HashSet<ContentHash> {
         }
     };
     for version in state.meta.entries() {
+        let path = state
+            .meta
+            .disk_path(&version.entry)
+            .unwrap_or(&version.path);
         let writes = !send_only
             && !state.dropped.contains(&version.entry)
+            && !state.ignores.is_ignored(path, false)
             && (!partial || materialised.contains(&version.entry));
         if writes {
             add(&version.kind);

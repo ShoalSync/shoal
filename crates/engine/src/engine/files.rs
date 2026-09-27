@@ -140,7 +140,8 @@ impl Engine {
 
     /// Replaces or creates the file at `path` with the contents of `source`, which is moved
     /// (or copied, across filesystems) into the folder, and records the change now instead of
-    /// at the next scan.
+    /// at the next scan. It is recorded even at an ignored path: this is an explicit save, and
+    /// a mounted folder shows only recorded files (ADR 0029).
     pub async fn write(&self, folder: FolderId, path: &str, source: &Path) -> Result<()> {
         if !tidefell_proto::sync::is_valid_path(path) {
             return Err(Error::Invalid(format!("invalid path {path:?}")));
@@ -164,7 +165,7 @@ impl Engine {
                 std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
             }
         }
-        run_scan(&self.inner, folder).await
+        run_scan(&self.inner, folder, Some(path.to_owned())).await
     }
 
     /// Deletes the live file at `path`, sending it to peers' recycle bins. Works on placeholders

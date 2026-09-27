@@ -181,7 +181,7 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
         let inner = inner.clone();
         tokio::spawn(async move {
             loop {
-                if let Err(e) = run_scan(&inner, id).await {
+                if let Err(e) = run_scan(&inner, id, None).await {
                     warn!(folder = %id, error = %e, "scan failed");
                 }
                 tokio::time::sleep(interval).await;
@@ -384,7 +384,7 @@ impl Engine {
 
     /// Scans `folder` for local changes now.
     pub async fn scan(&self, folder: FolderId) -> Result<()> {
-        run_scan(&self.inner, folder).await
+        run_scan(&self.inner, folder, None).await
     }
 
     /// Materialises remote changes to `folder` now.
@@ -417,13 +417,15 @@ impl Engine {
     }
 }
 
-async fn run_scan(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
+/// Scans `id`. `saved` is a path just written through the engine, recorded even if ignored.
+async fn run_scan(inner: &Arc<Inner>, id: FolderId, saved: Option<String>) -> Result<()> {
     let handle = inner.folder(&id)?;
     let _guard = handle.fs_lock.lock().await;
     let (inner2, handle2) = (inner.clone(), handle.clone());
-    let changed = tokio::task::spawn_blocking(move || scan::scan(&inner2, &handle2))
-        .await
-        .expect("scan task panicked")?;
+    let changed =
+        tokio::task::spawn_blocking(move || scan::scan(&inner2, &handle2, saved.as_deref()))
+            .await
+            .expect("scan task panicked")?;
     if changed {
         inner.changes.send_modify(|n| *n += 1);
         inner.emit(Event::FolderChanged(id));

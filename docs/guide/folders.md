@@ -51,6 +51,34 @@ Folders listed in the configuration file are managed there and cannot be changed
 `tidefell`. Folders created or joined with `tidefell` are stored in the data directory and
 survive restarts.
 
+## Ignoring files
+
+A `.tidefellignore` file at a folder's root lists paths this device neither sends nor writes.
+It uses gitignore syntax:
+
+```text
+# Build output and logs
+build/
+*.log
+!important.log
+/scratch.txt
+#include .shared-ignore
+```
+
+- The file applies to this device only and is never synced, so a phone and a laptop can ignore
+  different things. An `#include <path>` line reads more patterns from a file inside the folder,
+  which does sync, so devices can share a list.
+- Operating-system and temporary files are ignored on every device: `.DS_Store`, `._*`,
+  `Thumbs.db`, `desktop.ini`, `~$*`, `.~lock.*#`, `*.part`, `*.crdownload`, `*.swp` and the
+  like. A `!` line includes one of them again.
+- An ignored file on this device is not sent. Another device's file at an ignored path is
+  listed, but not written here.
+- Ignoring a file that already synced deletes nothing. This device stops sending changes to
+  it, and deletes from other devices leave it alone.
+- Patterns are read again at every scan.
+- A file you save through Tidefell itself, in a [mounted folder](mounting.md), by uploading in
+  the browser or from the Android file picker, is synced even at an ignored path.
+
 ## Partial replicas
 
 A device with little space can keep only some of a folder's files. Add `--partial <bytes>` when

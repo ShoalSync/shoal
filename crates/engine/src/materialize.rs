@@ -134,9 +134,11 @@ pub(crate) async fn materialize(
                     let current = here.is_some_and(|(p, l)| {
                         p.as_str() == path && l.content == content && l.executable == executable
                     });
-                    // Files dropped from this device stay off it until opened (ADR 0025).
+                    // Files dropped from this device stay off it until opened (ADR 0025), and
+                    // ignored paths are never written (ADR 0029).
                     let dropped = state.dropped.contains(&version.entry);
-                    if !current && (here.is_some() || (!partial && !dropped)) {
+                    let ignored = state.ignores.is_ignored(path, false);
+                    if !current && !ignored && (here.is_some() || (!partial && !dropped)) {
                         writes.push(PendingWrite {
                             entry: version.entry,
                             path: path.to_owned(),
@@ -152,7 +154,8 @@ pub(crate) async fn materialize(
                     }
                 }
                 EntryKind::Tombstone => {
-                    if let Some((p, _)) = here {
+                    if let Some((p, _)) = here.filter(|(p, _)| !state.ignores.is_ignored(p, false))
+                    {
                         deletes.push((*p).clone());
                     }
                 }

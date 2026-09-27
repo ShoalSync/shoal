@@ -37,6 +37,7 @@ mod copies;
 pub mod device;
 mod engine;
 mod evict;
+mod ignores;
 mod materialize;
 pub mod pairing;
 mod runtime;

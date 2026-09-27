@@ -13,6 +13,7 @@ use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
+use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
 const STATE_HEADER: &[u8] = b"tidefell-engine-folder 6\n";
@@ -320,6 +321,8 @@ pub(crate) struct FolderState {
     /// directory instead of being copied into the block store, by content: the file name there
     /// (ADR 0027). Removed once nothing references the content.
     pub(crate) kept: BTreeMap<ContentHash, String>,
+    /// This device's ignore patterns (ADR 0029), read again at every scan.
+    pub(crate) ignores: Ignores,
     dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
@@ -343,6 +346,7 @@ impl FolderState {
             Folder::new(config.id, device, epoch, config.retention)
         };
 
+        let ignores = Ignores::load(&config.path);
         let mut state = Self {
             config,
             members,
@@ -357,6 +361,7 @@ impl FolderState {
             dropped: BTreeSet::new(),
             set_aside: BTreeMap::new(),
             kept: BTreeMap::new(),
+            ignores,
             dir,
             removed: false,
         };

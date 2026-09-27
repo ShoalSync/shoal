@@ -267,11 +267,12 @@ impl Engine {
                     .local
                     .get(path)
                     .is_some_and(|l| l.entry == version.entry && l.content == content);
-                // Placeholders of a partial replica, files dropped from this device and every
-                // file of a send-only replica are not pending.
+                // Placeholders of a partial replica, files dropped from this device, ignored
+                // paths and every file of a send-only replica are not pending.
                 let dropped = state.dropped.contains(&version.entry);
                 if !on_disk
                     && !send_only
+                    && !state.ignores.is_ignored(path, false)
                     && (materialised.contains(&version.entry) || (!partial && !dropped))
                 {
                     status.pending += 1;
