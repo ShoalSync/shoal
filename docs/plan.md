@@ -446,14 +446,18 @@ Features from other sync tools (ADR 0029). It can run alongside Phase 5c steps 5
    never evicted, from the CLI, web and Android app.
 8. **Upload-only links.** Upload-only directory links in the web peer, with size and count
    limits.
-9. **Conflict resolution.** `resolve` in the engine, and conflict views in the CLI, web and
-   Android app. Release `v0.12.0`, and the infra, site and Android pins.
+9. **Conflict resolution.** The sync/1 change that keeps conflict copies until they are
+   resolved, same-content versions merged without a conflict, the `ConflictDetected` event,
+   `open_version`, and `resolve` with keep a version and keep both. `tidefell conflicts` and
+   `tidefell resolve`, the conflict screen and folder banner in the web, and the notification and
+   conflict screen in the Android app. Release `v0.12.0`, and the infra, site and Android pins.
 
 Exit criterion: with the relay disabled, two daemons on one network sync directly; an ignored
 file never leaves its device; a change is picked up within two seconds without a full scan; a
 file replaced by another device's edit is restored from its history; a paused folder transfers
 nothing; a pinned directory stays on a partial replica over its budget; an upload-only link
-accepts a file without showing the directory; and a conflict is resolved from the CLI.
+accepts a file without showing the directory; and a conflict survives a later edit, prompts on
+Android, and is resolved from the CLI by keeping both versions.
 
 ### Phase 6 work breakdown
 

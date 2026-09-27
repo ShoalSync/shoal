@@ -123,10 +123,45 @@ by amending this ADR.
 
 ### Resolving conflicts
 
-- The engine gains `resolve(folder, path, keep)`. The version to keep, either the current one or
-  a conflict copy, becomes the entry's current version with a vector that dominates every
-  conflicting version. The other versions go to every replica's recycle bin, as a delete does.
-- The CLI, the web and the Android app list a file's conflicting versions and resolve them.
+When two devices edit a file apart, every replica writes the same winner and keeps the other
+version as a conflict copy, which is not written to disk (sync/1). Until now the user saw only a
+count, could not open a conflict copy, and lost it without being asked: the winner is recorded
+on disk with the merge of every version's vector, so the next edit to the file on any device
+supersedes the conflict copy, which is neither recycled nor kept.
+
+- **Conflicts last until they are resolved.** A version written to disk is recorded with its
+  own vector, not the merge with its conflict copies, so later edits supersede only what the
+  device actually had. A conflict copy stays until `resolve`, or until a version made from its
+  own content supersedes it. sync/1 changes accordingly: a local change builds on the vector of
+  the content on disk, and no longer on the conflict copies that existed when it was written.
+- **Nothing to decide, nothing asked.** Concurrent versions with the same content do not
+  conflict: the losing one is dropped, and content on disk that matches is recorded with both
+  vectors merged, so the next edit supersedes both. A delete against an edit stays automatic, as
+  today: the edit wins and the delete's device gets the file back.
+- **The engine reports conflicts.** A new `ConflictDetected { folder, path }` event is emitted
+  when an entry gains a conflict copy. `files` and the API list, for each conflicting version,
+  the device that made it, its modification time and its size.
+- **Opening a conflict copy.** `open_version(folder, path, version)` returns a read-only copy of
+  a conflict copy's content, from this device or fetched from peers, so it can be compared before
+  choosing.
+- **Resolving.** `resolve(folder, path, keep)` takes one of:
+  - *keep a version*, the current one or a conflict copy: it becomes the entry's current version
+    with a vector that dominates every conflicting version, and the others go to every
+    replica's recycle bin, as a delete does, so they stay restorable for the retention period;
+  - *keep both*: every conflict copy becomes a new entry beside the file, named
+    `<stem> (<device name>, <date>)<extension>`, with a number added if that name is taken, and
+    syncs like any file. The file itself keeps its current version.
+- **Prompting.** The Android app shows a notification for a new conflict ("notes.txt was
+  changed on Laptop and on this phone") that opens the file's conflict screen, and marks the
+  folder and the file. The web shows a banner on the folder with the same screen. The CLI has
+  `tidefell conflicts [folder]` and `tidefell resolve <folder> <path> --keep <version>` or
+  `--keep-both`, and `tidefell status` counts conflicts. The conflict screen lists each version
+  with its device, time and size, opens it read-only, and offers keep this one, keep both and
+  decide later. Deciding later leaves the mark and the count.
+- **Not done:** conflict copies are not written to disk automatically, as Dropbox and Syncthing
+  do: they would clutter every device, and apps could open the wrong file. Keep both gives the
+  same result when it is wanted. The winner is still chosen by modification time while a
+  conflict waits; a device with a wrong clock wins until the user decides.
 
 ### Read-only members
 
@@ -154,5 +189,7 @@ by amending this ADR.
 - Local discovery announces device IDs on the local network unless turned off.
 - New dependencies are `ignore`, `notify` and `iroh-mdns-address-lookup`; each must pass
   `cargo-deny`'s licence and advisory checks before it is added.
+- Conflict copies no longer disappear on the next edit; a folder can hold unresolved conflicts
+  until someone decides, and the apps keep asking.
 - Engine state format 7 comes with version history. Nothing has been released publicly, so
   nothing migrates (ADR 0026).
