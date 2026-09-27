@@ -114,6 +114,11 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Confirmed copies | Full replicas confirm holding a file; eviction and removing originals wait for one | ADR 0022 |
 | Encrypted storage peers | Encrypted folders (sync/2, blobs/2), HPKE key grants, storage mode in `tidefelld` | ADR 0023 |
 | Sync consistency and trust | Changes build on what is on disk; same-path and equal-vector rules; bounded exchange with deadlines; authors vouched for by member certificates | ADR 0024 |
+| Phone folders | Any folder on the phone, per-folder sync options, removal through the recycle bin | ADR 0025 |
+| Compatibility | None before 1.0; from 1.0 a deprecation period, then removal | ADR 0026 |
+| File content on disk | Kept once per device; files are the content, the block store holds the rest | ADR 0027 |
+| Other devices' files on the phone | Download action and read-only documents provider roots | ADR 0028 |
+| Features from other sync tools | Ignore patterns, watching, local discovery, version history, bandwidth limits, pins, upload links, conflict resolution | ADR 0029 |
 
 ## Phases
 
@@ -128,6 +133,8 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5** Always on and sharing | Self-run always-on full replica deployed by infra; web peer uploads and share links; camera-roll backup; retention settings | A self-run always-on peer, deployed from pinned artifacts only, keeps a phone and a laptop in sync while they are never online together |
 | **5b** Confirmed copies | The engine records which full replicas hold each file made on a device; eviction and the Android app's removal of backed-up originals rely on it | Android removes a backed-up photo only after a full replica confirms it holds the photo, and a partial replica never evicts a file it made without such a copy |
 | **5c** Review fixes | The fixes from the codebase review: sync correctness and flow control (ADR 0024), Android safety, supply chain, hardening and maintainability | Every high finding has a regression test that failed before its fix; a folder with 100,000 entries completes its first sync; releases are built off shared runners and signed |
+| **5d** Phone folders | Per-device sync direction and local deletes in the engine; any folder on the phone with backup only, two-way sync and remove after backup (ADR 0025) | On an emulator, a phone folder syncs with a daemon on each option, and removal waits for the daemon's confirmed copy |
+| **5e** Features from other sync tools | Ignore patterns, watching for changes, local network discovery, version history, bandwidth limits and pause, pins on partial replicas, upload-only links, conflict resolution (ADR 0029) | See the Phase 5e breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -229,6 +236,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   app, and each phone folder is a read-only root of the documents provider listing them.
 - `v0.10.0` releases ADRs 0027 and 0028, with engine state format 6. The Android side of
   ADR 0028 is tidefell/android#13.
+- Phase 5e is decided: ADR 0029 (features from other sync tools) and its breakdown below.
 
 ### Phase 2 work breakdown
 
@@ -413,6 +421,37 @@ Phone folders (ADR 0025). Nothing has been released publicly, so nothing migrate
    each option; deleting it on the phone leaves it on the daemon; with remove after backup it
    moves to the phone's recycle bin only after the daemon confirms it; with two-way sync a file
    added on the daemon appears in the phone folder.
+
+### Phase 5e work breakdown
+
+Features from other sync tools (ADR 0029). It can run alongside Phase 5c steps 5 and 6.
+
+1. **Decisions.** ADR 0029 and this breakdown.
+2. **Local network discovery.** mDNS address lookup in the engine, `local_discovery` in the
+   configuration, API and bindings, and the multicast lock on Android. A test syncs two
+   daemons with the relay disabled and no address lookup.
+3. **Ignore patterns.** `.tidefellignore` with `#include` and the built-in defaults, applied
+   to scans, sending and writing. Ignored paths are listed as on other devices.
+4. **Watching.** `notify` watches in `tidefelld`, scans of the touched directories, the
+   one-hour safety scan, and the polling fallback shown in `tidefell status`. Release
+   `v0.11.0`, and the infra, site and Android pins.
+5. **Version history.** Replaced content kept as previous versions, retention and thinning,
+   restore as a new version, engine state format 7, and history in the API, CLI, web and
+   Android app.
+6. **Bandwidth limits and pause.** Rate limits with local peers exempt, and device and folder
+   pause that survives restarts.
+7. **Pins.** Pinned files and directories on partial replicas, fetched in the background and
+   never evicted, from the CLI, web and Android app.
+8. **Upload-only links.** Upload-only directory links in the web peer, with size and count
+   limits.
+9. **Conflict resolution.** `resolve` in the engine, and conflict views in the CLI, web and
+   Android app. Release `v0.12.0`, and the infra, site and Android pins.
+
+Exit criterion: with the relay disabled, two daemons on one network sync directly; an ignored
+file never leaves its device; a change is picked up within two seconds without a full scan; a
+file replaced by another device's edit is restored from its history; a paused folder transfers
+nothing; a pinned directory stays on a partial replica over its budget; an upload-only link
+accepts a file without showing the directory; and a conflict is resolved from the CLI.
 
 ### Phase 6 work breakdown
 
