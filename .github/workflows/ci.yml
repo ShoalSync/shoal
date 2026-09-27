@@ -1,15 +1,23 @@
 name: CI
 
 on:
-  # Branch pushes are covered by their pull request; one runner serves every repo.
+  # Branch pushes are covered by their pull request; three runners serve every repo.
   push:
     branches: [main]
   # Documentation-only pull requests skip the build; the Docs workflow checks them.
   pull_request:
     paths-ignore: ["docs/**", "*.md"]
 
+# A new push to a pull request cancels its older runs, so the runners build only the latest.
+# Each push to main runs in full.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  # Incremental artifacts only help repeated local builds; in CI they only take space.
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   check:
@@ -17,6 +25,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/cargo-target
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -37,6 +46,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/cargo-target
       - uses: dtolnay/rust-toolchain@1.91
       - name: Build
         run: cargo +1.91 build --workspace --all-targets --locked
@@ -88,6 +98,7 @@ jobs:
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/cargo-target
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-java@v4
         with:
@@ -105,6 +116,7 @@ jobs:
       NDK_VERSION: "30.0.16248370"
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/cargo-target
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android

@@ -1,0 +1,23 @@
+name: Persistent cargo target
+description: >
+  Links target/ to a directory kept between runs, one per runner and job, so unchanged
+  dependencies are not rebuilt. Checkout removes the link, so every job runs this after
+  checking out.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # The runners share a user and a home directory. Keying by runner keeps two runners
+        # from waiting on each other's cargo lock, and lets the size check below clear a
+        # directory that no other job is using.
+        dir="$HOME/.cache/tidefell-ci/target/$RUNNER_NAME/${{ github.job }}"
+        mkdir -p "$dir"
+        # Keep it bounded: start again once it passes 10 GiB.
+        if [ "$(du -s --block-size=1G "$dir" | cut -f1)" -gt 10 ]; then
+          echo "Clearing $dir, which passed 10 GiB"
+          rm -rf "$dir"
+          mkdir -p "$dir"
+        fi
+        rm -rf target
+        ln -s "$dir" target

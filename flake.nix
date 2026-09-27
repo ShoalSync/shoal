@@ -39,12 +39,8 @@
             "--package"
             "tidefell-cli"
           ];
-          cargoTestFlags = [ "--workspace" ];
-          # The sandbox has no network interface for multicast (ADR 0029).
-          checkFlags = [
-            "--skip"
-            "devices_on_one_network_find_each_other"
-          ];
+          # The CI test job runs the workspace tests; building the package does not repeat them.
+          doCheck = false;
           meta = {
             description = "Open-source peer-to-peer file sync";
             homepage = "https://github.com/tidefell/tidefell";
