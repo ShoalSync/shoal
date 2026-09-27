@@ -244,6 +244,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5e is decided: ADR 0029 (features from other sync tools) and its breakdown below. Step 2
   (local network discovery) is implemented in this repository; the Android multicast lock
   follows with the `v0.11.0` pin. Steps 3 (ignore patterns) and 4 (watching) are implemented.
+- `v0.11.0` releases Phase 5e steps 2 to 4 (local discovery, ignore patterns and watching) and
+  the recycle bin's local clock (tidefell/tidefell#46). The bindings' `Network` gains
+  `localDiscovery`.
 
 ### Phase 2 work breakdown
 
