@@ -4,7 +4,9 @@ on:
   # Branch pushes are covered by their pull request; one runner serves every repo.
   push:
     branches: [main]
+  # Documentation-only pull requests skip the build; the Docs workflow checks them.
   pull_request:
+    paths-ignore: ["docs/**", "*.md"]
 
 jobs:
   build:
