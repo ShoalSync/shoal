@@ -10,14 +10,16 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use tidefell_engine::diagnostics;
 use tidefell_engine::{
     self as engine, Engine, Error as EngineError, PeerAddr, ReplicaMode, Retention,
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ApprovePairing, CopiesRequest, Copy, ErrorKind, Event, FetchRequest, Fetched, File,
-    Folder, KnownPeer, Mode, NewFolder, NewMember, PairRequest, Pairing, Peer, RecycleBinSummary,
-    Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
+    ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
+    File, Folder, KnownPeer, LogLevel, LogSettings, Mode, NewFolder, NewMember, PairRequest,
+    Pairing, Peer, Problem, RecycleBinSummary, Recycled, RemoveHereRequest, RetentionUpdate,
+    Status, SyncOptions,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -61,7 +63,12 @@ type AppState = State<Arc<Engine>>;
         crate::pairing::start,
         crate::pairing::approve,
         crate::pairing::decline,
-        events
+        events,
+        log_settings,
+        set_log_level,
+        problems,
+        crashes,
+        dismiss_crashes
     ),
     components(schemas(
         Status,
@@ -84,7 +91,11 @@ type AppState = State<Arc<Engine>>;
         ApprovePairing,
         Event,
         ApiError,
-        ErrorKind
+        ErrorKind,
+        LogSettings,
+        LogLevel,
+        Problem,
+        Crash
     ))
 )]
 pub struct ApiDoc;
@@ -103,7 +114,7 @@ impl ApiFailure {
         )
     }
 
-    fn not_found(message: impl Into<String>) -> Self {
+    pub(crate) fn not_found(message: impl Into<String>) -> Self {
         Self(
             StatusCode::NOT_FOUND,
             ApiError {
@@ -177,6 +188,7 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
         name: certificate.name,
         version: env!("CARGO_PKG_VERSION").to_string(),
         local_discovery: engine.local_discovery(),
+        crash: crashes_on(&engine).into_iter().rfind(|c| !c.seen),
     }))
 }
 
@@ -568,4 +580,83 @@ pub(crate) async fn events(
 
 pub(crate) async fn openapi() -> Json<utoipa::openapi::OpenApi> {
     Json(ApiDoc::openapi())
+}
+
+fn log_settings_now() -> ApiResult<LogSettings> {
+    let level = diagnostics::log_level()
+        .ok_or_else(|| ApiFailure::not_found("logging is not started in this process"))?;
+    Ok(LogSettings {
+        level,
+        file: diagnostics::log_file().map(|p| p.display().to_string()),
+    })
+}
+
+/// How this device logs.
+#[utoipa::path(get, path = "/v1/log", tag = "device",
+    responses((status = 200, body = LogSettings), (status = 404, body = ApiError)))]
+pub(crate) async fn log_settings() -> ApiResult<Json<LogSettings>> {
+    Ok(Json(log_settings_now()?))
+}
+
+/// Changes the log level while running, until the next restart.
+#[utoipa::path(put, path = "/v1/log", tag = "device", request_body = LogLevel,
+    responses((status = 200, body = LogSettings), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn set_log_level(Json(update): Json<LogLevel>) -> ApiResult<Json<LogSettings>> {
+    log_settings_now()?;
+    diagnostics::set_log_level(&update.level)
+        .map_err(|e| ApiFailure::bad_request(format!("invalid level {e}")))?;
+    Ok(Json(log_settings_now()?))
+}
+
+/// The most recent warnings and errors, oldest first.
+#[utoipa::path(get, path = "/v1/log/problems", tag = "device",
+    responses((status = 200, body = [Problem])))]
+pub(crate) async fn problems() -> Json<Vec<Problem>> {
+    Json(
+        diagnostics::recent_problems()
+            .into_iter()
+            .map(|p| Problem {
+                time_ms: p.time_ms,
+                level: p.level,
+                target: p.target,
+                message: p.message,
+                fields: p.fields,
+            })
+            .collect(),
+    )
+}
+
+fn crashes_on(engine: &Engine) -> Vec<Crash> {
+    diagnostics::crashes(engine.data_dir())
+        .into_iter()
+        .map(|c| Crash {
+            file: c.file.display().to_string(),
+            time_ms: c.time_ms,
+            message: c.message,
+            seen: c.seen,
+        })
+        .collect()
+}
+
+/// Crashes recorded on this device, oldest first.
+#[utoipa::path(get, path = "/v1/crashes", tag = "device",
+    responses((status = 200, body = [Crash])))]
+pub(crate) async fn crashes(State(engine): AppState) -> Json<Vec<Crash>> {
+    Json(crashes_on(&engine))
+}
+
+/// Marks every crash recorded so far as seen, so status stops reporting it.
+#[utoipa::path(post, path = "/v1/crashes/dismiss", tag = "device",
+    responses((status = 204), (status = 500, body = ApiError)))]
+pub(crate) async fn dismiss_crashes(State(engine): AppState) -> ApiResult<StatusCode> {
+    diagnostics::dismiss_crashes(engine.data_dir()).map_err(|e| {
+        ApiFailure(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError {
+                kind: ErrorKind::Internal,
+                message: e.to_string(),
+            },
+        )
+    })?;
+    Ok(StatusCode::NO_CONTENT)
 }

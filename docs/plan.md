@@ -247,6 +247,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - `v0.11.0` releases Phase 5e steps 2 to 4 (local discovery, ignore patterns and watching) and
   the recycle bin's local clock (tidefell/tidefell#46). The bindings' `Network` gains
   `localDiscovery`.
+- Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
+  implemented in this repository; the Android side follows with the next Android pin.
 
 ### Phase 2 work breakdown
 

@@ -19,6 +19,9 @@ pub struct Status {
     pub version: String,
     /// Whether this device announces itself and finds known devices on the local network.
     pub local_discovery: bool,
+    /// The most recent crash the user has not been told about yet (ADR 0030).
+    #[serde(default)]
+    pub crash: Option<Crash>,
 }
 
 /// Full or partial replica.
@@ -298,6 +301,11 @@ pub enum Event {
         /// File path.
         path: String,
     },
+    /// A task panicked and the engine stopped; the daemon exits so it is restarted.
+    Crashed {
+        /// What went wrong.
+        message: String,
+    },
 }
 
 /// Start approving a new device from its pairing code.
@@ -351,4 +359,50 @@ pub struct ApiError {
     pub kind: ErrorKind,
     /// Human-readable message.
     pub message: String,
+}
+
+/// How this device logs (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LogSettings {
+    /// The level filter, such as `info` or `info,tidefell_net=debug`.
+    pub level: String,
+    /// The file logs are written to; none when the system journal keeps them.
+    #[serde(default)]
+    pub file: Option<String>,
+}
+
+/// A new level filter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LogLevel {
+    /// The level filter, such as `debug` or `info,tidefell_engine=debug`.
+    pub level: String,
+}
+
+/// A recent warning or error (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Problem {
+    /// When, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// `WARN` or `ERROR`.
+    pub level: String,
+    /// Where it was logged.
+    pub target: String,
+    /// The message.
+    pub message: String,
+    /// Its structured fields, such as the folder and path.
+    #[serde(default)]
+    pub fields: std::collections::BTreeMap<String, String>,
+}
+
+/// A crash recorded on this device (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Crash {
+    /// The crash file on the daemon's machine.
+    pub file: String,
+    /// When, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// What went wrong.
+    pub message: String,
+    /// Whether the user has already been told.
+    pub seen: bool,
 }

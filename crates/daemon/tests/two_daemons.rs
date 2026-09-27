@@ -97,6 +97,8 @@ secure_cookies = false
             Command::new(BIN)
                 .args(["run", "--config", path.to_str().unwrap()])
                 .env("RUST_LOG", "info")
+                // The CI runner may run under systemd; the log file is tested here.
+                .env_remove("JOURNAL_STREAM")
                 .stdout(Stdio::null())
                 .stderr(log)
                 .spawn()
@@ -168,6 +170,12 @@ fn two_daemons_sync_a_folder() {
     wait_for("a's file on b", &[&a, &b], || {
         fs::read(b.folder().join("hello.txt")).ok().as_deref() == Some(b"hello from a".as_slice())
     });
+    // Each daemon keeps JSON lines in its data directory (ADR 0030).
+    let log = fs::read_to_string(a.dir.join("data/logs/tidefell.log")).unwrap();
+    assert!(
+        log.lines().any(|l| l.contains("\"tidefelld running\"")),
+        "{log}"
+    );
 
     fs::create_dir_all(b.folder().join("sub")).unwrap();
     fs::write(b.folder().join("sub/reply.txt"), b"reply from b").unwrap();

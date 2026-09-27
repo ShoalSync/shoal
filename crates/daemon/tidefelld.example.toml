@@ -2,6 +2,15 @@
 # the JSON Schema is printed by `tidefelld config schema`.
 
 data_dir = "/var/lib/tidefell"
+# Watch folders for changes, with a full scan hourly. Folders that cannot be watched are scanned
+# every `scan_interval_secs`.
+watch = true
+
+[log]
+# "info", "debug", or per module such as "info,tidefell_net=debug". RUST_LOG overrides it.
+level = "info"
+# JSON lines in <data_dir>/logs/. By default written unless the system journal keeps the logs.
+# file = true
 
 [network]
 # "default" uses the public iroh relays; "custom" uses `urls`; "disabled" allows only direct

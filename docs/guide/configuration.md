@@ -22,6 +22,7 @@ This example shows every section:
 | `network.bind` | UDP address to listen on. |
 | `network.peers` | Peers to keep connected, each with a `device` ID, optional direct `addrs` and an optional `relay` URL they are reachable through. |
 | `folders` | Folders managed by the configuration: `id`, `path`, `mode` (`full` or `partial`, which needs `budget_bytes`; see [partial replicas](folders.md#partial-replicas)), `members`, `retention_days`, `scan_interval_secs`, `direction` (`both` or `send-only`) and `local_deletes` (`everywhere` or `this-device`; see [send-only folders](folders.md#send-only-folders-and-deletes-that-stay-on-one-device)), and on Linux `mount` (see [mounting a folder](mounting.md)). |
+| `log` | `level` (`info` by default, or per module such as `info,tidefell_net=debug`; `RUST_LOG` overrides it) and `file`: JSON lines in `<data_dir>/logs/`, rotated at 5 MiB with five files kept, written unless the system journal keeps the logs. `tidefell log-level` changes the level until the daemon restarts, and `tidefell logs --problems` shows the latest warnings and errors. |
 | `web` | Enables the [web peer](web.md): `bind`, `secure_cookies`, and `share_links` (off by default; see [share links](web.md#share-links)). |
 
 Folders in the configuration are read-only to `tidefell`; change them here and restart. Folders

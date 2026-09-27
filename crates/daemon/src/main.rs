@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use tidefell_engine::Engine;
+use tidefell_engine::{diagnostics, Engine};
 use tidefell_identity::{load_certificate, save_certificate, DeviceKey, UserKey};
 use tidefell_proto::{DeviceId, FolderId};
 
@@ -383,6 +383,22 @@ fn web_account(command: AccountCommand) -> Result<(), String> {
     }
 }
 
+/// Logs to standard error and, unless the journal keeps the logs, to `<data_dir>/logs/`, and
+/// records panics in `<data_dir>/crashes/`.
+fn start_logging(path: &Path) -> Result<(), String> {
+    let config = read_config(path)?;
+    diagnostics::install_panic_hook(&config.data_dir);
+    let level = std::env::var("RUST_LOG").unwrap_or(config.log.level);
+    diagnostics::init_logging(&diagnostics::LogOptions {
+        data_dir: config.data_dir,
+        level,
+        file: config.log.file,
+        stderr: true,
+    })
+    .map(drop)
+    .map_err(|e| format!("cannot start logging: {e}"))
+}
+
 fn read_config(path: &Path) -> Result<config::Config, String> {
     let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
@@ -462,6 +478,8 @@ async fn run(path: &Path) -> Result<(), String> {
         }
         result = api => Some(describe("control API", result)),
         result = web => Some(describe("web peer", result)),
+        // A panic in an engine task: exit so the service manager restarts from saved state.
+        Some(message) = engine.failed() => Some(message),
     };
     // Unmount first: mounts hold the engine and would otherwise be left stale.
     #[cfg(target_os = "linux")]
@@ -539,19 +557,13 @@ fn main() -> ExitCode {
                 .and_then(|c| c.to_engine().map(|_| ()))
                 .map(|()| println!("{}: ok", file.display())),
         },
-        Command::Run { config } => {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "info".into()),
-                )
-                .init();
+        Command::Run { config } => start_logging(&config).and_then(|()| {
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
                 .map_err(|e| e.to_string())
                 .and_then(|rt| rt.block_on(run(&config)))
-        }
+        }),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

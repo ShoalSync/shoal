@@ -35,6 +35,7 @@ mod config;
 mod content;
 mod copies;
 pub mod device;
+pub mod diagnostics;
 mod engine;
 mod evict;
 mod ignores;
@@ -103,6 +104,9 @@ pub enum Error {
     /// Something else is already at the path a file would be restored to.
     #[error("{0} is already taken")]
     PathTaken(String),
+    /// A task panicked and the engine stopped working (ADR 0030).
+    #[error("the engine stopped after an internal error: {0}")]
+    Crashed(String),
     /// A file's content could not be fetched from connected peers.
     #[error("{0} is not available: no connected peer has its content")]
     Unavailable(String),

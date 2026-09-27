@@ -18,7 +18,7 @@ crate-type = ["cdylib", "lib"]
 thiserror.workspace = true
 tidefell-engine.workspace = true
 tokio.workspace = true
-tracing-subscriber.workspace = true
+tracing.workspace = true
 uniffi = { workspace = true, features = ["tokio"] }
 
 [dev-dependencies]

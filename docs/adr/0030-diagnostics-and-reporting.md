@@ -53,6 +53,26 @@ partly for privacy: nothing leaves a device unless its user sends it.
   before passing the exception on.
 - On the next start, a crash file not yet seen is reported in `tidefell status`, the web and the
   app ("Tidefell stopped unexpectedly"), with the option to report it.
+- Step 2 decided:
+  - **Log file.** It is `<data_dir>/logs/tidefell.log`, rotated by size to `tidefell.1.log`
+    and so on (`tracing-appender` only rotates by time). The level filter applies to the outputs
+    only, so the recent-problems buffer always gets warnings and errors.
+  - **Logcat.** Android logs to logcat with `paranoid-android` under the tag `tidefell`.
+    `tracing-logcat` does not build alongside `serde_json`.
+  - **Bindings.** `init_diagnostics(data_dir, level)` starts logging and installs the panic
+    hook in one call. `record_crash` lets the app write its own crash files, in the same
+    format.
+  - **API and CLI.** `GET` and `PUT /v1/log` read and set the level, `GET /v1/log/problems`
+    lists recent problems, and `GET /v1/crashes` and `POST /v1/crashes/dismiss` handle
+    crashes. `/v1/status` carries the newest unseen crash. The CLI has `tidefell logs
+    [--problems]`, `tidefell log-level [LEVEL]` and `tidefell crashes [--dismiss]`.
+  - **One crash file per process.** Later panics, such as those on locks the first one
+    poisoned, are added to the first panic's file, so a cascade cannot push the cause out of
+    the ten kept.
+  - **Supervision.** Engine tasks are polled in place under `catch_unwind`, not spawned, so
+    shutting the engine down still waits for them. Panics in the fetch driver's requests and in
+    blocking scans and compaction are passed on rather than swallowed.
+  - **Web notice.** The crash notice in the web comes with step 3's status views.
 
 ### Status
 

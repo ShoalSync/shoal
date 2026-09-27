@@ -20,7 +20,7 @@ use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
 use tidefell_store::BlockStore;
 use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{AbortHandle, JoinSet};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub use folders::FolderStatus;
 
@@ -89,9 +89,33 @@ pub(crate) struct Inner {
     runtime_lock: Mutex<()>,
     /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
     watch: bool,
+    /// Set once a task panics: the engine has stopped working (ADR 0030).
+    failure: watch::Sender<Option<String>>,
 }
 
 impl Inner {
+    /// Records that the task `task` panicked. Locks it held may be poisoned and state in memory
+    /// may be inconsistent, so the engine stops working and its owner is told (ADR 0030).
+    /// Returns what went wrong.
+    pub(crate) fn fail(&self, task: &str, panic: Box<dyn std::any::Any + Send>) -> String {
+        let message = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "a panic without a message".into());
+        let message = format!("the {task} task panicked: {message}");
+        error!(task, "{message}; the engine has stopped");
+        self.failure.send_if_modified(|failure| {
+            if failure.is_some() {
+                return false;
+            }
+            *failure = Some(message.clone());
+            true
+        });
+        self.emit(Event::Crashed(message.clone()));
+        message
+    }
+
     pub(crate) fn folder(&self, id: &FolderId) -> Result<Arc<FolderHandle>> {
         self.folders
             .read()
@@ -184,6 +208,39 @@ fn open_folder(
     })
 }
 
+/// Runs `task`, marking the engine failed if it panics instead of the loop silently ending.
+fn supervised(
+    inner: Arc<Inner>,
+    name: &'static str,
+    task: impl std::future::Future<Output = ()> + Send + 'static,
+) -> impl std::future::Future<Output = ()> + Send + 'static {
+    on_panic(task, move |e| {
+        inner.fail(name, e);
+    })
+}
+
+/// Runs `task` and calls `panicked` with the payload if it panics. The task is polled in place,
+/// not spawned, so aborting or shutting down the caller stops it before that returns: a
+/// restarted engine must never share its folders with the old one's loops. Nothing is reused
+/// after a panic, since the engine is marked failed.
+async fn on_panic(
+    task: impl std::future::Future<Output = ()> + Send + 'static,
+    panicked: impl FnOnce(Box<dyn std::any::Any + Send>) + Send + 'static,
+) {
+    let mut task = Box::pin(task);
+    let outcome = std::future::poll_fn(|cx| {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| task.as_mut().poll(cx))) {
+            Ok(std::task::Poll::Ready(())) => std::task::Poll::Ready(Ok(())),
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Err(panic) => std::task::Poll::Ready(Err(panic)),
+        }
+    })
+    .await;
+    if let Err(panic) = outcome {
+        panicked(panic);
+    }
+}
+
 fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
     let (interval, root) = {
         let state = handle.lock();
@@ -191,7 +248,7 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
     };
     let task = {
         let inner = inner.clone();
-        tokio::spawn(async move {
+        tokio::spawn(supervised(inner.clone(), "scan", async move {
             // Watched before the first scan, so nothing changed during it is missed.
             let mut watch = if inner.watch {
                 match FolderWatch::new(&root) {
@@ -245,7 +302,7 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                     }
                 };
             }
-        })
+        }))
     };
     if let Some(old) = handle.scanner.lock().unwrap().replace(task.abort_handle()) {
         old.abort();
@@ -301,6 +358,7 @@ impl Engine {
             events: broadcast::channel(256).0,
             runtime_lock: Mutex::new(()),
             watch: config.watch,
+            failure: watch::channel(None).0,
         });
 
         let node = Arc::new(
@@ -325,7 +383,7 @@ impl Engine {
         let mut tasks = JoinSet::new();
         {
             let (inner, node) = (inner.clone(), node.clone());
-            tasks.spawn(async move {
+            tasks.spawn(supervised(inner.clone(), "materialise", async move {
                 loop {
                     for id in inner.folder_ids() {
                         match run_materialize(&inner, &node, id).await {
@@ -343,20 +401,25 @@ impl Engine {
                         || inner.handles().iter().any(|h| !h.lock().kept.is_empty());
                     if work {
                         let inner = inner.clone();
-                        let _ =
+                        let compacted =
                             tokio::task::spawn_blocking(move || crate::content::compact(&inner))
                                 .await;
+                        if let Err(e) = compacted {
+                            if e.is_panic() {
+                                std::panic::resume_unwind(e.into_panic());
+                            }
+                        }
                     }
                     tokio::select! {
                         () = inner.materialize.notified() => {}
                         () = tokio::time::sleep(RETRY_INTERVAL) => {}
                     }
                 }
-            });
+            }));
         }
         {
             let (inner, node) = (inner.clone(), node.clone());
-            tasks.spawn(async move {
+            tasks.spawn(supervised(inner.clone(), "dial", async move {
                 loop {
                     for peer in inner.peers() {
                         if node.peer(&peer.device).is_some() {
@@ -371,11 +434,11 @@ impl Engine {
                     }
                     tokio::time::sleep(RETRY_INTERVAL).await;
                 }
-            });
+            }));
         }
         {
             let (inner, node) = (inner.clone(), node.clone());
-            tasks.spawn(async move {
+            tasks.spawn(supervised(inner.clone(), "confirm", async move {
                 loop {
                     tokio::time::sleep(CONFIRM_INTERVAL).await;
                     for id in inner.folder_ids() {
@@ -387,16 +450,16 @@ impl Engine {
                         }
                     }
                 }
-            });
+            }));
         }
         {
             let inner = inner.clone();
-            tasks.spawn(async move {
+            tasks.spawn(supervised(inner.clone(), "purge", async move {
                 loop {
                     tokio::time::sleep(PURGE_INTERVAL).await;
                     purge(&inner, now_ms());
                 }
-            });
+            }));
         }
         Ok(Self {
             inner,
@@ -419,6 +482,31 @@ impl Engine {
     /// This device's certificate.
     pub fn certificate(&self) -> &Signed<DeviceCertificate> {
         &self.inner.certificate
+    }
+
+    /// What stopped the engine, if a task panicked (ADR 0030). Once set, the engine does no more
+    /// work and its owner should shut it down: `tidefelld` exits so its service manager restarts
+    /// it, and the bindings stop the node.
+    pub fn failure(&self) -> Option<String> {
+        self.inner.failure.borrow().clone()
+    }
+
+    /// Resolves when a task panics, with what went wrong, or with `None` once the engine has shut
+    /// down. It holds no reference to the engine, so waiting does not keep it alive.
+    pub fn failed(&self) -> impl std::future::Future<Output = Option<String>> + Send + 'static {
+        let mut failure = self.inner.failure.subscribe();
+        async move {
+            failure
+                .wait_for(Option::is_some)
+                .await
+                .ok()
+                .and_then(|m| m.clone())
+        }
+    }
+
+    /// The engine's state directory.
+    pub fn data_dir(&self) -> &Path {
+        &self.inner.data_dir
     }
 
     /// Whether this device announces itself and finds known devices on the local network.
@@ -496,11 +584,21 @@ async fn run_scan(
     let handle = inner.folder(&id)?;
     let _guard = handle.fs_lock.lock().await;
     let (inner2, handle2) = (inner.clone(), handle.clone());
-    let scanned = tokio::task::spawn_blocking(move || {
+    let scanned = match tokio::task::spawn_blocking(move || {
         scan::scan(&inner2, &handle2, scope.as_ref(), saved.as_deref())
     })
     .await
-    .expect("scan task panicked")?;
+    {
+        Ok(scanned) => scanned?,
+        Err(e) => {
+            let message = inner.fail(
+                "scan",
+                e.try_into_panic()
+                    .unwrap_or_else(|e| Box::new(e.to_string())),
+            );
+            return Err(Error::Crashed(message));
+        }
+    };
     if scanned.changed {
         inner.changes.send_modify(|n| *n += 1);
         inner.emit(Event::FolderChanged(id));
@@ -519,4 +617,47 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
     materialize::materialize(inner, node, id, &handle).await
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_task_is_reported() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        on_panic(async { panic!("in a background loop") }, move |panic| {
+            let _ = tx.send(panic.downcast_ref::<&str>().copied());
+        })
+        .await;
+        assert_eq!(rx.await.unwrap(), Some("in a background loop"));
+    }
+
+    #[tokio::test]
+    async fn shutting_down_stops_the_task_before_returning() {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut tasks = JoinSet::new();
+        tasks.spawn(on_panic(
+            {
+                let guard = Dropped(dropped.clone());
+                async move {
+                    let _guard = guard;
+                    std::future::pending::<()>().await;
+                }
+            },
+            |_| panic!("stopping is not a panic"),
+        ));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        tasks.shutdown().await;
+        // Stopped already, not merely asked to stop.
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 }

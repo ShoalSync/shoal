@@ -29,7 +29,6 @@ tidefell-proto.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 toml.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tidefell-fs-fuse.workspace = true

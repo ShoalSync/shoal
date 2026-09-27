@@ -136,5 +136,6 @@ pub(crate) fn event(e: Event) -> api::Event {
             folder: folder.to_string(),
             path,
         },
+        Event::Crashed(message) => api::Event::Crashed { message },
     }
 }

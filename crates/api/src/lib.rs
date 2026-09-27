@@ -101,6 +101,13 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/pairings/{id}/approve", post(pairing::approve))
         .route("/v1/pairings/{id}", delete(pairing::decline))
         .route("/v1/events", get(handlers::events))
+        .route(
+            "/v1/log",
+            get(handlers::log_settings).put(handlers::set_log_level),
+        )
+        .route("/v1/log/problems", get(handlers::problems))
+        .route("/v1/crashes", get(handlers::crashes))
+        .route("/v1/crashes/dismiss", post(handlers::dismiss_crashes))
         .route("/v1/openapi.json", get(handlers::openapi))
         .with_state(state)
 }

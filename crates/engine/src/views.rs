@@ -139,4 +139,6 @@ pub enum Event {
         /// The file's path.
         path: String,
     },
+    /// A task panicked and the engine stopped working (ADR 0030).
+    Crashed(String),
 }

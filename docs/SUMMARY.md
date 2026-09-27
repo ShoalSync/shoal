@@ -11,6 +11,7 @@
 - [The recycle bin](guide/recycle-bin.md)
 - [The web peer](guide/web.md)
 - [Configuration](guide/configuration.md)
+- [When something goes wrong](guide/troubleshooting.md)
 
 # Self-hosting
 

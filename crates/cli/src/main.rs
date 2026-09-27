@@ -34,6 +34,23 @@ struct Cli {
 enum Command {
     /// Show this device and its folders' recycle bins.
     Status,
+    /// Show where the daemon logs, or its recent warnings and errors.
+    Logs {
+        /// The most recent warnings and errors, oldest first.
+        #[arg(long)]
+        problems: bool,
+    },
+    /// List the crashes recorded on this device.
+    Crashes {
+        /// Mark them as seen, so `status` stops reporting them.
+        #[arg(long)]
+        dismiss: bool,
+    },
+    /// Show the daemon's log level, or change it until the daemon restarts.
+    LogLevel {
+        /// A level filter, such as `debug` or `info,tidefell_net=debug`.
+        level: Option<String>,
+    },
     /// Manage folders.
     #[command(subcommand)]
     Folder(FolderCommand),
@@ -364,6 +381,32 @@ async fn run(cli: Cli) -> Result<(), String> {
                 folders: client.folders().await.map_err(e)?,
             };
             print(json, &view, |v| format::status(&v.status, &v.folders));
+        }
+        Command::Logs { problems: true } => {
+            print(json, &client.problems().await.map_err(e)?, |p| {
+                format::problems(p)
+            });
+        }
+        Command::Logs { problems: false } => {
+            print(json, &client.log_settings().await.map_err(e)?, |l| {
+                format::log_settings(l)
+            });
+        }
+        Command::Crashes { dismiss: true } => {
+            client.dismiss_crashes().await.map_err(e)?;
+        }
+        Command::Crashes { dismiss: false } => {
+            print(json, &client.crashes().await.map_err(e)?, |c| {
+                format::crashes(c)
+            });
+        }
+        Command::LogLevel { level } => {
+            let settings = match level {
+                Some(level) => client.set_log_level(&level).await,
+                None => client.log_settings().await,
+            }
+            .map_err(e)?;
+            print(json, &settings, |l| l.level.clone());
         }
         Command::Folder(command) => match command {
             FolderCommand::List => print(json, &client.folders().await.map_err(e)?, |f| {

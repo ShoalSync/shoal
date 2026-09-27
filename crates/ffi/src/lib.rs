@@ -11,12 +11,14 @@
 //! Every async function runs on a runtime owned by this library, so callers can await them from
 //! any executor (Kotlin coroutines on Android).
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
+use tidefell_engine::diagnostics;
 use tidefell_engine::pairing::{self, PairingEvent, PairingServer};
 use tidefell_engine::{
     device, Engine, EngineConfig, FolderId, NewFolder, PeerAddr, RelayConfig, ReplicaMode,
@@ -158,14 +160,130 @@ impl Network {
     }
 }
 
-/// Logs to standard error at `filter` (e.g. `info` or `tidefell_net=debug`). Only the first call
-/// has an effect.
+/// Starts logging and crash recording (ADR 0030): JSON lines in `<data_dir>/logs/`, logcat on
+/// Android and standard error, at `level` (such as `info` or `info,tidefell_net=debug`), and a
+/// crash file in `<data_dir>/crashes/` for every panic. Call it once, before anything else. Only
+/// the first call has an effect; it returns false for later ones.
 #[uniffi::export]
-pub fn enable_logging(filter: String) {
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
-        .with_writer(std::io::stderr)
-        .try_init();
+pub fn init_diagnostics(data_dir: String, level: String) -> Result<bool> {
+    let data_dir = PathBuf::from(data_dir);
+    diagnostics::install_panic_hook(&data_dir);
+    diagnostics::init_logging(&diagnostics::LogOptions {
+        data_dir,
+        level,
+        file: Some(true),
+        stderr: true,
+    })
+    .map_err(|e| invalid(e.to_string()))
+}
+
+/// Changes the log level while running.
+#[uniffi::export]
+pub fn set_log_level(level: String) -> Result<()> {
+    diagnostics::set_log_level(&level).map_err(|e| invalid(e.to_string()))
+}
+
+/// The current log level, or none before [`init_logging`].
+#[uniffi::export]
+pub fn log_level() -> Option<String> {
+    diagnostics::log_level()
+}
+
+/// How severe a message from the app is.
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum LogLevel {
+    /// Detail for debugging.
+    Debug,
+    /// Normal operation.
+    Info,
+    /// Something went wrong but syncing carries on.
+    Warn,
+    /// Something failed.
+    Error,
+}
+
+/// Logs one of the app's own messages, so it lands in the same file as the engine's.
+#[uniffi::export]
+pub fn log(level: LogLevel, tag: String, message: String) {
+    match level {
+        LogLevel::Debug => tracing::debug!(target: "app", tag, "{message}"),
+        LogLevel::Info => tracing::info!(target: "app", tag, "{message}"),
+        LogLevel::Warn => tracing::warn!(target: "app", tag, "{message}"),
+        LogLevel::Error => tracing::error!(target: "app", tag, "{message}"),
+    }
+}
+
+/// A recent warning or error.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Problem {
+    /// When, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// `WARN` or `ERROR`.
+    pub level: String,
+    /// Where it was logged.
+    pub target: String,
+    /// The message.
+    pub message: String,
+    /// Its structured fields, such as the folder and path.
+    pub fields: HashMap<String, String>,
+}
+
+/// A crash recorded in `<data_dir>/crashes/`.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Crash {
+    /// The crash file.
+    pub file: String,
+    /// When, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// What went wrong.
+    pub message: String,
+    /// Whether the user has already been told.
+    pub seen: bool,
+}
+
+/// Crashes recorded for the device in `data_dir`, oldest first.
+#[uniffi::export]
+pub fn crashes(data_dir: String) -> Vec<Crash> {
+    diagnostics::crashes(&PathBuf::from(data_dir))
+        .into_iter()
+        .map(|c| Crash {
+            file: c.file.display().to_string(),
+            time_ms: c.time_ms,
+            message: c.message,
+            seen: c.seen,
+        })
+        .collect()
+}
+
+/// Marks every crash recorded so far as seen.
+#[uniffi::export]
+pub fn dismiss_crashes(data_dir: String) -> Result<()> {
+    diagnostics::dismiss_crashes(&PathBuf::from(data_dir)).map_err(|e| invalid(e.to_string()))
+}
+
+/// Records one of the app's own crashes, such as an uncaught exception, in the same place and
+/// format as the engine's. `details` is the stack trace.
+#[uniffi::export]
+pub fn record_crash(data_dir: String, message: String, details: String) -> Result<()> {
+    let dir = PathBuf::from(data_dir).join("crashes");
+    diagnostics::write_crash(&dir, "app", &message, &details)
+        .map(drop)
+        .map_err(|e| invalid(e.to_string()))
+}
+
+/// The most recent warnings and errors, oldest first.
+#[uniffi::export]
+pub fn recent_problems() -> Vec<Problem> {
+    diagnostics::recent_problems()
+        .into_iter()
+        .map(|p| Problem {
+            time_ms: p.time_ms,
+            level: p.level,
+            target: p.target,
+            message: p.message,
+            fields: p.fields.into_iter().collect(),
+        })
+        .collect()
 }
 
 /// This device's ID, creating its key in `data_dir` on first use.
@@ -527,6 +645,11 @@ pub enum NodeEvent {
         /// File path.
         path: String,
     },
+    /// A task panicked and the node stopped (ADR 0030). Start it again to resume syncing.
+    Crashed {
+        /// What went wrong.
+        message: String,
+    },
 }
 
 /// Receives [`NodeEvent`]s.
@@ -598,10 +721,24 @@ impl Node {
             peers: Vec::new(),
             folders: Vec::new(),
         };
-        let engine = on_runtime(Engine::start(config, key, certificate)).await??;
-        Ok(Arc::new(Self {
-            engine: RwLock::new(Some(Arc::new(engine))),
-        }))
+        let engine = Arc::new(on_runtime(Engine::start(config, key, certificate)).await??);
+        let node = Arc::new(Self {
+            engine: RwLock::new(Some(engine.clone())),
+        });
+        // A panic in an engine task stops the node: its state in memory may be inconsistent. The
+        // app is told through the `Crashed` event and starts a new node.
+        let (weak, failed) = (Arc::downgrade(&node), engine.failed());
+        drop(engine);
+        runtime().spawn(async move {
+            let Some(message) = failed.await else {
+                return;
+            };
+            if let Some(node) = weak.upgrade() {
+                node.engine.write().unwrap().take();
+                tracing::error!("the node stopped: {message}");
+            }
+        });
+        Ok(node)
     }
 
     /// This device.
@@ -887,6 +1024,7 @@ impl Node {
                         folder: folder.to_string(),
                         path,
                     },
+                    E::Crashed(message) => NodeEvent::Crashed { message },
                 });
             }
         });

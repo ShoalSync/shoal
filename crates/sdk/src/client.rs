@@ -10,9 +10,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, ApprovePairing, CopiesRequest, Copy, Event, FetchRequest, Fetched, File, Folder,
-    KnownPeer, NewFolder, NewMember, PairRequest, Pairing, Peer, Recycled, RemoveHereRequest,
-    RetentionUpdate, Status, SyncOptions,
+    ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
+    Folder, KnownPeer, LogLevel, LogSettings, NewFolder, NewMember, PairRequest, Pairing, Peer,
+    Problem, Recycled, RemoveHereRequest, RetentionUpdate, Status, SyncOptions,
 };
 
 /// Client errors.
@@ -145,6 +145,39 @@ impl Client {
     /// This device.
     pub async fn status(&self) -> Result<Status, Error> {
         self.get("/v1/status").await
+    }
+
+    /// How the daemon logs.
+    pub async fn log_settings(&self) -> Result<LogSettings, Error> {
+        self.get("/v1/log").await
+    }
+
+    /// Changes the daemon's log level until it restarts.
+    pub async fn set_log_level(&self, level: &str) -> Result<LogSettings, Error> {
+        self.call(
+            Method::PUT,
+            "/v1/log",
+            Some(&LogLevel {
+                level: level.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// The daemon's most recent warnings and errors, oldest first.
+    pub async fn problems(&self) -> Result<Vec<Problem>, Error> {
+        self.get("/v1/log/problems").await
+    }
+
+    /// Crashes recorded on the daemon's device, oldest first.
+    pub async fn crashes(&self) -> Result<Vec<Crash>, Error> {
+        self.get("/v1/crashes").await
+    }
+
+    /// Marks every crash recorded so far as seen.
+    pub async fn dismiss_crashes(&self) -> Result<(), Error> {
+        self.call(Method::POST, "/v1/crashes/dismiss", None::<&()>)
+            .await
     }
 
     /// All folders.

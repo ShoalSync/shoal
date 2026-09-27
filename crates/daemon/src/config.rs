@@ -34,6 +34,35 @@ pub struct Config {
     /// Serve the web peer. Omit to disable it.
     #[serde(default)]
     pub web: Option<Web>,
+    /// Logging (ADR 0030).
+    #[serde(default)]
+    pub log: Log,
+}
+
+/// Logging settings.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Log {
+    /// Level filter, such as "info" or "info,tidefell_net=debug". `RUST_LOG` overrides it.
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    /// Write JSON lines to `<data_dir>/logs/`, rotated at 5 MiB with five files kept. By default
+    /// the file is written unless the system journal keeps the logs.
+    #[serde(default)]
+    pub file: Option<bool>,
+}
+
+impl Default for Log {
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+            file: None,
+        }
+    }
+}
+
+fn default_log_level() -> String {
+    "info".into()
 }
 
 /// The web peer (ADR 0010, 0011).
@@ -347,6 +376,20 @@ mod tests {
         assert_eq!(engine.folders.len(), 1);
         assert_eq!(engine.folders[0].retention, Retention::Days(30));
         assert_eq!(engine.folders[0].sync, SyncOptions::default());
+    }
+
+    #[test]
+    fn reads_log_settings() {
+        let config = parse(EXAMPLE).unwrap();
+        assert_eq!(config.log.level, "info");
+        assert_eq!(config.log.file, None);
+        assert!(config.watch);
+        let text = EXAMPLE.replace("# file = true", "file = false");
+        assert_eq!(parse(&text).unwrap().log.file, Some(false));
+        let bad = EXAMPLE.replace("level = \"info\"", "level = \"info\"\nformat = \"xml\"");
+        assert!(parse(&bad).is_err(), "unknown log settings are rejected");
+        let default = parse("data_dir = \"/d\"").unwrap();
+        assert_eq!(default.log.level, "info");
     }
 
     #[test]

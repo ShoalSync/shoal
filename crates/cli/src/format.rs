@@ -3,8 +3,8 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Direction, Event, File, Folder, KnownPeer, LocalDeletes, Mode, Peer, Recycled, Status,
-    SyncOptions,
+    Crash, Direction, Event, File, Folder, KnownPeer, LocalDeletes, LogSettings, Mode, Peer,
+    Problem, Recycled, Status, SyncOptions,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -58,6 +58,16 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         s.version,
         if s.local_discovery { "on" } else { "off" }
     );
+    if let Some(c) = &s.crash {
+        let _ = write!(
+            out,
+            "\nTidefell stopped unexpectedly at {}: {}\n  crash file: {}\n  \
+             attach it to a report, then run `tidefell crashes --dismiss`",
+            time(c.time_ms),
+            c.message,
+            c.file
+        );
+    }
     if !folders.is_empty() {
         out.push_str("\nfolders:");
         for f in folders {
@@ -258,7 +268,48 @@ pub(crate) fn event(e: &Event) -> String {
         Event::FolderChanged { folder } => format!("folder changed    {folder}"),
         Event::FileUpdated { folder, path } => format!("file updated      {folder}  {path}"),
         Event::FileRemoved { folder, path } => format!("file removed      {folder}  {path}"),
+        Event::Crashed { message } => format!("engine stopped    {message}"),
     }
+}
+
+pub(crate) fn crashes(crashes: &[Crash]) -> String {
+    if crashes.is_empty() {
+        return "no crashes recorded".into();
+    }
+    crashes
+        .iter()
+        .map(|c| {
+            let seen = if c.seen { "" } else { "  (new)" };
+            format!("{}  {}{seen}\n  {}", time(c.time_ms), c.message, c.file)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+pub(crate) fn log_settings(l: &LogSettings) -> String {
+    match &l.file {
+        Some(file) => format!("level: {}\nfile:  {file}", l.level),
+        None => format!(
+            "level: {}\nfile:  none (the system journal keeps the logs)",
+            l.level
+        ),
+    }
+}
+
+pub(crate) fn problems(problems: &[Problem]) -> String {
+    if problems.is_empty() {
+        return "no warnings or errors".into();
+    }
+    let mut out = String::new();
+    for p in problems {
+        let _ = write!(out, "{} {:5} {}", time(p.time_ms), p.level, p.message);
+        for (k, v) in &p.fields {
+            let _ = write!(out, " {k}={v}");
+        }
+        out.push('\n');
+    }
+    out.pop();
+    out
 }
 
 #[cfg(test)]

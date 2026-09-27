@@ -7,7 +7,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use tidefell_proto::{ChunkHash, Manifest};
-use tokio::task::JoinSet;
+use tokio::task::{JoinError, JoinSet};
 use tokio::time::Instant;
 
 use crate::scheduler::{Config, Request, Scheduler};
@@ -84,7 +84,7 @@ pub async fn fetch<S: ChunkSource>(
         });
     }
     while let Some(joined) = queries.join_next().await {
-        if let Ok((peer, Ok(has))) = joined {
+        if let Ok((peer, Ok(has))) = rethrow(joined) {
             scheduler.set_availability(peer, has);
         }
     }
@@ -124,7 +124,7 @@ pub async fn fetch<S: ChunkSource>(
             },
             None => requests.join_next().await,
         };
-        let Some(Ok((request, result))) = joined else {
+        let Some(Ok((request, result))) = joined.map(rethrow) else {
             continue;
         };
         match result {
@@ -145,5 +145,13 @@ pub async fn fetch<S: ChunkSource>(
             }
             Err(_) => scheduler.failed(&request.peer, &request.chunks, Instant::now().into_std()),
         }
+    }
+}
+/// Passes a panic in a spawned request on to the caller, so it is not mistaken for a failed
+/// request (ADR 0030).
+fn rethrow<T>(joined: Result<T, JoinError>) -> Result<T, JoinError> {
+    match joined {
+        Err(e) if e.is_panic() => std::panic::resume_unwind(e.into_panic()),
+        other => other,
     }
 }

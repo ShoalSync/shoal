@@ -61,7 +61,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"
 tracing = "0.1"
 uniffi = "0.32"
 tokio-stream = { version = "0.1", features = ["sync"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+paranoid-android = "0.2"
 
 # Dependencies, above all the Ed25519 and BLAKE3 code, are built optimised in development so
 # tests that sign and verify tens of thousands of versions run in seconds. Workspace crates

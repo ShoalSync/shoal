@@ -88,8 +88,11 @@ class PairAndSyncTest {
                 eventually("the control socket") { laptopData.resolve("control.sock").exists() }
 
                 // The phone.
-                enableLogging("info,tidefell_net=debug,tidefell_engine=debug")
                 val phoneData = root.resolve("phone").path
+                assertTrue(initDiagnostics(phoneData, "info,tidefell_net=debug,tidefell_engine=debug"))
+                log(LogLevel.INFO, "PairAndSyncTest", "the app's own message")
+                val logFile = JFile(phoneData, "logs/tidefell.log")
+                assertTrue(logFile.readText().contains("the app's own message"))
                 val device = deviceId(phoneData)
                 assertFalse(isPaired(phoneData))
                 assertFailsWith<TidefellException.NotPaired> { Node.start(phoneData, network) }

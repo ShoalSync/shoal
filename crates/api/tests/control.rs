@@ -280,11 +280,100 @@ async fn control_api_end_to_end() {
         "/v1/folders/{id}/recycle/{entry}",
         "/v1/folders/{id}/recycle/{entry}/restore",
         "/v1/events",
+        "/v1/log",
+        "/v1/log/problems",
+        "/v1/crashes",
+        "/v1/crashes/dismiss",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }
     assert!(doc["components"]["schemas"]["NewFolder"].is_object());
 
     events.abort();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn logging_through_the_api() {
+    let tmp = tempfile::tempdir().unwrap();
+    let key = DeviceKey::from_seed([3; 32]);
+    let data_dir = tmp.path().join("data");
+    let engine = Arc::new(
+        Engine::start(
+            EngineConfig {
+                data_dir: data_dir.clone(),
+                relay: RelayConfig::Disabled,
+                address_lookup: false,
+                local_discovery: false,
+                watch: false,
+                bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+                peers: Vec::new(),
+                folders: Vec::new(),
+            },
+            key.clone(),
+            UserKey::from_seed([1; 32]).certify(key.id(), "log-test", 0),
+        )
+        .await
+        .unwrap(),
+    );
+    let socket = Client::socket_path(&data_dir);
+    let server = tokio::spawn({
+        let (engine, socket) = (engine.clone(), socket.clone());
+        async move { tidefell_api::serve_unix(engine, &socket).await }
+    });
+    let client = Client::unix(&socket);
+    eventually("socket is up", async || client.status().await.is_ok()).await;
+
+    // Before the process starts logging there is nothing to show.
+    assert_eq!(api_error(client.log_settings().await), ErrorKind::NotFound);
+    tidefell_engine::diagnostics::init_logging(&tidefell_engine::diagnostics::LogOptions {
+        data_dir: data_dir.clone(),
+        level: "info".into(),
+        file: Some(true),
+        stderr: false,
+    })
+    .unwrap();
+
+    let settings = client.log_settings().await.unwrap();
+    assert_eq!(settings.level, "info");
+    assert_eq!(
+        settings.file.as_deref(),
+        Some(data_dir.join("logs/tidefell.log").to_str().unwrap())
+    );
+    assert_eq!(
+        client
+            .set_log_level("debug,tidefell_net=trace")
+            .await
+            .unwrap()
+            .level,
+        "debug,tidefell_net=trace"
+    );
+    assert_eq!(
+        api_error(client.set_log_level("[nope").await),
+        ErrorKind::BadRequest
+    );
+    assert_eq!(
+        client.log_settings().await.unwrap().level,
+        "debug,tidefell_net=trace"
+    );
+
+    tracing::warn!(folder = "f1", "a warning for the problems list");
+    let problems = client.problems().await.unwrap();
+    let problem = problems.last().unwrap();
+    assert_eq!(problem.message, "a warning for the problems list");
+    assert_eq!(problem.fields["folder"], "f1");
+
+    // A crash from an earlier run is reported until it is dismissed.
+    assert!(client.status().await.unwrap().crash.is_none());
+    tidefell_engine::diagnostics::write_crash(&data_dir.join("crashes"), "test", "boom", "")
+        .unwrap();
+    let crash = client.status().await.unwrap().crash.unwrap();
+    assert_eq!(crash.message, "boom");
+    assert!(!crash.seen);
+    assert_eq!(client.crashes().await.unwrap(), vec![crash]);
+    client.dismiss_crashes().await.unwrap();
+    assert!(client.status().await.unwrap().crash.is_none());
+    assert!(client.crashes().await.unwrap()[0].seen);
+
     server.abort();
 }
