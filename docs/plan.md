@@ -122,6 +122,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Features from other sync tools | Ignore patterns, watching, local discovery, version history, bandwidth limits, pins, upload links, conflict resolution | ADR 0029 |
 | Diagnostics and reporting | Local logs and crash files, detailed status, redacted diagnostics bundles, doctor, activity history, opt-in metrics; no telemetry | ADR 0030 |
 | Static analysis and fuzzing | Stricter lints on peers' data, property tests, nightly fuzzing, workflow, Kotlin, shell, Nix and spelling checks | ADR 0031 |
+| Transfer efficiency | Files written concurrently, no manifest for single-chunk files, small files batched per request, no availability query to full replicas; wire changes wait for sync/2 | ADR 0032 |
 
 ## Phases
 
@@ -140,6 +141,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5e** Features from other sync tools | Ignore patterns, watching for changes, local network discovery, version history, bandwidth limits and pause, pins on partial replicas, upload-only links, conflict resolution (ADR 0029) | See the Phase 5e breakdown |
 | **5f** Diagnostics and reporting | Logs and crash files on every platform, status and problems, diagnostics bundle and doctor, activity history, metrics, crash reports through the issue tracker (ADR 0030) | See the Phase 5f breakdown |
 | **5g** Static analysis and fuzzing | Unused dependencies and the public API checked; stricter lints in `proto`, `net` and `store`; property tests; fuzzing; workflow, Android, shell, Nix and spelling checks in every repository (ADR 0031) | See the Phase 5g breakdown |
+| **5h** Transfer efficiency | Concurrent file writes, the single-chunk shortcut, cross-file chunk requests and direct requests to full replicas, measured before and after (ADR 0032) | See the Phase 5h breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
 | **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
@@ -519,6 +521,24 @@ Exit criterion: a pull request adding an unchecked index to `proto` fails CI; th
 every fuzz target for ten minutes without a crash; a new Android Lint error fails the Android CI;
 an unpinned action fails `zizmor` in each repository; and `shellcheck`, `statix`, `deadnix` and
 `typos` run in every repository's CI.
+
+### Phase 5h work breakdown
+
+Transfer efficiency (ADR 0032). Engine changes only; sync/1 and blobs/1 are unchanged.
+
+1. **Decisions.** ADR 0032 and this breakdown.
+2. **Measurement.** A test syncing 1,000 files of 2 KB and one file of 256 MiB between two
+   daemons, with a fixed delay added to every request, that reports streams, requests and time.
+   Its first numbers are the baseline.
+3. **Concurrent writes.** Up to 8 files at once with at most 64 MiB in flight, overlapping paths
+   in order, placeholders opened ahead of background writes.
+4. **Single-chunk files.** Chunks requested by content hash for files under 64 KiB, the
+   one-chunk manifest recorded, and the manifest fetched when a peer answers `Missing`.
+5. **Fewer requests.** Chunk requests batched across files, and no availability query to full
+   replicas or a single candidate peer.
+
+Exit criterion: with a 100 ms delay per request, 1,000 files of 2 KB sync at least five times
+faster than the step 2 baseline, the 256 MiB file no slower, and every file is intact.
 
 ### Phase 6 work breakdown
 
