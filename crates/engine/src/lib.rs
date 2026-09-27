@@ -22,6 +22,7 @@
 //! <data>/blocks/                 block store shared by all folders
 //! <data>/folders/<id>/meta       folder metadata snapshot (`meta` format)
 //! <data>/folders/<id>/state      engine state: manifests, local files, peer progress, copies
+//! <folder root>/.tidefell/folder the folder's marker; without it the folder is unavailable
 //! <folder root>/.tidefell/tmp/   in-progress downloads, renamed into place when complete
 //! ```
 //!
@@ -42,6 +43,7 @@ mod history;
 mod ignores;
 mod materialize;
 pub mod pairing;
+mod root;
 mod runtime;
 mod scan;
 mod setaside;
@@ -114,6 +116,10 @@ pub enum Error {
     /// A file's content could not be fetched from connected peers.
     #[error("{0} is not available: no connected peer has its content")]
     Unavailable(String),
+    /// The folder's root or its marker is missing, as when its drive is not mounted, so
+    /// nothing is scanned, written or deleted there (ADR 0037).
+    #[error("folder {0} is unavailable: {1}")]
+    FolderUnavailable(tidefell_proto::FolderId, String),
     /// A request was invalid.
     #[error("{0}")]
     Invalid(String),

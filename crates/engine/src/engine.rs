@@ -32,7 +32,7 @@ use crate::scan::Scope;
 use crate::state::FolderState;
 use crate::views::Event;
 use crate::watch::{FolderWatch, Wanted};
-use crate::{copies, evict, materialize, now_ms, scan, Error, Result};
+use crate::{copies, evict, materialize, now_ms, root, scan, Error, Result};
 use peers::endpoint_addr;
 use recycle::purge;
 
@@ -40,6 +40,8 @@ use recycle::purge;
 const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 /// How often a watched folder is scanned in full anyway, in case the watch missed a change.
 const SAFETY_SCAN: Duration = Duration::from_secs(3600);
+/// How often an unavailable folder's root is checked again, at most (ADR 0037).
+const RECHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to purge expired recycle-bin items.
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
 /// How often to ask full replicas about files that have no confirmed copy yet (ADR 0022).
@@ -55,6 +57,9 @@ pub(crate) struct FolderHandle {
     scanner: Mutex<Option<AbortHandle>>,
     /// Why the folder is not watched for changes and is scanned on its interval instead.
     pub(crate) watch_error: Mutex<Option<String>>,
+    /// Why the folder's root cannot be used (ADR 0037): no scans, writes or deletes until it is
+    /// back.
+    pub(crate) unavailable: Mutex<Option<String>>,
     /// Paths opened by front-ends, with how many times; never evicted while open.
     pins: Mutex<HashMap<String, usize>>,
 }
@@ -62,6 +67,39 @@ pub(crate) struct FolderHandle {
 impl FolderHandle {
     pub(crate) fn lock(&self) -> MutexGuard<'_, FolderState> {
         self.state.lock().unwrap()
+    }
+
+    /// Checks the folder's root and marker, recording why the folder is unavailable if they are
+    /// not there, as when its drive is not mounted.
+    pub(crate) fn available(&self) -> Result<()> {
+        let (id, root) = {
+            let state = self.lock();
+            (state.config.id, state.config.path.clone())
+        };
+        let reason = root::check(&root, id);
+        let mut unavailable = self.unavailable.lock().unwrap();
+        match (&*unavailable, &reason) {
+            (None, Some(reason)) => {
+                warn!(folder = %id, reason = %reason, "folder unavailable; not syncing it");
+            }
+            (Some(_), None) => {
+                info!(folder = %id, "folder available again");
+                crate::history::recover(&root);
+            }
+            _ => {}
+        }
+        unavailable.clone_from(&reason);
+        match reason {
+            Some(reason) => Err(Error::FolderUnavailable(id, reason)),
+            None => Ok(()),
+        }
+    }
+
+    /// Takes the file lock, once the folder's root is available.
+    pub(crate) async fn disk(&self) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+        let guard = self.fs_lock.lock().await;
+        self.available()?;
+        Ok(guard)
     }
 
     /// Paths currently open.
@@ -198,15 +236,32 @@ fn open_folder(
     device: DeviceId,
     configured: bool,
 ) -> Result<FolderHandle> {
-    std::fs::create_dir_all(&config.path).map_err(crate::io_err(&config.path))?;
-    // Before the first scan, which would otherwise record the file as deleted.
-    crate::history::recover(&config.path);
+    // Only a folder being created or joined gets its root created (ADR 0037); an existing
+    // folder whose root is missing is unavailable, not empty.
+    let new = !FolderState::exists(data_dir, config.id);
+    if new {
+        root::create(&config.path, config.id, device)?;
+    }
+    let state = FolderState::open(data_dir, config, device)?;
+    if !new {
+        if let Err(e) = root::adopt(&state, device) {
+            warn!(folder = %state.config.id, error = %e, "marking the folder's root failed");
+        }
+    }
+    let (id, root) = (state.config.id, state.config.path.clone());
+    let unavailable = root::check(&root, id);
+    match &unavailable {
+        // Before the first scan, which would otherwise record the file as deleted.
+        None => crate::history::recover(&root),
+        Some(reason) => warn!(folder = %id, reason = %reason, "folder unavailable; not syncing it"),
+    }
     Ok(FolderHandle {
-        state: Mutex::new(FolderState::open(data_dir, config, device)?),
+        state: Mutex::new(state),
         fs_lock: tokio::sync::Mutex::new(()),
         configured,
         scanner: Mutex::new(None),
         watch_error: Mutex::new(None),
+        unavailable: Mutex::new(unavailable),
         pins: Mutex::new(HashMap::new()),
     })
 }
@@ -252,20 +307,25 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
     let task = {
         let inner = inner.clone();
         tokio::spawn(supervised(inner.clone(), "scan", async move {
-            // Watched before the first scan, so nothing changed during it is missed.
-            let mut watch = if inner.watch {
-                match FolderWatch::new(&root) {
-                    Ok(watch) => Some(watch),
-                    Err(e) => {
-                        not_watched(&inner, id, e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
+            let mut watch = None;
+            // Set until the folder is watched, or cannot be; again while it is unavailable, so
+            // a drive mounted over an empty directory is watched once it is back (ADR 0037).
+            let mut unwatched = inner.watch;
             let mut wanted = Wanted::Full;
             loop {
+                // Watched before scanning, so nothing changed during the scan is missed.
+                if unwatched && inner.folder(&id).is_ok_and(|h| h.available().is_ok()) {
+                    unwatched = false;
+                    match FolderWatch::new(&root) {
+                        Ok(w) => {
+                            watch = Some(w);
+                            if let Ok(h) = inner.folder(&id) {
+                                h.watch_error.lock().unwrap().take();
+                            }
+                        }
+                        Err(e) => not_watched(&inner, id, e),
+                    }
+                }
                 let scope = match &wanted {
                     Wanted::Full => None,
                     Wanted::Scope(scope) => Some(scope.clone()),
@@ -278,6 +338,10 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                                 watch = None;
                             }
                         }
+                    }
+                    Err(Error::FolderUnavailable(..)) => {
+                        watch = None;
+                        unwatched = inner.watch;
                     }
                     Err(e) => warn!(folder = %id, error = %e, "scan failed"),
                 }
@@ -300,7 +364,15 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                         }
                     }
                     None => {
-                        tokio::time::sleep(interval).await;
+                        let away = inner
+                            .folder(&id)
+                            .is_ok_and(|h| h.unavailable.lock().unwrap().is_some());
+                        let wait = if away {
+                            interval.min(RECHECK_INTERVAL)
+                        } else {
+                            interval
+                        };
+                        tokio::time::sleep(wait).await;
                         Wanted::Full
                     }
                 };
@@ -391,11 +463,13 @@ impl Engine {
                 loop {
                     for id in inner.folder_ids() {
                         match run_materialize(&inner, &node, id).await {
-                            Ok(()) | Err(Error::UnknownFolder(_)) => {}
+                            Ok(())
+                            | Err(Error::UnknownFolder(_) | Error::FolderUnavailable(..)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "materialise failed"),
                         }
                         match run_evict(&inner, id).await {
-                            Ok(()) | Err(Error::UnknownFolder(_)) => {}
+                            Ok(())
+                            | Err(Error::UnknownFolder(_) | Error::FolderUnavailable(..)) => {}
                             Err(e) => warn!(folder = %id, error = %e, "eviction failed"),
                         }
                     }
@@ -597,7 +671,7 @@ async fn run_scan(
     saved: Option<String>,
 ) -> Result<Vec<PathBuf>> {
     let handle = inner.folder(&id)?;
-    let _guard = handle.fs_lock.lock().await;
+    let _guard = handle.disk().await?;
     let (inner2, handle2) = (inner.clone(), handle.clone());
     let scanned = match tokio::task::spawn_blocking(move || {
         scan::scan(&inner2, &handle2, scope.as_ref(), saved.as_deref())
@@ -623,7 +697,7 @@ async fn run_scan(
 
 async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
-    let _guard = handle.fs_lock.lock().await;
+    let _guard = handle.disk().await?;
     evict::evict(inner, id, &handle)
 }
 
@@ -631,6 +705,8 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
 /// while fetching from peers.
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
+    // Checked before fetching, so an unavailable folder does not download what it cannot write.
+    handle.available()?;
     materialize::materialize(inner, node, id, &handle).await
 }
 

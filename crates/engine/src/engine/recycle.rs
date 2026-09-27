@@ -82,7 +82,7 @@ impl Engine {
             state.set_aside.contains_key(&entry) && state.meta.recycle_bin().get(&entry).is_none()
         };
         if here_only {
-            let _guard = handle.fs_lock.lock().await;
+            let _guard = handle.disk().await?;
             let path = {
                 let mut state = handle.lock();
                 let path = setaside::restore(&mut state, &entry)?;
@@ -210,7 +210,7 @@ impl Engine {
     pub async fn remove_here(&self, folder: FolderId, path: &str) -> Result<()> {
         let handle = self.inner.folder(&folder)?;
         {
-            let _guard = handle.fs_lock.lock().await;
+            let _guard = handle.disk().await?;
             let mut state = handle.lock();
             setaside::remove_here(&mut state, path, now_ms())?;
             state.save()?;

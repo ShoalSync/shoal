@@ -10,7 +10,7 @@ use tidefell_chunker::ChunkIndex;
 use tidefell_identity::FolderMembers;
 use tidefell_meta::{Folder, Recycled};
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, Manifest, VersionVector};
+use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
 use crate::history::Previous;
@@ -373,6 +373,12 @@ pub(crate) struct FolderState {
 }
 
 impl FolderState {
+    /// True if `folder` has saved state under `data_dir`, so it is not being created or joined.
+    pub(crate) fn exists(data_dir: &Path, folder: FolderId) -> bool {
+        let dir = data_dir.join("folders").join(folder.to_string());
+        dir.join("meta").exists() || dir.join("state").exists()
+    }
+
     /// Loads the folder's state from `data_dir`, or creates it.
     pub(crate) fn open(data_dir: &Path, config: FolderConfig, device: DeviceId) -> Result<Self> {
         let dir = data_dir.join("folders").join(config.id.to_string());

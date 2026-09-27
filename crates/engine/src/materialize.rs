@@ -168,7 +168,7 @@ pub(crate) async fn materialize(
     };
 
     if !deletes.is_empty() {
-        let _guard = handle.fs_lock.lock().await;
+        let _guard = handle.disk().await?;
         for path in deletes {
             remove_if_unchanged(inner, handle, id, &root, &path)?;
         }
@@ -365,7 +365,7 @@ async fn write_file(
 
     // Fetching is done; only now take the folder's file lock, so a slow peer never holds up
     // scans or file operations (ADR 0024).
-    let _guard = handle.fs_lock.lock().await;
+    let _guard = handle.disk().await?;
     // Assemble into a temporary file and verify the whole content before it becomes visible.
     let tmp_dir = root.join(RESERVED_DIR).join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(io_err(&tmp_dir))?;

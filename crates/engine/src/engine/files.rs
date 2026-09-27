@@ -105,7 +105,7 @@ impl Engine {
         {
             return Err(Error::Unavailable(path.to_owned()));
         }
-        let _guard = handle.fs_lock.lock().await;
+        let _guard = handle.disk().await?;
         // Evicted or replaced between fetching and pinning; rare, and the caller can retry.
         if self.local_path(folder, path)?.is_none() {
             return Err(Error::Unavailable(path.to_owned()));
@@ -149,7 +149,7 @@ impl Engine {
         }
         let handle = self.inner.folder(&folder)?;
         {
-            let _guard = handle.fs_lock.lock().await;
+            let _guard = handle.disk().await?;
             let root = handle.lock().config.path.clone();
             let target = root.join(path);
             if let Some(parent) = target.parent() {
@@ -200,7 +200,7 @@ impl Engine {
     pub async fn delete(&self, folder: FolderId, path: &str) -> Result<()> {
         let handle = self.inner.folder(&folder)?;
         {
-            let _guard = handle.fs_lock.lock().await;
+            let _guard = handle.disk().await?;
             let mut state = handle.lock();
             let entry = match state.meta.find_path(path) {
                 Some(v) if matches!(v.kind, EntryKind::File { .. }) => v.entry,
@@ -245,7 +245,7 @@ impl Engine {
         }
         let handle = self.inner.folder(&folder)?;
         {
-            let _guard = handle.fs_lock.lock().await;
+            let _guard = handle.disk().await?;
             let mut state = handle.lock();
             let prefix = format!("{from}/");
             // Paths are where files are on disk, which for entries that share a path is not

@@ -145,9 +145,9 @@ impl From<EngineError> for ApiFailure {
             EngineError::NoSuchFile(_) | EngineError::NotRecycled(_) => {
                 (StatusCode::NOT_FOUND, ErrorKind::NotFound)
             }
-            EngineError::Unavailable(_) | EngineError::Net(_) => {
-                (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable)
-            }
+            EngineError::Unavailable(_)
+            | EngineError::FolderUnavailable(..)
+            | EngineError::Net(_) => (StatusCode::SERVICE_UNAVAILABLE, ErrorKind::Unavailable),
             _ => (StatusCode::INTERNAL_SERVER_ERROR, ErrorKind::Internal),
         };
         Self(

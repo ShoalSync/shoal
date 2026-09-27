@@ -99,6 +99,10 @@ pub struct Folder {
     /// Why the folder is scanned on an interval instead of watched for changes, if it is.
     #[serde(default)]
     pub watch_error: Option<String>,
+    /// Why the folder's root cannot be used, if it cannot, as when its drive is not mounted.
+    /// Nothing is scanned, written or deleted there until it is back.
+    #[serde(default)]
+    pub unavailable: Option<String>,
 }
 
 /// A summary of one device's recycle bin for a folder.

@@ -328,6 +328,13 @@ pub(crate) fn scan(
         );
     }
 
+    // The drive may have gone while the folder was walked, and an unmounted root looks like
+    // every file deleted. Check it again right before recording any delete (ADR 0037).
+    if let Some(reason) = crate::root::check(&root, state.config.id) {
+        state.save()?;
+        return Err(crate::Error::FolderUnavailable(state.config.id, reason));
+    }
+
     // A path that became ignored after it synced keeps its entry: nothing is deleted. Only
     // files in the scope that are verifiably gone are.
     let deleted: Vec<String> = known

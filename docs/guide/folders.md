@@ -26,6 +26,18 @@ Both commands take `--retention-days` (how long deleted files stay in the recycl
 [the recycle bin](recycle-bin.md#retention)) and `--member` to set the members explicitly. By
 default the only member is your own user.
 
+### Folders on removable or network drives
+
+Creating or joining a folder creates its directory and writes `.tidefell/folder` in it, naming
+the folder. After that, Tidefell never creates the directory again. If the directory or that file
+is missing, as when the drive holding it is not mounted, the folder is **unavailable**: nothing is
+scanned, written or deleted there, and `tidefell status` says why. Once the drive is back, the
+folder syncs again by itself, within a minute. Without this, an empty mount point would look like
+every file had been deleted, and the deletes would reach your other devices.
+
+Folders created before this check was added are given the file the first time Tidefell starts, if
+their directory holds any file Tidefell already knew about.
+
 ## Sharing with other people
 
 Add another user as a member, using the user ID they get from `tidefelld id`:

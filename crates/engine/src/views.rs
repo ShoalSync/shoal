@@ -32,6 +32,9 @@ pub struct FolderInfo {
     /// Why the folder is scanned on its interval instead of watched for changes, if it is
     /// (ADR 0029).
     pub watch_error: Option<String>,
+    /// Why the folder's root cannot be used, if it cannot, as when its drive is not mounted:
+    /// nothing is scanned, written or deleted there until it is back (ADR 0037).
+    pub unavailable: Option<String>,
 }
 
 /// A summary of one replica's recycle bin.
