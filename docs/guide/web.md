@@ -74,5 +74,14 @@ revoked or expires, when its download limit is reached, or when the account that
 removed or its user loses access to the folder. Every use of a link is logged at `info` with
 the link's short ID, never its token.
 
+### Upload-only links
+
+A link to a directory can be **upload-only**, for collecting files from people without an
+account. Visitors see an upload form and nothing that is already in the directory. Their files
+land in the directory, and a name already taken gets a number, as in `photo (1).jpg`, so
+nothing is replaced. Besides the expiry and password, an upload-only link can limit the total
+size, in MiB, and the number of files. **Your share links** shows how much has been uploaded.
+Every upload is logged at `info` with the link's ID and where the file was stored.
+
 Links are only as reachable as the web peer. On a home NAS that means port forwarding or a
 tunnel to the reverse proxy; on a self-run server it works as it is.

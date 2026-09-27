@@ -44,6 +44,8 @@ pub(crate) struct AppState {
     pub(crate) accounts: AccountStore,
     pub(crate) sessions: sessions::Sessions,
     pub(crate) shares: shares::ShareStore,
+    /// Held by an upload through a link from choosing a free name to writing the file.
+    pub(crate) link_uploads: tokio::sync::Mutex<()>,
     pub(crate) config: WebConfig,
 }
 
@@ -75,6 +77,7 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         accounts: AccountStore::new(data_dir),
         sessions: sessions::Sessions::default(),
         shares: shares::ShareStore::new(data_dir),
+        link_uploads: tokio::sync::Mutex::new(()),
         config,
     });
     Router::new()
@@ -96,6 +99,10 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         .route("/shares/{link}/revoke", post(sharing::revoke_share))
         .route("/s/{token}", get(sharing::link).post(sharing::unlock_link))
         .route("/s/{token}/download", get(sharing::link_download))
+        .route(
+            "/s/{token}/upload",
+            post(sharing::link_upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/folders/{id}/recycle", get(handlers::recycle))
         .route("/folders/{id}/history", get(handlers::history))
         .route("/folders/{id}/pause", post(handlers::pause_folder))

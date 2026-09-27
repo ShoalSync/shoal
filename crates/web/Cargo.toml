@@ -21,7 +21,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tidefell-engine.workspace = true
 tidefell-proto.workspace = true
-tokio = { workspace = true, features = ["net", "fs", "time"] }
+tokio = { workspace = true, features = ["net", "fs", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tracing.workspace = true
 

@@ -32,7 +32,7 @@ the same pull request that introduces it.
 | **Epoch** | A random identifier of one replica's index. A new epoch means the index was rebuilt and peers must re-fetch it from the start. |
 | **Tombstone** | A version recording that an entry was deleted. Propagates the delete to other replicas. |
 | **Recycle bin** | Where a deleted entry's last live version is kept until its retention period expires. |
-| **Share link** | A web peer URL that gives someone without an account read-only access to one file or directory. It can expire, need a password or limit downloads, and can be revoked. See ADR 0019. |
+| **Share link** | A web peer URL that gives someone without an account read-only access to one file or directory. It can expire, need a password or limit downloads, and can be revoked. A directory link can instead be *upload-only*: visitors add files and see none (ADR 0029). See ADR 0019. |
 | **Retention period** | How long the recycle bin keeps deleted entries. Chosen at first setup; can be changed later. |
 | **Block store** | A replica's on-disk, content-addressed chunk storage. |
 | **Availability** | Which chunks of a manifest a peer holds, expressed as a bitmap over the manifest's chunk list. |

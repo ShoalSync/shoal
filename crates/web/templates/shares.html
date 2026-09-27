@@ -9,12 +9,12 @@
 <p class="muted">No share links. Open a folder and choose <em>share</em> next to a file.</p>
 {% else %}
 <table>
-  <thead><tr><th>Folder</th><th>Shared</th><th>Created</th><th>Expires</th><th>Downloads</th><th></th></tr></thead>
+  <thead><tr><th>Folder</th><th>Shared</th><th>Created</th><th>Expires</th><th>Used</th><th></th></tr></thead>
   <tbody>
   {% for s in shares %}
     <tr>
       <td>{{ s.folder }}</td>
-      <td>{{ s.path }}{% if s.password %} <span class="tag">password</span>{% endif %}<div class="muted mono">{{ s.id }}{% if admin %} · {{ s.created_by }}{% endif %}</div></td>
+      <td>{{ s.path }}{% if s.upload_only %} <span class="tag">upload-only</span>{% endif %}{% if s.password %} <span class="tag">password</span>{% endif %}<div class="muted mono">{{ s.id }}{% if admin %} · {{ s.created_by }}{% endif %}</div></td>
       <td>{{ s.created }}</td>
       <td>{{ s.expires }}</td>
       <td>{{ s.downloads }}</td>

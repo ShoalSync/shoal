@@ -5,11 +5,11 @@
 <p><a href="/folders/{{ id }}">← {{ name }}</a></p>
 <h1>Share {% if path.is_empty() %}the whole folder{% else if directory %}{{ path }}/{% else %}{{ path }}{% endif %}</h1>
 {% if let Some(url) = created %}
-<p class="notice">Anyone with this link can {% if directory %}browse and download these files{% else %}download this file{% endif %} without an account. Copy it now: it is not shown again.</p>
+<p class="notice">Anyone with this link can {% if upload_only %}upload files into this directory, without seeing what is in it,{% else if directory %}browse and download these files{% else %}download this file{% endif %} without an account. Copy it now: it is not shown again.</p>
 <p><input class="mono" readonly value="{{ url }}" aria-label="Share link"></p>
 <p><a href="/shares">Your share links</a></p>
 {% else %}
-<p class="muted">A link gives read-only access, with no account, to {% if directory %}the files in this directory{% else %}this file{% endif %} and nothing else. You can revoke it at any time.</p>
+<p class="muted">A link gives read-only access, with no account, to {% if directory %}the files in this directory{% else %}this file{% endif %} and nothing else.{% if directory %} An upload-only link instead lets visitors add files here without seeing any; nothing already here is replaced.{% endif %} You can revoke it at any time.</p>
 {% if let Some(error) = error %}<p class="error">{{ error }}</p>{% endif %}
 <form method="post" action="/folders/{{ id }}/share" hx-boost="false">
   <input type="hidden" name="csrf" value="{{ csrf }}">
@@ -17,6 +17,14 @@
   <label>Expires after this many days (empty for never) <input name="expires_days" inputmode="numeric" pattern="[0-9]*"></label>
   <label>Password (optional) <input name="password" type="password" autocomplete="new-password"></label>
   <label>Download limit (empty for none) <input name="max_downloads" inputmode="numeric" pattern="[0-9]*"></label>
+  {% if directory %}
+  <fieldset>
+    <legend>Upload-only</legend>
+    <label><input type="checkbox" name="upload_only" value="on"> Visitors can only upload files, and see none</label>
+    <label>Upload size limit in MiB (empty for none) <input name="max_upload_mib" inputmode="numeric" pattern="[0-9]*"></label>
+    <label>File limit (empty for none) <input name="max_uploads" inputmode="numeric" pattern="[0-9]*"></label>
+  </fieldset>
+  {% endif %}
   <button type="submit">Create link</button>
 </form>
 {% endif %}

@@ -110,6 +110,8 @@ pub(crate) struct ShareNew {
     pub(crate) name: String,
     pub(crate) path: String,
     pub(crate) directory: bool,
+    /// True if the new link is upload-only.
+    pub(crate) upload_only: bool,
     pub(crate) error: Option<String>,
     /// The new link's URL, shown once.
     pub(crate) created: Option<String>,
@@ -122,8 +124,10 @@ pub(crate) struct ShareRow {
     pub(crate) created_by: String,
     pub(crate) created: String,
     pub(crate) expires: String,
+    /// Downloads so far, or for an upload-only link, files and bytes uploaded.
     pub(crate) downloads: String,
     pub(crate) password: bool,
+    pub(crate) upload_only: bool,
 }
 
 #[derive(Template)]
@@ -151,6 +155,20 @@ pub(crate) struct Link {
     pub(crate) exhausted: bool,
     pub(crate) expires: Option<String>,
     pub(crate) files: Vec<LinkFile>,
+}
+
+/// What a visitor to an upload-only link sees: a form, and none of the directory's contents.
+#[derive(Template)]
+#[template(path = "link_upload.html")]
+pub(crate) struct LinkUpload {
+    pub(crate) token: String,
+    pub(crate) title: String,
+    pub(crate) exhausted: bool,
+    pub(crate) expires: Option<String>,
+    pub(crate) files_left: Option<u32>,
+    pub(crate) bytes_left: Option<String>,
+    /// Files the last form uploaded.
+    pub(crate) uploaded: Option<u32>,
 }
 
 #[derive(Template)]

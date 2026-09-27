@@ -686,6 +686,180 @@ async fn uploads_and_share_links() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn upload_only_links() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = WebConfig {
+        secure_cookies: false,
+        share_links: true,
+    };
+    let (engine, root, addr) = serve_folder(
+        tmp.path(),
+        &[
+            ("inbox/taken.txt", b"already here"),
+            ("report.pdf", b"%PDF"),
+        ],
+        config,
+    )
+    .await;
+    let mut alice = Browser::new(addr);
+    alice.login("alice", "alice password 1").await;
+
+    // Only a directory link can be upload-only.
+    let form = alice
+        .get(&format!("/folders/{FOLDER}/share?path=report.pdf"))
+        .await;
+    assert!(!form.body.contains("upload_only"));
+    let refused = alice
+        .post(
+            &format!("/folders/{FOLDER}/share"),
+            &[
+                ("csrf", &form.csrf()),
+                ("path", "report.pdf"),
+                ("upload_only", "on"),
+            ],
+        )
+        .await;
+    assert!(refused.body.contains("Only a link to a directory"));
+
+    let form = alice
+        .get(&format!("/folders/{FOLDER}/share?path=inbox"))
+        .await;
+    assert!(form.body.contains("upload_only"));
+    let created = alice
+        .post(
+            &format!("/folders/{FOLDER}/share"),
+            &[
+                ("csrf", &form.csrf()),
+                ("path", "inbox"),
+                ("upload_only", "on"),
+                ("max_upload_mib", "1"),
+                ("max_uploads", "3"),
+            ],
+        )
+        .await;
+    assert!(created.body.contains("without seeing"), "{}", created.body);
+    let link = created_link(&created);
+
+    // Visitors see a form and none of the directory's contents, and cannot download.
+    let mut visitor = Browser::new(addr);
+    let page = visitor.get(&link).await;
+    assert!(page.body.contains("/upload") && page.body.contains("3 more file(s)"));
+    assert!(!page.body.contains("taken.txt"), "{}", page.body);
+    assert_eq!(
+        visitor
+            .get(&format!("{link}/download?path=taken.txt"))
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+
+    // A name already taken gets a number, and nothing is replaced.
+    let upload = format!("{link}/upload");
+    let sent = visitor
+        .upload(
+            &upload,
+            &[],
+            &[
+                ("file", "taken.txt", b"from a visitor"),
+                ("file", "notes", b"no extension"),
+            ],
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
+    assert!(sent.location().ends_with("uploaded=2"));
+    assert_eq!(
+        std::fs::read(root.join("inbox/taken.txt")).unwrap(),
+        b"already here"
+    );
+    assert_eq!(
+        std::fs::read(root.join("inbox/taken (1).txt")).unwrap(),
+        b"from a visitor"
+    );
+    assert!(engine
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .any(|f| f.path == "inbox/notes"));
+    let page = visitor.get(&format!("{link}?uploaded=2")).await;
+    assert!(page.body.contains("Sent 2 file(s)") && page.body.contains("1 more file(s)"));
+
+    // Over the byte limit: refused, and nothing is left behind.
+    let big = vec![7u8; (1 << 20) + 1];
+    let refused = visitor
+        .upload(&upload, &[], &[("file", "big.bin", &big)])
+        .await;
+    assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!root.join("inbox/big.bin").exists());
+    let staged = std::fs::read_dir(root.join(".tidefell/tmp"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().starts_with("upload-"))
+        .count();
+    assert_eq!(staged, 0);
+
+    // The third file uses up the link.
+    let sent = visitor
+        .upload(
+            &upload,
+            &[],
+            &[("file", "last.txt", b"3"), ("file", "extra.txt", b"4")],
+        )
+        .await;
+    assert_eq!(sent.status, StatusCode::GONE);
+    assert!(root.join("inbox/last.txt").exists() && !root.join("inbox/extra.txt").exists());
+    assert!(visitor.get(&link).await.body.contains("upload limit"));
+
+    let shares = alice.get("/shares").await;
+    assert!(shares.body.contains("upload-only"));
+    assert!(shares.body.contains("3 of 3 files"), "{}", shares.body);
+
+    // Uploads through an ordinary link, or before a password is entered, are refused.
+    let form = alice
+        .get(&format!("/folders/{FOLDER}/share?path=inbox"))
+        .await;
+    let read_link = created_link(
+        &alice
+            .post(
+                &format!("/folders/{FOLDER}/share"),
+                &[("csrf", &form.csrf()), ("path", "inbox")],
+            )
+            .await,
+    );
+    let refused = visitor
+        .upload(
+            &format!("{read_link}/upload"),
+            &[],
+            &[("file", "x.txt", b"x")],
+        )
+        .await;
+    assert_eq!(refused.status, StatusCode::NOT_FOUND);
+    let created = alice
+        .post(
+            &format!("/folders/{FOLDER}/share"),
+            &[
+                ("csrf", &form.csrf()),
+                ("path", "inbox"),
+                ("upload_only", "on"),
+                ("password", "open sesame"),
+            ],
+        )
+        .await;
+    let locked = created_link(&created);
+    let mut visitor = Browser::new(addr);
+    let refused = visitor
+        .upload(&format!("{locked}/upload"), &[], &[("file", "x.txt", b"x")])
+        .await;
+    assert_eq!(refused.status, StatusCode::SEE_OTHER);
+    assert!(!root.join("inbox/x.txt").exists());
+    visitor.post(&locked, &[("password", "open sesame")]).await;
+    let sent = visitor
+        .upload(&format!("{locked}/upload"), &[], &[("file", "x.txt", b"x")])
+        .await;
+    assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
+    assert!(root.join("inbox/x.txt").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn share_links_are_off_by_default() {
     let tmp = tempfile::tempdir().unwrap();
     let (_, _, addr) = serve_folder(
@@ -716,6 +890,17 @@ async fn share_links_are_off_by_default() {
     assert_eq!(
         alice
             .get("/s/00000000000000000000000000000000")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        alice
+            .upload(
+                "/s/00000000000000000000000000000000/upload",
+                &[],
+                &[("file", "x.txt", b"x")]
+            )
             .await
             .status,
         StatusCode::NOT_FOUND

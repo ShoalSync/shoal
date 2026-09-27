@@ -1,4 +1,5 @@
-//! Share links (ADR 0019): read-only access to one file or directory without an account.
+//! Share links (ADR 0019): access to one file or directory without an account. A link to a
+//! directory can instead be upload-only (ADR 0029): visitors can add files but see none.
 //!
 //! Stored as JSON in `<data_dir>/web/shares.json`, readable only by the daemon's user. Only a
 //! BLAKE3 hash of each link's token is stored, so the file does not reveal working links. A
@@ -48,6 +49,21 @@ pub(crate) struct Share {
     pub(crate) max_downloads: Option<u32>,
     /// Downloads so far.
     pub(crate) downloads: u32,
+    /// True if visitors can only upload into the directory, and see none of its contents.
+    #[serde(default)]
+    pub(crate) upload_only: bool,
+    /// How many bytes an upload-only link accepts in total, if limited.
+    #[serde(default)]
+    pub(crate) max_upload_bytes: Option<u64>,
+    /// How many files an upload-only link accepts, if limited.
+    #[serde(default)]
+    pub(crate) max_uploads: Option<u32>,
+    /// Bytes uploaded so far.
+    #[serde(default)]
+    pub(crate) uploaded_bytes: u64,
+    /// Files uploaded so far.
+    #[serde(default)]
+    pub(crate) uploads: u32,
 }
 
 impl Share {
@@ -56,9 +72,21 @@ impl Share {
         self.expires_at_ms.is_some_and(|t| t <= now_ms)
     }
 
-    /// True if the download limit is used up.
+    /// True if the link's limit is used up: downloads, or for an upload-only link, files or
+    /// bytes.
     pub(crate) fn exhausted(&self) -> bool {
-        self.max_downloads.is_some_and(|max| self.downloads >= max)
+        if self.upload_only {
+            self.max_uploads.is_some_and(|max| self.uploads >= max)
+                || self.remaining_bytes() == Some(0)
+        } else {
+            self.max_downloads.is_some_and(|max| self.downloads >= max)
+        }
+    }
+
+    /// How many more bytes an upload-only link accepts, if limited.
+    pub(crate) fn remaining_bytes(&self) -> Option<u64> {
+        self.max_upload_bytes
+            .map(|max| max.saturating_sub(self.uploaded_bytes))
     }
 
     /// True if `password` unlocks the link.
@@ -84,6 +112,9 @@ pub(crate) struct NewShare {
     pub(crate) expires_at_ms: Option<i64>,
     pub(crate) password: Option<String>,
     pub(crate) max_downloads: Option<u32>,
+    pub(crate) upload_only: bool,
+    pub(crate) max_upload_bytes: Option<u64>,
+    pub(crate) max_uploads: Option<u32>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -183,6 +214,11 @@ impl ShareStore {
             password_hash,
             max_downloads: new.max_downloads,
             downloads: 0,
+            upload_only: new.upload_only,
+            max_upload_bytes: new.max_upload_bytes,
+            max_uploads: new.max_uploads,
+            uploaded_bytes: 0,
+            uploads: 0,
         };
         let _guard = self.lock.lock().unwrap();
         let mut file = self.load()?;
@@ -240,6 +276,24 @@ impl ShareStore {
         Ok(true)
     }
 
+    /// Counts one upload of `bytes` to link `id`. Returns false, without counting, if the link
+    /// is gone or the upload would go over its limits.
+    pub(crate) fn record_upload(&self, id: &str, bytes: u64) -> Result<bool, AccountError> {
+        let _guard = self.lock.lock().unwrap();
+        let mut file = self.load()?;
+        let Some(share) = file.shares.iter_mut().find(|s| s.id == id) else {
+            return Ok(false);
+        };
+        let too_many = share.max_uploads.is_some_and(|max| share.uploads >= max);
+        if too_many || share.remaining_bytes().is_some_and(|left| bytes > left) {
+            return Ok(false);
+        }
+        share.uploads += 1;
+        share.uploaded_bytes += bytes;
+        self.save(&file)?;
+        Ok(true)
+    }
+
     /// Remembers that a browser entered the password of link `id`, and returns the value for
     /// its cookie.
     pub(crate) fn unlock(&self, id: &str) -> String {
@@ -275,6 +329,9 @@ mod tests {
             expires_at_ms: Some(2_000),
             password: password.map(Into::into),
             max_downloads,
+            upload_only: false,
+            max_upload_bytes: None,
+            max_uploads: None,
         }
     }
 
@@ -336,5 +393,52 @@ mod tests {
         let listed = store.list().unwrap();
         assert_eq!(listed[0].downloads, 5);
         assert!(!listed[0].exhausted());
+    }
+
+    #[test]
+    fn upload_limits() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ShareStore::new(dir.path());
+        let (share, _) = store
+            .create(NewShare {
+                path: "inbox".into(),
+                directory: true,
+                upload_only: true,
+                max_upload_bytes: Some(100),
+                max_uploads: Some(3),
+                ..new_share(None, None)
+            })
+            .unwrap();
+        assert!(store.record_upload(&share.id, 60).unwrap());
+        assert!(
+            !store.record_upload(&share.id, 41).unwrap(),
+            "over 100 bytes"
+        );
+        assert!(store.record_upload(&share.id, 40).unwrap());
+        let listed = store.list().unwrap();
+        assert_eq!((listed[0].uploads, listed[0].uploaded_bytes), (2, 100));
+        assert!(listed[0].exhausted(), "no bytes left");
+        assert!(store.record_upload(&share.id, 0).unwrap());
+        assert!(
+            !store.record_upload(&share.id, 0).unwrap(),
+            "limit of 3 files"
+        );
+        assert!(!store.record_upload("missing", 0).unwrap());
+
+        // Links saved before upload-only links existed still load.
+        let json = fs::read_to_string(dir.path().join("web/shares.json")).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        for key in [
+            "upload_only",
+            "max_upload_bytes",
+            "max_uploads",
+            "uploaded_bytes",
+            "uploads",
+        ] {
+            value["shares"][0].as_object_mut().unwrap().remove(key);
+        }
+        fs::write(dir.path().join("web/shares.json"), value.to_string()).unwrap();
+        let old = &store.list().unwrap()[0];
+        assert!(!old.upload_only && old.uploads == 0);
     }
 }

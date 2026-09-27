@@ -232,6 +232,16 @@ by amending this ADR.
 - These links have the existing expiry and password settings, plus limits on total bytes and
   number of files. They need `[web] share_links = true`, like other links, and every upload is
   logged with the link ID.
+- Step 8 decided:
+  - The byte and file limits are optional, like the download limit. Each file is streamed to
+    a staging file and refused as soon as it goes over the bytes left, so an unlimited or
+    nearly used link cannot fill the disk with one request.
+  - A taken name becomes `name (1).ext`, then `(2)` and so on. A name is taken if the folder
+    has a file there or below it, or anything is on disk there. Visitors are not told the name
+    a file was stored under, so the suffix does not reveal what is in the directory.
+  - Only a directory link can be upload-only, and it serves no downloads. Uploads need the
+    link's password first, like downloads.
+  - **Your share links** shows files and bytes uploaded in place of downloads.
 
 ### Resolving conflicts
 

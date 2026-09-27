@@ -19,7 +19,7 @@ service.
 - **Share links.** An account can create a link to a file or a directory. A link is a random
   128-bit token in the URL. It can have an expiry, a password (argon2id) and a download
   limit. It gives read-only access, with no account and no view of anything outside what
-  was shared. Links are stored in the web peer's data directory, listed per account, and
+  was shared. A directory link can instead be upload-only (ADR 0029). Links are stored in the web peer's data directory, listed per account, and
   revocable.
 - **Link pages** are the same server-rendered UI with a reduced layout. A directory link
   lists its contents and lets visitors download single files. A placeholder is fetched on

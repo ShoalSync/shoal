@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Tidefell{% endblock %}
+{% block content %}
+<h1>Send files to {{ title }}</h1>
+<p class="muted">Files you send here go to the person who shared this link. You cannot see what is already here.{% if let Some(expires) = expires %} This link expires {{ expires }}.{% endif %}</p>
+{% if let Some(n) = uploaded %}<p class="notice">Sent {{ n }} file(s).</p>{% endif %}
+{% if exhausted %}
+<p class="notice">This link has reached its upload limit.</p>
+{% else %}
+<form method="post" action="/s/{{ token }}/upload" enctype="multipart/form-data" hx-boost="false">
+  <label>Files <input type="file" name="file" multiple required></label>
+  {% if files_left.is_some() || bytes_left.is_some() %}
+  <p class="muted">This link accepts{% if let Some(n) = files_left %} {{ n }} more file(s){% endif %}{% if files_left.is_some() && bytes_left.is_some() %} and{% endif %}{% if let Some(b) = bytes_left %} {{ b }} more{% endif %}.</p>
+  {% endif %}
+  <button type="submit">Send</button>
+</form>
+{% endif %}
+{% endblock %}
