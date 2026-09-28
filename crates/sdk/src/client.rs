@@ -10,10 +10,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched,
-    File, Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, OpenedVersion,
-    PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem, Recycled, RemoveHereRequest,
-    ResolveRequest, RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
+    ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, DiagnosticsRequest, Event,
+    FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder,
+    NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem,
+    Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Version,
+    VersionRequest,
 };
 
 /// Client errors.
@@ -137,6 +138,37 @@ impl Client {
             bytes
         };
         serde_json::from_slice(&bytes).map_err(|e| Error::Decode(e.to_string()))
+    }
+
+    /// Like `call`, for a response that is not JSON, such as a zip file.
+    async fn call_bytes(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&impl Serialize>,
+    ) -> Result<Vec<u8>, Error> {
+        let body = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|e| Error::Http(e.to_string()))?;
+        let response = self.send(method, path, body).await?;
+        let status = response.status();
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .map_err(|e| Error::Http(e.to_string()))?
+            .to_bytes();
+        if !status.is_success() {
+            let error: ApiError = serde_json::from_slice(&bytes).map_err(|_| {
+                Error::Decode(format!(
+                    "HTTP {status}: {}",
+                    String::from_utf8_lossy(&bytes)
+                ))
+            })?;
+            return Err(Error::Api(error));
+        }
+        Ok(bytes.to_vec())
     }
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, Error> {
@@ -381,6 +413,17 @@ impl Client {
                 path: path.to_owned(),
                 version: Some(version.to_owned()),
             }),
+        )
+        .await
+    }
+
+    /// A diagnostics bundle: a zip file describing this device, redacted unless
+    /// `include_paths` (ADR 0030).
+    pub async fn diagnostics(&self, include_paths: bool) -> Result<Vec<u8>, Error> {
+        self.call_bytes(
+            Method::POST,
+            "/v1/diagnostics",
+            Some(&DiagnosticsRequest { include_paths }),
         )
         .await
     }

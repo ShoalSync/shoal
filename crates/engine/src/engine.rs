@@ -3,6 +3,7 @@
 //! The handle's operations are split by concern: [`folders`], [`files`], [`recycle`] and
 //! [`peers`].
 
+mod bundle;
 mod conflicts;
 mod doctor;
 mod files;
@@ -25,6 +26,7 @@ use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{AbortHandle, JoinSet};
 use tracing::{debug, error, info, warn};
 
+pub use bundle::{zip_bundle, BundleEntry, BundleOptions};
 pub use conflicts::Resolution;
 pub use folders::FolderStatus;
 
@@ -137,6 +139,8 @@ pub(crate) struct Inner {
     failure: watch::Sender<Option<String>>,
     /// Syncing paused for the whole device, and for these folders (ADR 0029).
     paused: RwLock<(bool, BTreeSet<FolderId>)>,
+    /// The configuration the engine was started with, for diagnostics bundles (ADR 0030).
+    diagnostics_config: Mutex<Option<serde_json::Value>>,
 }
 
 impl Inner {
@@ -452,6 +456,7 @@ impl Engine {
             watch: config.watch,
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
+            diagnostics_config: Mutex::new(None),
         });
 
         let node = Arc::new(

@@ -45,6 +45,7 @@ mod ignores;
 mod materialize;
 pub mod pairing;
 mod pins;
+mod redact;
 mod root;
 mod runtime;
 mod scan;
@@ -57,7 +58,7 @@ pub use config::{
     Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr, ReplicaMode,
     SyncOptions,
 };
-pub use engine::{Engine, FolderStatus, Resolution};
+pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::Retention;
 pub use tidefell_net::{Limits, PathKind, RelayConfig, RelayUrl, Transfer, MIN_BYTES_PER_SEC};

@@ -47,6 +47,8 @@
 {% else %}
 <p><a href="/status?check=true">Check</a> this server's clock against its devices', its free space, its folders and its connection.</p>
 {% endif %}
+<h2>Reporting a problem</h2>
+<p><a href="/status/diagnostics">Diagnostics</a>: a file describing this server, with paths and names hashed, to look at and attach to a report yourself.</p>
 <h2>Transfer</h2>
 <p>{{ sent }} sent and {{ received }} received since the server started; now {{ send_rate }}/s up and {{ receive_rate }}/s down.</p>
 {% endblock %}

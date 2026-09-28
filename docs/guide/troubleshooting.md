@@ -42,6 +42,20 @@ checks, and says what to do about anything that is not right:
 
 Administrators find the same under **Check** on the web peer's status page.
 
+## Reporting a problem
+
+```sh
+tidefell diagnostics                  # writes tidefell-diagnostics-<time>.zip and lists it
+tidefell diagnostics --include-paths  # keeps real file and folder names
+```
+
+The file holds this device's version and platform, its configuration, status and problems,
+the doctor's checks, recent logs and any crash files. Paths and folder names are replaced by
+hashes that mean nothing outside the file, device and folder IDs are shortened, and addresses
+say only whether they are local or public. File contents, keys, share links and passwords are
+never included. Nothing is sent: look inside, then attach it to a report yourself.
+Administrators can look at and download the same from the web peer's status page.
+
 ## Logs
 
 `tidefelld` writes its log to standard error and, as JSON lines, to `<data_dir>/logs/`. The

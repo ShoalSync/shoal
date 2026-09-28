@@ -201,6 +201,19 @@ fn folder_state(f: &Folder) -> String {
     line
 }
 
+/// The files in a zip file and their sizes.
+pub(crate) fn zip_entries(zip: &[u8]) -> Vec<(String, u64)> {
+    let Ok(mut archive) = zip::ZipArchive::new(std::io::Cursor::new(zip)) else {
+        return Vec::new();
+    };
+    (0..archive.len())
+        .filter_map(|i| {
+            let file = archive.by_index(i).ok()?;
+            Some((file.name().to_owned(), file.size()))
+        })
+        .collect()
+}
+
 /// `tidefell doctor`'s checks, one per line, with advice under warnings and failures.
 pub(crate) fn checks(checks: &[Check]) -> String {
     checks

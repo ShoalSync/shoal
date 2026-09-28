@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/status">← Status</a></p>
+<h1>Diagnostics</h1>
+<p>This is what the diagnostics file holds. {% if include_paths %}Paths and folder names are included as they are.{% else %}Paths and folder names are replaced by hashes that mean nothing outside this file.{% endif %} Device, user and folder IDs are shortened and addresses reduced to their kind. File contents, keys, share links and passwords are never included. Nothing is sent anywhere: download it and attach it to a report yourself.</p>
+<p>
+  <a href="/status/diagnostics.zip{% if include_paths %}?include_paths=true{% endif %}" hx-boost="false">Download</a>
+  · {% if include_paths %}<a href="/status/diagnostics">Hash paths and names</a>{% else %}<a href="/status/diagnostics?include_paths=true">Include paths and names</a>{% endif %}
+</p>
+<p class="muted">Downloading builds the file again, so its hashes differ from those shown here; what it holds is the same.</p>
+{% for e in entries %}
+<details>
+  <summary class="mono">{{ e.name }} <span class="muted">{{ e.size }}</span></summary>
+  <pre>{{ e.text }}{% if e.truncated %}
+…{% endif %}</pre>
+</details>
+{% endfor %}
+{% endblock %}

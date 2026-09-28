@@ -628,6 +628,24 @@ pub struct PeerState {
     pub clock_offset_ms: Option<i64>,
 }
 
+/// A diagnostics bundle written for sharing (ADR 0030).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DiagnosticsBundle {
+    /// The zip file.
+    pub path: String,
+    /// What it holds, to show before sharing.
+    pub entries: Vec<DiagnosticsEntry>,
+}
+
+/// One file of a diagnostics bundle.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct DiagnosticsEntry {
+    /// Its name in the zip file.
+    pub name: String,
+    /// Its content, already redacted.
+    pub text: String,
+}
+
 /// How a check came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum CheckLevel {
@@ -1345,6 +1363,41 @@ impl Node {
                 clock_offset_ms: p.clock_offset_ms,
             })
             .collect())
+    }
+
+    /// Writes a diagnostics bundle into `dir` and returns where, and what it holds, for the app
+    /// to show before the user shares it (ADR 0030). `app` is JSON about the app, such as the
+    /// Android API level, the device model and the app's settings. Paths and names are hashed
+    /// unless `include_paths`. It reads the disks, so call it off the main thread.
+    pub fn diagnostics(
+        &self,
+        dir: String,
+        include_paths: bool,
+        app: Option<String>,
+    ) -> Result<DiagnosticsBundle> {
+        let options = tidefell_engine::BundleOptions {
+            include_paths,
+            app: app.and_then(|a| serde_json::from_str(&a).ok()),
+        };
+        let entries = self
+            .engine()?
+            .diagnostics(&options)
+            .map_err(|e| invalid(e.to_string()))?;
+        let zip = tidefell_engine::zip_bundle(&entries).map_err(|e| invalid(e.to_string()))?;
+        let dir = PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).map_err(|e| invalid(e.to_string()))?;
+        let path = dir.join("tidefell-diagnostics.zip");
+        std::fs::write(&path, zip).map_err(|e| invalid(e.to_string()))?;
+        Ok(DiagnosticsBundle {
+            path: path.display().to_string(),
+            entries: entries
+                .into_iter()
+                .map(|e| DiagnosticsEntry {
+                    name: e.name,
+                    text: e.text,
+                })
+                .collect(),
+        })
     }
 
     /// Checks the node's clock against its peers', its free space, its folders and its

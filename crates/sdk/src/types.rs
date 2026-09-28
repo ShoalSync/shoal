@@ -73,6 +73,15 @@ pub struct PeerState {
     pub clock_offset_ms: Option<i64>,
 }
 
+/// Asks for a diagnostics bundle (ADR 0030).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct DiagnosticsRequest {
+    /// Keep real paths and folder names instead of hashes. IDs are shortened and addresses
+    /// reduced to their kind either way.
+    #[serde(default)]
+    pub include_paths: bool,
+}
+
 /// How a check came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]

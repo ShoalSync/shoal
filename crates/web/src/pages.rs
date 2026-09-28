@@ -113,6 +113,25 @@ pub(crate) struct Status {
     pub(crate) crash: Option<CrashNotice>,
 }
 
+pub(crate) struct BundleRow {
+    pub(crate) name: String,
+    pub(crate) size: String,
+    /// Its content, cut short if long.
+    pub(crate) text: String,
+    pub(crate) truncated: bool,
+}
+
+/// A diagnostics bundle's files, to look at before downloading it (ADR 0030).
+#[derive(Template)]
+#[template(path = "diagnostics.html")]
+pub(crate) struct Diagnostics {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) include_paths: bool,
+    pub(crate) entries: Vec<BundleRow>,
+}
+
 pub(crate) struct CheckRow {
     /// `pass`, `warning` or `failure`.
     pub(crate) level: &'static str,

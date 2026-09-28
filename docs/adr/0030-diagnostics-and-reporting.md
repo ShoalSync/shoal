@@ -120,7 +120,7 @@ partly for privacy: nothing leaves a device unless its user sends it.
     problems on its page, and an administrators' **Status** page lists the peers, the transfer
     totals and a crash not yet dismissed, which step 2 left for here.
 
-- Step 4 decided, first part (the doctor; the bundle follows):
+- Step 4 decided, first part (the doctor):
   - **Clock.** `Hello` gains `clock_ms: Option<i64>`, the sender's clock, as its last field. A
     `Hello` whose frame ends before it is read with it absent, so devices from before it still
     connect both ways; every other message must be complete. The offset is measured when the peer's `Hello`
@@ -138,6 +138,31 @@ partly for privacy: nothing leaves a device unless its user sends it.
   - `GET /v1/doctor`, `tidefell doctor`, the bindings' `doctor`, and **Check** on the web's
     status page. Peers gain `clock_offset_ms`. The checks read the disks, so the API and web
     run them off the async runtime.
+- Step 4 decided, second part (the bundle):
+  - **Entries.** `summary.json` (version, platform, what the app passed, such as the Android
+    API level, and whether there is a log file), `config.json` (the configuration as the daemon
+    read it, or the app's settings), `status.json`, `problems.json`, `recent-problems.json`,
+    `doctor.json`, the last 5 MiB of the current and previous log files, and the crash files.
+    The builder writes only these; it never walks the data directory, so keys, account
+    passwords, share-link tokens, `seen` markers and state files cannot get in.
+  - **Redaction.** One random key per bundle. Every path component becomes the first 12 hex
+    digits of its keyed BLAKE3 hash, plus its extension if that is 1 to 8 letters or digits
+    after a dot that is not the first character. Known names (folder roots, the data
+    directory, `$HOME`, every file and recycle-bin path, and paths in the configuration such as
+    mount points) are replaced where they stand as a name, not inside a word; one followed by
+    `/` starts a path that runs to `": "`, a quote or the line's end, spaces and all, and is
+    hashed whole. Quoted paths are hashed whole too, and any other token with a `/`, except
+    source locations in backtraces. Path fields of JSON log lines and the configuration are
+    hashed whole. Hashing a hash leaves it alone, so a name reads the same everywhere in a
+    bundle. If the names cannot be matched, no bundle is made. URLs keep only scheme and host.
+    64-digit IDs keep 8 digits. IP addresses become `local-ipv4`, `public-ipv6` and so on; a
+    bare IPv6 address needs four hex digits, so `engine::materialize` and timestamps stay.
+    `include_paths` keeps names; IDs and addresses are shortened either way. Device names,
+    such as "Graeme's phone", are kept: they say which device is which.
+  - `POST /v1/diagnostics` returns the zip; `tidefell diagnostics [--include-paths] [-o file]`
+    writes it and lists what it holds; the web's status page shows every entry's content
+    before its download, which builds the bundle again with a new key; the bindings write it
+    to a directory the app gives and return its entries for the app to show.
 
 ### Diagnostics bundle
 

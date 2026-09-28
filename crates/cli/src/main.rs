@@ -137,6 +137,16 @@ enum Command {
     },
     /// Check this device's clock, space, folders, watching and connectivity, with advice.
     Doctor,
+    /// Write a diagnostics bundle to attach to a report: a zip file describing this device,
+    /// with paths and names hashed. Look inside before sending it.
+    Diagnostics {
+        /// Keep real paths and folder names.
+        #[arg(long)]
+        include_paths: bool,
+        /// Where to write it; `tidefell-diagnostics-<time>.zip` here if left out.
+        #[arg(long, short)]
+        output: Option<std::path::PathBuf>,
+    },
     /// List paths that failed to scan, fetch, write or delete, in one folder or all.
     Problems {
         /// Folder ID; all folders if left out.
@@ -499,6 +509,33 @@ async fn run(cli: Cli) -> Result<(), String> {
                 .await
                 .map_err(e)?;
             print(json, &opened, |o| o.file.clone());
+        }
+        Command::Diagnostics {
+            include_paths,
+            output,
+        } => {
+            let zip = client.diagnostics(include_paths).await.map_err(e)?;
+            let output = output.unwrap_or_else(|| {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                std::path::PathBuf::from(format!("tidefell-diagnostics-{secs}.zip"))
+            });
+            std::fs::write(&output, &zip).map_err(|e| format!("{}: {e}", output.display()))?;
+            let entries = format::zip_entries(&zip);
+            print(json, &entries, |entries| {
+                format!(
+                    "wrote {}\n{}\npaths and names are {}; IDs are shortened and addresses \
+                     reduced to their kind. Look inside before attaching it to a report.",
+                    output.display(),
+                    entries
+                        .iter()
+                        .map(|(name, size)| format!("  {name}  {}", format::size(*size)))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    if include_paths { "included" } else { "hashed" }
+                )
+            });
         }
         Command::Doctor => {
             let checks = client.doctor().await.map_err(e)?;

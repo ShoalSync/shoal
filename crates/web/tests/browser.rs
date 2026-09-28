@@ -1084,6 +1084,19 @@ async fn status_and_problems() {
     assert_eq!(status.status, StatusCode::OK, "{}", status.body);
     assert!(status.body.contains("does not sync with any other device"));
     assert!(status.body.contains("0 B sent"));
+    let preview = admin.get("/status/diagnostics").await;
+    assert!(preview.body.contains("summary.json") && preview.body.contains("doctor.json"));
+    assert!(
+        !preview.body.contains("team-docs"),
+        "the folder's name is hashed"
+    );
+    let zip = admin.get("/status/diagnostics.zip").await;
+    assert_eq!(zip.status, StatusCode::OK);
+    assert!(zip.body.starts_with("PK"));
+    assert_eq!(
+        alice.get("/status/diagnostics").await.status,
+        StatusCode::FORBIDDEN
+    );
     let checked = admin.get("/status?check=true").await;
     assert!(
         checked.body.contains("can be read and written"),

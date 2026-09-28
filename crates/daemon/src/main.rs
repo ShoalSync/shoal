@@ -430,6 +430,10 @@ async fn run(path: &Path) -> Result<(), String> {
             .map_err(|e| e.to_string())?,
     );
     tracing::info!(device = %engine.id(), "tidefelld running");
+    // For diagnostics bundles, which redact it (ADR 0030).
+    if let Ok(value) = serde_json::to_value(&config) {
+        engine.set_diagnostics_config(value);
+    }
     #[cfg(target_os = "linux")]
     let mounts = mounts::Mounts::start(&engine, config.mounts()?)?;
 

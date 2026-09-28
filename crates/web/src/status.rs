@@ -130,3 +130,100 @@ pub(crate) async fn dismiss_crashes(
     }
     Redirect::to("/status").into_response()
 }
+
+#[derive(serde::Deserialize)]
+pub(crate) struct DiagnosticsQuery {
+    /// Keep real paths and folder names.
+    #[serde(default)]
+    include_paths: bool,
+}
+
+/// Builds a diagnostics bundle off the async runtime (ADR 0030).
+async fn bundle(
+    state: &AppState,
+    include_paths: bool,
+) -> std::io::Result<Vec<tidefell_engine::BundleEntry>> {
+    let engine = state.engine.clone();
+    let options = tidefell_engine::BundleOptions {
+        include_paths,
+        app: None,
+    };
+    tokio::task::spawn_blocking(move || engine.diagnostics(&options))
+        .await
+        .map_err(std::io::Error::other)?
+}
+
+/// What a diagnostics bundle holds, to look at before downloading it.
+pub(crate) async fn diagnostics(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<DiagnosticsQuery>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session) {
+        return response;
+    }
+    const SHOWN: usize = 20_000;
+    let entries = match bundle(&state, query.include_paths).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::warn!(error = %e, "building a diagnostics bundle failed");
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+    let entries = entries
+        .into_iter()
+        .map(|e| {
+            let truncated = e.text.len() > SHOWN;
+            let mut end = SHOWN.min(e.text.len());
+            while !e.text.is_char_boundary(end) {
+                end -= 1;
+            }
+            pages::BundleRow {
+                size: size(e.text.len() as u64),
+                name: e.name,
+                text: e.text[..end].to_owned(),
+                truncated,
+            }
+        })
+        .collect();
+    render(pages::Diagnostics {
+        username: session.username,
+        admin: session.admin,
+        csrf: session.csrf,
+        include_paths: query.include_paths,
+        entries,
+    })
+}
+
+/// Downloads a diagnostics bundle, built afresh.
+pub(crate) async fn diagnostics_zip(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<DiagnosticsQuery>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session) {
+        return response;
+    }
+    match bundle(&state, query.include_paths)
+        .await
+        .and_then(|entries| tidefell_engine::zip_bundle(&entries))
+    {
+        Ok(zip) => (
+            [
+                (axum::http::header::CONTENT_TYPE, "application/zip"),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"tidefell-diagnostics.zip\"",
+                ),
+            ],
+            zip,
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "building a diagnostics bundle failed");
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}

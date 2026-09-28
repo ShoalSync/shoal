@@ -15,6 +15,7 @@ crate-type = ["cdylib", "lib"]
 
 # Dependency boundary: may depend only on `tidefell-sdk` and `tidefell-engine`.
 [dependencies]
+serde_json.workspace = true
 thiserror.workspace = true
 tidefell-engine.workspace = true
 tokio.workspace = true

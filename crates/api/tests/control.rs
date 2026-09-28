@@ -315,6 +315,11 @@ async fn control_api_end_to_end() {
         .await
         .unwrap()
         .is_empty());
+    // A diagnostics bundle is a zip file; its summary names no full ID (ADR 0030).
+    let zip = client.diagnostics(false).await.unwrap();
+    assert!(zip.starts_with(b"PK"), "a zip file");
+    let status = client.status().await.unwrap();
+    assert!(!zip.windows(64).any(|w| w == status.device.as_bytes()));
     let checks = client.doctor().await.unwrap();
     assert!(checks
         .iter()
@@ -358,6 +363,7 @@ async fn control_api_end_to_end() {
         "/v1/folders/{id}/pause",
         "/v1/folders/{id}/problems",
         "/v1/doctor",
+        "/v1/diagnostics",
         "/v1/folders/{id}/resolve",
         "/v1/folders/{id}/versions/open",
     ] {

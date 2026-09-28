@@ -16,12 +16,12 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ApprovePairing, Check, CheckLevel, CopiesRequest, Copy, Crash, ErrorKind, Event,
-    FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel,
-    LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing,
-    PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary,
-    Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer,
-    Version, VersionKind, VersionRequest,
+    ApiError, ApprovePairing, Check, CheckLevel, CopiesRequest, Copy, Crash, DiagnosticsRequest,
+    ErrorKind, Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer,
+    Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation,
+    PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind,
+    RecycleBinSummary, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
+    SyncOptions, Transfer, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -60,6 +60,7 @@ type AppState = State<Arc<Engine>>;
         versions,
         folder_problems,
         doctor,
+        diagnostics,
         restore_version,
         open_version,
         resolve,
@@ -121,6 +122,7 @@ type AppState = State<Arc<Engine>>;
         PeerState,
         Check,
         CheckLevel,
+        DiagnosticsRequest,
         PathKind,
         Transfer,
         FolderState,
@@ -153,6 +155,15 @@ impl ApiFailure {
             StatusCode::NOT_FOUND,
             ApiError {
                 kind: ErrorKind::NotFound,
+                message: message.into(),
+            },
+        )
+    }
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
+        Self(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError {
+                kind: ErrorKind::Internal,
                 message: message.into(),
             },
         )
@@ -789,6 +800,41 @@ pub(crate) async fn folder_problems(
             .into_iter()
             .map(convert::path_problem)
             .collect(),
+    ))
+}
+
+/// A diagnostics bundle (ADR 0030): a zip file with a summary, the configuration, status,
+/// problems, recent logs, crash files and the doctor's checks. Paths and folder names are
+/// hashed unless `include_paths`; IDs are shortened and addresses reduced to their kind.
+#[utoipa::path(post, path = "/v1/diagnostics", tag = "device",
+    request_body = DiagnosticsRequest,
+    responses((status = 200, description = "The zip file", content_type = "application/zip")))]
+pub(crate) async fn diagnostics(
+    State(engine): AppState,
+    Json(request): Json<DiagnosticsRequest>,
+) -> ApiResult<impl IntoResponse> {
+    let options = engine::BundleOptions {
+        include_paths: request.include_paths,
+        app: None,
+    };
+    // It reads the disks, and a network mount can be slow.
+    let zip = tokio::task::spawn_blocking(move || {
+        engine
+            .diagnostics(&options)
+            .and_then(|entries| engine::zip_bundle(&entries))
+    })
+    .await
+    .map_err(|e| ApiFailure::internal(e.to_string()))?
+    .map_err(|e| ApiFailure::internal(e.to_string()))?;
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/zip"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"tidefell-diagnostics.zip\"",
+            ),
+        ],
+        zip,
     ))
 }
 
