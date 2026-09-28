@@ -4,6 +4,7 @@
 //! [`peers`].
 
 mod conflicts;
+mod doctor;
 mod files;
 mod folders;
 mod history;

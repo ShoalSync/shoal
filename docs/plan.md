@@ -273,7 +273,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   with the `v0.12.0` pin.
 - Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
   implemented, and its Android side came with the `v0.12.0` pin. Step 3 (status and problems)
-  is implemented; the app's screens follow with the next Android pin.
+  is implemented; the app's screens follow with the next Android pin. Step 4's doctor is
+  implemented; the diagnostics bundle follows.
 
 ### Phase 2 work breakdown
 

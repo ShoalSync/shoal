@@ -157,6 +157,33 @@ pub struct PeerState {
     pub last_seen_ms: Option<i64>,
     /// Why the last attempt to connect, or the last session, failed.
     pub last_error: Option<String>,
+    /// How far its clock was ahead of this device's at the last handshake, in milliseconds.
+    pub clock_offset_ms: Option<i64>,
+}
+
+/// How a check of `tidefell doctor` came out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckLevel {
+    /// Fine.
+    Pass,
+    /// Works, but worth attention.
+    Warning,
+    /// Something does not work.
+    Failure,
+}
+
+/// One check of `tidefell doctor` (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Check {
+    /// What was checked: `state`, `clock`, `space`, `folder`, `watch`, `relay`, `network` or
+    /// `peers`.
+    pub name: String,
+    /// How it came out.
+    pub level: CheckLevel,
+    /// What was found.
+    pub detail: String,
+    /// What to do about it, for a warning or failure.
+    pub advice: Option<String>,
 }
 
 /// A summary of one replica's recycle bin.

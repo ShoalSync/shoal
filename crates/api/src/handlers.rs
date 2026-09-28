@@ -16,12 +16,12 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
-    File, Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel, LogSettings, Mode,
-    NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem,
-    Peer, PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary, Recycled,
-    RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version,
-    VersionKind, VersionRequest,
+    ApiError, ApprovePairing, Check, CheckLevel, CopiesRequest, Copy, Crash, ErrorKind, Event,
+    FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel,
+    LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing,
+    PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary,
+    Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer,
+    Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -59,6 +59,7 @@ type AppState = State<Arc<Engine>>;
         copies,
         versions,
         folder_problems,
+        doctor,
         restore_version,
         open_version,
         resolve,
@@ -118,6 +119,8 @@ type AppState = State<Arc<Engine>>;
         OpenedVersion,
         ResolveRequest,
         PeerState,
+        Check,
+        CheckLevel,
         PathKind,
         Transfer,
         FolderState,
@@ -787,6 +790,18 @@ pub(crate) async fn folder_problems(
             .map(convert::path_problem)
             .collect(),
     ))
+}
+
+/// Checks this device's clock against its peers', its free space, its folders, file watching
+/// and connectivity, each pass, warning or failure with advice (ADR 0030).
+#[utoipa::path(get, path = "/v1/doctor", tag = "device",
+    responses((status = 200, body = [Check])))]
+pub(crate) async fn doctor(State(engine): AppState) -> Json<Vec<Check>> {
+    // It reads the folders' disks, which can be slow or hang on a network mount.
+    let checks = tokio::task::spawn_blocking(move || engine.doctor())
+        .await
+        .unwrap_or_default();
+    Json(checks.into_iter().map(convert::check).collect())
 }
 
 /// The most recent warnings and errors, oldest first.

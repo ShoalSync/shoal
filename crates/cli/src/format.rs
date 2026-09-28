@@ -3,9 +3,9 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Crash, Direction, Event, File, Folder, FolderState, KnownPeer, Limits, LocalDeletes,
-    LogSettings, Mode, Operation, PathKind, PathProblem, Peer, PeerState, Problem, ProblemKind,
-    Recycled, Status, SyncOptions, Version, VersionKind,
+    Check, CheckLevel, Crash, Direction, Event, File, Folder, FolderState, KnownPeer, Limits,
+    LocalDeletes, LogSettings, Mode, Operation, PathKind, PathProblem, Peer, PeerState, Problem,
+    ProblemKind, Recycled, Status, SyncOptions, Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -199,6 +199,26 @@ fn folder_state(f: &Folder) -> String {
         let _ = write!(line, "; not up to date with {}", behind.join(", "));
     }
     line
+}
+
+/// `tidefell doctor`'s checks, one per line, with advice under warnings and failures.
+pub(crate) fn checks(checks: &[Check]) -> String {
+    checks
+        .iter()
+        .map(|c| {
+            let level = match c.level {
+                CheckLevel::Pass => "pass",
+                CheckLevel::Warning => "WARN",
+                CheckLevel::Failure => "FAIL",
+            };
+            let mut line = format!("{level}  {:<8} {}", c.name, c.detail);
+            if let Some(advice) = &c.advice {
+                let _ = write!(line, "\n      {advice}");
+            }
+            line
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Paths of one folder that failed.

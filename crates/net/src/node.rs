@@ -18,6 +18,7 @@ use tracing::{debug, warn};
 use crate::backend::Backend;
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
 use crate::limits::{Limits, RateLimiter};
+use crate::now_ms;
 use crate::sync::{self, Peer};
 use crate::{Error, Result};
 
@@ -67,12 +68,46 @@ struct Record {
     disconnected_ms: Option<i64>,
     /// Why the last attempt to connect, or the last session, failed.
     last_error: Option<String>,
+    /// How far the device's clock was ahead of ours at the last handshake.
+    clock_offset_ms: Option<i64>,
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+/// A relay server this node uses, and whether it is connected to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayState {
+    /// The relay's URL.
+    pub url: String,
+    /// Connected now.
+    pub connected: bool,
+    /// Why the last attempt failed.
+    pub error: Option<String>,
+}
+
+/// What this node knows of its network (ADR 0030), from iroh's latest network report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkReport {
+    /// UDP over IPv4 works.
+    pub udp_v4: bool,
+    /// UDP over IPv6 works.
+    pub udp_v6: bool,
+    /// The NAT maps this node to a different public port for each destination, which makes
+    /// direct connections through it hard.
+    pub mapping_varies: Option<bool>,
+    /// A public IPv4 address was found.
+    pub public_v4: bool,
+    /// A public IPv6 address was found.
+    pub public_v6: bool,
+    /// A captive portal, such as a hotel's sign-in page, blocks the network.
+    pub captive_portal: Option<bool>,
+}
+
+/// This node's relays and network, for `tidefell doctor` (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Connectivity {
+    /// The relays in use; empty if relays are turned off.
+    pub relays: Vec<RelayState>,
+    /// `None` until the first report is done.
+    pub report: Option<NetworkReport>,
 }
 
 /// How a connection reaches its peer.
@@ -101,6 +136,9 @@ pub struct PeerStatus {
     pub last_seen_ms: Option<i64>,
     /// Why the last attempt to connect, or the last session, failed. Cleared by a new session.
     pub last_error: Option<String>,
+    /// How far the device's clock was ahead of this one's at the last handshake, in
+    /// milliseconds, if it said (ADR 0030).
+    pub clock_offset_ms: Option<i64>,
 }
 
 /// A connected sync peer.
@@ -187,6 +225,7 @@ async fn run_session(
             record.connected_since_ms = Some(now_ms());
             record.last_error = None;
             record.name = Some(handle.certificate().name.clone());
+            record.clock_offset_ms = handle.peer.clock_offset_ms;
             if let Some(tx) = ready.lock().unwrap().take() {
                 let _ = tx.send(Ok(handle));
             }
@@ -405,12 +444,38 @@ impl Node {
                 record.disconnected_ms
             },
             last_error: record.last_error,
+            clock_offset_ms: record.clock_offset_ms,
         }
     }
 
     /// Devices this node has connected to, or tried to, since it started.
     pub fn recorded_peers(&self) -> Vec<DeviceId> {
         self.records.lock().unwrap().keys().copied().collect()
+    }
+
+    /// The relays this node uses and what it knows of its network (ADR 0030).
+    pub fn connectivity(&self) -> Connectivity {
+        use iroh::Watcher;
+        let relays = self
+            .endpoint
+            .home_relay_status()
+            .get()
+            .into_iter()
+            .map(|r| RelayState {
+                url: r.url().to_string(),
+                connected: r.is_connected(),
+                error: r.last_error().map(ToString::to_string),
+            })
+            .collect();
+        let report = self.endpoint.net_report().get().map(|r| NetworkReport {
+            udp_v4: r.udp_v4,
+            udp_v6: r.udp_v6,
+            mapping_varies: r.mapping_varies_by_dest(),
+            public_v4: r.global_v4.is_some(),
+            public_v6: r.global_v6.is_some(),
+            captive_portal: r.captive_portal,
+        });
+        Connectivity { relays, report }
     }
 
     /// File content sent and received since the node started (ADR 0030).

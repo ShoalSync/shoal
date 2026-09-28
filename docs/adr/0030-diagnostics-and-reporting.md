@@ -120,6 +120,25 @@ partly for privacy: nothing leaves a device unless its user sends it.
     problems on its page, and an administrators' **Status** page lists the peers, the transfer
     totals and a crash not yet dismissed, which step 2 left for here.
 
+- Step 4 decided, first part (the doctor; the bundle follows):
+  - **Clock.** `Hello` gains `clock_ms: Option<i64>`, the sender's clock, as its last field. A
+    `Hello` whose frame ends before it is read with it absent, so devices from before it still
+    connect both ways; every other message must be complete. The offset is measured when the peer's `Hello`
+    arrives and kept with the peer's record.
+  - **Checks.** Engine state loaded; the clock of each connected peer (a warning over two
+    minutes); free space on the data volume and each folder's, once per volume (a failure
+    under 100 MiB, a warning under 1 GiB or 5%); each folder's root read and checked writable
+    without writing in it, where a scan could sync the file, and its reserved directory written
+    with a probe file; an unavailable folder fails; a folder not watched warns
+    with the system's watch limit; each relay connected or not; UDP over IPv4 and IPv6, a NAT
+    that maps each destination differently, and a captive portal, from iroh's network report
+    (its `unstable-net-report` feature), skipped with relays turned off, since the report
+    probes them; and how many devices are connected directly or
+    through a relay. The app adds its Android checks.
+  - `GET /v1/doctor`, `tidefell doctor`, the bindings' `doctor`, and **Check** on the web's
+    status page. Peers gain `clock_offset_ms`. The checks read the disks, so the API and web
+    run them off the async runtime.
+
 ### Diagnostics bundle
 
 - `tidefell diagnostics`, `POST /v1/diagnostics`, the bindings, a "Share diagnostics" action in

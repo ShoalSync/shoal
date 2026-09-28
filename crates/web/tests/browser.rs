@@ -1084,4 +1084,11 @@ async fn status_and_problems() {
     assert_eq!(status.status, StatusCode::OK, "{}", status.body);
     assert!(status.body.contains("does not sync with any other device"));
     assert!(status.body.contains("0 B sent"));
+    let checked = admin.get("/status?check=true").await;
+    assert!(
+        checked.body.contains("can be read and written"),
+        "{}",
+        checked.body
+    );
+    assert!(checked.body.contains("engine state of 1 folder(s) loaded"));
 }

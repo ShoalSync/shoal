@@ -298,3 +298,43 @@ async fn a_read_only_folder_lists_every_file_it_cannot_write() {
     engine_b.shutdown().await;
     engine_a.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_doctor_checks_clocks_and_folders() {
+    use tidefell_engine::CheckLevel;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 57);
+    let b = Replica::new(dir.path(), "b", 58);
+    let engine_a = a.start(&user, Vec::new()).await;
+    let engine_b = b.start(&user, Vec::new()).await;
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    let checks = engine_b.doctor();
+    let find = |name: &str| checks.iter().filter(|c| c.name == name).collect::<Vec<_>>();
+    // The peer's Hello carried its clock; on one machine the clocks agree.
+    let clock = find("clock");
+    assert_eq!(clock.len(), 1, "{checks:?}");
+    assert_eq!(clock[0].level, CheckLevel::Pass);
+    assert!(clock[0].detail.contains("laptop"));
+    assert_eq!(find("folder")[0].level, CheckLevel::Pass);
+    assert_eq!(find("state")[0].level, CheckLevel::Pass);
+    // With relays turned off there is no network report to judge, so nothing warns.
+    assert!(
+        checks.iter().all(|c| c.level == CheckLevel::Pass),
+        "{checks:?}"
+    );
+
+    // A folder this device cannot write to fails, with advice.
+    if !is_root(dir.path()) {
+        chmod(&b.root, 0o555);
+        let checks = engine_b.doctor();
+        chmod(&b.root, 0o755);
+        let folder = checks.iter().find(|c| c.name == "folder").unwrap();
+        assert_eq!(folder.level, CheckLevel::Failure, "{folder:?}");
+        assert!(folder.advice.is_some());
+    }
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

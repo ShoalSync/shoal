@@ -32,6 +32,21 @@
   </tbody>
 </table>
 {% endif %}
+<h2>Checks</h2>
+{% if let Some(checks) = checks %}
+<table>
+  <tbody>
+  {% for c in checks %}
+    <tr>
+      <td>{% if c.level == "pass" %}<span class="tag">pass</span>{% else %}<span class="tag warn">{{ c.level }}</span>{% endif %}</td>
+      <td>{{ c.detail }}{% if let Some(a) = c.advice %}<div class="muted">{{ a }}</div>{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><a href="/status?check=true">Check</a> this server's clock against its devices', its free space, its folders and its connection.</p>
+{% endif %}
 <h2>Transfer</h2>
 <p>{{ sent }} sent and {{ received }} received since the server started; now {{ send_rate }}/s up and {{ receive_rate }}/s down.</p>
 {% endblock %}

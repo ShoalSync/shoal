@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
+use tidefell_proto::frame::Message;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
@@ -86,6 +87,7 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
             SyncMessage::Hello {
                 certificate: certificate(),
                 folders: vec![folder],
+                clock_ms: Some(1_758_600_000_000),
             },
         ),
         (
@@ -412,4 +414,30 @@ fn alpn_constants_match_specs() {
             "{file} does not declare ALPN {alpn}"
         );
     }
+}
+
+#[test]
+fn hello_from_before_the_clock_decodes() {
+    // A Hello as devices sent it before `clock_ms` (ADR 0030): the frame ends after `folders`.
+    let old = SyncMessage::Hello {
+        certificate: certificate(),
+        folders: vec![FolderId([0x22; 32])],
+        clock_ms: None,
+    };
+    let mut body = postcard::to_stdvec(&old).unwrap();
+    assert_eq!(body.pop(), Some(0), "None is one zero byte at the end");
+    let decoded = SyncMessage::decode_body(&body).unwrap();
+    assert_eq!(decoded, old);
+    // Any other message must be complete: an index batch cut short before `last` is refused,
+    // not read as `last: false`.
+    let batch = postcard::to_stdvec(&SyncMessage::IndexBatch {
+        folder: FolderId([0x22; 32]),
+        epoch: 1,
+        up_to: 1,
+        versions: Vec::new(),
+        last: false,
+    })
+    .unwrap();
+    assert!(SyncMessage::decode_body(&batch[..batch.len() - 1]).is_err());
+    assert!(SyncMessage::decode_body(&body[..body.len() - 5]).is_err());
 }

@@ -315,6 +315,10 @@ async fn control_api_end_to_end() {
         .await
         .unwrap()
         .is_empty());
+    let checks = client.doctor().await.unwrap();
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "folder" && c.level == tidefell_sdk::types::CheckLevel::Pass));
     let folder = client
         .folders()
         .await
@@ -353,6 +357,7 @@ async fn control_api_end_to_end() {
         "/v1/pause",
         "/v1/folders/{id}/pause",
         "/v1/folders/{id}/problems",
+        "/v1/doctor",
         "/v1/folders/{id}/resolve",
         "/v1/folders/{id}/versions/open",
     ] {

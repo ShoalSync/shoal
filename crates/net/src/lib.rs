@@ -18,7 +18,10 @@ pub use backend::{Backend, IndexPage};
 pub use blobs::ChunkResult;
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
 pub use limits::{Limits, MIN_BYTES_PER_SEC};
-pub use node::{Node, NodeConfig, PathKind, PeerHandle, PeerStatus, RelayConfig};
+pub use node::{
+    Connectivity, NetworkReport, Node, NodeConfig, PathKind, PeerHandle, PeerStatus, RelayConfig,
+    RelayState,
+};
 pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
 pub use traffic::Transfer;
 
@@ -74,4 +77,11 @@ pub(crate) async fn within<T>(
     tokio::time::timeout(limit, future)
         .await
         .map_err(|_| Error::Timeout(limit))?
+}
+
+/// Milliseconds since the Unix epoch.
+pub(crate) fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }

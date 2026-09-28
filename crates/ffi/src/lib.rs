@@ -624,6 +624,33 @@ pub struct PeerState {
     pub last_seen_ms: Option<i64>,
     /// Why the last attempt to connect, or the last session, failed.
     pub last_error: Option<String>,
+    /// How far its clock was ahead of this device's at the last handshake, in milliseconds.
+    pub clock_offset_ms: Option<i64>,
+}
+
+/// How a check came out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum CheckLevel {
+    /// Fine.
+    Pass,
+    /// Works, but worth attention.
+    Warning,
+    /// Something does not work.
+    Failure,
+}
+
+/// One check of [`Node::doctor`] (ADR 0030).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Check {
+    /// What was checked: `state`, `clock`, `space`, `folder`, `watch`, `relay`, `network` or
+    /// `peers`.
+    pub name: String,
+    /// How it came out.
+    pub level: CheckLevel,
+    /// What was found.
+    pub detail: String,
+    /// What to do about it, for a warning or failure.
+    pub advice: Option<String>,
 }
 
 /// File content moved since the node started, in bytes and bytes per second.
@@ -1315,6 +1342,28 @@ impl Node {
                 rtt_ms: p.rtt_ms,
                 last_seen_ms: p.last_seen_ms,
                 last_error: p.last_error,
+                clock_offset_ms: p.clock_offset_ms,
+            })
+            .collect())
+    }
+
+    /// Checks the node's clock against its peers', its free space, its folders and its
+    /// connectivity (ADR 0030). The app adds its own checks, such as All files access. It reads
+    /// the folders' disks, so call it off the main thread.
+    pub fn doctor(&self) -> Result<Vec<Check>> {
+        Ok(self
+            .engine()?
+            .doctor()
+            .into_iter()
+            .map(|c| Check {
+                name: c.name,
+                level: match c.level {
+                    tidefell_engine::CheckLevel::Pass => CheckLevel::Pass,
+                    tidefell_engine::CheckLevel::Warning => CheckLevel::Warning,
+                    tidefell_engine::CheckLevel::Failure => CheckLevel::Failure,
+                },
+                detail: c.detail,
+                advice: c.advice,
             })
             .collect())
     }

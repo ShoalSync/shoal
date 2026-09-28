@@ -137,7 +137,7 @@ verified in strict mode. Each kind states who must sign:
 
 | Index | Message | Fields |
 | --- | --- | --- |
-| 0 | `Hello` | `certificate: Signed<DeviceCertificate>`, `folders: Vec<FolderId>` |
+| 0 | `Hello` | `certificate: Signed<DeviceCertificate>`, `folders: Vec<FolderId>`, `clock_ms: Option<i64>` |
 | 1 | `IndexRequest` | `folder: FolderId`, `epoch: u64`, `since: u64` |
 | 2 | `IndexBatch` | `folder: FolderId`, `epoch: u64`, `up_to: u64`, `versions: Vec<Signed<EntryVersion>>`, `last: bool` |
 | 3 | `ManifestRequest` | `folder: FolderId`, `content: ContentHash` |
@@ -145,6 +145,11 @@ verified in strict mode. Each kind states who must sign:
 | 5 | `Error` | `code: ErrorCode` |
 | 6 | `CertificateRequest` | `folder: FolderId`, `device: DeviceId` |
 | 7 | `CertificateResponse` | `certificate: Signed<DeviceCertificate>` |
+
+`Hello`'s `clock_ms` is the sender's clock when it sent the message, in milliseconds since the
+Unix epoch, so each side can tell how far apart their clocks are (ADR 0030). It was appended
+later: a `Hello` whose frame ends after `folders` is read with `clock_ms` absent. Every other
+message must be complete.
 
 `EntryVersion`:
 

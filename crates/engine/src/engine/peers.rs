@@ -53,6 +53,7 @@ impl Engine {
                     connected_since_ms: status.connected_since_ms,
                     last_seen_ms: status.last_seen_ms,
                     last_error: status.last_error,
+                    clock_offset_ms: status.clock_offset_ms,
                 }
             })
             .collect()

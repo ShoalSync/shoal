@@ -80,6 +80,20 @@ pub(crate) fn peer_state(p: engine::PeerState) -> api::PeerState {
         connected_since_ms: p.connected_since_ms,
         last_seen_ms: p.last_seen_ms,
         last_error: p.last_error,
+        clock_offset_ms: p.clock_offset_ms,
+    }
+}
+
+pub(crate) fn check(c: engine::Check) -> api::Check {
+    api::Check {
+        name: c.name,
+        level: match c.level {
+            engine::CheckLevel::Pass => api::CheckLevel::Pass,
+            engine::CheckLevel::Warning => api::CheckLevel::Warning,
+            engine::CheckLevel::Failure => api::CheckLevel::Failure,
+        },
+        detail: c.detail,
+        advice: c.advice,
     }
 }
 

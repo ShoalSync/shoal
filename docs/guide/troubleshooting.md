@@ -25,6 +25,23 @@ allowed on this system, changed while writing), the error, since when and how ma
 One file that fails does not hold up the others. A file in a directory that cannot be read is
 not taken for deleted.
 
+## Checking a device
+
+```sh
+tidefell doctor
+```
+
+checks, and says what to do about anything that is not right:
+
+- that the device's clock agrees with its connected devices': conflicting edits are decided by
+  modification time, so a clock more than two minutes off is a warning;
+- free space where the data directory and each folder live;
+- that each folder can be read and written, and is watched for changes;
+- the connection to the relay, and whether direct connections can work (UDP over IPv4 and IPv6,
+  the kind of NAT, a sign-in page blocking the network).
+
+Administrators find the same under **Check** on the web peer's status page.
+
 ## Logs
 
 `tidefelld` writes its log to standard error and, as JSON lines, to `<data_dir>/logs/`. The

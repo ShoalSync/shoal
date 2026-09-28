@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
-use tidefell_engine::{diagnostics, PathKind};
+use tidefell_engine::{diagnostics, CheckLevel, PathKind};
 
 use crate::format::{size, time};
 use crate::handlers::{admin_only, check_csrf, render, signed_in, CsrfForm};
@@ -23,7 +23,18 @@ pub(crate) fn unseen_crash(state: &AppState) -> Option<diagnostics::Crash> {
         .rfind(|c| !c.seen)
 }
 
-pub(crate) async fn status(State(state): AppStateRef, headers: HeaderMap) -> Response {
+#[derive(serde::Deserialize)]
+pub(crate) struct StatusQuery {
+    /// Run the checks of `tidefell doctor` (ADR 0030).
+    #[serde(default)]
+    check: bool,
+}
+
+pub(crate) async fn status(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<StatusQuery>,
+) -> Response {
     let (_, session) = signed_in!(state, headers);
     if let Some(response) = admin_only(&session) {
         return response;
@@ -70,6 +81,29 @@ pub(crate) async fn status(State(state): AppStateRef, headers: HeaderMap) -> Res
         received: size(t.received),
         send_rate: size(t.send_rate),
         receive_rate: size(t.receive_rate),
+        checks: if query.check {
+            // It reads the folders' disks, which can be slow or hang on a network mount.
+            let engine = state.engine.clone();
+            let checks = tokio::task::spawn_blocking(move || engine.doctor())
+                .await
+                .unwrap_or_default();
+            Some(
+                checks
+                    .into_iter()
+                    .map(|c| pages::CheckRow {
+                        level: match c.level {
+                            CheckLevel::Pass => "pass",
+                            CheckLevel::Warning => "warning",
+                            CheckLevel::Failure => "failure",
+                        },
+                        detail: c.detail,
+                        advice: c.advice,
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        },
         crash: unseen_crash(&state).map(|c| pages::CrashNotice {
             time: time(c.time_ms),
             message: c.message,

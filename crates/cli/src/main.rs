@@ -135,6 +135,8 @@ enum Command {
         #[arg(long)]
         open: Option<String>,
     },
+    /// Check this device's clock, space, folders, watching and connectivity, with advice.
+    Doctor,
     /// List paths that failed to scan, fetch, write or delete, in one folder or all.
     Problems {
         /// Folder ID; all folders if left out.
@@ -497,6 +499,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                 .await
                 .map_err(e)?;
             print(json, &opened, |o| o.file.clone());
+        }
+        Command::Doctor => {
+            let checks = client.doctor().await.map_err(e)?;
+            print(json, &checks, |c| format::checks(c));
         }
         Command::Problems { folder } => {
             let folders = match folder {

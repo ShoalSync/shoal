@@ -108,7 +108,16 @@ pub(crate) struct Status {
     pub(crate) received: String,
     pub(crate) send_rate: String,
     pub(crate) receive_rate: String,
+    /// The checks of `tidefell doctor`, when asked for.
+    pub(crate) checks: Option<Vec<CheckRow>>,
     pub(crate) crash: Option<CrashNotice>,
+}
+
+pub(crate) struct CheckRow {
+    /// `pass`, `warning` or `failure`.
+    pub(crate) level: &'static str,
+    pub(crate) detail: String,
+    pub(crate) advice: Option<String>,
 }
 
 pub(crate) struct RecycledRow {

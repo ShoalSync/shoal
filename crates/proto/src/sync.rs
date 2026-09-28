@@ -170,6 +170,10 @@ pub enum SyncMessage {
         certificate: Signed<DeviceCertificate>,
         /// Folders the sender offers to sync with this peer.
         folders: Vec<FolderId>,
+        /// The sender's clock when it sent this, in milliseconds since the Unix epoch, so the
+        /// other side can tell how far apart their clocks are (ADR 0030). Devices from before
+        /// it leave it out: the frame ends after `folders`.
+        clock_ms: Option<i64>,
     },
     /// Ask for every version the responder has recorded after sequence `since` in its index
     /// for `folder`.

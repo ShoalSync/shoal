@@ -64,8 +64,9 @@ pub use tidefell_net::{Limits, PathKind, RelayConfig, RelayUrl, Transfer, MIN_BY
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
-    CopyInfo, Event, FileInfo, FolderInfo, FolderPeer, FolderState, Operation, PathProblem,
-    PeerInfo, PeerState, ProblemKind, RecycleSummary, RecycledInfo, VersionInfo, VersionKind,
+    Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer, FolderState, Operation,
+    PathProblem, PeerInfo, PeerState, ProblemKind, RecycleSummary, RecycledInfo, VersionInfo,
+    VersionKind,
 };
 
 /// Engine errors.

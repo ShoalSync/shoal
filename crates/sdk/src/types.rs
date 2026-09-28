@@ -68,6 +68,36 @@ pub struct PeerState {
     /// Why the last attempt to connect, or the last session, failed.
     #[serde(default)]
     pub last_error: Option<String>,
+    /// How far its clock was ahead of this device's at the last handshake, in milliseconds.
+    #[serde(default)]
+    pub clock_offset_ms: Option<i64>,
+}
+
+/// How a check came out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum CheckLevel {
+    /// Fine.
+    Pass,
+    /// Works, but worth attention.
+    Warning,
+    /// Something does not work.
+    Failure,
+}
+
+/// One check of `GET /v1/doctor` (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Check {
+    /// What was checked: `state`, `clock`, `space`, `folder`, `watch`, `relay`, `network` or
+    /// `peers`.
+    pub name: String,
+    /// How it came out.
+    pub level: CheckLevel,
+    /// What was found.
+    pub detail: String,
+    /// What to do about it, for a warning or failure.
+    #[serde(default)]
+    pub advice: Option<String>,
 }
 
 /// File content moved since the daemon started. Index exchanges are not counted.

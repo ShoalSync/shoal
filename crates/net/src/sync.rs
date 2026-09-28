@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::backend::Backend;
-use crate::{frame_io, Error, Result};
+use crate::{frame_io, now_ms, Error, Result};
 
 /// Most versions sent in one `IndexBatch` (ADR 0024).
 const BATCH: usize = 512;
@@ -45,6 +45,9 @@ pub(crate) type Shared = Arc<RwLock<BTreeSet<FolderId>>>;
 pub(crate) struct Peer {
     pub(crate) certificate: DeviceCertificate,
     pub(crate) shared: Shared,
+    /// How far the peer's clock was ahead of ours at the handshake, if its `Hello` said
+    /// (ADR 0030).
+    pub(crate) clock_offset_ms: Option<i64>,
 }
 
 impl Peer {
@@ -80,7 +83,7 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
     }
     .map_err(|e| Error::Stream(e.to_string()))?;
 
-    let (theirs, peer, offered) = if initiator {
+    let (theirs, peer, offered, clock) = if initiator {
         // The dialer offers everything before it knows the peer, then narrows its offer with a
         // second `Hello` as soon as the session starts (see `run`).
         let offered: BTreeSet<FolderId> = backend.folders().into_iter().collect();
@@ -89,21 +92,24 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
+                clock_ms: Some(now_ms()),
             },
         )
         .await?;
         let SyncMessage::Hello {
             certificate,
             folders,
+            clock_ms,
         } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
-        (folders, verify_peer(&certificate, conn)?, offered)
+        (folders, verify_peer(&certificate, conn)?, offered, clock_ms)
     } else {
         let SyncMessage::Hello {
             certificate,
             folders,
+            clock_ms,
         } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
@@ -115,11 +121,15 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
+                clock_ms: Some(now_ms()),
             },
         )
         .await?;
-        (folders, peer, offered)
+        (folders, peer, offered, clock_ms)
     };
+    // Measured when the peer's Hello arrived; the time it took on the way is small next to the
+    // two minutes that matter.
+    let clock_offset_ms = clock.map(|theirs| theirs - now_ms());
 
     // Share what both sides named, and only folders the peer may sync now. Folders added or
     // removed since our `Hello` are announced by `reoffer` once the session runs.
@@ -134,6 +144,7 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
         peer: Peer {
             certificate: peer,
             shared: Arc::new(RwLock::new(shared)),
+            clock_offset_ms,
         },
         theirs,
         offered,
@@ -464,6 +475,7 @@ fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
     session.send(Outgoing::Message(SyncMessage::Hello {
         certificate: backend.certificate(),
         folders: offer.iter().copied().collect(),
+        clock_ms: Some(now_ms()),
     }))?;
     session.offered = offer;
     let added = session.reshare();
@@ -482,6 +494,7 @@ fn handle(
         SyncMessage::Hello {
             certificate,
             folders,
+            ..
         } => {
             // An updated offer. The certificate must still be for this connection's device.
             let certificate = verify_peer(&certificate, conn)?;
