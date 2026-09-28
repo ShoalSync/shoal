@@ -135,6 +135,11 @@ enum Command {
         #[arg(long)]
         open: Option<String>,
     },
+    /// List paths that failed to scan, fetch, write or delete, in one folder or all.
+    Problems {
+        /// Folder ID; all folders if left out.
+        folder: Option<String>,
+    },
     /// List files with conflicting versions waiting for a decision, in one folder or all.
     Conflicts {
         /// Folder ID; all folders if left out.
@@ -492,6 +497,31 @@ async fn run(cli: Cli) -> Result<(), String> {
                 .await
                 .map_err(e)?;
             print(json, &opened, |o| o.file.clone());
+        }
+        Command::Problems { folder } => {
+            let folders = match folder {
+                Some(folder) => vec![folder],
+                None => client
+                    .folders()
+                    .await
+                    .map_err(e)?
+                    .into_iter()
+                    .map(|f| f.id)
+                    .collect(),
+            };
+            let mut all = Vec::new();
+            for folder in folders {
+                let problems = client.folder_problems(&folder).await.map_err(e)?;
+                all.push((folder, problems));
+            }
+            print(json, &all, |all| {
+                all.iter()
+                    .map(|(folder, problems)| {
+                        format!("{folder}\n{}", format::path_problems(problems))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            });
         }
         Command::Conflicts { folder } => {
             let folders = match folder {

@@ -15,11 +15,13 @@ use tidefell_proto::{
 };
 use tracing::{debug, info, warn};
 
+use crate::activity::Failure;
 use crate::config::{Direction, ReplicaMode};
 use crate::engine::{FolderHandle, Inner};
 use crate::scan::{stat, unchanged, RESERVED_DIR};
-use crate::state::LocalFile;
+use crate::state::{FolderState, LocalFile};
 use crate::views::Event;
+use crate::views::{Operation, ProblemKind};
 use crate::{io_err, random_bytes, Error, Result};
 
 /// Fetches chunks from connected peers over blobs/1.
@@ -92,11 +94,11 @@ impl ChunkSource for PeerSource {
     }
 }
 
-struct PendingWrite {
+pub(crate) struct PendingWrite {
     entry: EntryId,
-    path: String,
+    pub(crate) path: String,
     content: ContentHash,
-    size: u64,
+    pub(crate) size: u64,
     executable: bool,
     modified_ms: i64,
     /// Where this entry was on disk before, if it moved.
@@ -104,6 +106,76 @@ struct PendingWrite {
     /// The vector of what is being written, taken when the write was planned: versions that
     /// arrive while it is fetched are not in it (ADR 0024).
     base: VersionVector,
+    /// Why its content could not be fetched from the peers asked, if it could not (ADR 0030).
+    unavailable: std::sync::Mutex<Option<String>>,
+}
+
+/// True for an error that is about the whole folder rather than one path.
+fn folder_wide(error: &Error) -> bool {
+    matches!(error, Error::FolderUnavailable(..) | Error::Crashed(_))
+}
+
+/// What materialising `state` would do now: the files to write and the paths to delete. A
+/// send-only replica writes nothing (ADR 0025).
+pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
+    if state.config.sync.direction == Direction::SendOnly {
+        return (Vec::new(), Vec::new());
+    }
+    let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
+        state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
+    let mut writes = Vec::new();
+    let mut deletes = Vec::new();
+    // A partial replica keeps the files it has materialised up to date and leaves the rest
+    // as placeholders.
+    let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
+    for version in state.meta.entries() {
+        let here = on_disk.get(&version.entry);
+        match version.kind {
+            EntryKind::File {
+                content,
+                size,
+                executable,
+            } => {
+                // Where this entry goes on disk: its path, unless it shares it (ADR 0024).
+                let path = state
+                    .meta
+                    .disk_path(&version.entry)
+                    .unwrap_or(&version.path);
+                let current = here.is_some_and(|(p, l)| {
+                    p.as_str() == path && l.content == content && l.executable == executable
+                });
+                // Files dropped from this device stay off it until opened (ADR 0025), and
+                // ignored paths are never written (ADR 0029).
+                let dropped = state.dropped.contains(&version.entry);
+                let ignored = state.ignores.is_ignored(path, false);
+                // A partial replica also keeps its pinned files (ADR 0029).
+                let pinned = partial && crate::pins::is_pinned(&state.pins, path);
+                if !current && !ignored && (here.is_some() || pinned || (!partial && !dropped)) {
+                    writes.push(PendingWrite {
+                        entry: version.entry,
+                        path: path.to_owned(),
+                        content,
+                        size,
+                        executable,
+                        modified_ms: version.modified_ms,
+                        old_path: here
+                            .map(|(p, _)| (*p).clone())
+                            .filter(|p| p.as_str() != path),
+                        base: state.meta.current_vector(&version.entry),
+
+                        unavailable: std::sync::Mutex::default(),
+                    });
+                }
+            }
+            EntryKind::Tombstone => {
+                if let Some((p, _)) = here.filter(|(p, _)| !state.ignores.is_ignored(p, false)) {
+                    deletes.push((*p).clone());
+                }
+            }
+            EntryKind::Directory | EntryKind::Symlink { .. } => {}
+        }
+    }
+    (writes, deletes)
 }
 
 /// Brings the folder on disk up to date with its metadata, as far as content is available.
@@ -128,67 +200,22 @@ pub(crate) async fn materialize(
                 state.dropped.remove(&entry);
             }
         }
-        let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
-            state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
-        let mut writes = Vec::new();
-        let mut deletes = Vec::new();
-        // A partial replica keeps the files it has materialised up to date and leaves the rest
-        // as placeholders.
-        let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
-        for version in state.meta.entries() {
-            let here = on_disk.get(&version.entry);
-            match version.kind {
-                EntryKind::File {
-                    content,
-                    size,
-                    executable,
-                } => {
-                    // Where this entry goes on disk: its path, unless it shares it (ADR 0024).
-                    let path = state
-                        .meta
-                        .disk_path(&version.entry)
-                        .unwrap_or(&version.path);
-                    let current = here.is_some_and(|(p, l)| {
-                        p.as_str() == path && l.content == content && l.executable == executable
-                    });
-                    // Files dropped from this device stay off it until opened (ADR 0025), and
-                    // ignored paths are never written (ADR 0029).
-                    let dropped = state.dropped.contains(&version.entry);
-                    let ignored = state.ignores.is_ignored(path, false);
-                    // A partial replica also keeps its pinned files (ADR 0029).
-                    let pinned = partial && crate::pins::is_pinned(&state.pins, path);
-                    if !current && !ignored && (here.is_some() || pinned || (!partial && !dropped))
-                    {
-                        writes.push(PendingWrite {
-                            entry: version.entry,
-                            path: path.to_owned(),
-                            content,
-                            size,
-                            executable,
-                            modified_ms: version.modified_ms,
-                            old_path: here
-                                .map(|(p, _)| (*p).clone())
-                                .filter(|p| p.as_str() != path),
-                            base: state.meta.current_vector(&version.entry),
-                        });
-                    }
-                }
-                EntryKind::Tombstone => {
-                    if let Some((p, _)) = here.filter(|(p, _)| !state.ignores.is_ignored(p, false))
-                    {
-                        deletes.push((*p).clone());
-                    }
-                }
-                EntryKind::Directory | EntryKind::Symlink { .. } => {}
-            }
-        }
+        let (writes, deletes) = plan(&state);
         (state.config.path.clone(), writes, deletes)
     };
 
+    // One path that fails is recorded and the rest carry on (ADR 0030).
+    let mut failures = Vec::new();
     if !deletes.is_empty() {
         let _guard = handle.disk().await?;
         for path in deletes {
-            remove_if_unchanged(inner, handle, id, &root, &path)?;
+            if let Err(e) = remove_if_unchanged(inner, handle, id, &root, &path) {
+                if folder_wide(&e) {
+                    return Err(e);
+                }
+                warn!(folder = %id, %path, error = %e, "delete failed");
+                failures.push(Failure::error(&path, Operation::Delete, &e));
+            }
         }
     }
     for write in writes {
@@ -200,9 +227,35 @@ pub(crate) async fn materialize(
                     path: write.path.clone(),
                 });
             }
-            Ok(false) => {}
-            Err(e) => warn!(folder = %id, path = %write.path, error = %e, "update failed"),
+            Ok(false) => {
+                if let Some(reason) = write.unavailable.lock().unwrap().take() {
+                    failures.push(Failure::new(
+                        &write.path,
+                        Operation::Fetch,
+                        ProblemKind::ContentUnavailable,
+                        reason,
+                    ));
+                }
+            }
+            // An unmounted drive or a crash is the folder's problem, shown in its state, not
+            // one per file.
+            Err(e) if folder_wide(&e) => return Err(e),
+            Err(e) => {
+                warn!(folder = %id, path = %write.path, error = %e, "update failed");
+                failures.push(Failure::error(&write.path, Operation::Write, &e));
+            }
         }
+    }
+    // Each pass plans every write and delete, so problems of paths no longer planned, done,
+    // deleted elsewhere or now ignored, go away.
+    let changed = handle.activity.lock().unwrap().settle(
+        &[Operation::Fetch, Operation::Write, Operation::Delete],
+        |_| true,
+        failures,
+        crate::now_ms(),
+    );
+    if changed {
+        inner.emit(Event::FolderChanged(id));
     }
     handle.lock().save()
 }
@@ -246,6 +299,8 @@ pub(crate) async fn fetch_one(
                 modified_ms: version.modified_ms,
                 old_path,
                 base: state.meta.current_vector(&version.entry),
+
+                unavailable: std::sync::Mutex::default(),
             },
         )
     };
@@ -480,6 +535,8 @@ pub(crate) async fn write_copy(
         modified_ms: version.modified_ms,
         old_path: None,
         base: VersionVector::new(),
+
+        unavailable: std::sync::Mutex::default(),
     };
     let Some(manifest) = fetch_content(inner, node, handle, id, &write).await? else {
         return Ok(false);
@@ -514,15 +571,19 @@ async fn fetch_content(
     id: FolderId,
     write: &PendingWrite,
 ) -> Result<Option<Manifest>> {
-    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
-        return Ok(None);
-    };
     let peers: Vec<DeviceId> = node
         .peers()
         .into_iter()
         .filter(|p| p.shared_folders().contains(&id))
         .map(|p| p.device())
         .collect();
+    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
+        if !peers.is_empty() {
+            *write.unavailable.lock().unwrap() =
+                Some("no connected device has this version".to_owned());
+        }
+        return Ok(None);
+    };
     // Chunks already here, in the block store or in any file on disk, are not fetched.
     let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
     if manifest.chunks.iter().any(|c| !store_has(&c.hash)) {
@@ -555,6 +616,9 @@ async fn fetch_content(
         if let Err(e) = fetched {
             inner.fetching.lock().unwrap().remove(&manifest.content);
             debug!(path = %write.path, error = %e, "content not available yet");
+            if !inner.is_paused(&id) {
+                *write.unavailable.lock().unwrap() = Some(e);
+            }
             return Ok(None);
         }
     }

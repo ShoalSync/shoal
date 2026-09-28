@@ -1,16 +1,16 @@
 //! Folders: adding, removing and configuring them, and their status.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, EntryId, FolderId, UserId};
+use tidefell_proto::{ContentHash, DeviceId, FolderId, UserId};
 use tracing::info;
 
 use super::recycle::recycle_summary;
 use super::{open_folder, spawn_scanner, Engine};
 use crate::config::{FolderConfig, NewFolder};
-use crate::views::{Event, FolderInfo};
+use crate::views::{Event, FolderInfo, FolderPeer, FolderState, PathProblem};
 use crate::{copies, Error, Result};
 
 /// A summary of one folder, for status displays and tests.
@@ -29,6 +29,21 @@ pub struct FolderStatus {
 impl Engine {
     /// All folders.
     pub fn folders(&self) -> Vec<FolderInfo> {
+        // Connected peers and the folders each shares, for folder states (ADR 0030).
+        // With when each session started: an exchange before it says nothing about now.
+        let sessions: Vec<(DeviceId, BTreeSet<FolderId>, i64)> = self
+            .node
+            .peers()
+            .into_iter()
+            .map(|p| {
+                let since = self
+                    .node
+                    .peer_status(&p.device())
+                    .connected_since_ms
+                    .unwrap_or(i64::MAX);
+                (p.device(), p.shared_folders(), since)
+            })
+            .collect();
         self.inner
             .folders
             .read()
@@ -36,6 +51,49 @@ impl Engine {
             .values()
             .map(|h| {
                 let state = h.lock();
+                let id = state.config.id;
+                let (writes, _) = crate::materialize::plan(&state);
+                let pending_bytes = writes.iter().map(|w| w.size).sum();
+                let activity = h.activity.lock().unwrap();
+                let unavailable = h.unavailable.lock().unwrap().clone();
+                let scan_error = activity
+                    .last_scan
+                    .as_ref()
+                    .and_then(|(_, _, error)| error.clone());
+                let error = unavailable.or(scan_error);
+                let sharing: Vec<(DeviceId, i64)> = sessions
+                    .iter()
+                    .filter(|(_, folders, _)| folders.contains(&id))
+                    .map(|(device, _, since)| (*device, *since))
+                    .collect();
+                let paused = self.inner.is_paused(&id);
+                let state_now = if error.is_some() {
+                    FolderState::Error
+                } else if paused {
+                    FolderState::Paused
+                } else if activity.scanning {
+                    FolderState::Scanning
+                } else if !writes.is_empty() && !sharing.is_empty() {
+                    FolderState::Syncing
+                } else {
+                    FolderState::Idle
+                };
+                let mut devices: BTreeSet<DeviceId> = sharing.iter().map(|(d, _)| *d).collect();
+                devices.extend(activity.exchanged.keys().copied());
+                let peers = devices
+                    .into_iter()
+                    .map(|device| {
+                        let last_exchange_ms = activity.exchanged.get(&device).copied();
+                        let session = sharing.iter().find(|(d, _)| *d == device);
+                        FolderPeer {
+                            device,
+                            last_exchange_ms,
+                            up_to_date: session.is_some_and(|(_, since)| {
+                                last_exchange_ms.is_some_and(|at| at >= *since)
+                            }),
+                        }
+                    })
+                    .collect();
                 FolderInfo {
                     id: state.config.id,
                     path: state.config.path.clone(),
@@ -77,9 +135,25 @@ impl Engine {
                         .unwrap()
                         .1
                         .contains(&state.config.id),
+                    state: state_now,
+                    error,
+                    pending_files: writes.len(),
+                    pending_bytes,
+                    last_scan_ms: activity.last_scan.as_ref().map(|(at, _, _)| *at),
+                    last_scan_duration_ms: activity.last_scan.as_ref().map(|(_, took, _)| *took),
+                    peers,
+                    problems: activity.problems.len(),
                 }
             })
             .collect()
+    }
+
+    /// The paths of `folder` that failed to scan, fetch, write or delete, until they succeed
+    /// (ADR 0030).
+    pub fn path_problems(&self, folder: FolderId) -> Result<Vec<PathProblem>> {
+        let handle = self.inner.folder(&folder)?;
+        let activity = handle.activity.lock().unwrap();
+        Ok(activity.problems.values().cloned().collect())
     }
 
     /// Pauses syncing of `folder`, or of the whole device if `None` (ADR 0029). A paused folder
@@ -328,9 +402,6 @@ impl Engine {
                 .chain(state.set_aside.values().map(|s| s.path.clone()))
                 .collect(),
         };
-        let partial = matches!(state.config.mode, crate::ReplicaMode::Partial { .. });
-        let send_only = state.config.sync.direction == crate::Direction::SendOnly;
-        let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
         for version in state.meta.entries() {
             if state.meta.open_conflicts(&version.entry).next().is_some() {
                 status.conflicts += 1;
@@ -341,24 +412,10 @@ impl Engine {
                     .disk_path(&version.entry)
                     .unwrap_or(&version.path);
                 status.files.insert(path.to_owned(), content);
-                let on_disk = state
-                    .local
-                    .get(path)
-                    .is_some_and(|l| l.entry == version.entry && l.content == content);
-                // Placeholders of a partial replica, files dropped from this device, ignored
-                // paths and every file of a send-only replica are not pending.
-                let dropped = state.dropped.contains(&version.entry);
-                if !on_disk
-                    && !send_only
-                    && !state.ignores.is_ignored(path, false)
-                    && (materialised.contains(&version.entry)
-                        || (partial && crate::pins::is_pinned(&state.pins, path))
-                        || (!partial && !dropped))
-                {
-                    status.pending += 1;
-                }
             }
         }
+        // What materialising would write now (ADR 0030).
+        status.pending = crate::materialize::plan(&state).0.len();
         Ok(status)
     }
 }

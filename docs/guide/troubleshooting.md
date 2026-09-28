@@ -3,6 +3,28 @@
 Everything Tidefell records about problems stays on the device. Nothing is sent anywhere unless
 you attach it to a report yourself.
 
+## Status and problems
+
+`tidefell status` shows, besides this device:
+
+- each device this one syncs with: connected directly or through a relay, the round-trip time
+  and since when, or when it was last seen and why the last connection failed;
+- file content sent and received since the daemon started, and the current rates;
+- each folder's state (idle, scanning, syncing, paused or error), the files it still has to
+  fetch, its last scan, and the devices it is not up to date with.
+
+A file that cannot be read, fetched, written or deleted is a problem until it succeeds:
+
+```sh
+tidefell problems              # every folder
+tidefell problems <folder id>  # one folder
+```
+
+Each lists the path, what failed (permission denied, disk full, content unavailable, name not
+allowed on this system, changed while writing), the error, since when and how many attempts.
+One file that fails does not hold up the others. A file in a directory that cannot be read is
+not taken for deleted.
+
 ## Logs
 
 `tidefelld` writes its log to standard error and, as JSON lines, to `<data_dir>/logs/`. The

@@ -45,7 +45,12 @@ the daemon.
   file has a *conflict: decide* link. Its page lists the versions with their device and time,
   opens each one, and keeps one or both. See [Conflicts](folders.md#conflicts).
 - Share a file or directory through a link, if share links are turned on (see below).
-- Admins: add and remove accounts, and see and revoke everyone's share links.
+- See what each folder is doing (up to date, syncing and how much is left, paused, or why it
+  is not syncing) and, on a folder's page, any file this server could not read, fetch, write
+  or delete.
+- Admins: add and remove accounts, and see and revoke everyone's share links. The **Status**
+  page lists the devices this server syncs with, connected or not and how, what it has sent
+  and received, and a crash not yet dismissed.
 
 Sessions expire after 12 hours. Every form is protected against cross-site request forgery.
 

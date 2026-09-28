@@ -565,6 +565,125 @@ pub struct Folder {
     pub pinned_bytes: u64,
     /// Files with versions that conflict with the current one, waiting for a decision.
     pub conflicts: u64,
+    /// What the folder is doing (ADR 0030).
+    pub state: FolderState,
+    /// Why the folder is in [`FolderState::Error`].
+    pub error: Option<String>,
+    /// Files this device is to write and does not have yet.
+    pub pending_files: u64,
+    /// Their total size.
+    pub pending_bytes: u64,
+    /// When the last scan finished, in milliseconds since the Unix epoch.
+    pub last_scan_ms: Option<i64>,
+    /// The peers the folder is shared with now or was exchanged with since the node started.
+    pub peers: Vec<FolderPeer>,
+    /// Paths that failed to scan, fetch, write or delete; see [`Node::path_problems`].
+    pub problems: u64,
+}
+
+/// What a folder is doing (ADR 0030).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum FolderState {
+    /// Nothing to do.
+    Idle,
+    /// Looking for local changes.
+    Scanning,
+    /// Files are pending and a connected peer shares the folder.
+    Syncing,
+    /// Paused.
+    Paused,
+    /// The folder cannot be used, or its last scan failed.
+    Error,
+}
+
+/// A folder's exchanges with one peer.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct FolderPeer {
+    /// Device ID.
+    pub device: String,
+    /// When the folder last finished exchanging changes with it, since the node started.
+    pub last_exchange_ms: Option<i64>,
+    /// Connected and caught up.
+    pub up_to_date: bool,
+}
+
+/// A device this one syncs with, connected or not (ADR 0030).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PeerState {
+    /// Device ID.
+    pub device: String,
+    /// Its name, if it has connected since the node started.
+    pub name: Option<String>,
+    /// A sync session is running.
+    pub connected: bool,
+    /// Through a relay rather than directly, while connected.
+    pub relayed: Option<bool>,
+    /// Round-trip time in milliseconds, while connected.
+    pub rtt_ms: Option<u64>,
+    /// When a session was last up: now while connected.
+    pub last_seen_ms: Option<i64>,
+    /// Why the last attempt to connect, or the last session, failed.
+    pub last_error: Option<String>,
+}
+
+/// File content moved since the node started, in bytes and bytes per second.
+#[derive(Debug, Clone, Copy, uniffi::Record)]
+pub struct Transfer {
+    /// Bytes sent.
+    pub sent: u64,
+    /// Bytes received.
+    pub received: u64,
+    /// Bytes per second sent, over the last ten seconds.
+    pub send_rate: u64,
+    /// Bytes per second received, over the last ten seconds.
+    pub receive_rate: u64,
+}
+
+/// What a failing path was being used for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum Operation {
+    /// Reading it for changes.
+    Scan,
+    /// Fetching its content from other devices.
+    Fetch,
+    /// Writing it to disk.
+    Write,
+    /// Deleting it from disk.
+    Delete,
+}
+
+/// Why a path failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ProblemKind {
+    /// Not allowed, including a read-only disk.
+    PermissionDenied,
+    /// No space left.
+    DiskFull,
+    /// No connected device has the content.
+    ContentUnavailable,
+    /// A name this device cannot sync.
+    NameNotAllowed,
+    /// The file changed while it was read or written; tried again later.
+    ChangedWhileWriting,
+    /// Anything else; see the message.
+    Other,
+}
+
+/// A path that failed, until it succeeds (ADR 0030).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PathProblem {
+    /// Path within the folder.
+    pub path: String,
+    /// What it was being used for.
+    pub operation: Operation,
+    /// Why it failed.
+    pub kind: ProblemKind,
+    /// The error.
+    pub message: String,
+    /// When it first failed.
+    pub since_ms: i64,
+    /// How many passes in a row it has failed.
+    pub attempts: u32,
 }
 
 /// A live file.
@@ -754,6 +873,27 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         paused: f.paused,
         pinned_bytes: f.pinned_bytes,
         conflicts: f.conflicts as u64,
+        state: match f.state {
+            tidefell_engine::FolderState::Idle => FolderState::Idle,
+            tidefell_engine::FolderState::Scanning => FolderState::Scanning,
+            tidefell_engine::FolderState::Syncing => FolderState::Syncing,
+            tidefell_engine::FolderState::Paused => FolderState::Paused,
+            tidefell_engine::FolderState::Error => FolderState::Error,
+        },
+        error: f.error,
+        pending_files: f.pending_files as u64,
+        pending_bytes: f.pending_bytes,
+        last_scan_ms: f.last_scan_ms,
+        peers: f
+            .peers
+            .into_iter()
+            .map(|p| FolderPeer {
+                device: p.device.to_string(),
+                last_exchange_ms: p.last_exchange_ms,
+                up_to_date: p.up_to_date,
+            })
+            .collect(),
+        problems: f.problems as u64,
     }
 }
 
@@ -1159,6 +1299,65 @@ impl Node {
         let folder: FolderId = parse("folder ID", &folder)?;
         on_runtime(async move { engine.remove_here(folder, &path).await }).await??;
         Ok(())
+    }
+
+    /// Every device this one syncs with, connected or not, and how (ADR 0030).
+    pub fn peer_states(&self) -> Result<Vec<PeerState>> {
+        Ok(self
+            .engine()?
+            .peer_states()
+            .into_iter()
+            .map(|p| PeerState {
+                device: p.device.to_string(),
+                name: p.name,
+                connected: p.connected,
+                relayed: p.path.map(|path| path == tidefell_engine::PathKind::Relay),
+                rtt_ms: p.rtt_ms,
+                last_seen_ms: p.last_seen_ms,
+                last_error: p.last_error,
+            })
+            .collect())
+    }
+
+    /// File content sent and received since the node started (ADR 0030).
+    pub fn transfer(&self) -> Result<Transfer> {
+        let t = self.engine()?.transfer();
+        Ok(Transfer {
+            sent: t.sent,
+            received: t.received,
+            send_rate: t.send_rate,
+            receive_rate: t.receive_rate,
+        })
+    }
+
+    /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).
+    pub fn path_problems(&self, folder: String) -> Result<Vec<PathProblem>> {
+        use tidefell_engine::{Operation as Op, ProblemKind as Kind};
+        Ok(self
+            .engine()?
+            .path_problems(parse("folder ID", &folder)?)?
+            .into_iter()
+            .map(|p| PathProblem {
+                path: p.path,
+                operation: match p.operation {
+                    Op::Scan => Operation::Scan,
+                    Op::Fetch => Operation::Fetch,
+                    Op::Write => Operation::Write,
+                    Op::Delete => Operation::Delete,
+                },
+                kind: match p.kind {
+                    Kind::PermissionDenied => ProblemKind::PermissionDenied,
+                    Kind::DiskFull => ProblemKind::DiskFull,
+                    Kind::ContentUnavailable => ProblemKind::ContentUnavailable,
+                    Kind::NameNotAllowed => ProblemKind::NameNotAllowed,
+                    Kind::ChangedWhileWriting => ProblemKind::ChangedWhileWriting,
+                    Kind::Other => ProblemKind::Other,
+                },
+                message: p.message,
+                since_ms: p.since_ms,
+                attempts: p.attempts,
+            })
+            .collect())
     }
 
     /// Connected peers.

@@ -25,6 +25,140 @@ pub struct Status {
     /// Syncing is paused for the whole device (ADR 0029).
     #[serde(default)]
     pub paused: bool,
+    /// Every device this one syncs with, connected or not (ADR 0030).
+    #[serde(default)]
+    pub peers: Vec<PeerState>,
+    /// File content sent and received since the daemon started.
+    #[serde(default)]
+    pub transfer: Transfer,
+}
+
+/// How a connection reaches its peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PathKind {
+    /// Directly over IP.
+    Direct,
+    /// Through a relay server.
+    Relay,
+}
+
+/// A device this one syncs with, connected or not (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PeerState {
+    /// Device ID.
+    pub device: String,
+    /// Its name, if it has connected since the daemon started.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// A sync session is running.
+    pub connected: bool,
+    /// How the connection goes, while connected.
+    #[serde(default)]
+    pub path: Option<PathKind>,
+    /// Round-trip time in milliseconds, while connected.
+    #[serde(default)]
+    pub rtt_ms: Option<u64>,
+    /// When the current session started.
+    #[serde(default)]
+    pub connected_since_ms: Option<i64>,
+    /// When a session was last up: now while connected.
+    #[serde(default)]
+    pub last_seen_ms: Option<i64>,
+    /// Why the last attempt to connect, or the last session, failed.
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+/// File content moved since the daemon started. Index exchanges are not counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Transfer {
+    /// Bytes sent.
+    pub sent: u64,
+    /// Bytes received.
+    pub received: u64,
+    /// Bytes per second sent, over the last ten seconds.
+    pub send_rate: u64,
+    /// Bytes per second received, over the last ten seconds.
+    pub receive_rate: u64,
+}
+
+/// What a folder is doing (ADR 0030).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FolderState {
+    /// Nothing to do.
+    #[default]
+    Idle,
+    /// Looking for local changes.
+    Scanning,
+    /// Files are pending and a connected peer shares the folder.
+    Syncing,
+    /// Paused.
+    Paused,
+    /// The folder cannot be used, or its last scan failed; see `error`.
+    Error,
+}
+
+/// A folder's exchanges with one peer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FolderPeer {
+    /// Device ID.
+    pub device: String,
+    /// When the folder last finished exchanging changes with it, since the daemon started.
+    #[serde(default)]
+    pub last_exchange_ms: Option<i64>,
+    /// Connected and caught up; later changes are pushed as they happen.
+    pub up_to_date: bool,
+}
+
+/// What a failing path was being used for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Operation {
+    /// Reading it for changes.
+    Scan,
+    /// Fetching its content from other devices.
+    Fetch,
+    /// Writing it to disk.
+    Write,
+    /// Deleting it from disk.
+    Delete,
+}
+
+/// Why a path failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProblemKind {
+    /// Not allowed, including a read-only disk.
+    PermissionDenied,
+    /// No space left.
+    DiskFull,
+    /// No connected device has the content.
+    ContentUnavailable,
+    /// A name this device cannot sync.
+    NameNotAllowed,
+    /// The file changed while it was read or written; tried again later.
+    ChangedWhileWriting,
+    /// Anything else; see the message.
+    Other,
+}
+
+/// A path that failed, until it succeeds (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PathProblem {
+    /// Path within the folder.
+    pub path: String,
+    /// What it was being used for.
+    pub operation: Operation,
+    /// Why it failed.
+    pub kind: ProblemKind,
+    /// The error.
+    pub message: String,
+    /// When it first failed.
+    pub since_ms: i64,
+    /// How many passes in a row it has failed.
+    pub attempts: u32,
 }
 
 /// Full or partial replica.
@@ -115,6 +249,30 @@ pub struct Folder {
     /// Files with versions that conflict with the current one, waiting for a decision.
     #[serde(default)]
     pub conflicts: u64,
+    /// What the folder is doing (ADR 0030).
+    #[serde(default)]
+    pub state: FolderState,
+    /// Why the folder is in the error state.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Files this device is to write and does not have yet.
+    #[serde(default)]
+    pub pending_files: u64,
+    /// Their total size.
+    #[serde(default)]
+    pub pending_bytes: u64,
+    /// When the last scan finished.
+    #[serde(default)]
+    pub last_scan_ms: Option<i64>,
+    /// How long the last scan took, in milliseconds.
+    #[serde(default)]
+    pub last_scan_duration_ms: Option<u64>,
+    /// Peers the folder is shared with now, or was exchanged with since the daemon started.
+    #[serde(default)]
+    pub peers: Vec<FolderPeer>,
+    /// Paths that failed to scan, fetch, write or delete; `GET /v1/folders/{id}/problems`.
+    #[serde(default)]
+    pub problems: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.

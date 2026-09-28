@@ -17,10 +17,11 @@ use tidefell_engine::{
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, ErrorKind, Event, FetchRequest, Fetched,
-    File, Folder, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
-    OpenedVersion, PairRequest, Pairing, Peer, PinRequest, Problem, RecycleBinSummary, Recycled,
-    RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Version, VersionKind,
-    VersionRequest,
+    File, Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel, LogSettings, Mode,
+    NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem,
+    Peer, PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary, Recycled,
+    RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version,
+    VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -57,6 +58,7 @@ type AppState = State<Arc<Engine>>;
         pins,
         copies,
         versions,
+        folder_problems,
         restore_version,
         open_version,
         resolve,
@@ -115,6 +117,14 @@ type AppState = State<Arc<Engine>>;
         VersionRequest,
         OpenedVersion,
         ResolveRequest,
+        PeerState,
+        PathKind,
+        Transfer,
+        FolderState,
+        FolderPeer,
+        PathProblem,
+        Operation,
+        ProblemKind,
         Limits,
         PinRequest
     ))
@@ -212,6 +222,12 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
         local_discovery: engine.local_discovery(),
         crash: crashes_on(&engine).into_iter().rfind(|c| !c.seen),
         paused: engine.paused(),
+        peers: engine
+            .peer_states()
+            .into_iter()
+            .map(convert::peer_state)
+            .collect(),
+        transfer: convert::transfer(engine.transfer()),
     }))
 }
 
@@ -753,6 +769,24 @@ pub(crate) async fn set_log_level(Json(update): Json<LogLevel>) -> ApiResult<Jso
     diagnostics::set_log_level(&update.level)
         .map_err(|e| ApiFailure::bad_request(format!("invalid level {e}")))?;
     Ok(Json(log_settings_now()?))
+}
+
+/// The folder's paths that failed to scan, fetch, write or delete, until they succeed
+/// (ADR 0030).
+#[utoipa::path(get, path = "/v1/folders/{id}/problems", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = [PathProblem]), (status = 404, body = ApiError)))]
+pub(crate) async fn folder_problems(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<PathProblem>>> {
+    Ok(Json(
+        engine
+            .path_problems(parse("folder", &id)?)?
+            .into_iter()
+            .map(convert::path_problem)
+            .collect(),
+    ))
 }
 
 /// The most recent warnings and errors, oldest first.

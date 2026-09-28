@@ -1033,3 +1033,55 @@ async fn deciding_a_conflict() {
     assert_eq!(page.status, StatusCode::SEE_OTHER);
     other.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn status_and_problems() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let config = WebConfig {
+        secure_cookies: false,
+        share_links: false,
+    };
+    let (engine, root, addr) = serve_folder(tmp.path(), &[("readable.txt", b"fine")], config).await;
+    AccountStore::new(&tmp.path().join("data"))
+        .upsert(
+            "root",
+            "root password 12",
+            UserKey::from_seed([1; 32]).id(),
+            true,
+        )
+        .unwrap();
+
+    let mut alice = Browser::new(addr);
+    alice.login("alice", "alice password 1").await;
+    let folders = alice.get("/").await;
+    assert!(folders.body.contains("up to date"), "{}", folders.body);
+    assert!(!folders.body.contains("href=\"/status\""));
+    assert_eq!(alice.get("/status").await.status, StatusCode::FORBIDDEN);
+
+    // A file this server cannot read is listed on the folder's page until it can.
+    let locked = root.join("locked.txt");
+    std::fs::write(&locked, b"secret").unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let root_user = std::fs::read(&locked).is_ok();
+    engine.scan(FOLDER).await.unwrap();
+    let page = alice.get(&format!("/folders/{FOLDER}")).await;
+    if !root_user {
+        assert!(page.body.contains("locked.txt") && page.body.contains("read: permission denied"));
+        let folders = alice.get("/").await;
+        assert!(folders.body.contains("1 problem(s)"), "{}", folders.body);
+    }
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+    engine.scan(FOLDER).await.unwrap();
+    let page = alice.get(&format!("/folders/{FOLDER}")).await;
+    assert!(!page.body.contains("permission denied"));
+
+    // Administrators see the server's status.
+    let mut admin = Browser::new(addr);
+    admin.login("root", "root password 12").await;
+    let status = admin.get("/status").await;
+    assert_eq!(status.status, StatusCode::OK, "{}", status.body);
+    assert!(status.body.contains("does not sync with any other device"));
+    assert!(status.body.contains("0 B sent"));
+}

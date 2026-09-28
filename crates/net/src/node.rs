@@ -54,6 +54,55 @@ pub struct NodeConfig {
 
 type Peers = Arc<Mutex<HashMap<DeviceId, PeerHandle>>>;
 
+/// What happened with each device's connections since the node started (ADR 0030).
+type Records = Arc<Mutex<HashMap<DeviceId, Record>>>;
+
+#[derive(Debug, Clone, Default)]
+struct Record {
+    /// The name in the device's certificate, from its last session.
+    name: Option<String>,
+    /// When the current session started, if one is running.
+    connected_since_ms: Option<i64>,
+    /// When the last session ended.
+    disconnected_ms: Option<i64>,
+    /// Why the last attempt to connect, or the last session, failed.
+    last_error: Option<String>,
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// How a connection reaches its peer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// Directly over IP.
+    Direct,
+    /// Through a relay server.
+    Relay,
+}
+
+/// One device's connection, as far as this node knows it (ADR 0030).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PeerStatus {
+    /// The name in the device's certificate, if it has connected since the node started.
+    pub name: Option<String>,
+    /// A sync session is running.
+    pub connected: bool,
+    /// How the session's connection goes, if it has a path now.
+    pub path: Option<PathKind>,
+    /// Round-trip time on that path.
+    pub rtt: Option<std::time::Duration>,
+    /// When the current session started, in milliseconds since the Unix epoch.
+    pub connected_since_ms: Option<i64>,
+    /// When the last session ended.
+    pub last_seen_ms: Option<i64>,
+    /// Why the last attempt to connect, or the last session, failed. Cleared by a new session.
+    pub last_error: Option<String>,
+}
+
 /// A connected sync peer.
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
@@ -91,6 +140,7 @@ impl PeerHandle {
 struct SyncProtocol {
     backend: Arc<dyn Backend>,
     peers: Peers,
+    records: Records,
 }
 
 impl std::fmt::Debug for SyncProtocol {
@@ -101,7 +151,15 @@ impl std::fmt::Debug for SyncProtocol {
 
 impl ProtocolHandler for SyncProtocol {
     async fn accept(&self, conn: Connection) -> std::result::Result<(), AcceptError> {
-        run_session(conn, self.backend.clone(), self.peers.clone(), false, None).await;
+        run_session(
+            conn,
+            self.backend.clone(),
+            self.peers.clone(),
+            self.records.clone(),
+            false,
+            None,
+        )
+        .await;
         Ok(())
     }
 }
@@ -110,6 +168,7 @@ async fn run_session(
     conn: Connection,
     backend: Arc<dyn Backend>,
     peers: Peers,
+    records: Records,
     initiator: bool,
     ready: Option<oneshot::Sender<Result<PeerHandle>>>,
 ) {
@@ -118,23 +177,40 @@ async fn run_session(
     let on_ready = {
         let conn = conn.clone();
         let peers = peers.clone();
+        let records = records.clone();
         let ready = ready.clone();
         move |peer: Peer| {
             let handle = PeerHandle { conn, peer };
             peers.lock().unwrap().insert(device, handle.clone());
+            let mut records = records.lock().unwrap();
+            let record = records.entry(device).or_default();
+            record.connected_since_ms = Some(now_ms());
+            record.last_error = None;
+            record.name = Some(handle.certificate().name.clone());
             if let Some(tx) = ready.lock().unwrap().take() {
                 let _ = tx.send(Ok(handle));
             }
         }
     };
     let result = sync::run(conn.clone(), backend, initiator, on_ready).await;
-    {
+    let ended = {
         let mut peers = peers.lock().unwrap();
-        if peers
+        let current = peers
             .get(&device)
-            .is_some_and(|h| h.conn.stable_id() == conn.stable_id())
-        {
+            .is_some_and(|h| h.conn.stable_id() == conn.stable_id());
+        if current {
             peers.remove(&device);
+        }
+        current
+    };
+    // A session replaced by a newer one leaves the record to that one.
+    if ended {
+        let mut records = records.lock().unwrap();
+        let record = records.entry(device).or_default();
+        record.connected_since_ms = None;
+        record.disconnected_ms = Some(now_ms());
+        if let Err(e) = &result {
+            record.last_error = Some(e.to_string());
         }
     }
     if let Err(e) = &result {
@@ -193,6 +269,7 @@ pub struct Node {
     router: Router,
     backend: Arc<dyn Backend>,
     peers: Peers,
+    records: Records,
     blob_conns: Mutex<HashMap<EndpointId, Connection>>,
     limiter: Arc<RateLimiter>,
 }
@@ -212,6 +289,7 @@ impl Node {
             bind_endpoint(&config, vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()]).await?;
 
         let peers: Peers = Arc::default();
+        let records: Records = Arc::default();
         let limiter = Arc::new(RateLimiter::new(config.limits));
         let router = Router::builder(endpoint.clone())
             .accept(
@@ -219,6 +297,7 @@ impl Node {
                 SyncProtocol {
                     backend: backend.clone(),
                     peers: peers.clone(),
+                    records: records.clone(),
                 },
             )
             .accept(
@@ -234,6 +313,7 @@ impl Node {
             router,
             backend,
             peers,
+            records,
             blob_conns: Mutex::default(),
             limiter,
         })
@@ -262,20 +342,80 @@ impl Node {
 
     /// Dials a peer and starts a sync session. Returns once the handshake has completed.
     pub async fn connect(&self, addr: impl Into<EndpointAddr>) -> Result<PeerHandle> {
-        let conn = self
-            .endpoint
-            .connect(addr, ALPN_SYNC_V1)
-            .await
-            .map_err(|e| Error::Connect(e.to_string()))?;
+        let addr = addr.into();
+        let device = DeviceId(*addr.id.as_bytes());
+        let conn = match self.endpoint.connect(addr, ALPN_SYNC_V1).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                let e = Error::Connect(e.to_string());
+                self.records
+                    .lock()
+                    .unwrap()
+                    .entry(device)
+                    .or_default()
+                    .last_error = Some(e.to_string());
+                return Err(e);
+            }
+        };
         let (tx, rx) = oneshot::channel();
         tokio::spawn(run_session(
             conn,
             self.backend.clone(),
             self.peers.clone(),
+            self.records.clone(),
             true,
             Some(tx),
         ));
         rx.await.map_err(|_| Error::Closed)?
+    }
+
+    /// The connection with `device` as far as this node knows it: now, if connected, and what
+    /// happened since the node started.
+    pub fn peer_status(&self, device: &DeviceId) -> PeerStatus {
+        let record = self
+            .records
+            .lock()
+            .unwrap()
+            .get(device)
+            .cloned()
+            .unwrap_or_default();
+        let session = self.peer(device);
+        let (path, rtt) = session
+            .as_ref()
+            .and_then(|s| {
+                let paths = s.conn.paths();
+                let selected = paths.iter().find(|p| p.is_selected())?;
+                let kind = if selected.is_relay() {
+                    PathKind::Relay
+                } else {
+                    PathKind::Direct
+                };
+                Some((Some(kind), Some(selected.rtt())))
+            })
+            .unwrap_or((None, None));
+        PeerStatus {
+            name: record.name,
+            connected: session.is_some(),
+            path,
+            rtt,
+            connected_since_ms: record.connected_since_ms.filter(|_| session.is_some()),
+            last_seen_ms: if session.is_some() {
+                Some(now_ms())
+            } else {
+                record.disconnected_ms
+            },
+            last_error: record.last_error,
+        }
+    }
+
+    /// Devices this node has connected to, or tried to, since it started.
+    pub fn recorded_peers(&self) -> Vec<DeviceId> {
+        self.records.lock().unwrap().keys().copied().collect()
+    }
+
+    /// File content sent and received since the node started (ADR 0030).
+    pub fn transfer(&self) -> crate::Transfer {
+        self.limiter.traffic.transfer()
     }
 
     /// Peers with an active sync session.

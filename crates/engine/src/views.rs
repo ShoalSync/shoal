@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use tidefell_meta::Retention;
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 
+use tidefell_net::PathKind;
+
 use crate::config::{ReplicaMode, SyncOptions};
 
 /// A synced folder.
@@ -43,6 +45,118 @@ pub struct FolderInfo {
     pub pinned_bytes: u64,
     /// Files with versions that conflict with the current one, waiting for a decision (ADR 0029).
     pub conflicts: usize,
+    /// What the folder is doing (ADR 0030).
+    pub state: FolderState,
+    /// Why the folder is in [`FolderState::Error`].
+    pub error: Option<String>,
+    /// Files this device is to write and does not have yet.
+    pub pending_files: usize,
+    /// Their total size.
+    pub pending_bytes: u64,
+    /// When the last scan finished, in milliseconds since the Unix epoch.
+    pub last_scan_ms: Option<i64>,
+    /// How long the last scan took.
+    pub last_scan_duration_ms: Option<u64>,
+    /// The peers the folder is shared with now or was exchanged with since the engine started.
+    pub peers: Vec<FolderPeer>,
+    /// Paths that failed to scan, fetch, write or delete; see [`crate::Engine::path_problems`].
+    pub problems: usize,
+}
+
+/// What a folder is doing (ADR 0030). The first that applies: error, paused, scanning,
+/// syncing, idle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderState {
+    /// Nothing to do.
+    Idle,
+    /// Looking for local changes.
+    Scanning,
+    /// Files are pending and a connected peer shares the folder.
+    Syncing,
+    /// Paused (ADR 0029).
+    Paused,
+    /// The folder cannot be used, or its last scan failed.
+    Error,
+}
+
+/// A folder's exchanges with one peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderPeer {
+    /// The peer.
+    pub device: DeviceId,
+    /// When the folder last finished exchanging changes with it, since the engine started.
+    pub last_exchange_ms: Option<i64>,
+    /// Connected and caught up: the exchange finished, and later changes are pushed as they
+    /// happen.
+    pub up_to_date: bool,
+}
+
+/// What a failing path was being used for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Operation {
+    /// Reading it for changes.
+    Scan,
+    /// Fetching its content from peers.
+    Fetch,
+    /// Writing it to disk.
+    Write,
+    /// Deleting it from disk.
+    Delete,
+}
+
+/// Why a path failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProblemKind {
+    /// Not allowed, including a read-only disk.
+    PermissionDenied,
+    /// No space left.
+    DiskFull,
+    /// No connected device has the content.
+    ContentUnavailable,
+    /// A name this device cannot sync, such as one that is not valid UTF-8.
+    NameNotAllowed,
+    /// The file changed while it was being read or written; tried again later.
+    ChangedWhileWriting,
+    /// Anything else; see the message.
+    Other,
+}
+
+/// A path that failed, until it succeeds (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathProblem {
+    /// The path in the folder.
+    pub path: String,
+    /// What it was being used for.
+    pub operation: Operation,
+    /// Why it failed.
+    pub kind: ProblemKind,
+    /// The error.
+    pub message: String,
+    /// When it first failed, in milliseconds since the Unix epoch.
+    pub since_ms: i64,
+    /// How many passes it has failed in a row.
+    pub attempts: u32,
+}
+
+/// A device this one syncs with, connected or not (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerState {
+    /// The device.
+    pub device: DeviceId,
+    /// Its name, if it has connected since the engine started.
+    pub name: Option<String>,
+    /// A sync session is running.
+    pub connected: bool,
+    /// `direct` or `relay`, while connected.
+    pub path: Option<PathKind>,
+    /// Round-trip time, while connected.
+    pub rtt_ms: Option<u64>,
+    /// When the current session started, in milliseconds since the Unix epoch.
+    pub connected_since_ms: Option<i64>,
+    /// When a session was last up: now while connected.
+    pub last_seen_ms: Option<i64>,
+    /// Why the last attempt to connect, or the last session, failed.
+    pub last_error: Option<String>,
 }
 
 /// A summary of one replica's recycle bin.

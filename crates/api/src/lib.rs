@@ -92,6 +92,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             post(handlers::open_version),
         )
         .route("/v1/folders/{id}/resolve", post(handlers::resolve))
+        .route("/v1/folders/{id}/problems", get(handlers::folder_problems))
         .route(
             "/v1/folders/{id}/recycle",
             get(handlers::recycle_bin).delete(handlers::empty_recycle_bin),

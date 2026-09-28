@@ -2,6 +2,7 @@
 
 use std::str::FromStr;
 
+use tidefell_engine as engine;
 use tidefell_engine::{
     CopyInfo, Direction, Event, FileInfo, FolderInfo, LocalDeletes, PeerAddr, PeerInfo,
     RecycledInfo, ReplicaMode, SyncOptions,
@@ -41,6 +42,76 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         paused: f.paused,
         pinned_bytes: f.pinned_bytes,
         conflicts: f.conflicts as u64,
+        state: match f.state {
+            engine::FolderState::Idle => api::FolderState::Idle,
+            engine::FolderState::Scanning => api::FolderState::Scanning,
+            engine::FolderState::Syncing => api::FolderState::Syncing,
+            engine::FolderState::Paused => api::FolderState::Paused,
+            engine::FolderState::Error => api::FolderState::Error,
+        },
+        error: f.error,
+        pending_files: f.pending_files as u64,
+        pending_bytes: f.pending_bytes,
+        last_scan_ms: f.last_scan_ms,
+        last_scan_duration_ms: f.last_scan_duration_ms,
+        peers: f
+            .peers
+            .into_iter()
+            .map(|p| api::FolderPeer {
+                device: p.device.to_string(),
+                last_exchange_ms: p.last_exchange_ms,
+                up_to_date: p.up_to_date,
+            })
+            .collect(),
+        problems: f.problems as u64,
+    }
+}
+
+pub(crate) fn peer_state(p: engine::PeerState) -> api::PeerState {
+    api::PeerState {
+        device: p.device.to_string(),
+        name: p.name,
+        connected: p.connected,
+        path: p.path.map(|path| match path {
+            engine::PathKind::Direct => api::PathKind::Direct,
+            engine::PathKind::Relay => api::PathKind::Relay,
+        }),
+        rtt_ms: p.rtt_ms,
+        connected_since_ms: p.connected_since_ms,
+        last_seen_ms: p.last_seen_ms,
+        last_error: p.last_error,
+    }
+}
+
+pub(crate) fn transfer(t: engine::Transfer) -> api::Transfer {
+    api::Transfer {
+        sent: t.sent,
+        received: t.received,
+        send_rate: t.send_rate,
+        receive_rate: t.receive_rate,
+    }
+}
+
+pub(crate) fn path_problem(p: engine::PathProblem) -> api::PathProblem {
+    api::PathProblem {
+        path: p.path,
+        operation: match p.operation {
+            engine::Operation::Scan => api::Operation::Scan,
+            engine::Operation::Fetch => api::Operation::Fetch,
+            engine::Operation::Write => api::Operation::Write,
+            engine::Operation::Delete => api::Operation::Delete,
+        },
+        kind: match p.kind {
+            engine::ProblemKind::PermissionDenied => api::ProblemKind::PermissionDenied,
+            engine::ProblemKind::DiskFull => api::ProblemKind::DiskFull,
+            engine::ProblemKind::ContentUnavailable => api::ProblemKind::ContentUnavailable,
+            engine::ProblemKind::NameNotAllowed => api::ProblemKind::NameNotAllowed,
+            engine::ProblemKind::ChangedWhileWriting => api::ProblemKind::ChangedWhileWriting,
+            engine::ProblemKind::Other => api::ProblemKind::Other,
+        },
+        message: p.message,
+        since_ms: p.since_ms,
+        attempts: p.attempts,
     }
 }
 

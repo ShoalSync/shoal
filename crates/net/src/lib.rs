@@ -12,13 +12,15 @@ mod limits;
 mod node;
 mod pair;
 mod sync;
+mod traffic;
 
 pub use backend::{Backend, IndexPage};
 pub use blobs::ChunkResult;
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
 pub use limits::{Limits, MIN_BYTES_PER_SEC};
-pub use node::{Node, NodeConfig, PeerHandle, RelayConfig};
+pub use node::{Node, NodeConfig, PathKind, PeerHandle, PeerStatus, RelayConfig};
 pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
+pub use traffic::Transfer;
 
 /// Network and protocol errors.
 #[derive(Debug, thiserror::Error)]

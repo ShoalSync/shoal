@@ -7,7 +7,7 @@ use std::time::Duration;
 use tidefell_engine::{Engine, EngineConfig, RelayConfig};
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_sdk::types::{
-    Direction, ErrorKind, Event, KnownPeer, Limits, LocalDeletes, NewFolder, SyncOptions,
+    Direction, ErrorKind, Event, Folder, KnownPeer, Limits, LocalDeletes, NewFolder, SyncOptions,
 };
 use tidefell_sdk::{Client, Error};
 
@@ -131,8 +131,22 @@ async fn control_api_end_to_end() {
     assert_eq!(created.members, vec![user.id().to_string()]);
     assert_eq!(created.retention_days, Some(7));
     assert!(!created.configured);
-    assert_eq!(client.folders().await.unwrap(), vec![created.clone()]);
-    assert_eq!(client.folder(&created.id).await.unwrap(), created);
+    // The state and last scan change as the first scan runs.
+    let settled = |f: Folder| Folder {
+        state: created.state,
+        last_scan_ms: None,
+        last_scan_duration_ms: None,
+        ..f
+    };
+    let listed: Vec<Folder> = client
+        .folders()
+        .await
+        .unwrap()
+        .into_iter()
+        .map(settled)
+        .collect();
+    assert_eq!(listed, vec![created.clone()]);
+    assert_eq!(settled(client.folder(&created.id).await.unwrap()), created);
     let added = tokio::time::timeout(Duration::from_secs(5), rx.recv())
         .await
         .unwrap()
@@ -292,6 +306,30 @@ async fn control_api_end_to_end() {
     );
     assert!(client.peers().await.unwrap().is_empty());
 
+    // Status and problems (ADR 0030): no peers, nothing moved, nothing wrong.
+    let status = client.status().await.unwrap();
+    assert!(status.peers.is_empty());
+    assert_eq!(status.transfer.sent, 0);
+    assert!(client
+        .folder_problems(&created.id)
+        .await
+        .unwrap()
+        .is_empty());
+    let folder = client
+        .folders()
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|f| f.id == created.id)
+        .unwrap();
+    assert_eq!(folder.problems, 0);
+    assert_eq!(folder.pending_files, 0);
+    assert!(folder.last_scan_ms.is_some());
+    assert_eq!(
+        api_error(client.folder_problems(&"ab".repeat(32)).await),
+        ErrorKind::NotFound
+    );
+
     // Remove the folder.
     client.remove_folder(&created.id).await.unwrap();
     assert!(client.folders().await.unwrap().is_empty());
@@ -314,6 +352,9 @@ async fn control_api_end_to_end() {
         "/v1/limits",
         "/v1/pause",
         "/v1/folders/{id}/pause",
+        "/v1/folders/{id}/problems",
+        "/v1/folders/{id}/resolve",
+        "/v1/folders/{id}/versions/open",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }

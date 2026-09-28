@@ -10,11 +10,13 @@ use tidefell_proto::sync::{is_valid_path, EntryKind};
 use tidefell_proto::{EntryId, Manifest, VersionVector};
 use tracing::{debug, warn};
 
+use crate::activity::Failure;
 use crate::config::LocalDeletes;
 use crate::engine::{FolderHandle, Inner};
 use crate::ignores::{Ignores, IGNORE_FILE};
 use crate::state::{FolderState, LocalFile};
-use crate::{io_err, now_ms, random_bytes, Result};
+use crate::views::{Operation, ProblemKind};
+use crate::{now_ms, random_bytes, Result};
 
 /// Directory at a folder's root reserved for the engine's own files.
 pub(crate) const RESERVED_DIR: &str = ".tidefell";
@@ -96,33 +98,55 @@ struct Walk<'a> {
     ignores: &'a Ignores,
     files: Vec<(String, DiskStat)>,
     dirs: Vec<PathBuf>,
+    /// Paths that could not be read or synced (ADR 0030).
+    failures: Vec<Failure>,
+    /// Directories that could not be read: what is under them is not known to be gone.
+    unreadable: Vec<String>,
 }
 
 impl Walk<'_> {
     fn dir(&mut self, dir: &Path, recursive: bool) {
         self.dirs.push(dir.to_owned());
-        walk(
-            self.root,
-            dir,
-            self.ignores,
-            recursive,
-            &mut self.files,
-            &mut self.dirs,
-        );
+        let (root, ignores) = (self.root, self.ignores);
+        walk(root, dir, ignores, recursive, self);
     }
 }
 
-fn walk(
-    root: &Path,
-    dir: &Path,
-    ignores: &Ignores,
-    recursive: bool,
-    out: &mut Vec<(String, DiskStat)>,
-    dirs: &mut Vec<PathBuf>,
-) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        warn!(dir = %dir.display(), "cannot read directory");
-        return;
+/// How a directory's problems are keyed: its path with a `/` after it, so it is told apart
+/// from a file's.
+fn dir_key(rel: &str) -> String {
+    format!("{rel}/")
+}
+
+/// True if `error` says the path is not there: only then is a recorded file deleted.
+fn is_gone(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+/// `path` relative to `root`, `/`-separated, if it is valid UTF-8.
+fn relative(root: &Path, path: &Path) -> Option<String> {
+    let rel = path
+        .strip_prefix(root)
+        .expect("walked paths are under root");
+    rel.to_str()
+        .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
+fn walk(root: &Path, dir: &Path, ignores: &Ignores, recursive: bool, found: &mut Walk<'_>) {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            warn!(dir = %dir.display(), error = %e, "cannot read directory");
+            let rel = relative(root, dir).unwrap_or_else(|| dir.to_string_lossy().into_owned());
+            found
+                .failures
+                .push(Failure::io(&dir_key(&rel), Operation::Scan, &e));
+            found.unreadable.push(rel);
+            return;
+        }
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -136,14 +160,19 @@ fn walk(
             // Symlinks and special files are not synced yet.
             continue;
         }
-        let rel = path
-            .strip_prefix(root)
-            .expect("walked paths are under root");
-        let Some(rel) = rel
-            .to_str()
-            .map(|s| s.replace(std::path::MAIN_SEPARATOR, "/"))
-        else {
+        let Some(rel) = relative(root, &path) else {
             warn!(path = %path.display(), "skipping non-UTF-8 path");
+            let lossy = path
+                .strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            found.failures.push(Failure::new(
+                &lossy,
+                Operation::Scan,
+                ProblemKind::NameNotAllowed,
+                "the name is not valid UTF-8",
+            ));
             continue;
         };
         if ignores.is_ignored(&rel, file_type.is_dir()) {
@@ -151,16 +180,30 @@ fn walk(
         }
         if file_type.is_dir() {
             if recursive {
-                dirs.push(path.clone());
-                walk(root, &path, ignores, true, out, dirs);
+                found.dirs.push(path.clone());
+                walk(root, &path, ignores, true, found);
             }
         } else {
             if !is_valid_path(&rel) {
                 warn!(path = %rel, "skipping path that cannot be synced");
+                found.failures.push(Failure::new(
+                    &rel,
+                    Operation::Scan,
+                    ProblemKind::NameNotAllowed,
+                    "the name cannot be synced",
+                ));
                 continue;
             }
-            if let Some(stat) = stat(&path) {
-                out.push((rel, stat));
+            match stat(&path) {
+                Some(stat) => found.files.push((rel, stat)),
+                None => {
+                    if let Err(e) = fs::symlink_metadata(&path) {
+                        if !is_gone(&e) {
+                            warn!(path = %rel, error = %e, "cannot look at file");
+                            found.failures.push(Failure::io(&rel, Operation::Scan, &e));
+                        }
+                    }
+                }
             }
         }
     }
@@ -188,6 +231,8 @@ pub(crate) struct Scanned {
     pub(crate) dirs: Vec<PathBuf>,
     /// Files whose changes conflict with a version that arrived before they were scanned.
     pub(crate) conflicts: Vec<String>,
+    /// Whether the set of paths with problems changed (ADR 0030).
+    pub(crate) problems_changed: bool,
 }
 
 /// Scans `id` for changes since the last scan and records them: everything, or only `scope`.
@@ -209,6 +254,8 @@ pub(crate) fn scan(
         ignores: &ignores,
         files: Vec::new(),
         dirs: Vec::new(),
+        failures: Vec::new(),
+        unreadable: Vec::new(),
     };
     match scope {
         None => walker.dir(&root, true),
@@ -225,6 +272,8 @@ pub(crate) fn scan(
     let Walk {
         files: mut found,
         dirs,
+        mut failures,
+        unreadable,
         ..
     } = walker;
     found.sort_by(|a, b| a.0.cmp(&b.0));
@@ -247,18 +296,35 @@ pub(crate) fn scan(
         let path = root.join(&rel);
         let file = match fs::File::open(&path) {
             Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!(path = %rel, "file vanished while scanning");
+                continue;
+            }
             Err(e) => {
-                debug!(path = %rel, error = %e, "file vanished while scanning");
+                warn!(path = %rel, error = %e, "cannot open file");
+                failures.push(Failure::io(&rel, Operation::Scan, &e));
                 continue;
             }
         };
         // The file itself is where its content is kept and read from (ADR 0027); only the
-        // manifest is recorded.
-        let manifest = chunk_reader(BufReader::new(file), Params::DEFAULT, |_, _| Ok(()))
-            .map_err(io_err(&path))?;
+        // manifest is recorded. One file that cannot be read does not stop the scan.
+        let manifest = match chunk_reader(BufReader::new(file), Params::DEFAULT, |_, _| Ok(())) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                warn!(path = %rel, error = %e, "cannot read file");
+                failures.push(Failure::io(&rel, Operation::Scan, &e));
+                continue;
+            }
+        };
         // A file still being written will be picked up by a later scan.
         if stat(&path) != Some(disk) {
             debug!(path = %rel, "file changed while scanning");
+            failures.push(Failure::new(
+                &rel,
+                Operation::Scan,
+                ProblemKind::ChangedWhileWriting,
+                "the file changed while it was read; it is read again at the next scan",
+            ));
             continue;
         }
         changed.push(Changed {
@@ -342,16 +408,30 @@ pub(crate) fn scan(
 
     // A path that became ignored after it synced keeps its entry: nothing is deleted. Only
     // files in the scope that are verifiably gone are.
-    let deleted: Vec<String> = known
-        .keys()
-        .filter(|rel| {
-            !seen.contains(*rel)
-                && scope.is_none_or(|s| s.contains(rel))
-                && !state.ignores.is_ignored(rel, false)
-                && fs::symlink_metadata(root.join(rel)).is_err()
-        })
-        .cloned()
-        .collect();
+    // Only a path known to be gone is deleted. One that cannot be looked at, such as in a
+    // directory this device may list but not enter, is a problem, not a delete (ADR 0030).
+    let mut deleted = Vec::new();
+    for rel in known.keys() {
+        if seen.contains(rel)
+            || !scope.is_none_or(|s| s.contains(rel))
+            || state.ignores.is_ignored(rel, false)
+            || unreadable
+                .iter()
+                .any(|dir| dir.is_empty() || rel.starts_with(&format!("{dir}/")))
+        {
+            continue;
+        }
+        match fs::symlink_metadata(root.join(rel)) {
+            Ok(_) => {}
+            Err(e) if is_gone(&e) => deleted.push(rel.clone()),
+            Err(e) => {
+                if !failures.iter().any(|f| f.path == *rel) {
+                    warn!(path = %rel, error = %e, "cannot look at file");
+                    failures.push(Failure::io(rel, Operation::Scan, &e));
+                }
+            }
+        }
+    }
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
     for rel in deleted {
         let Some(local) = state.local.remove(&rel) else {
@@ -385,10 +465,32 @@ pub(crate) fn scan(
     }
 
     state.save()?;
+    drop(state);
+    // Problems the scan covered are replaced by what it found: a path read, gone or now
+    // ignored has none.
+    // A directory's problem is covered only if the scan tried to read that directory.
+    let tried: BTreeSet<String> = dirs
+        .iter()
+        .filter_map(|d| relative(&root, d))
+        .map(|rel| dir_key(&rel))
+        .collect();
+    let problems_changed = handle.activity.lock().unwrap().settle(
+        &[Operation::Scan],
+        |path| {
+            if path.ends_with('/') {
+                tried.contains(path)
+            } else {
+                scope.is_none_or(|s| s.contains(path))
+            }
+        },
+        failures,
+        now_ms(),
+    );
     Ok(Scanned {
         changed: index_changed,
         dirs,
         conflicts,
+        problems_changed,
     })
 }
 

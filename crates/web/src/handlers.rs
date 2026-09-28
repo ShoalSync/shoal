@@ -228,6 +228,8 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
             name: folder_name(&f),
             files: state.engine.files(f.id).map(|v| v.len()).unwrap_or(0),
             recycled: state.engine.recycle_bin(f.id).map(|v| v.len()).unwrap_or(0),
+            state: folder_state(&f),
+            problems: f.problems,
         })
         .collect();
     render(pages::Folders {
@@ -236,8 +238,49 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
         csrf: session.csrf,
         share_links: state.config.share_links,
         paused: state.engine.paused(),
+        crashed: session.admin && crate::status::unseen_crash(&state).is_some(),
         folders: rows,
     })
+}
+
+/// What failed and why, such as "write: permission denied".
+fn problem_what(p: &tidefell_engine::PathProblem) -> String {
+    use tidefell_engine::{Operation, ProblemKind};
+    let operation = match p.operation {
+        Operation::Scan => "read",
+        Operation::Fetch => "fetch",
+        Operation::Write => "write",
+        Operation::Delete => "delete",
+    };
+    let kind = match p.kind {
+        ProblemKind::PermissionDenied => "permission denied",
+        ProblemKind::DiskFull => "disk full",
+        ProblemKind::ContentUnavailable => "no connected device has it",
+        ProblemKind::NameNotAllowed => "name not allowed here",
+        ProblemKind::ChangedWhileWriting => "changed while in use",
+        ProblemKind::Other => "failed",
+    };
+    format!("{operation}: {kind}")
+}
+
+/// What a folder is doing, in a few words: "syncing: 3 files, 2.0 MiB to fetch" (ADR 0030).
+pub(crate) fn folder_state(f: &FolderInfo) -> String {
+    use tidefell_engine::FolderState;
+    let mut line = match f.state {
+        FolderState::Idle => "up to date".to_owned(),
+        FolderState::Scanning => "looking for changes".to_owned(),
+        FolderState::Syncing => "syncing".to_owned(),
+        FolderState::Paused => "paused".to_owned(),
+        FolderState::Error => format!("not syncing: {}", f.error.as_deref().unwrap_or("an error")),
+    };
+    if f.pending_files > 0 && f.state != FolderState::Error {
+        line = format!(
+            "{line}: {} file(s), {} to fetch",
+            f.pending_files,
+            size(f.pending_bytes)
+        );
+    }
+    line
 }
 
 #[derive(Deserialize)]
@@ -290,6 +333,26 @@ pub(crate) async fn folder(
         partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
         conflicts: folder.conflicts,
+        state: {
+            let mut line = folder_state(&folder);
+            if let Some(at) = folder.last_scan_ms {
+                line = format!("{line}. Last looked for changes {}.", time(at));
+            }
+            line
+        },
+        problems: state
+            .engine
+            .path_problems(folder.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| pages::ProblemRow {
+                what: problem_what(&p),
+                path: p.path,
+                message: p.message,
+                since: time(p.since_ms),
+                attempts: p.attempts,
+            })
+            .collect(),
         notice: query
             .uploaded
             .map(|n| format!("Uploaded {n} file(s). They sync to every device."))
@@ -672,14 +735,14 @@ pub(crate) async fn resume_device(
 // ---- Account administration ----
 
 /// A rejection page unless the session is an administrator's.
-fn admin_only(session: &Session) -> Option<Response> {
+pub(crate) fn admin_only(session: &Session) -> Option<Response> {
     if session.admin {
         None
     } else {
         Some(error(
             StatusCode::FORBIDDEN,
             "Administrators only",
-            "Ask an administrator to manage accounts.",
+            "Only an administrator can see this page.",
         ))
     }
 }

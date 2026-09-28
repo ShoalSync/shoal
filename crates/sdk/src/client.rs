@@ -12,8 +12,8 @@ use serde::Serialize;
 use crate::types::{
     ApiError, ApprovePairing, CopiesRequest, Copy, Crash, Event, FetchRequest, Fetched, File,
     Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember, OpenedVersion,
-    PairRequest, Pairing, Peer, PinRequest, Problem, Recycled, RemoveHereRequest, ResolveRequest,
-    RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
+    PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem, Recycled, RemoveHereRequest,
+    ResolveRequest, RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
 };
 
 /// Client errors.
@@ -383,6 +383,11 @@ impl Client {
             }),
         )
         .await
+    }
+
+    /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).
+    pub async fn folder_problems(&self, folder: &str) -> Result<Vec<PathProblem>, Error> {
+        self.get(&format!("/v1/folders/{folder}/problems")).await
     }
 
     /// Decides a conflict on a file: `keep` is the version to keep, `current` or

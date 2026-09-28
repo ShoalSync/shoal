@@ -13,6 +13,10 @@ pub(crate) struct FolderRow {
     pub(crate) name: String,
     pub(crate) files: usize,
     pub(crate) recycled: usize,
+    /// What the folder is doing, such as "syncing: 3 files, 2.0 MiB to fetch" (ADR 0030).
+    pub(crate) state: String,
+    /// Paths that failed.
+    pub(crate) problems: usize,
 }
 
 #[derive(Template)]
@@ -23,6 +27,8 @@ pub(crate) struct Folders {
     pub(crate) csrf: String,
     pub(crate) share_links: bool,
     pub(crate) paused: bool,
+    /// For administrators: the server crashed and nobody dismissed it yet (ADR 0030).
+    pub(crate) crashed: bool,
     pub(crate) folders: Vec<FolderRow>,
 }
 
@@ -55,8 +61,54 @@ pub(crate) struct Folder {
     pub(crate) pinned_size: String,
     /// Files with conflicting versions waiting for a decision (ADR 0029).
     pub(crate) conflicts: usize,
+    /// What the folder is doing and its last scan (ADR 0030).
+    pub(crate) state: String,
+    /// Paths that failed, until they succeed.
+    pub(crate) problems: Vec<ProblemRow>,
     pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
+}
+
+pub(crate) struct ProblemRow {
+    pub(crate) path: String,
+    /// Such as "write: permission denied".
+    pub(crate) what: String,
+    pub(crate) message: String,
+    pub(crate) since: String,
+    pub(crate) attempts: u32,
+}
+
+pub(crate) struct PeerRow {
+    pub(crate) name: String,
+    pub(crate) device: String,
+    pub(crate) connected: bool,
+    /// Such as "connected direct, 12 ms".
+    pub(crate) connection: String,
+    /// When the session started, or when the device was last seen.
+    pub(crate) since: String,
+    pub(crate) error: Option<String>,
+}
+
+pub(crate) struct CrashNotice {
+    pub(crate) time: String,
+    pub(crate) message: String,
+    pub(crate) file: String,
+}
+
+/// This server's status, for administrators (ADR 0030).
+#[derive(Template)]
+#[template(path = "status.html")]
+pub(crate) struct Status {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) device: String,
+    pub(crate) peers: Vec<PeerRow>,
+    pub(crate) sent: String,
+    pub(crate) received: String,
+    pub(crate) send_rate: String,
+    pub(crate) receive_rate: String,
+    pub(crate) crash: Option<CrashNotice>,
 }
 
 pub(crate) struct RecycledRow {

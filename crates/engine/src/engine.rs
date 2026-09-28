@@ -64,6 +64,8 @@ pub(crate) struct FolderHandle {
     pub(crate) unavailable: Mutex<Option<String>>,
     /// Paths held open by front-ends, with how many times; never evicted while open.
     open: Mutex<HashMap<String, usize>>,
+    /// Scans, exchanges and problems, for status displays (ADR 0030).
+    pub(crate) activity: Mutex<crate::activity::Activity>,
 }
 
 impl FolderHandle {
@@ -276,6 +278,7 @@ fn open_folder(
         watch_error: Mutex::new(None),
         unavailable: Mutex::new(unavailable),
         open: Mutex::new(HashMap::new()),
+        activity: Mutex::default(),
     })
 }
 
@@ -696,11 +699,24 @@ async fn run_scan(
     let handle = inner.folder(&id)?;
     let _guard = handle.disk().await?;
     let (inner2, handle2) = (inner.clone(), handle.clone());
-    let scanned = match tokio::task::spawn_blocking(move || {
+    handle.activity.lock().unwrap().scanning = true;
+    let started = std::time::Instant::now();
+    let result = tokio::task::spawn_blocking(move || {
         scan::scan(&inner2, &handle2, scope.as_ref(), saved.as_deref())
     })
-    .await
+    .await;
     {
+        let mut activity = handle.activity.lock().unwrap();
+        activity.scanning = false;
+        let error = match &result {
+            Ok(Err(e)) => Some(e.to_string()),
+            Ok(Ok(_)) => None,
+            Err(_) => Some("the scan crashed".to_owned()),
+        };
+        let took = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        activity.last_scan = Some((now_ms(), took, error));
+    }
+    let scanned = match result {
         Ok(scanned) => scanned?,
         Err(e) => {
             let message = inner.fail(
@@ -713,6 +729,8 @@ async fn run_scan(
     };
     if scanned.changed {
         inner.changes.send_modify(|n| *n += 1);
+    }
+    if scanned.changed || scanned.problems_changed {
         inner.emit(Event::FolderChanged(id));
     }
     for path in scanned.conflicts {

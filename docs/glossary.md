@@ -27,6 +27,8 @@ the same pull request that introduces it.
 | **Version vector** | A map from device to change counter, attached to every version of an entry. Used only to decide whether two versions of that entry are ordered or concurrent. |
 | **Conflict** | Two concurrent versions of the same entry. Every replica shows the same winner (edits win over deletes, then the later modification); the losing version is kept as a conflict copy until the user resolves the conflict (ADR 0029). |
 | **Conflict copy** | A losing concurrent version, kept until the conflict is resolved. Not written to disk. One with the same content as the winner, or a delete an edit beat, needs no decision. |
+| **Folder state** | What a folder is doing on one device: idle, scanning, syncing, paused or error (ADR 0030). |
+| **Path problem** | A path in a folder that failed to scan, fetch, write or delete, with why, since when and how many attempts. It clears when the path succeeds (ADR 0030). |
 | **Resolve** | Deciding a conflict: keep one version, which sends the others to every recycle bin, or keep both, which makes each other version a file of its own. |
 | **Index** | A replica's record of the versions it holds for a folder, each numbered with an index sequence. |
 | **Index sequence** | A replica-local, increasing number assigned to each version when it is stored. Peers ask for "everything after sequence N". Unrelated to version vectors. |

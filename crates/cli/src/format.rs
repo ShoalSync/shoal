@@ -3,8 +3,9 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Crash, Direction, Event, File, Folder, KnownPeer, Limits, LocalDeletes, LogSettings, Mode,
-    Peer, Problem, Recycled, Status, SyncOptions, Version, VersionKind,
+    Crash, Direction, Event, File, Folder, FolderState, KnownPeer, Limits, LocalDeletes,
+    LogSettings, Mode, Operation, PathKind, PathProblem, Peer, PeerState, Problem, ProblemKind,
+    Recycled, Status, SyncOptions, Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -71,10 +72,39 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             c.file
         );
     }
+    let t = &s.transfer;
+    let _ = write!(
+        out,
+        "\ntransfer: {} sent, {} received since start; now {}/s up, {}/s down",
+        size(t.sent),
+        size(t.received),
+        size(t.send_rate),
+        size(t.receive_rate)
+    );
+    if !s.peers.is_empty() {
+        out.push_str("\npeers:");
+        for p in &s.peers {
+            let _ = write!(out, "\n  {}  {}", p.device, peer_line(p));
+        }
+    }
     if !folders.is_empty() {
         out.push_str("\nfolders:");
         for f in folders {
-            let _ = write!(out, "\n  {}  {}\n    {}", f.id, f.path, recycle_bin(f));
+            let _ = write!(
+                out,
+                "\n  {}  {}\n    {}\n    {}",
+                f.id,
+                f.path,
+                folder_state(f),
+                recycle_bin(f)
+            );
+            if f.problems > 0 {
+                let _ = write!(
+                    out,
+                    "\n    {} path(s) with problems: `tidefell problems {}`",
+                    f.problems, f.id
+                );
+            }
             if let Some(note) = only_here(f) {
                 let _ = write!(out, "\n    {note}");
             }
@@ -103,6 +133,106 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         }
     }
     out
+}
+
+/// A peer's name and connection: "laptop, connected direct (12 ms) since …" or "not
+/// connected, last seen …: error".
+fn peer_line(p: &PeerState) -> String {
+    let name = p.name.clone().unwrap_or_else(|| "(not seen yet)".into());
+    if p.connected {
+        let path = match p.path {
+            Some(PathKind::Direct) => "direct",
+            Some(PathKind::Relay) => "through a relay",
+            None => "no path now",
+        };
+        let rtt = p.rtt_ms.map(|ms| format!(" ({ms} ms)")).unwrap_or_default();
+        let since = p
+            .connected_since_ms
+            .map(|ms| format!(" since {}", time(ms)))
+            .unwrap_or_default();
+        return format!("{name}, connected {path}{rtt}{since}");
+    }
+    let seen = p
+        .last_seen_ms
+        .map_or("not seen since start".to_string(), |ms| {
+            format!("last seen {}", time(ms))
+        });
+    let error = p
+        .last_error
+        .as_ref()
+        .map(|e| format!(": {e}"))
+        .unwrap_or_default();
+    format!("{name}, not connected, {seen}{error}")
+}
+
+/// What a folder is doing, what it waits for, and its last scan.
+fn folder_state(f: &Folder) -> String {
+    let state = match f.state {
+        FolderState::Idle => "idle",
+        FolderState::Scanning => "scanning",
+        FolderState::Syncing => "syncing",
+        FolderState::Paused => "paused",
+        FolderState::Error => "error",
+    };
+    let mut line = state.to_string();
+    if let Some(error) = &f.error {
+        let _ = write!(line, " ({error})");
+    }
+    if f.pending_files > 0 {
+        let _ = write!(
+            line,
+            ", {} file(s), {} to fetch",
+            f.pending_files,
+            size(f.pending_bytes)
+        );
+    }
+    if let (Some(at), Some(took)) = (f.last_scan_ms, f.last_scan_duration_ms) {
+        let _ = write!(line, "; last scan {} ({took} ms)", time(at));
+    }
+    let behind: Vec<&str> = f
+        .peers
+        .iter()
+        .filter(|p| !p.up_to_date)
+        .map(|p| p.device.get(..8).unwrap_or(&p.device))
+        .collect();
+    if !behind.is_empty() {
+        let _ = write!(line, "; not up to date with {}", behind.join(", "));
+    }
+    line
+}
+
+/// Paths of one folder that failed.
+pub(crate) fn path_problems(problems: &[PathProblem]) -> String {
+    if problems.is_empty() {
+        return "no problems".into();
+    }
+    problems
+        .iter()
+        .map(|p| {
+            let operation = match p.operation {
+                Operation::Scan => "scan",
+                Operation::Fetch => "fetch",
+                Operation::Write => "write",
+                Operation::Delete => "delete",
+            };
+            let kind = match p.kind {
+                ProblemKind::PermissionDenied => "permission denied",
+                ProblemKind::DiskFull => "disk full",
+                ProblemKind::ContentUnavailable => "content unavailable",
+                ProblemKind::NameNotAllowed => "name not allowed",
+                ProblemKind::ChangedWhileWriting => "changed while writing",
+                ProblemKind::Other => "error",
+            };
+            format!(
+                "{}\n  {operation}: {kind}: {}\n  since {}, {} attempt(s)",
+                p.path,
+                p.message,
+                time(p.since_ms),
+                p.attempts
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// A warning when files made on this device have no confirmed copy on a full replica.
@@ -463,6 +593,14 @@ mod tests {
             paused: false,
             pinned_bytes: 0,
             conflicts: 0,
+            state: FolderState::Idle,
+            error: None,
+            pending_files: 0,
+            pending_bytes: 0,
+            last_scan_ms: None,
+            last_scan_duration_ms: None,
+            peers: Vec::new(),
+            problems: 0,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

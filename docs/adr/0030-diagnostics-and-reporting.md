@@ -88,6 +88,37 @@ partly for privacy: nothing leaves a device unless its user sends it.
 - **Transfer:** current rates and totals since start, sent and received.
 - All of it is in the API, the sdk, the bindings, `tidefell status` and `tidefell problems`, the
   web and the app.
+- Step 3 decided (the app's screens come with the next Android pin):
+  - **Peers** are the ones the engine keeps connected plus any that connected since it
+    started. A record per device holds when its session started, when it ended and the last
+    error, including failed dials, which were only logged before. The path and round-trip time
+    are read from the session's selected path when asked. The device's name comes from its last
+    session.
+  - **Transfer** counts file content where the rate limiter sees it, so local peers count too.
+    Index exchanges are not counted. Rates are averaged over the last ten seconds.
+  - **Folder state** is the first of: error (unavailable, or the last scan failed), paused,
+    scanning, syncing (files pending and a connected peer shares the folder), idle. Pending
+    files and bytes come from the same plan materialising follows. A peer is up to date once an
+    exchange finished in its current session; later changes are pushed as they happen.
+  - **Problems** are kept by path and operation (scan, fetch, write, delete). A scan replaces
+    the scan problems of the paths it covered with what it found, so a path read, gone or now
+    ignored clears. A materialise pass replaces the fetch, write and delete problems with its
+    own. A directory's problems are keyed with a trailing `/` and cleared only by a scan that
+    read that directory. Content unavailable is recorded only when a connected peer was asked.
+    An unavailable folder or a crash stops the pass and shows in the folder's state instead of
+    once per file. One path that fails no longer stops a scan or a materialise pass.
+  - **Only a path known to be gone is deleted.** A scan used to take any path it could not
+    look at for deleted, so the files in a directory this device could list but not enter, or
+    not read at all, were deleted on every device. Now only "not found" is a delete; other
+    errors are problems.
+  - None of it is persisted: it describes the current run.
+  - `GET /v1/status` gains `peers` and `transfer`; folders gain `state`, `error`,
+    `pending_files`, `pending_bytes`, `last_scan_ms`, `last_scan_duration_ms`, `peers` and a
+    `problems` count; `GET /v1/folders/{id}/problems` lists them. The CLI shows them in
+    `tidefell status` and `tidefell problems [folder]`, and the bindings have `peerStates`,
+    `transfer` and `pathProblems`. The web shows each folder's state on the folder list and its
+    problems on its page, and an administrators' **Status** page lists the peers, the transfer
+    totals and a crash not yet dismissed, which step 2 left for here.
 
 ### Diagnostics bundle
 

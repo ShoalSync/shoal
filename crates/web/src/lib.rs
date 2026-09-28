@@ -18,6 +18,7 @@ mod pages;
 mod sessions;
 mod shares;
 mod sharing;
+mod status;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -83,6 +84,8 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
     });
     Router::new()
         .route("/", get(handlers::folders))
+        .route("/status", get(status::status))
+        .route("/status/crashes/dismiss", post(status::dismiss_crashes))
         .route("/login", get(handlers::login_page).post(handlers::login))
         .route("/logout", post(handlers::logout))
         .route("/folders/{id}", get(handlers::folder))

@@ -117,6 +117,13 @@ impl Backend for EngineBackend {
 
     fn set_peer_progress(&self, folder: &FolderId, peer: DeviceId, epoch: u64, up_to: u64) {
         if let Ok(handle) = self.0.folder(folder) {
+            // The peer's index is all here: the exchange finished (ADR 0030).
+            handle
+                .activity
+                .lock()
+                .unwrap()
+                .exchanged
+                .insert(peer, crate::now_ms());
             let mut state = handle.lock();
             state.progress.insert(peer, (epoch, up_to));
             if let Err(e) = state.save() {

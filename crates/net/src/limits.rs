@@ -106,6 +106,8 @@ pub(crate) struct RateLimiter {
     limits: Mutex<Limits>,
     upload: Bucket,
     download: Bucket,
+    /// Every chunk passes through here, limited or not, so this is where it is counted.
+    pub(crate) traffic: crate::traffic::Traffic,
 }
 
 impl RateLimiter {
@@ -114,6 +116,7 @@ impl RateLimiter {
             limits: Mutex::new(limits.clamped()),
             upload: Bucket::new(),
             download: Bucket::new(),
+            traffic: crate::traffic::Traffic::new(),
         }
     }
 
@@ -147,14 +150,19 @@ impl RateLimiter {
     /// Before sending a chunk of `bytes` on `conn`: `Ok(wait)` to send it after `wait`, or
     /// `Err(retry_after)` if the upload backlog is too long to send it in time.
     pub(crate) fn upload(&self, conn: &Connection, bytes: usize) -> Result<Duration, Duration> {
-        match self.limits().upload.filter(|_| self.applies(conn)) {
+        let wait = match self.limits().upload.filter(|_| self.applies(conn)) {
             Some(rate) => self.upload.try_reserve(bytes, rate, MAX_BACKLOG),
             None => Ok(Duration::ZERO),
+        };
+        if wait.is_ok() {
+            self.traffic.sent(bytes);
         }
+        wait
     }
 
     /// After receiving a chunk of `bytes` on `conn`: how long to wait before reading more.
     pub(crate) fn download(&self, conn: &Connection, bytes: usize) -> Duration {
+        self.traffic.received(bytes);
         match self.limits().download.filter(|_| self.applies(conn)) {
             Some(rate) => self.download.reserve(bytes, rate),
             None => Duration::ZERO,

@@ -1,6 +1,6 @@
 <nav>
   <span class="who">{{ username }}</span>
-  {% if admin %}<a href="/admin/accounts">Accounts</a>{% endif %}
+  {% if admin %}<a href="/status">Status</a> <a href="/admin/accounts">Accounts</a>{% endif %}
   <form method="post" action="/logout" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit" class="link">Sign out</button>

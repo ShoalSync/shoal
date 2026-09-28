@@ -5,7 +5,7 @@ use tidefell_proto::DeviceId;
 
 use super::Engine;
 use crate::config::PeerAddr;
-use crate::views::PeerInfo;
+use crate::views::{PeerInfo, PeerState};
 use crate::Result;
 
 impl Engine {
@@ -24,6 +24,43 @@ impl Engine {
             .collect();
         peers.sort_by_key(|p| p.device);
         peers
+    }
+
+    /// Every device this engine syncs with, connected or not: the peers it keeps connected, and
+    /// any other that connected since the engine started, with how the connection goes
+    /// (ADR 0030).
+    pub fn peer_states(&self) -> Vec<PeerState> {
+        let mut devices: Vec<DeviceId> = self.inner.peers().iter().map(|p| p.device).collect();
+        let others = self.node.peers().into_iter().map(|p| p.device());
+        for device in others.chain(self.node.recorded_peers()) {
+            if !devices.contains(&device) {
+                devices.push(device);
+            }
+        }
+        devices.sort();
+        devices
+            .into_iter()
+            .map(|device| {
+                let status = self.node.peer_status(&device);
+                PeerState {
+                    device,
+                    name: status.name,
+                    connected: status.connected,
+                    path: status.path,
+                    rtt_ms: status
+                        .rtt
+                        .map(|rtt| u64::try_from(rtt.as_millis()).unwrap_or(u64::MAX)),
+                    connected_since_ms: status.connected_since_ms,
+                    last_seen_ms: status.last_seen_ms,
+                    last_error: status.last_error,
+                }
+            })
+            .collect()
+    }
+
+    /// File content sent and received since the engine started (ADR 0030).
+    pub fn transfer(&self) -> tidefell_net::Transfer {
+        self.node.transfer()
     }
 
     /// Peers this engine keeps connected: from the configuration and added at runtime.

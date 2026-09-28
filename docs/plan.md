@@ -272,7 +272,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   state is format 9 and meta snapshots format 2, upgraded on load. The Android screens follow
   with the `v0.12.0` pin.
 - Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
-  implemented in this repository; the Android side follows with the next Android pin.
+  implemented, and its Android side came with the `v0.12.0` pin. Step 3 (status and problems)
+  is implemented; the app's screens follow with the next Android pin.
 
 ### Phase 2 work breakdown
 
