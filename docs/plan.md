@@ -271,6 +271,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   crashes) and folder root markers (ADR 0037). sync/1 version vectors can have holes; engine
   state is format 9 and meta snapshots format 2, upgraded on load. The Android screens follow
   with the `v0.12.0` pin.
+- `v0.13.0` releases the rest of Phase 5f in this repository: status and problems, the doctor
+  and diagnostics bundles, activity history, Prometheus metrics and crash reports (steps 3 to
+  7). sync/1's `Hello` gains the sender's clock. The Android screens follow with the `v0.13.0`
+  pin, and `tidefell/infra`'s metrics scrape option with its pin.
 - Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
   implemented, and its Android side came with the `v0.12.0` pin. Step 3 (status and problems)
   is implemented; the app's screens follow with the next Android pin. Step 4 (the doctor
