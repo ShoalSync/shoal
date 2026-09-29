@@ -54,6 +54,23 @@ checks, and says what to do about anything that is not right:
 
 Administrators find the same under **Check** on the web peer's status page.
 
+## Metrics
+
+`tidefelld` can serve metrics for Prometheus. Turn them on in its configuration:
+
+```toml
+[metrics]
+listen = "127.0.0.1:9477"
+```
+
+and scrape `http://127.0.0.1:9477/metrics`. There is no password, so keep the address on
+loopback, or on a network only Prometheus can reach. The page has content sent and received,
+split between the local network and the rest; chunks served; fetch failures by reason; peers
+connected directly and through a relay; and, for each folder, labelled by the first 8
+characters of its ID, the files and bytes still to fetch, how long the last scan took, the
+recycle bin's size and the number of problems. iroh's own metrics, named `iroh_endpoint_...`,
+follow. ADR 0030 lists every name.
+
 ## Reporting a problem
 
 ```sh

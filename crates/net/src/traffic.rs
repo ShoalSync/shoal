@@ -1,4 +1,4 @@
-//! File content sent and received, for status displays (ADR 0030).
+//! File content sent and received, for status displays and metrics (ADR 0030).
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -55,6 +55,28 @@ pub(crate) struct Traffic {
     start: Instant,
     sent: Counter,
     received: Counter,
+    /// The same, to and from peers on the local network as bandwidth limits see them, and the
+    /// rest. Each only grows, as metrics counters must.
+    sent_local: AtomicU64,
+    sent_remote: AtomicU64,
+    received_local: AtomicU64,
+    received_remote: AtomicU64,
+    chunks_served: AtomicU64,
+}
+
+/// Counts since the node started, for metrics (ADR 0030).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TrafficCounts {
+    /// Bytes of file content sent to peers on the local network.
+    pub sent_local: u64,
+    /// Bytes of file content sent to other peers.
+    pub sent_remote: u64,
+    /// Bytes of file content received from peers on the local network.
+    pub received_local: u64,
+    /// Bytes of file content received from other peers.
+    pub received_remote: u64,
+    /// Chunks sent to peers.
+    pub chunks_served: u64,
 }
 
 /// Totals since start and current rates of file content moved, in bytes and bytes per second.
@@ -77,6 +99,11 @@ impl Traffic {
             start: Instant::now(),
             sent: Counter::new(),
             received: Counter::new(),
+            sent_local: AtomicU64::new(0),
+            sent_remote: AtomicU64::new(0),
+            received_local: AtomicU64::new(0),
+            received_remote: AtomicU64::new(0),
+            chunks_served: AtomicU64::new(0),
         }
     }
 
@@ -84,12 +111,38 @@ impl Traffic {
         self.start.elapsed().as_secs()
     }
 
-    pub(crate) fn sent(&self, bytes: usize) {
+    pub(crate) fn sent(&self, bytes: usize, local: bool) {
         self.sent.add(self.second(), bytes as u64);
+        let split = if local {
+            &self.sent_local
+        } else {
+            &self.sent_remote
+        };
+        split.fetch_add(bytes as u64, Ordering::Relaxed);
     }
 
-    pub(crate) fn received(&self, bytes: usize) {
+    pub(crate) fn received(&self, bytes: usize, local: bool) {
         self.received.add(self.second(), bytes as u64);
+        let split = if local {
+            &self.received_local
+        } else {
+            &self.received_remote
+        };
+        split.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn chunk_served(&self) {
+        self.chunks_served.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn counts(&self) -> TrafficCounts {
+        TrafficCounts {
+            sent_local: self.sent_local.load(Ordering::Relaxed),
+            sent_remote: self.sent_remote.load(Ordering::Relaxed),
+            received_local: self.received_local.load(Ordering::Relaxed),
+            received_remote: self.received_remote.load(Ordering::Relaxed),
+            chunks_served: self.chunks_served.load(Ordering::Relaxed),
+        }
     }
 
     pub(crate) fn transfer(&self) -> Transfer {
@@ -120,5 +173,25 @@ mod tests {
         // Nothing moved for a while.
         assert_eq!(counter.rate(40), 0);
         assert!(counter.recent.lock().unwrap().len() <= WINDOW as usize + 1);
+    }
+
+    #[test]
+    fn local_and_remote_counts() {
+        let traffic = Traffic::new();
+        traffic.sent(100, true);
+        traffic.sent(40, false);
+        traffic.received(7, false);
+        traffic.chunk_served();
+        assert_eq!(
+            traffic.counts(),
+            TrafficCounts {
+                sent_local: 100,
+                sent_remote: 40,
+                received_local: 0,
+                received_remote: 7,
+                chunks_served: 1,
+            }
+        );
+        assert_eq!(traffic.transfer().sent, 140);
     }
 }

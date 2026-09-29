@@ -423,3 +423,92 @@ async fn each_device_logs_what_it_applied() {
     engine_b.shutdown().await;
     engine_a.shutdown().await;
 }
+
+/// An OpenMetrics page's samples, by name and labels, after checking its structure: each
+/// family typed once, and a single `# EOF` at the end.
+fn samples(page: &str) -> std::collections::HashMap<String, f64> {
+    assert!(page.ends_with("\n# EOF\n"), "{page}");
+    assert_eq!(page.matches("# EOF").count(), 1);
+    let mut typed = std::collections::HashSet::new();
+    let mut samples = std::collections::HashMap::new();
+    for line in page.lines() {
+        if let Some(rest) = line.strip_prefix("# TYPE ") {
+            let name = rest.split(' ').next().unwrap();
+            assert!(typed.insert(name.to_owned()), "{name} is typed twice");
+        } else if !line.starts_with('#') {
+            let (name, value) = line.rsplit_once(' ').unwrap();
+            samples.insert(name.to_owned(), value.parse().unwrap());
+        }
+    }
+    samples
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn metrics_count_a_sync() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 61);
+    let b = Replica::new(dir.path(), "b", 62);
+    let content = vec![9u8; 300_000];
+    a.write("big.bin", &content);
+    let engine_a = a.start(&user, Vec::new()).await;
+    let engine_b = b.start(&user, Vec::new()).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("b has the file", || {
+        fs::read(b.root.join("big.bin")).is_ok_and(|d| d == content)
+    })
+    .await;
+
+    // Loopback is the local network.
+    let on_a = samples(&engine_a.metrics());
+    assert!(on_a[r#"tidefell_content_sent_bytes_total{network="local"}"#] >= 300_000.0);
+    assert_eq!(
+        on_a[r#"tidefell_content_sent_bytes_total{network="remote"}"#],
+        0.0
+    );
+    assert!(on_a["tidefell_chunks_served_total"] >= 1.0);
+    let on_b = samples(&engine_b.metrics());
+    assert!(on_b[r#"tidefell_content_received_bytes_total{network="local"}"#] >= 300_000.0);
+    assert_eq!(
+        on_b[r#"tidefell_content_received_bytes_total{network="remote"}"#],
+        0.0
+    );
+    assert_eq!(on_b[r#"tidefell_connections{path="direct"}"#], 1.0);
+    assert_eq!(on_b[r#"tidefell_connections{path="relay"}"#], 0.0);
+    for reason in ["request", "busy", "missing", "unavailable", "storage"] {
+        assert!(on_b.contains_key(&format!(
+            r#"tidefell_fetch_failures_total{{reason="{reason}"}}"#
+        )));
+    }
+    // Folders by the first 8 characters of their ID.
+    let folder = r#"{folder="2b2b2b2b"}"#;
+    assert_eq!(on_b[&format!("tidefell_folder_pending_files{folder}")], 0.0);
+    assert_eq!(on_b[&format!("tidefell_folder_problems{folder}")], 0.0);
+    assert!(on_b.contains_key(&format!("tidefell_folder_recycle_bin_bytes{folder}")));
+    assert!(on_a.contains_key(&format!("tidefell_folder_scan_duration_seconds{folder}")));
+    // iroh's own.
+    assert!(on_b.keys().any(|k| k.starts_with("iroh_")), "{on_b:?}");
+
+    // A folder added at runtime has its series, and they go with it.
+    let other = FolderId([0xcd; 32]);
+    engine_b
+        .add_folder(FolderConfig {
+            id: other,
+            path: dir.path().join("other"),
+            mode: ReplicaMode::Full,
+            members: vec![user.id()],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
+        })
+        .unwrap();
+    let with = samples(&engine_b.metrics());
+    assert!(with.contains_key(r#"tidefell_folder_problems{folder="cdcdcdcd"}"#));
+    engine_b.remove_folder(other).unwrap();
+    let page = engine_b.metrics();
+    assert!(!page.contains("cdcdcdcd"), "{page}");
+    samples(&page);
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

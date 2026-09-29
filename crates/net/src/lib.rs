@@ -23,7 +23,7 @@ pub use node::{
     RelayState,
 };
 pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
-pub use traffic::Transfer;
+pub use traffic::{TrafficCounts, Transfer};
 
 /// Network and protocol errors.
 #[derive(Debug, thiserror::Error)]

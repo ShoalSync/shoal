@@ -483,6 +483,22 @@ impl Node {
         self.limiter.traffic.transfer()
     }
 
+    /// File content moved since the node started, split by local network, and chunks served,
+    /// for metrics (ADR 0030).
+    pub fn traffic_counts(&self) -> crate::TrafficCounts {
+        self.limiter.traffic.counts()
+    }
+
+    /// iroh's own metrics in the OpenMetrics text format, named `iroh_endpoint_...`, without
+    /// the closing `# EOF` (ADR 0030).
+    pub fn encode_iroh_metrics(&self, out: &mut String) -> std::fmt::Result {
+        let mut registry = iroh_metrics::Registry::default();
+        registry
+            .sub_registry_with_prefix("iroh")
+            .register_all_prefixed(self.endpoint.metrics());
+        registry.encode_openmetrics_to_writer(out)
+    }
+
     /// Peers with an active sync session.
     pub fn peers(&self) -> Vec<PeerHandle> {
         self.peers.lock().unwrap().values().cloned().collect()

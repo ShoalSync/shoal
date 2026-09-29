@@ -13,6 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::FromRef;
+use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
 use tidefell_engine::Engine;
@@ -161,4 +162,44 @@ pub async fn serve_unix_with(
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     tracing::info!(socket = %path.display(), "control API listening");
     axum::serve(listener, router_with(engine, options)).await
+}
+
+/// The content type of [`serve_metrics`]'s page.
+pub const METRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
+
+/// A router serving the engine's metrics at `GET /metrics` for Prometheus (ADR 0030). It has no
+/// authentication: bind it to loopback, or to a network only the scraper can reach.
+pub fn metrics_router(engine: Arc<Engine>) -> Router {
+    Router::new()
+        .route(
+            "/metrics",
+            get(
+                |axum::extract::State(engine): axum::extract::State<Arc<Engine>>| async move {
+                    // Building the page reads every folder's state.
+                    match tokio::task::spawn_blocking(move || engine.metrics()).await {
+                        Ok(page) => (
+                            [(axum::http::header::CONTENT_TYPE, METRICS_CONTENT_TYPE)],
+                            page,
+                        )
+                            .into_response(),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "building the metrics failed");
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                    }
+                },
+            ),
+        )
+        .with_state(engine)
+}
+
+/// Serves [`metrics_router`] on `listener` until it fails.
+pub async fn serve_metrics(
+    listener: tokio::net::TcpListener,
+    engine: Arc<Engine>,
+) -> std::io::Result<()> {
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(%addr, "metrics listening");
+    }
+    axum::serve(listener, metrics_router(engine)).await
 }

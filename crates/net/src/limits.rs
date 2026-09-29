@@ -155,14 +155,14 @@ impl RateLimiter {
             None => Ok(Duration::ZERO),
         };
         if wait.is_ok() {
-            self.traffic.sent(bytes);
+            self.traffic.sent(bytes, is_local(conn));
         }
         wait
     }
 
     /// After receiving a chunk of `bytes` on `conn`: how long to wait before reading more.
     pub(crate) fn download(&self, conn: &Connection, bytes: usize) -> Duration {
-        self.traffic.received(bytes);
+        self.traffic.received(bytes, is_local(conn));
         match self.limits().download.filter(|_| self.applies(conn)) {
             Some(rate) => self.download.reserve(bytes, rate),
             None => Duration::ZERO,

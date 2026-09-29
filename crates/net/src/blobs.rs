@@ -107,7 +107,11 @@ async fn serve_stream(
                     },
                     None => BlobsMessage::Missing { hash },
                 };
+                let served = matches!(reply, BlobsMessage::Chunk { .. });
                 frame_io::write(&mut send, &reply).await?;
+                if served {
+                    limiter.traffic.chunk_served();
+                }
             }
         }
         BlobsMessage::AvailabilityRequest { folder, content } => {

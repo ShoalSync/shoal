@@ -4100,6 +4100,7 @@ dependencies = [
  "blake3",
  "iroh",
  "iroh-mdns-address-lookup",
+ "iroh-metrics",
  "postcard",
  "serde",
  "thiserror 2.0.20",

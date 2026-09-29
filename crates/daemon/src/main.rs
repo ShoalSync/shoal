@@ -469,6 +469,16 @@ async fn run(path: &Path) -> Result<(), String> {
         }
         None => tokio::spawn(std::future::pending()),
     };
+    let metrics = match &config.metrics {
+        Some(metrics) => {
+            let listener = tokio::net::TcpListener::bind(metrics.listen)
+                .await
+                .map_err(|e| format!("metrics cannot bind {}: {e}", metrics.listen))?;
+            let engine = engine.clone();
+            tokio::spawn(async move { tidefell_api::serve_metrics(listener, engine).await })
+        }
+        None => tokio::spawn(std::future::pending()),
+    };
     let describe =
         |what: &str, result: Result<std::io::Result<()>, tokio::task::JoinError>| match result {
             Ok(Ok(())) => format!("{what} stopped"),
@@ -482,6 +492,7 @@ async fn run(path: &Path) -> Result<(), String> {
         }
         result = api => Some(describe("control API", result)),
         result = web => Some(describe("web peer", result)),
+        result = metrics => Some(describe("metrics", result)),
         // A panic in an engine task: exit so the service manager restarts from saved state.
         Some(message) = engine.failed() => Some(message),
     };

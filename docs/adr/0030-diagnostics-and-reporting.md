@@ -232,6 +232,33 @@ with advice for:
   problems per folder, and iroh's own metrics. Folders are labelled by the first 8 characters of
   their ID.
 - `tidefell/infra` gains an option to scrape it.
+- Step 6 decided:
+  - **Format.** One OpenMetrics page (`application/openmetrics-text; version=1.0.0`) at
+    `GET /metrics`, ending with `# EOF`. It has no authentication; `listen` should be loopback
+    or a network only the scraper reaches, and the NixOS module's `openFirewall` does not open
+    it. A bind failure stops `tidefelld` at start, like the web peer's. Only `tidefelld` serves
+    it; the app and the control API do not.
+  - **Counters,** since the daemon started: `tidefell_content_sent_bytes_total` and
+    `tidefell_content_received_bytes_total` with `network="local"` or `"remote"`, local as
+    bandwidth limits see it (a direct path to a private, link-local or loopback address);
+    `tidefell_chunks_served_total`, counted once a chunk is written to the stream; and
+    `tidefell_fetch_failures_total` with `reason`: `request` (a request to a peer failed),
+    `busy` (a peer at its upload limit asked for a retry later: back-pressure rather than an
+    error, counted so a limit that is too low shows), `missing` (a peer that was not busy did
+    not send a chunk it was asked for), `unavailable` (no connected peer had the content) and
+    `storage` (a chunk could not be stored). A paused folder's cancelled fetches are not
+    failures.
+  - **Gauges,** read when the page is built: `tidefell_connections` with `path="direct"` or
+    `"relay"`, both always present; and per folder, labelled `folder` with the first 8
+    characters of its ID, `tidefell_folder_pending_files`, `tidefell_folder_pending_bytes`,
+    `tidefell_folder_scan_duration_seconds` (the last scan, once there is one),
+    `tidefell_folder_recycle_bin_items`, `tidefell_folder_recycle_bin_bytes` and
+    `tidefell_folder_problems`. A removed folder's series go with it. Labels never hold paths,
+    names or messages.
+  - **iroh's metrics** follow, as iroh names them under `iroh_endpoint_`.
+  - The page reads every folder's state, so it is built off the async runtime.
+  - `tidefell/infra`'s scrape option needs a `tidefelld` that knows `[metrics]`, since the
+    configuration rejects unknown keys, so it comes with the infra pin after the next release.
 
 ### Reporting a crash
 

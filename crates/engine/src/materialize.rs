@@ -1,5 +1,6 @@
 //! Writing remote changes to disk.
 
+use crate::engine::metrics::FetchFailure;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -33,6 +34,12 @@ struct PeerSource {
 }
 
 impl PeerSource {
+    /// Counts a failed request, and returns its error.
+    fn failed(&self, reason: FetchFailure, error: impl std::fmt::Display) -> String {
+        self.inner.counters.fetch_failed(reason);
+        error.to_string()
+    }
+
     fn check_paused(&self) -> std::result::Result<(), String> {
         match self.inner.is_paused(&self.folder) {
             true => Err(format!("syncing of folder {} is paused", self.folder)),
@@ -58,7 +65,7 @@ impl ChunkSource for PeerSource {
             .node
             .availability(endpoint(peer)?, self.folder, manifest.content)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| self.failed(FetchFailure::Request, e))?;
         if count as usize != manifest.chunks.len() {
             return Ok(Vec::new());
         }
@@ -81,13 +88,22 @@ impl ChunkSource for PeerSource {
             .node
             .fetch_chunks(endpoint(peer)?, self.folder, chunks)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| self.failed(FetchFailure::Request, e))?;
         let mut fetched = tidefell_fetch::Fetched::default();
         for result in results {
             match result {
                 ChunkResult::Found(hash, data) => fetched.chunks.push((hash, data)),
                 ChunkResult::Missing(_) => {}
-                ChunkResult::Busy(wait) => fetched.busy_for = Some(wait),
+                ChunkResult::Busy(wait) => {
+                    self.inner.counters.fetch_failed(FetchFailure::Busy);
+                    fetched.busy_for = Some(wait);
+                }
+            }
+        }
+        // Chunks not sent count as missing, as the fetch treats them, unless the peer was busy.
+        if fetched.busy_for.is_none() {
+            for _ in fetched.chunks.len()..chunks.len() {
+                self.inner.counters.fetch_failed(FetchFailure::Missing);
             }
         }
         Ok(fetched)
@@ -579,6 +595,7 @@ async fn fetch_content(
         .collect();
     let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
         if !peers.is_empty() {
+            inner.counters.fetch_failed(FetchFailure::Unavailable);
             *write.unavailable.lock().unwrap() =
                 Some("no connected device has this version".to_owned());
         }
@@ -610,7 +627,13 @@ async fn fetch_content(
         );
         // Pausing the folder stops the download: dropping it cancels the requests in flight.
         let fetched = tokio::select! {
-            fetched = download => fetched.map_err(|e| e.to_string()),
+            fetched = download => fetched.map_err(|e| {
+                inner.counters.fetch_failed(match e {
+                    tidefell_fetch::FetchError::Unobtainable(_) => FetchFailure::Unavailable,
+                    tidefell_fetch::FetchError::Sink(_) => FetchFailure::Storage,
+                });
+                e.to_string()
+            }),
             () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
         };
         if let Err(e) = fetched {

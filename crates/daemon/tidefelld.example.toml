@@ -11,6 +11,11 @@ watch = true
 # download_kib_per_sec = 8192
 # limit_local = false            # traffic to devices on the local network is not limited
 
+# Prometheus metrics at http://<listen>/metrics, off unless set. No authentication: keep it on
+# loopback or a network only the scraper can reach.
+# [metrics]
+# listen = "127.0.0.1:9477"
+
 [log]
 # "info", "debug", or per module such as "info,tidefell_net=debug". RUST_LOG overrides it.
 level = "info"

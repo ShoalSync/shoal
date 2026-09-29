@@ -276,7 +276,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   is implemented; the app's screens follow with the next Android pin. Step 4 (the doctor
   and the diagnostics bundle) is implemented; the app's screens follow with the next Android
   pin. Step 5 (activity history) is implemented; the app's screen follows with the next
-  Android pin.
+  Android pin. Step 6 (metrics) is implemented in `tidefelld`; the scrape option in
+  `tidefell/infra` comes with its pin after the next release.
 
 ### Phase 2 work breakdown
 

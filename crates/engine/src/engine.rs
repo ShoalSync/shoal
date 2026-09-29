@@ -9,6 +9,7 @@ mod doctor;
 mod files;
 mod folders;
 mod history;
+pub(crate) mod metrics;
 mod peers;
 mod recycle;
 
@@ -141,6 +142,8 @@ pub(crate) struct Inner {
     paused: RwLock<(bool, BTreeSet<FolderId>)>,
     /// The configuration the engine was started with, for diagnostics bundles (ADR 0030).
     diagnostics_config: Mutex<Option<serde_json::Value>>,
+    /// Counted as they happen, for metrics (ADR 0030).
+    pub(crate) counters: crate::engine::metrics::Counters,
 }
 
 impl Inner {
@@ -446,6 +449,7 @@ impl Engine {
             data_dir: config.data_dir.clone(),
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
+            counters: crate::engine::metrics::Counters::default(),
             folders: RwLock::new(folders),
             configured_peers: config.peers.clone(),
             runtime_peers: RwLock::new(runtime.peers.into_iter().map(Into::into).collect()),

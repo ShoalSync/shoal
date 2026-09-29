@@ -48,6 +48,7 @@ struct Node {
     dir: PathBuf,
     port: u16,
     web_port: u16,
+    metrics_port: u16,
     device: String,
 }
 
@@ -81,12 +82,16 @@ scan_interval_secs = 1
 [web]
 bind = "127.0.0.1:{web_port}"
 secure_cookies = false
+
+[metrics]
+listen = "127.0.0.1:{metrics_port}"
 "#,
             data = self.dir.join("data").display(),
             port = self.port,
             peer_device = peer.device,
             peer_port = peer.port,
             web_port = self.web_port,
+            metrics_port = self.metrics_port,
             folder = self.folder().display(),
         );
         let path = self.dir.join("tidefelld.toml");
@@ -118,15 +123,18 @@ fn init(root: &Path, name: &str, user_key: &Path) -> Node {
         "--user-key",
         user_key.to_str().unwrap(),
     ]);
-    let web_port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
+    let tcp_port = || {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    };
     Node {
         dir,
         port: free_port(),
-        web_port,
+        web_port: tcp_port(),
+        metrics_port: tcp_port(),
         device: field(&out, "device"),
     }
 }
@@ -147,6 +155,20 @@ fn wait_for(what: &str, nodes: &[&Node], mut check: impl FnMut() -> bool) {
         );
     }
     panic!("timed out waiting for {what}");
+}
+
+/// The response to a plain HTTP GET, head and body.
+fn http_get(port: u16, path: &str) -> String {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response
 }
 
 #[test]
@@ -176,6 +198,22 @@ fn two_daemons_sync_a_folder() {
         log.lines().any(|l| l.contains("\"tidefelld running\"")),
         "{log}"
     );
+
+    // Prometheus metrics count the sync (ADR 0030).
+    let response = http_get(b.metrics_port, "/metrics");
+    let (head, page) = response.split_once("\r\n\r\n").unwrap();
+    assert!(head.starts_with("HTTP/1.1 200"), "{head}");
+    assert!(
+        head.to_ascii_lowercase()
+            .contains("content-type: application/openmetrics-text; version=1.0.0"),
+        "{head}"
+    );
+    assert!(page.ends_with("# EOF\n"), "{page}");
+    let received = page
+        .lines()
+        .find_map(|l| l.strip_prefix(r#"tidefell_content_received_bytes_total{network="local"} "#))
+        .unwrap();
+    assert!(received.parse::<u64>().unwrap() >= 12, "{page}");
 
     fs::create_dir_all(b.folder().join("sub")).unwrap();
     fs::write(b.folder().join("sub/reply.txt"), b"reply from b").unwrap();
@@ -287,6 +325,7 @@ fn a_new_daemon_pairs_then_syncs() {
         dir: a_dir.clone(),
         port: free_port(),
         web_port: 0,
+        metrics_port: 0,
         device: field(&out, "device"),
     };
     let user = field(
@@ -385,6 +424,7 @@ scan_interval_secs = 1
         dir: b_dir,
         port: free_port(),
         web_port: 0,
+        metrics_port: 0,
         device: b_device,
     };
     let config = format!(

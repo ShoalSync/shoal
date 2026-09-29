@@ -40,6 +40,18 @@ pub struct Config {
     /// Upload and download limits for file content (ADR 0029).
     #[serde(default)]
     pub limits: Limits,
+    /// Serve Prometheus metrics (ADR 0030). Off unless set.
+    #[serde(default)]
+    pub metrics: Option<Metrics>,
+}
+
+/// Prometheus metrics (ADR 0030).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Metrics {
+    /// TCP address to serve `/metrics` on, e.g. "127.0.0.1:9477". It has no authentication:
+    /// keep it on loopback or a network only the scraper can reach.
+    pub listen: SocketAddr,
 }
 
 /// Upload and download limits. The lowest limit is 64 KiB/s; lower values are raised to it.
@@ -430,6 +442,25 @@ mod tests {
         assert!(parse(&bad).is_err(), "unknown log settings are rejected");
         let default = parse("data_dir = \"/d\"").unwrap();
         assert_eq!(default.log.level, "info");
+    }
+
+    #[test]
+    fn reads_metrics() {
+        assert!(parse(EXAMPLE).unwrap().metrics.is_none(), "off by default");
+        let text = EXAMPLE.replace(
+            "# [metrics]\n# listen = \"127.0.0.1:9477\"",
+            "[metrics]\nlisten = \"127.0.0.1:9477\"",
+        );
+        let metrics = parse(&text).unwrap().metrics.unwrap();
+        assert_eq!(metrics.listen, "127.0.0.1:9477".parse().unwrap());
+        let bad = text.replace(
+            "listen = \"127.0.0.1:9477\"",
+            "listen = \"127.0.0.1:9477\"\npath = \"/m\"",
+        );
+        assert!(
+            parse(&bad).is_err(),
+            "unknown metrics settings are rejected"
+        );
     }
 
     #[test]
