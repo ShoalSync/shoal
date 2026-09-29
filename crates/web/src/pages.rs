@@ -92,9 +92,24 @@ pub(crate) struct PeerRow {
 }
 
 pub(crate) struct CrashNotice {
+    /// Names it for its report page.
+    pub(crate) id: String,
     pub(crate) time: String,
     pub(crate) message: String,
     pub(crate) file: String,
+}
+
+/// A crash written up as a new issue, to review and file (ADR 0030).
+#[derive(Template)]
+#[template(path = "crash_report.html")]
+pub(crate) struct CrashReport {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) title: String,
+    pub(crate) body: String,
+    /// Opens it pre-filled on the tracker, if one is configured.
+    pub(crate) url: Option<String>,
 }
 
 /// This server's status, for administrators (ADR 0030).

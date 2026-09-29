@@ -3,9 +3,10 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Activity, ChangeKind, Check, CheckLevel, Crash, Direction, Event, File, Folder, FolderState,
-    KnownPeer, Limits, LocalDeletes, LogSettings, Mode, Operation, PathKind, PathProblem, Peer,
-    PeerState, Problem, ProblemKind, Recycled, Status, SyncOptions, Version, VersionKind,
+    Activity, ChangeKind, Check, CheckLevel, Crash, CrashReport, Direction, Event, File, Folder,
+    FolderState, KnownPeer, Limits, LocalDeletes, LogSettings, Mode, Operation, PathKind,
+    PathProblem, Peer, PeerState, Problem, ProblemKind, Recycled, Status, SyncOptions, Version,
+    VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -66,7 +67,8 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         let _ = write!(
             out,
             "\nTidefell stopped unexpectedly at {}: {}\n  crash file: {}\n  \
-             attach it to a report, then run `tidefell crashes --dismiss`",
+             `tidefell crashes --report` writes it up for the project's tracker; \
+             `tidefell crashes --dismiss` then stops this notice",
             time(c.time_ms),
             c.message,
             c.file
@@ -600,6 +602,19 @@ pub(crate) fn crashes(crashes: &[Crash]) -> String {
         .join("\n")
 }
 
+/// A crash report: the issue's title and body, then where to file it.
+pub(crate) fn crash_report(r: &CrashReport) -> String {
+    let file = match &r.url {
+        Some(url) => format!(
+            "Open this link to file it (its body may be cut to fit; paste the rest from above):\n{url}"
+        ),
+        None => "Copy the title and body above into a new issue on the project's tracker. Nothing \
+                 has been sent."
+            .to_owned(),
+    };
+    format!("Title: {}\n\n{}\n{file}", r.title, r.body)
+}
+
 pub(crate) fn limits(l: &Limits) -> String {
     let rate = |r: Option<u64>| r.map_or("no limit".to_owned(), |k| format!("{k} KiB/s"));
     format!(
@@ -701,6 +716,20 @@ mod tests {
             "1970-01-01 00:00  renamed   a.txt -> b.txt  by phone\n\
              1970-01-01 00:00  added     b.txt  by this device"
         );
+    }
+
+    #[test]
+    fn crash_reports() {
+        let mut report = CrashReport {
+            title: "Crash: boom".into(),
+            body: "Tidefell stopped unexpectedly: boom\n".into(),
+            url: None,
+        };
+        let text = crash_report(&report);
+        assert!(text.starts_with("Title: Crash: boom\n\nTidefell stopped unexpectedly: boom\n"));
+        assert!(text.contains("Nothing has been sent"));
+        report.url = Some("https://example.org/issues/new?title=x".into());
+        assert!(crash_report(&report).ends_with("\nhttps://example.org/issues/new?title=x"));
     }
 
     #[test]

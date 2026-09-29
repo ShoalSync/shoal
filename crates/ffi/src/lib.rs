@@ -242,6 +242,8 @@ pub struct Limits {
 /// A crash recorded in `<data_dir>/crashes/`.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Crash {
+    /// Names it for [`crash_report`]: its file's name.
+    pub id: String,
     /// The crash file.
     pub file: String,
     /// When, in milliseconds since the Unix epoch.
@@ -252,12 +254,47 @@ pub struct Crash {
     pub seen: bool,
 }
 
+/// A crash written up as a new issue for the project's tracker (ADR 0030). Nothing is sent:
+/// the user reviews it and files it.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct CrashReport {
+    /// The issue's title.
+    pub title: String,
+    /// Its body, in Markdown, with home directories replaced by `~`.
+    pub body: String,
+    /// A link that opens a new issue pre-filled with them, if a tracker is known; its body may be
+    /// cut to fit a link. Without one, the app offers the title and body to copy.
+    pub url: Option<String>,
+}
+
+/// The crash `id` in `data_dir` written up for `report_url`, the tracker's issues page from the
+/// app's settings, or the default tracker if `None` (ADR 0030).
+#[uniffi::export]
+pub fn crash_report(
+    data_dir: String,
+    id: String,
+    report_url: Option<String>,
+) -> Result<CrashReport> {
+    if let Some(url) = &report_url {
+        diagnostics::check_report_url(url).map_err(invalid)?;
+    }
+    let url = report_url.or(diagnostics::DEFAULT_REPORT_URL.map(str::to_owned));
+    let report = diagnostics::crash_report(&PathBuf::from(data_dir), &id, url.as_deref())
+        .ok_or(TidefellError::NotFound { detail: id })?;
+    Ok(CrashReport {
+        title: report.title,
+        body: report.body,
+        url: report.url,
+    })
+}
+
 /// Crashes recorded for the device in `data_dir`, oldest first.
 #[uniffi::export]
 pub fn crashes(data_dir: String) -> Vec<Crash> {
     diagnostics::crashes(&PathBuf::from(data_dir))
         .into_iter()
         .map(|c| Crash {
+            id: c.id,
             file: c.file.display().to_string(),
             time_ms: c.time_ms,
             message: c.message,

@@ -8,7 +8,8 @@
 {% if let Some(c) = crash %}
 <div class="notice">
   <p>Tidefell stopped unexpectedly at {{ c.time }}: {{ c.message }}</p>
-  <p class="muted">The crash file is <span class="mono">{{ c.file }}</span> on this server. Attach it to a report.</p>
+  <p class="muted">The crash file is <span class="mono">{{ c.file }}</span> on this server.</p>
+  <p><a href="/status/crashes/report?id={{ c.id }}">Report this crash</a></p>
   <form method="post" action="/status/crashes/dismiss" class="inline">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <button type="submit">Dismiss</button>

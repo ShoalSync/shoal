@@ -248,6 +248,8 @@ const CRASHES: usize = 10;
 /// A crash recorded in `<data_dir>/crashes/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Crash {
+    /// Its file's name, which names it in [`crash_report`].
+    pub id: String,
     /// The crash file.
     pub file: PathBuf,
     /// When, in milliseconds since the Unix epoch.
@@ -339,6 +341,7 @@ pub fn crashes(data_dir: &Path) -> Vec<Crash> {
             };
             let time_ms = field("time_ms: ")?.parse().ok()?;
             Some(Crash {
+                id: name,
                 file,
                 time_ms,
                 message: field("message: ").unwrap_or_default(),
@@ -346,6 +349,201 @@ pub fn crashes(data_dir: &Path) -> Vec<Crash> {
             })
         })
         .collect()
+}
+
+/// Where crash reports go unless the configuration says otherwise: the project's issue tracker,
+/// once the repositories are public (ADR 0030). Until then the report is shown to copy.
+pub const DEFAULT_REPORT_URL: Option<&str> = None;
+
+/// The longest pre-filled issue link made: longer ones are turned away by browsers and trackers.
+const REPORT_LINK_MAX: usize = 8000;
+
+/// A crash written up as a new issue for the project's tracker (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CrashReport {
+    /// The issue's title.
+    pub title: String,
+    /// Its body, in Markdown, with home directories replaced by `~`.
+    pub body: String,
+    /// A link that opens a new issue pre-filled with them, if a tracker is configured. Its
+    /// body is cut to fit a link when it has to be; `body` is always whole.
+    pub url: Option<String>,
+}
+
+/// Checks a tracker's URL: its issues page over HTTP or HTTPS, without a query, such as
+/// `https://github.com/Tidefell/tidefell/issues`.
+pub fn check_report_url(url: &str) -> Result<(), String> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| format!("{url:?} is not an http or https URL"))?;
+    if rest.is_empty() || rest.starts_with('/') {
+        return Err(format!("{url:?} has no host"));
+    }
+    if url.contains(['?', '#', ' ']) {
+        return Err(format!("{url:?} must be the issues page, without a query"));
+    }
+    Ok(())
+}
+
+/// The crash `id` in `<data_dir>/crashes/`, written up for `report_url`, the tracker's issues
+/// page: GitHub and Forgejo open `<report_url>/new?title=...&body=...` as a new issue. `None`
+/// if there is no such crash.
+pub fn crash_report(data_dir: &Path, id: &str, report_url: Option<&str>) -> Option<CrashReport> {
+    let well_formed = id.starts_with("crash-")
+        && id.ends_with(".txt")
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+        && !id.contains("..");
+    if !well_formed {
+        return None;
+    }
+    let text = fs::read_to_string(data_dir.join("crashes").join(id)).ok()?;
+    let text = strip_home(&text, std::env::var_os("HOME").as_deref().map(Path::new));
+    let message = text
+        .lines()
+        .find_map(|l| l.strip_prefix("message: "))
+        .unwrap_or("Tidefell stopped unexpectedly")
+        .trim();
+    let mut title = format!("Crash: {message}");
+    if title.chars().count() > 100 {
+        title = title.chars().take(99).collect::<String>() + "…";
+    }
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    // A fence longer than any run of backticks in the text.
+    let longest = lines
+        .iter()
+        .flat_map(|l| l.split(|c| c != '`'))
+        .map(str::len)
+        .max()
+        .unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    let head = format!("Tidefell stopped unexpectedly: {message}\n\n{fence}\n");
+    let tail = |cut: bool| {
+        let note = if cut {
+            "(cut to fit a link: paste the rest of the crash file here)\n"
+        } else {
+            ""
+        };
+        format!(
+            "{note}{fence}\n\nA diagnostics bundle helps: make one with `tidefell diagnostics`, \
+             the web peer's status page or the app, look inside, and attach it here.\n"
+        )
+    };
+    let body = format!("{head}{}\n{}", lines.join("\n"), tail(false));
+    let url = report_url.map(|base| {
+        let start = format!(
+            "{}/new?title={}&body=",
+            base.trim_end_matches('/'),
+            percent_encode(&title)
+        );
+        if start.len() + encoded_len(&body) <= REPORT_LINK_MAX {
+            return start + &percent_encode(&body);
+        }
+        // The most lines that fit, each followed by an encoded newline, in one pass.
+        let fixed = start.len() + encoded_len(&head) + encoded_len(&tail(true));
+        let mut total = fixed + 3;
+        let mut shown = 0;
+        for line in &lines {
+            let with = total + encoded_len(line) + if shown == 0 { 0 } else { 3 };
+            if with > REPORT_LINK_MAX {
+                break;
+            }
+            total = with;
+            shown += 1;
+        }
+        if total > REPORT_LINK_MAX {
+            // Even the message is too long for a link.
+            return start
+                + &percent_encode("The crash report is too long for a link: paste it here.\n");
+        }
+        let cut = format!("{head}{}\n{}", lines[..shown].join("\n"), tail(true));
+        start + &percent_encode(&cut)
+    });
+    Some(CrashReport { title, body, url })
+}
+
+/// `text` with home directories replaced by `~`: `home`, and any `/home/<name>`,
+/// `/Users/<name>`, `/root` or `C:\Users\<name>`, which backtraces can name from the machine
+/// that built Tidefell.
+fn strip_home(text: &str, home: Option<&Path>) -> String {
+    let mut text = text.to_owned();
+    if let Some(home) = home.and_then(Path::to_str).filter(|h| h.len() > 1) {
+        text = replace_at_boundary(&text, home.trim_end_matches('/'), None);
+    }
+    for (prefix, separator) in [("/home/", '/'), ("/Users/", '/'), ("C:\\Users\\", '\\')] {
+        text = replace_at_boundary(&text, prefix, Some(separator));
+    }
+    replace_at_boundary(&text, "/root", None)
+}
+
+/// Replaces `prefix` with `~` where it starts a path and is followed by a separator or the end
+/// of the path. With `name`, a name up to that separator follows the prefix and goes too.
+fn replace_at_boundary(text: &str, prefix: &str, name: Option<char>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(prefix) {
+        let starts_path = rest[..at]
+            .chars()
+            .last()
+            .or_else(|| out.chars().last())
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_' && c != '.' && c != '-');
+        let after = &rest[at + prefix.len()..];
+        let (skip, ok) = match name {
+            Some(separator) => match after.find(separator) {
+                Some(end)
+                    if end > 0
+                        && !after[..end].contains(|c: char| c.is_whitespace() || c == '/') =>
+                {
+                    (end, true)
+                }
+                _ => (0, false),
+            },
+            None => (
+                0,
+                after
+                    .chars()
+                    .next()
+                    .is_none_or(|c| c == '/' || c == '\\' || c.is_whitespace() || c == ':'),
+            ),
+        };
+        if starts_path && ok {
+            out.push_str(&rest[..at]);
+            out.push('~');
+            rest = &after[skip..];
+        } else {
+            out.push_str(&rest[..at + prefix.len()]);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn unreserved(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b"-._~".contains(&b)
+}
+
+/// Percent-encodes everything but unreserved characters, for a URL's query.
+fn percent_encode(s: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(encoded_len(s));
+    for b in s.bytes() {
+        if unreserved(b) {
+            out.push(b as char);
+        } else {
+            out.push('%');
+            out.push(HEX[usize::from(b >> 4)] as char);
+            out.push(HEX[usize::from(b & 15)] as char);
+        }
+    }
+    out
+}
+
+/// How long `s` is once percent-encoded.
+fn encoded_len(s: &str) -> usize {
+    s.bytes().map(|b| if unreserved(b) { 1 } else { 3 }).sum()
 }
 
 /// Marks every crash recorded so far as seen.
@@ -504,5 +702,125 @@ mod tests {
             .collect();
         assert!(messages[0].contains("message: crash 2"));
         assert!(messages[9].contains("message: crash 11"));
+    }
+
+    #[test]
+    fn home_directories_are_stripped() {
+        let home = Some(Path::new("/srv/me"));
+        assert_eq!(
+            strip_home(
+                "at /srv/me/x.rs and /home/ci/.cargo/r.rs, /Users/ann/a, /root/b, \
+                 C:\\Users\\bo\\c.rs",
+                home
+            ),
+            "at ~/x.rs and ~/.cargo/r.rs, ~/a, ~/b, ~\\c.rs"
+        );
+        // Only whole path components.
+        let kept = "/homework/a /srv/meadow x/home/y/z /rooted";
+        assert_eq!(strip_home(kept, home), kept);
+    }
+
+    #[test]
+    fn crashes_are_written_up() {
+        let dir = tempfile::tempdir().unwrap();
+        let crashes = dir.path().join("crashes");
+        write_crash(
+            &crashes,
+            "rust",
+            "index out of bounds: `x` ``` + ü",
+            "thread: main\nlocation: /home/ci/src/lib.rs:3\n\nbacktrace:\n  0: f\n",
+        )
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        write_crash(
+            &crashes,
+            "app",
+            "NullPointerException",
+            "java.lang.Npe\n\tat A",
+        )
+        .unwrap();
+        let found = super::crashes(dir.path());
+        let report = crash_report(dir.path(), &found[0].id, None).unwrap();
+        assert!(report.title.starts_with("Crash: index out of bounds"));
+        assert!(
+            report.body.contains("location: ~/src/lib.rs:3"),
+            "{}",
+            report.body
+        );
+        assert!(
+            report.body.contains("\n````\n"),
+            "a fence longer than the text's"
+        );
+        assert!(report.body.contains("tidefell diagnostics"));
+        assert_eq!(report.url, None);
+        // The app's own crashes, with free-form details.
+        let app = crash_report(dir.path(), &found[1].id, None).unwrap();
+        assert!(app.body.contains("\tat A"));
+
+        // A link that opens the issue, with every reserved character escaped.
+        let tracker = "https://example.org/t/issues/";
+        let report = crash_report(dir.path(), &found[0].id, Some(tracker)).unwrap();
+        let url = report.url.unwrap();
+        assert!(url.starts_with("https://example.org/t/issues/new?title=Crash%3A%20index"));
+        assert!(url.contains("%C3%BC") && !url.contains(' ') && !url.contains('+'));
+
+        // Anything but a crash file is not found.
+        for id in [
+            "../seen",
+            "crash-1-x.txt/../../x",
+            "seen",
+            "crash-9-none.txt",
+        ] {
+            assert_eq!(crash_report(dir.path(), id, None), None, "{id}");
+        }
+    }
+
+    #[test]
+    fn long_reports_are_cut_to_fit_a_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let backtrace: String = (0..2000).map(|i| format!("  {i}: frame ü\n")).collect();
+        let path = write_crash(&dir.path().join("crashes"), "rust", "boom", &backtrace).unwrap();
+        let id = path.file_name().unwrap().to_str().unwrap();
+        let report = crash_report(dir.path(), id, Some("https://example.org/issues")).unwrap();
+        let url = report.url.unwrap();
+        assert!(url.len() <= REPORT_LINK_MAX, "{}", url.len());
+        assert!(url.contains("cut%20to%20fit%20a%20link"));
+        assert!(
+            report.body.contains("1999: frame ü"),
+            "the body stays whole"
+        );
+        assert!(url.contains("1%3A%20frame"), "it keeps what fits");
+
+        // A message too long for any link.
+        let message = "x".repeat(9000) + " ü";
+        let path = write_crash(&dir.path().join("crashes"), "rust", &message, "").unwrap();
+        let id = path.file_name().unwrap().to_str().unwrap();
+        let report = crash_report(dir.path(), id, Some("https://example.org/issues")).unwrap();
+        let url = report.url.unwrap();
+        assert!(url.len() <= REPORT_LINK_MAX, "{}", url.len());
+        assert!(url.contains("too%20long%20for%20a%20link"));
+        assert!(report.body.contains(&message));
+    }
+
+    #[test]
+    fn encoding() {
+        let text = "a b+c/ü~";
+        assert_eq!(percent_encode(text), "a%20b%2Bc%2F%C3%BC~");
+        assert_eq!(encoded_len(text), percent_encode(text).len());
+    }
+
+    #[test]
+    fn report_urls_are_checked() {
+        assert!(check_report_url("https://github.com/Tidefell/tidefell/issues").is_ok());
+        assert!(check_report_url("http://git.local/o/r/issues").is_ok());
+        for bad in [
+            "ftp://x/issues",
+            "https://",
+            "https:///x",
+            "https://x/issues?y=1",
+            "x",
+        ] {
+            assert!(check_report_url(bad).is_err(), "{bad}");
+        }
     }
 }

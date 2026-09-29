@@ -269,6 +269,29 @@ with advice for:
 - The tracker URL is `report_url` in the configuration and the app's settings. It defaults to
   the public tracker once the repositories are public; until then the report is shown for the
   user to copy.
+- Step 7 decided (the app's screen comes with the next Android pin):
+  - **`report_url`** is the tracker's issues page, over HTTP or HTTPS without a query, checked
+    when the configuration is. A report links to `<report_url>/new?title=...&body=...`, which
+    GitHub and Forgejo open as a new issue. The default is one constant, empty until the
+    repositories are public. `tidefelld` reads it from the top of its configuration; the app
+    passes its setting to the bindings.
+  - **The report** is built from the crash file, whatever wrote it: the panic hook, with
+    later panics appended, or the app's own. Its title is "Crash: " and the message, cut at
+    100 characters; its body the message, the crash file in a code block fenced longer than
+    any backticks in it, and how to attach a diagnostics bundle. `$HOME` and any `/home/<name>`,
+    `/Users/<name>`, `/root` or `C:\Users\<name>` are replaced by `~` where they start a path,
+    since backtraces name the machine that built Tidefell.
+  - **The link** percent-encodes everything but unreserved characters and stays under 8,000
+    bytes: if it would not, lines are dropped from the end of the crash file and a note says to
+    paste the rest, and if even the message is too long, the link's body only asks for the
+    report to be pasted. Every surface shows the whole title and body as well.
+  - **Crashes** gain an `id`, their file's name. Only a name like `crash-<digits>-<source>.txt`
+    that exists in `crashes/` is written up; anything else is not found.
+  - `GET /v1/crashes/report?id=`; `tidefell crashes --report [id]`, for the newest crash not
+    dismissed, else the newest, printing the report and the link or how to file it, and never
+    opening a browser; **Report this crash** on the web's status page, for administrators; and
+    `crash_report(data_dir, id, report_url)` in the bindings. Reporting does not dismiss the
+    crash: dismissing stays its own step, once the user has filed it.
 
 ### Usage telemetry
 

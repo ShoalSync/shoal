@@ -121,8 +121,27 @@ The next `tidefell status` says that Tidefell stopped unexpectedly and names the
 
 ```sh
 tidefell crashes                 # every crash recorded, newest last
+tidefell crashes --report        # write the newest one up as an issue to file
+tidefell crashes --report <id>   # or another one, by its ID from `tidefell crashes --json`
 tidefell crashes --dismiss       # stop reporting them in status
 ```
 
 The ten most recent crash files are kept. On Android, the app tells you syncing stopped and offers
 to restart it.
+
+### Reporting a crash
+
+`tidefell crashes --report` prints an issue for the project's tracker: a title, and a body with
+the crash file in it, with your home directory replaced by `~`. Nothing is sent. Read it, then
+file it yourself, and attach a diagnostics bundle if you can (see above). With `report_url` set
+in `tidefelld`'s configuration to the tracker's issues page, it also prints a link that opens a
+new issue already filled in; a long report is cut to fit the link, so paste the rest from the
+printed body. Without it, copy the title and body into a new issue. Administrators find the same
+under **Report this crash** on the web peer's status page.
+
+```toml
+report_url = "https://github.com/Tidefell/tidefell/issues"
+```
+
+`report_url` goes at the top of the file, before any `[section]`. It works with trackers that
+open `<report_url>/new?title=...&body=...` as a new issue, such as GitHub and Forgejo.

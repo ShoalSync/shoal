@@ -142,6 +142,8 @@ pub(crate) struct Inner {
     paused: RwLock<(bool, BTreeSet<FolderId>)>,
     /// The configuration the engine was started with, for diagnostics bundles (ADR 0030).
     diagnostics_config: Mutex<Option<serde_json::Value>>,
+    /// The issue tracker crash reports go to, if not the default (ADR 0030).
+    report_url: Mutex<Option<String>>,
     /// Counted as they happen, for metrics (ADR 0030).
     pub(crate) counters: crate::engine::metrics::Counters,
 }
@@ -461,6 +463,7 @@ impl Engine {
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
             diagnostics_config: Mutex::new(None),
+            report_url: Mutex::new(None),
         });
 
         let node = Arc::new(

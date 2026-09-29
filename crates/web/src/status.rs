@@ -105,10 +105,39 @@ pub(crate) async fn status(
             None
         },
         crash: unseen_crash(&state).map(|c| pages::CrashNotice {
+            id: c.id,
             time: time(c.time_ms),
             message: c.message,
             file: c.file.display().to_string(),
         }),
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct CrashReportQuery {
+    id: String,
+}
+
+/// A crash of this server written up as a new issue, to review and file (ADR 0030).
+pub(crate) async fn crash_report(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<CrashReportQuery>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session) {
+        return response;
+    }
+    let Some(report) = state.engine.crash_report(&query.id) else {
+        return crate::handlers::not_found();
+    };
+    render(pages::CrashReport {
+        username: session.username,
+        admin: session.admin,
+        csrf: session.csrf,
+        title: report.title,
+        body: report.body,
+        url: report.url,
     })
 }
 

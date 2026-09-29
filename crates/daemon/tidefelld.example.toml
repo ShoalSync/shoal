@@ -5,6 +5,9 @@ data_dir = "/var/lib/tidefell"
 # Watch folders for changes, with a full scan hourly. Folders that cannot be watched are scanned
 # every `scan_interval_secs`.
 watch = true
+# Where crash reports are filed: an issue tracker's issues page. Reports link to a new issue there,
+# pre-filled; without it they are shown to copy.
+# report_url = "https://github.com/Tidefell/tidefell/issues"
 
 # [limits]
 # upload_kib_per_sec = 2048      # unlimited if unset; at least 64

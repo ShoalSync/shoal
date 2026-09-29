@@ -340,6 +340,34 @@ async fn control_api_end_to_end() {
         api_error(client.folder_problems(&"ab".repeat(32)).await),
         ErrorKind::NotFound
     );
+    // A crash written up for the tracker (ADR 0030): shown to copy, or linked when configured.
+    tidefell_engine::diagnostics::write_crash(
+        &engine.data_dir().join("crashes"),
+        "rust",
+        "boom",
+        "location: src/x.rs:1",
+    )
+    .unwrap();
+    let crash = client.crashes().await.unwrap().pop().unwrap();
+    let report = client.crash_report(&crash.id).await.unwrap();
+    assert_eq!(report.title, "Crash: boom");
+    assert!(report.body.contains("location: src/x.rs:1"));
+    assert_eq!(report.url, None);
+    engine.set_report_url(Some("https://example.org/issues".into()));
+    let report = client.crash_report(&crash.id).await.unwrap();
+    assert!(report
+        .url
+        .unwrap()
+        .starts_with("https://example.org/issues/new?title=Crash%3A%20boom&body="));
+    for id in ["../device.key", "crash-0-none.txt", "seen"] {
+        assert_eq!(
+            api_error(client.crash_report(id).await),
+            ErrorKind::NotFound,
+            "{id}"
+        );
+    }
+    client.dismiss_crashes().await.unwrap();
+
     // The activity log (ADR 0030): everything above, newest first, all made here.
     use tidefell_sdk::types::ChangeKind;
     let activity = client.activity(&created.id, 100).await.unwrap();
@@ -381,6 +409,7 @@ async fn control_api_end_to_end() {
         "/v1/log/problems",
         "/v1/crashes",
         "/v1/crashes/dismiss",
+        "/v1/crashes/report",
         "/v1/limits",
         "/v1/pause",
         "/v1/folders/{id}/pause",

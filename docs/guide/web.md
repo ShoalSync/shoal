@@ -52,7 +52,8 @@ the daemon.
   server applied, newest first, and who made each change.
 - Admins: add and remove accounts, and see and revoke everyone's share links. The **Status**
   page lists the devices this server syncs with, connected or not and how, what it has sent
-  and received, and a crash not yet dismissed.
+  and received, and a crash not yet dismissed, with **Report this crash**: an issue for the
+  project's tracker, written up to review and file.
 
 Sessions expire after 12 hours. Every form is protected against cross-site request forgery.
 

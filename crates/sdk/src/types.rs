@@ -680,6 +680,9 @@ pub struct Problem {
 /// A crash recorded on this device (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Crash {
+    /// Names the crash for `GET /v1/crashes/report`: its file's name.
+    #[serde(default)]
+    pub id: String,
     /// The crash file on the daemon's machine.
     pub file: String,
     /// When, in milliseconds since the Unix epoch.
@@ -688,6 +691,27 @@ pub struct Crash {
     pub message: String,
     /// Whether the user has already been told.
     pub seen: bool,
+}
+
+/// Which crash `GET /v1/crashes/report` writes up.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+pub struct CrashReportQuery {
+    /// The crash's `id`.
+    pub id: String,
+}
+
+/// A crash written up as a new issue for the project's tracker (ADR 0030). Nothing is sent:
+/// the user reviews it and files it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct CrashReport {
+    /// The issue's title.
+    pub title: String,
+    /// Its body, in Markdown, with home directories replaced by `~`.
+    pub body: String,
+    /// A link that opens a new issue pre-filled with them, if a tracker is configured; its body
+    /// may be cut to fit a link. Without one, copy the title and body into a new issue.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// A file whose versions are wanted, or one of them to restore.

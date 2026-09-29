@@ -17,12 +17,12 @@ use tidefell_engine::{
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
-    CopiesRequest, Copy, Crash, DiagnosticsRequest, ErrorKind, Event, FetchRequest, Fetched, File,
-    Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder,
-    NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem, Peer,
-    PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary, Recycled, RemoveHereRequest,
-    ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version, VersionKind,
-    VersionRequest,
+    CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
+    Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits,
+    LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest,
+    Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind,
+    RecycleBinSummary, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
+    SyncOptions, Transfer, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -82,6 +82,7 @@ type AppState = State<Arc<Engine>>;
         set_log_level,
         problems,
         crashes,
+        crash_report,
         dismiss_crashes,
         limits,
         set_limits,
@@ -116,6 +117,7 @@ type AppState = State<Arc<Engine>>;
         LogLevel,
         Problem,
         Crash,
+        CrashReport,
         Version,
         VersionKind,
         VersionRequest,
@@ -896,6 +898,7 @@ fn crashes_on(engine: &Engine) -> Vec<Crash> {
     diagnostics::crashes(engine.data_dir())
         .into_iter()
         .map(|c| Crash {
+            id: c.id,
             file: c.file.display().to_string(),
             time_ms: c.time_ms,
             message: c.message,
@@ -909,6 +912,26 @@ fn crashes_on(engine: &Engine) -> Vec<Crash> {
     responses((status = 200, body = [Crash])))]
 pub(crate) async fn crashes(State(engine): AppState) -> Json<Vec<Crash>> {
     Json(crashes_on(&engine))
+}
+
+/// A crash written up as a new issue for the project's tracker (ADR 0030): its title and
+/// Markdown body with home directories stripped, and a link that opens it pre-filled if a
+/// tracker is configured. Nothing is sent: the user reviews it and files it.
+#[utoipa::path(get, path = "/v1/crashes/report", tag = "device",
+    params(CrashReportQuery),
+    responses((status = 200, body = CrashReport), (status = 404, body = ApiError)))]
+pub(crate) async fn crash_report(
+    State(engine): AppState,
+    axum::extract::Query(query): axum::extract::Query<CrashReportQuery>,
+) -> ApiResult<Json<CrashReport>> {
+    let report = engine
+        .crash_report(&query.id)
+        .ok_or_else(|| ApiFailure::not_found(format!("no crash {:?}", query.id)))?;
+    Ok(Json(CrashReport {
+        title: report.title,
+        body: report.body,
+        url: report.url,
+    }))
 }
 
 /// Marks every crash recorded so far as seen, so status stops reporting it.

@@ -86,6 +86,7 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         .route("/", get(handlers::folders))
         .route("/status", get(status::status))
         .route("/status/crashes/dismiss", post(status::dismiss_crashes))
+        .route("/status/crashes/report", get(status::crash_report))
         .route("/status/diagnostics", get(status::diagnostics))
         .route("/status/diagnostics.zip", get(status::diagnostics_zip))
         .route("/login", get(handlers::login_page).post(handlers::login))

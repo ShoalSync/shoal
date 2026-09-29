@@ -1121,4 +1121,37 @@ async fn status_and_problems() {
         checked.body
     );
     assert!(checked.body.contains("engine state of 1 folder(s) loaded"));
+
+    // A crash not dismissed yet can be written up for the tracker (ADR 0030).
+    let file = tidefell_engine::diagnostics::write_crash(
+        &engine.data_dir().join("crashes"),
+        "rust",
+        "boom <b>",
+        "location: src/x.rs:1",
+    )
+    .unwrap();
+    let id = file.file_name().unwrap().to_str().unwrap().to_owned();
+    let status = admin.get("/status").await;
+    let link = format!("/status/crashes/report?id={id}");
+    assert!(status.body.contains(&link), "{}", status.body);
+    let report = admin.get(&link).await;
+    assert_eq!(report.status, StatusCode::OK);
+    assert!(report.body.contains("Crash: boom"), "{}", report.body);
+    assert!(!report.body.contains("boom <b>"), "escaped");
+    assert!(report.body.contains("location: src/x.rs:1"));
+    assert!(report.body.contains("Copy the title and body"));
+    engine.set_report_url(Some("https://example.org/issues".into()));
+    let report = admin.get(&link).await;
+    assert!(report
+        .body
+        .contains("href=\"https://example.org/issues/new?title=Crash%3A%20boom"));
+    assert!(report.body.contains("rel=\"noopener noreferrer\""));
+    assert_eq!(alice.get(&link).await.status, StatusCode::FORBIDDEN);
+    assert_eq!(
+        admin
+            .get("/status/crashes/report?id=../device.key")
+            .await
+            .status,
+        StatusCode::NOT_FOUND
+    );
 }

@@ -43,6 +43,11 @@ pub struct Config {
     /// Serve Prometheus metrics (ADR 0030). Off unless set.
     #[serde(default)]
     pub metrics: Option<Metrics>,
+    /// The issue tracker crash reports are written up for: its issues page, such as
+    /// "https://github.com/Tidefell/tidefell/issues" (ADR 0030). Reports link to
+    /// `<report_url>/new` pre-filled; without one they are shown to copy.
+    #[serde(default)]
+    pub report_url: Option<String>,
 }
 
 /// Prometheus metrics (ADR 0030).
@@ -279,6 +284,10 @@ fn hex_id<T: std::str::FromStr>(what: &str, s: &str) -> Result<T, String> {
 impl Config {
     /// Validates the configuration and converts it for the engine.
     pub fn to_engine(&self) -> Result<EngineConfig, String> {
+        if let Some(url) = &self.report_url {
+            tidefell_engine::diagnostics::check_report_url(url)
+                .map_err(|e| format!("report_url: {e}"))?;
+        }
         let relay = match self.network.relay.mode {
             RelayMode::Default => RelayConfig::Default,
             RelayMode::Disabled => RelayConfig::Disabled,
@@ -461,6 +470,23 @@ mod tests {
             parse(&bad).is_err(),
             "unknown metrics settings are rejected"
         );
+    }
+
+    #[test]
+    fn reads_report_url() {
+        assert_eq!(parse(EXAMPLE).unwrap().report_url, None);
+        let text = EXAMPLE.replace("# report_url", "report_url");
+        let config = parse(&text).unwrap();
+        assert_eq!(
+            config.report_url.as_deref(),
+            Some("https://github.com/Tidefell/tidefell/issues")
+        );
+        assert!(config.to_engine().is_ok());
+        let bad = EXAMPLE.replace(
+            "# report_url = \"https://github.com/Tidefell/tidefell/issues\"",
+            "report_url = \"github.com/issues?x=1\"",
+        );
+        assert!(parse(&bad).unwrap().to_engine().is_err());
     }
 
     #[test]

@@ -10,11 +10,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, DiagnosticsRequest,
-    Event, FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel, LogSettings,
-    NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest,
-    Problem, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions,
-    Version, VersionRequest,
+    Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, CrashReport,
+    DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel,
+    LogSettings, NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
+    PinRequest, Problem, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
+    SyncOptions, Version, VersionRequest,
 };
 
 /// Client errors.
@@ -437,6 +437,20 @@ impl Client {
     pub async fn activity(&self, folder: &str, limit: usize) -> Result<Vec<Activity>, Error> {
         self.get(&format!("/v1/folders/{folder}/activity?limit={limit}"))
             .await
+    }
+
+    /// The crash `id` written up as a new issue for the project's tracker (ADR 0030).
+    pub async fn crash_report(&self, id: &str) -> Result<CrashReport, Error> {
+        let id: String = id
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => {
+                    (b as char).to_string()
+                }
+                _ => format!("%{b:02X}"),
+            })
+            .collect();
+        self.get(&format!("/v1/crashes/report?id={id}")).await
     }
 
     /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).

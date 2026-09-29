@@ -434,6 +434,7 @@ async fn run(path: &Path) -> Result<(), String> {
     if let Ok(value) = serde_json::to_value(&config) {
         engine.set_diagnostics_config(value);
     }
+    engine.set_report_url(config.report_url.clone());
     #[cfg(target_os = "linux")]
     let mounts = mounts::Mounts::start(&engine, config.mounts()?)?;
 

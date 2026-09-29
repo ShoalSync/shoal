@@ -40,11 +40,18 @@ enum Command {
         #[arg(long)]
         problems: bool,
     },
-    /// List the crashes recorded on this device.
+    /// List the crashes recorded on this device, or write one up to report it.
     Crashes {
         /// Mark them as seen, so `status` stops reporting them.
         #[arg(long)]
         dismiss: bool,
+        /// Write a crash up as a new issue for the project's tracker: the newest one not
+        /// dismissed, the newest one, or `ID`. Nothing is sent.
+        #[arg(long, conflicts_with = "dismiss")]
+        report: bool,
+        /// With `--report`: the crash's ID, as `crashes --json` lists it.
+        #[arg(requires = "report")]
+        id: Option<String>,
     },
     /// Pause syncing of a folder, or of the whole device. Folders still scan; nothing is sent or
     /// received until you resume, across restarts.
@@ -499,10 +506,29 @@ async fn run(cli: Cli) -> Result<(), String> {
                 format::log_settings(l)
             });
         }
-        Command::Crashes { dismiss: true } => {
+        Command::Crashes { dismiss: true, .. } => {
             client.dismiss_crashes().await.map_err(e)?;
         }
-        Command::Crashes { dismiss: false } => {
+        Command::Crashes {
+            report: true, id, ..
+        } => {
+            let id = match id {
+                Some(id) => id,
+                None => {
+                    let crashes = client.crashes().await.map_err(e)?;
+                    crashes
+                        .iter()
+                        .rfind(|c| !c.seen)
+                        .or(crashes.last())
+                        .ok_or("no crashes recorded")?
+                        .id
+                        .clone()
+                }
+            };
+            let report = client.crash_report(&id).await.map_err(e)?;
+            print(json, &report, format::crash_report);
+        }
+        Command::Crashes { .. } => {
             print(json, &client.crashes().await.map_err(e)?, |c| {
                 format::crashes(c)
             });

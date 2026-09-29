@@ -125,6 +125,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         )
         .route("/v1/log/problems", get(handlers::problems))
         .route("/v1/crashes", get(handlers::crashes))
+        .route("/v1/crashes/report", get(handlers::crash_report))
         .route(
             "/v1/limits",
             get(handlers::limits).put(handlers::set_limits),

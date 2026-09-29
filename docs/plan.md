@@ -277,7 +277,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   and the diagnostics bundle) is implemented; the app's screens follow with the next Android
   pin. Step 5 (activity history) is implemented; the app's screen follows with the next
   Android pin. Step 6 (metrics) is implemented in `tidefelld`; the scrape option in
-  `tidefell/infra` comes with its pin after the next release.
+  `tidefell/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
+  implemented; the app's screen follows with the next Android pin.
 
 ### Phase 2 work breakdown
 

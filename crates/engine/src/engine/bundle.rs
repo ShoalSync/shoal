@@ -71,6 +71,28 @@ impl Engine {
         *self.inner.diagnostics_config.lock().unwrap() = Some(config);
     }
 
+    /// Sends crash reports to this issue tracker's issues page instead of the default one
+    /// (ADR 0030); see [`crate::diagnostics::check_report_url`].
+    pub fn set_report_url(&self, url: Option<String>) {
+        *self.inner.report_url.lock().unwrap() = url;
+    }
+
+    /// Where crash reports go: the configured tracker, or the default, if any.
+    pub fn report_url(&self) -> Option<String> {
+        self.inner
+            .report_url
+            .lock()
+            .unwrap()
+            .clone()
+            .or(crate::diagnostics::DEFAULT_REPORT_URL.map(str::to_owned))
+    }
+
+    /// The crash `id` on this device written up as a new issue (ADR 0030), or `None` if there
+    /// is no such crash.
+    pub fn crash_report(&self, id: &str) -> Option<crate::diagnostics::CrashReport> {
+        crate::diagnostics::crash_report(self.data_dir(), id, self.report_url().as_deref())
+    }
+
     /// Builds a diagnostics bundle's files (ADR 0030): a summary, the configuration, status,
     /// problems, recent logs, crash files and the doctor's checks. Never file contents, keys,
     /// share-link tokens, account passwords or the engine's state files: only the files listed

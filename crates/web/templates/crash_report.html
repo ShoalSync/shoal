@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Report a crash · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/status">← Status</a></p>
+<h1>Report this crash</h1>
+<p class="muted">Nothing has been sent. Home directories are replaced by <span class="mono">~</span>; read it before filing it.</p>
+{% if let Some(url) = url %}
+<p><a href="{{ url }}" hx-boost="false" target="_blank" rel="noopener noreferrer">Open a new issue with this report</a>. If the report is long, the link carries its start: paste the rest from below.</p>
+{% else %}
+<p>Copy the title and body into a new issue on the project's tracker.</p>
+{% endif %}
+<label>Title <input class="mono" value="{{ title }}" readonly></label>
+<label>Body <textarea class="mono" rows="24" readonly>{{ body }}</textarea></label>
+<p class="muted">A diagnostics bundle helps too: <a href="/status/diagnostics">look at one</a> and attach it.</p>
+{% endblock %}
