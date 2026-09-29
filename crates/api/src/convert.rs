@@ -84,6 +84,25 @@ pub(crate) fn peer_state(p: engine::PeerState) -> api::PeerState {
     }
 }
 
+pub(crate) fn activity(a: engine::ActivityEntry) -> api::Activity {
+    api::Activity {
+        time_ms: a.time_ms,
+        kind: match a.kind {
+            engine::ChangeKind::Added => api::ChangeKind::Added,
+            engine::ChangeKind::Changed => api::ChangeKind::Changed,
+            engine::ChangeKind::Deleted => api::ChangeKind::Deleted,
+            engine::ChangeKind::Renamed => api::ChangeKind::Renamed,
+            engine::ChangeKind::Restored => api::ChangeKind::Restored,
+            engine::ChangeKind::Conflict => api::ChangeKind::Conflict,
+        },
+        path: a.path,
+        old_path: a.old_path,
+        device: a.device.to_string(),
+        device_name: a.device_name,
+        local: a.local,
+    }
+}
+
 pub(crate) fn check(c: engine::Check) -> api::Check {
     api::Check {
         name: c.name,
@@ -165,6 +184,7 @@ pub(crate) fn file(f: FileInfo) -> api::File {
         on_disk: f.on_disk,
         conflicts: f.conflicts,
         author: f.author.to_string(),
+        author_name: f.author_name,
         confirmed_copies: f.confirmed_copies as u64,
         only_here: f.only_here,
         pinned: f.pinned,

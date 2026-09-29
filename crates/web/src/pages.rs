@@ -37,6 +37,8 @@ pub(crate) struct FileRow {
     pub(crate) path_query: String,
     pub(crate) size: String,
     pub(crate) modified: String,
+    /// The device that made the current version (ADR 0030).
+    pub(crate) by: String,
     pub(crate) on_disk: bool,
     pub(crate) conflicts: usize,
     pub(crate) only_here: bool,
@@ -147,6 +149,27 @@ pub(crate) struct RecycledRow {
     pub(crate) size: String,
     pub(crate) deleted: String,
     pub(crate) expires: String,
+}
+
+pub(crate) struct ActivityRow {
+    pub(crate) time: String,
+    pub(crate) what: &'static str,
+    pub(crate) path: String,
+    /// Its path before, for a rename.
+    pub(crate) old_path: Option<String>,
+    pub(crate) by: String,
+}
+
+/// What this server applied to a folder, newest first (ADR 0030).
+#[derive(Template)]
+#[template(path = "activity.html")]
+pub(crate) struct Activity {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) items: Vec<ActivityRow>,
 }
 
 #[derive(Template)]

@@ -167,6 +167,8 @@ async fn control_api_end_to_end() {
     // Made here, and no full replica holds it yet.
     assert!(files[0].only_here);
     assert_eq!(files[0].confirmed_copies, 0);
+    assert_eq!(files[0].author, client.status().await.unwrap().device);
+    assert!(!files[0].author_name.is_empty());
     assert_eq!(client.folder(&created.id).await.unwrap().only_here, 1);
     assert!(client
         .copies(&created.id, "a.txt")
@@ -338,6 +340,27 @@ async fn control_api_end_to_end() {
         api_error(client.folder_problems(&"ab".repeat(32)).await),
         ErrorKind::NotFound
     );
+    // The activity log (ADR 0030): everything above, newest first, all made here.
+    use tidefell_sdk::types::ChangeKind;
+    let activity = client.activity(&created.id, 100).await.unwrap();
+    let oldest = activity.last().unwrap();
+    assert_eq!(
+        (oldest.kind, oldest.path.as_str()),
+        (ChangeKind::Added, "a.txt")
+    );
+    assert_eq!(activity[0].kind, ChangeKind::Deleted);
+    assert!(activity
+        .iter()
+        .any(|a| (a.kind, a.path.as_str()) == (ChangeKind::Restored, "a.txt")));
+    assert!(activity
+        .iter()
+        .all(|a| a.local && a.device == status.device));
+    assert!(activity.windows(2).all(|w| w[0].time_ms >= w[1].time_ms));
+    assert_eq!(client.activity(&created.id, 2).await.unwrap().len(), 2);
+    assert_eq!(
+        api_error(client.activity(&"ab".repeat(32), 10).await),
+        ErrorKind::NotFound
+    );
 
     // Remove the folder.
     client.remove_folder(&created.id).await.unwrap();
@@ -362,6 +385,7 @@ async fn control_api_end_to_end() {
         "/v1/pause",
         "/v1/folders/{id}/pause",
         "/v1/folders/{id}/problems",
+        "/v1/folders/{id}/activity",
         "/v1/doctor",
         "/v1/diagnostics",
         "/v1/folders/{id}/resolve",

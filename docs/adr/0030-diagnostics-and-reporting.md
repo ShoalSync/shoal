@@ -206,6 +206,23 @@ with advice for:
   renamed, restored or in conflict, which device made each change, and whether it came from a
   peer or from this device. It keeps 30 days or 10,000 entries, whichever is less, and is not
   synced. `tidefell activity`, the API, the web and the app show it.
+- Step 5 decided (the app's screen comes with the next Android pin):
+  - **What is logged.** The folder's metadata notes what each version it stores does to its
+    entry, compared with the entry's current version before it: added, changed (new content),
+    deleted, renamed (a new path, perhaps with new content too), restored (live after a
+    delete), or a conflict. A conflict is logged when a version made apart from the current one
+    arrives and one of them waits for a decision, whichever wins. A version already known, or
+    one that needs no decision, logs nothing. The device is the version's author, and the time
+    is when this device stored it.
+  - **Where.** One JSON line per change in `activity` in the folder's state directory, written
+    after each save of the folder's metadata. A failure to write it is logged and does not stop
+    the save. It is rewritten without entries past 30 days or beyond 10,000 when the folder is
+    opened and whenever it reaches 20,000 lines.
+  - Files gain `author_name`, the name this device knows for the author, or the start of its
+    ID. `GET /v1/folders/{id}/activity?limit=` (100 by default) lists the log newest first,
+    with each change's device, its name and whether it was made here; `tidefell activity
+    <folder> [--limit]` prints it and the bindings have `activity`. The web shows who made
+    each file's current version on the folder's page, and an **Activity** page per folder.
 
 ### Metrics
 

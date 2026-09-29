@@ -48,6 +48,8 @@ the daemon.
 - See what each folder is doing (up to date, syncing and how much is left, paused, or why it
   is not syncing) and, on a folder's page, any file this server could not read, fetch, write
   or delete.
+- See which device made each file's current version, and a folder's **Activity**: what this
+  server applied, newest first, and who made each change.
 - Admins: add and remove accounts, and see and revoke everyone's share links. The **Status**
   page lists the devices this server syncs with, connected or not and how, what it has sent
   and received, and a crash not yet dismissed.

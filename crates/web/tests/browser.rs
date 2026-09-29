@@ -316,6 +316,16 @@ async fn web_peer_end_to_end() {
     })
     .await;
 
+    // The folder's activity: what this server applied, newest first, and by whom (ADR 0030).
+    let activity = browser.get(&format!("/folders/{FOLDER}/activity")).await;
+    assert_eq!(activity.status, StatusCode::OK);
+    let restored_at = activity.body.find("restored").expect("the restore");
+    let deleted_at = activity.body.find("deleted").expect("the delete");
+    assert!(restored_at < deleted_at, "{}", activity.body);
+    assert!(activity.body.contains("report.pdf") && activity.body.contains("this server"));
+    let folder = browser.get(&format!("/folders/{FOLDER}")).await;
+    assert!(folder.body.contains("<th>By</th>"), "{}", folder.body);
+
     // Bob is not a member: he sees nothing and cannot guess his way in.
     let mut bob_browser = Browser::new(addr);
     bob_browser.login("bob", "bob password 12").await;
@@ -323,6 +333,13 @@ async fn web_peer_end_to_end() {
     assert!(!home.body.contains("team-docs"));
     assert_eq!(
         bob_browser.get(&format!("/folders/{FOLDER}")).await.status,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        bob_browser
+            .get(&format!("/folders/{FOLDER}/activity"))
+            .await
+            .status,
         StatusCode::NOT_FOUND
     );
     assert_eq!(

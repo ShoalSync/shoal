@@ -16,12 +16,13 @@ use tidefell_engine::{
 };
 use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
-    ApiError, ApprovePairing, Check, CheckLevel, CopiesRequest, Copy, Crash, DiagnosticsRequest,
-    ErrorKind, Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer,
-    Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation,
-    PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind,
-    RecycleBinSummary, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
-    SyncOptions, Transfer, Version, VersionKind, VersionRequest,
+    Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
+    CopiesRequest, Copy, Crash, DiagnosticsRequest, ErrorKind, Event, FetchRequest, Fetched, File,
+    Folder, FolderPeer, FolderState, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder,
+    NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem, Peer,
+    PeerState, PinRequest, Problem, ProblemKind, RecycleBinSummary, Recycled, RemoveHereRequest,
+    ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version, VersionKind,
+    VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -59,6 +60,7 @@ type AppState = State<Arc<Engine>>;
         copies,
         versions,
         folder_problems,
+        activity,
         doctor,
         diagnostics,
         restore_version,
@@ -122,6 +124,8 @@ type AppState = State<Arc<Engine>>;
         PeerState,
         Check,
         CheckLevel,
+        Activity,
+        ChangeKind,
         DiagnosticsRequest,
         PathKind,
         Transfer,
@@ -799,6 +803,26 @@ pub(crate) async fn folder_problems(
             .path_problems(parse("folder", &id)?)?
             .into_iter()
             .map(convert::path_problem)
+            .collect(),
+    ))
+}
+
+/// What this device applied to the folder, newest first: files added, changed, deleted,
+/// renamed, restored or in conflict, who made each change, and whether it came from a peer
+/// (ADR 0030).
+#[utoipa::path(get, path = "/v1/folders/{id}/activity", tag = "files",
+    params(("id" = String, Path, description = "Folder ID"), ActivityQuery),
+    responses((status = 200, body = [Activity]), (status = 404, body = ApiError)))]
+pub(crate) async fn activity(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<ActivityQuery>,
+) -> ApiResult<Json<Vec<Activity>>> {
+    Ok(Json(
+        engine
+            .activity(parse("folder", &id)?, query.limit.unwrap_or(100))?
+            .into_iter()
+            .map(convert::activity)
             .collect(),
     ))
 }

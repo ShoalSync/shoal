@@ -145,6 +145,7 @@ impl Folder {
             entries,
             recycle,
             layout: std::sync::OnceLock::new(),
+            changes: std::cell::RefCell::default(),
         })
     }
 

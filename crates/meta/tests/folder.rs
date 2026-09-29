@@ -740,3 +740,64 @@ fn ordinary_edits_bin_nothing() {
         assert!(r.recycle_bin().is_empty());
     }
 }
+
+#[test]
+fn changes_are_noted_for_the_activity_log() {
+    use tidefell_meta::ChangeKind;
+
+    let mut a = replica(1);
+    let mut b = replica(2);
+    let v1 = a.local_change(&key(1), E, "f", file(1), 1).unwrap();
+    let v2 = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
+    let v3 = a.local_change(&key(1), E, "g", file(2), 3).unwrap();
+    let v4 = a
+        .local_change(&key(1), E, "g", EntryKind::Tombstone, 4)
+        .unwrap();
+    let kinds: Vec<(ChangeKind, String)> = a
+        .take_changes()
+        .into_iter()
+        .map(|c| (c.kind, c.path))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            (ChangeKind::Added, "f".into()),
+            (ChangeKind::Changed, "f".into()),
+            (ChangeKind::Renamed, "g".into()),
+            (ChangeKind::Deleted, "g".into()),
+        ]
+    );
+    assert!(a.take_changes().is_empty(), "taken once");
+
+    // A peer's copy notes who made each change, and nothing for versions already known.
+    for v in [&v1, &v2, &v3, &v4] {
+        b.apply_remote(v.clone(), NOW).unwrap();
+    }
+    b.apply_remote(v4, NOW).unwrap();
+    let changes = b.take_changes();
+    assert_eq!(changes.len(), 4);
+    assert!(changes.iter().all(|c| c.author == device(1)));
+    assert_eq!(changes[2].old_path.as_deref(), Some("f"));
+
+    // A concurrent edit that loses is a conflict.
+    let mut c = replica(3);
+    let base = a.local_change(&key(1), E, "g", file(5), 5).unwrap();
+    b.apply_remote(base.clone(), NOW).unwrap();
+    c.apply_remote(base, NOW).unwrap();
+    b.take_changes();
+    let winner = b.local_change(&key(2), E, "g", file(6), 7).unwrap();
+    let loser = c.local_change(&key(3), E, "g", file(7), 6).unwrap();
+    b.take_changes();
+    c.take_changes();
+    b.apply_remote(loser, NOW).unwrap();
+    let changes = b.take_changes();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].kind, ChangeKind::Conflict);
+    assert_eq!(changes[0].author, device(3));
+    // On the other side the arriving version wins, and the local one waits: a conflict too.
+    c.apply_remote(winner, NOW).unwrap();
+    let changes = c.take_changes();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].kind, ChangeKind::Conflict);
+    assert_eq!(changes[0].author, device(2));
+}

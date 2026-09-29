@@ -310,6 +310,11 @@ pub(crate) async fn folder(
             path: f.path,
             size: size(f.size),
             modified: time(f.modified_ms),
+            by: if f.author == state.engine.id() {
+                "this server".to_owned()
+            } else {
+                f.author_name
+            },
             on_disk: f.on_disk,
             conflicts: f.conflicts,
             only_here: f.only_here,
@@ -472,6 +477,55 @@ pub(crate) async fn recycle(
         notice: query
             .restored
             .map(|p| format!("Restored {p}. It will reappear on every device.")),
+        items,
+    })
+}
+
+/// Changes this server applied to the folder, newest first.
+const ACTIVITY_SHOWN: usize = 500;
+
+pub(crate) async fn activity(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    let items = state
+        .engine
+        .activity(folder.id, ACTIVITY_SHOWN)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|a| {
+            use tidefell_engine::ChangeKind;
+            pages::ActivityRow {
+                time: time(a.time_ms),
+                what: match a.kind {
+                    ChangeKind::Added => "added",
+                    ChangeKind::Changed => "changed",
+                    ChangeKind::Deleted => "deleted",
+                    ChangeKind::Renamed => "renamed",
+                    ChangeKind::Restored => "restored",
+                    ChangeKind::Conflict => "conflict",
+                },
+                path: a.path,
+                old_path: a.old_path,
+                by: if a.local {
+                    "this server".to_owned()
+                } else {
+                    a.device_name
+                },
+            }
+        })
+        .collect();
+    render(pages::Activity {
+        username: session.username,
+        admin: session.admin,
+        csrf: session.csrf,
+        id: folder.id.to_string(),
+        name: folder_name(&folder),
         items,
     })
 }

@@ -32,6 +32,7 @@
 //! metadata but not written to disk.
 
 mod activity;
+mod activity_log;
 mod backend;
 mod config;
 mod content;
@@ -60,14 +61,14 @@ pub use config::{
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use tidefell_identity::{DeviceKey, UserKey};
-pub use tidefell_meta::Retention;
+pub use tidefell_meta::{ChangeKind, Retention};
 pub use tidefell_net::{Limits, PathKind, RelayConfig, RelayUrl, Transfer, MIN_BYTES_PER_SEC};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
-    Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer, FolderState, Operation,
-    PathProblem, PeerInfo, PeerState, ProblemKind, RecycleSummary, RecycledInfo, VersionInfo,
-    VersionKind,
+    ActivityEntry, Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer,
+    FolderState, Operation, PathProblem, PeerInfo, PeerState, ProblemKind, RecycleSummary,
+    RecycledInfo, VersionInfo, VersionKind,
 };
 
 /// Engine errors.

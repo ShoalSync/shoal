@@ -119,3 +119,38 @@ impl Engine {
         self.write(folder, path, &copy).await
     }
 }
+
+impl Engine {
+    /// What this device applied to `folder`, newest first: files added, changed, deleted,
+    /// renamed, restored or in conflict, who made each change, and whether it came from a peer
+    /// (ADR 0030). At most `limit` entries; the log keeps 30 days or 10,000 entries.
+    pub fn activity(&self, folder: FolderId, limit: usize) -> Result<Vec<crate::ActivityEntry>> {
+        let handle = self.inner.folder(&folder)?;
+        // Read without the folder's lock: a line being appended meanwhile is skipped.
+        let dir = handle.lock().dir.clone();
+        let lines = crate::activity_log::read(&dir, crate::now_ms());
+        let state = handle.lock();
+        let me = self.id();
+        let mut names = std::collections::HashMap::new();
+        Ok(lines
+            .into_iter()
+            .rev()
+            .filter_map(|line| {
+                let device = line.device()?;
+                Some(crate::ActivityEntry {
+                    time_ms: line.time_ms,
+                    kind: crate::activity_log::kind_of(&line.kind)?,
+                    path: line.path,
+                    old_path: line.old_path,
+                    device_name: names
+                        .entry(device)
+                        .or_insert_with(|| self.device_name(&state, &device))
+                        .clone(),
+                    local: device == me,
+                    device,
+                })
+            })
+            .take(limit)
+            .collect())
+    }
+}

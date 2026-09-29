@@ -161,6 +161,25 @@ pub struct PeerState {
     pub clock_offset_ms: Option<i64>,
 }
 
+/// One change this device applied to a folder, from its activity log (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActivityEntry {
+    /// When this device applied it, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// What happened.
+    pub kind: tidefell_meta::ChangeKind,
+    /// The entry's path.
+    pub path: String,
+    /// Its path before, for a rename.
+    pub old_path: Option<String>,
+    /// The device that made the change.
+    pub device: DeviceId,
+    /// That device's name, as far as this device knows it, or the start of its ID.
+    pub device_name: String,
+    /// Made on this device, rather than received from a peer.
+    pub local: bool,
+}
+
 /// How a check of `tidefell doctor` came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
@@ -217,6 +236,8 @@ pub struct FileInfo {
     pub conflicts: usize,
     /// The device that made the current version.
     pub author: DeviceId,
+    /// That device's name, as far as this device knows it, or the start of its ID (ADR 0030).
+    pub author_name: String,
     /// Full replicas that confirmed holding the current version's content (ADR 0022). Only
     /// tracked for content made on this device; 0 for everything else.
     pub confirmed_copies: usize,

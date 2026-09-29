@@ -35,6 +35,7 @@
 {% endif %}
 <p>
   <a href="/folders/{{ id }}/recycle">Recycle bin ({{ recycled }})</a>
+  · <a href="/folders/{{ id }}/activity">Activity</a>
   {% if share_links %} · <a href="/folders/{{ id }}/share">Share the whole folder</a>{% endif %}
 </p>
 {% if partial %}
@@ -60,7 +61,7 @@
 <p class="muted">This folder is empty.</p>
 {% else %}
 <table>
-  <thead><tr><th>Name</th><th class="num">Size</th><th>Modified</th></tr></thead>
+  <thead><tr><th>Name</th><th class="num">Size</th><th>Modified</th><th>By</th></tr></thead>
   <tbody>
   {% for f in files %}
     <tr>
@@ -80,6 +81,7 @@
       </td>
       <td class="num">{{ f.size }}</td>
       <td>{{ f.modified }}</td>
+      <td>{{ f.by }}</td>
     </tr>
   {% endfor %}
   </tbody>

@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Activity · {{ name }} · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<p><a href="/folders/{{ id }}">← {{ name }}</a></p>
+<h1>Activity</h1>
+<p class="muted">What this server applied to the folder, newest first, and which device made each change. It keeps 30 days or 10,000 changes.</p>
+{% if items.is_empty() %}
+<p class="muted">Nothing has changed yet.</p>
+{% else %}
+<table>
+  <thead><tr><th>When</th><th>What</th><th>Name</th><th>By</th></tr></thead>
+  <tbody>
+  {% for a in items %}
+    <tr>
+      <td>{{ a.time }}</td>
+      <td>{{ a.what }}</td>
+      <td>{% if let Some(old) = a.old_path %}<span class="muted">{{ old }} →</span> {% endif %}{{ a.path }}</td>
+      <td>{{ a.by }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

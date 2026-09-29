@@ -82,6 +82,52 @@ pub struct DiagnosticsRequest {
     pub include_paths: bool,
 }
 
+/// What a change in the activity log did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeKind {
+    /// A new file.
+    Added,
+    /// New content.
+    Changed,
+    /// Deleted.
+    Deleted,
+    /// Moved to another path.
+    Renamed,
+    /// Live again after it was deleted.
+    Restored,
+    /// A version made apart from the current one arrived, and waits for a decision.
+    Conflict,
+}
+
+/// How many changes `GET /v1/folders/{id}/activity` returns.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+pub struct ActivityQuery {
+    /// Most changes to return; 100 if left out.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// One change the daemon applied to a folder (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Activity {
+    /// When the daemon applied it.
+    pub time_ms: i64,
+    /// What happened.
+    pub kind: ChangeKind,
+    /// The file's path.
+    pub path: String,
+    /// Its path before, for a rename.
+    #[serde(default)]
+    pub old_path: Option<String>,
+    /// The device that made the change.
+    pub device: String,
+    /// That device's name, as far as the daemon knows it, or the start of its ID.
+    pub device_name: String,
+    /// Made on this device, rather than received from a peer.
+    pub local: bool,
+}
+
 /// How a check came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
@@ -401,6 +447,9 @@ pub struct File {
     pub conflicts: usize,
     /// Device that made the current version.
     pub author: String,
+    /// That device's name, as far as the daemon knows it, or the start of its ID.
+    #[serde(default)]
+    pub author_name: String,
     /// Full replicas that confirmed holding this file. Only tracked for files made on this
     /// device; 0 otherwise.
     #[serde(default)]

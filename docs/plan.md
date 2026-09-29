@@ -275,7 +275,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   implemented, and its Android side came with the `v0.12.0` pin. Step 3 (status and problems)
   is implemented; the app's screens follow with the next Android pin. Step 4 (the doctor
   and the diagnostics bundle) is implemented; the app's screens follow with the next Android
-  pin.
+  pin. Step 5 (activity history) is implemented; the app's screen follows with the next
+  Android pin.
 
 ### Phase 2 work breakdown
 

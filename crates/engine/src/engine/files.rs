@@ -16,6 +16,9 @@ impl Engine {
     pub fn files(&self, folder: FolderId) -> Result<Vec<FileInfo>> {
         let handle = self.inner.folder(&folder)?;
         let state = handle.lock();
+        // Few devices make many files: look each name up once.
+        let mut names: std::collections::HashMap<tidefell_proto::DeviceId, String> =
+            std::collections::HashMap::new();
         let mut files: Vec<FileInfo> = state
             .meta
             .entries()
@@ -38,6 +41,10 @@ impl Engine {
                             .is_some_and(|l| l.entry == v.entry && l.content == content),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author,
+                        author_name: names
+                            .entry(v.author)
+                            .or_insert_with(|| self.device_name(&state, &v.author))
+                            .clone(),
                         confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
                         only_here: copies::only_here(&state, self.inner.key.id(), v),
                         pinned: crate::pins::is_pinned(&state.pins, path),

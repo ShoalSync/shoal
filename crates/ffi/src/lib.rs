@@ -714,6 +714,42 @@ pub enum ProblemKind {
     Other,
 }
 
+/// What a change in a folder's activity log did (ADR 0030).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum ChangeKind {
+    /// A new file.
+    Added,
+    /// New content.
+    Changed,
+    /// Deleted.
+    Deleted,
+    /// Moved to another path.
+    Renamed,
+    /// Live again after it was deleted.
+    Restored,
+    /// A version made apart from the current one arrived, and waits for a decision.
+    Conflict,
+}
+
+/// One change this device applied to a folder (ADR 0030).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Activity {
+    /// When this device applied it, in milliseconds since the Unix epoch.
+    pub time_ms: i64,
+    /// What happened.
+    pub kind: ChangeKind,
+    /// The file's path.
+    pub path: String,
+    /// Its path before, for a rename.
+    pub old_path: Option<String>,
+    /// The device that made the change.
+    pub device: String,
+    /// That device's name, as far as this device knows it, or the start of its ID.
+    pub device_name: String,
+    /// Made on this device, rather than received from a peer.
+    pub local: bool,
+}
+
 /// A path that failed, until it succeeds (ADR 0030).
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct PathProblem {
@@ -754,6 +790,10 @@ pub struct File {
     pub only_here: bool,
     /// Pinned on this device (ADR 0029): kept on disk and never evicted.
     pub pinned: bool,
+    /// The device that made the current version.
+    pub author: String,
+    /// That device's name, as far as this device knows it, or the start of its ID (ADR 0030).
+    pub author_name: String,
 }
 
 /// A full replica that confirmed holding a file.
@@ -1116,6 +1156,8 @@ impl Node {
                 confirmed_copies: f.confirmed_copies as u32,
                 only_here: f.only_here,
                 pinned: f.pinned,
+                author: f.author.to_string(),
+                author_name: f.author_name,
             })
             .collect())
     }
@@ -1430,6 +1472,33 @@ impl Node {
             send_rate: t.send_rate,
             receive_rate: t.receive_rate,
         })
+    }
+
+    /// What this device applied to a folder, newest first, at most `limit` changes: who changed
+    /// which file, and whether the change came from a peer (ADR 0030).
+    pub fn activity(&self, folder: String, limit: u32) -> Result<Vec<Activity>> {
+        use tidefell_engine::ChangeKind as Kind;
+        Ok(self
+            .engine()?
+            .activity(parse("folder ID", &folder)?, limit as usize)?
+            .into_iter()
+            .map(|a| Activity {
+                time_ms: a.time_ms,
+                kind: match a.kind {
+                    Kind::Added => ChangeKind::Added,
+                    Kind::Changed => ChangeKind::Changed,
+                    Kind::Deleted => ChangeKind::Deleted,
+                    Kind::Renamed => ChangeKind::Renamed,
+                    Kind::Restored => ChangeKind::Restored,
+                    Kind::Conflict => ChangeKind::Conflict,
+                },
+                path: a.path,
+                old_path: a.old_path,
+                device: a.device.to_string(),
+                device_name: a.device_name,
+                local: a.local,
+            })
+            .collect())
     }
 
     /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).

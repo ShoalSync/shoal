@@ -149,7 +149,7 @@ async fn create_join_delete_restore() {
     })
     .await;
     let files = nas.run(&["files", &id]);
-    assert!(files.contains("beach.jpg"), "{files}");
+    assert!(files.contains("beach.jpg  by laptop"), "{files}");
     let peers = nas.json(&["peer", "list"]);
     assert_eq!(peers["connected"].as_array().unwrap().len(), 1);
 
@@ -170,6 +170,22 @@ async fn create_join_delete_restore() {
             == Some(b"sand and sea".as_slice())
     })
     .await;
+    // The NAS's activity, newest first: its own restore, then what came from the laptop.
+    let activity = nas.run(&["activity", &id]);
+    let lines: Vec<&str> = activity.lines().collect();
+    assert_eq!(lines.len(), 3, "{activity}");
+    assert!(
+        lines[0].ends_with("restored  beach.jpg  by this device"),
+        "{activity}"
+    );
+    assert!(
+        lines[1].ends_with("deleted   beach.jpg  by laptop"),
+        "{activity}"
+    );
+    assert!(
+        lines[2].ends_with("added     beach.jpg  by laptop"),
+        "{activity}"
+    );
 
     // Errors are reported on stderr with a non-zero exit.
     let out = nas.try_run(&["recycle", "restore", &id, "nope.txt"]);

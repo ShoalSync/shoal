@@ -338,3 +338,88 @@ async fn the_doctor_checks_clocks_and_folders() {
     engine_b.shutdown().await;
     engine_a.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_device_logs_what_it_applied() {
+    use tidefell_engine::ChangeKind;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 59);
+    let b = Replica::new(dir.path(), "b", 60);
+    let engine_a = a.start(&user, Vec::new()).await;
+    let engine_b = b.start(&user, Vec::new()).await;
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    // An old file copied in: logged when it is applied, not at its modification time.
+    a.write("notes.txt", b"one");
+    let long_ago = std::time::SystemTime::now() - Duration::from_secs(60 * 86_400);
+    fs::File::options()
+        .write(true)
+        .open(a.root.join("notes.txt"))
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("b has the file", || {
+        fs::read(b.root.join("notes.txt")).is_ok()
+    })
+    .await;
+    engine_a
+        .rename(FOLDER, "notes.txt", "renamed.txt")
+        .await
+        .unwrap();
+    eventually("b has the rename", || {
+        fs::read(b.root.join("renamed.txt")).is_ok()
+    })
+    .await;
+    engine_a.delete(FOLDER, "renamed.txt").await.unwrap();
+    eventually("b has the delete", || {
+        fs::read(b.root.join("renamed.txt")).is_err()
+    })
+    .await;
+
+    let kinds = |engine: &Engine| {
+        engine
+            .activity(FOLDER, 100)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.kind, e.path, e.local))
+            .collect::<Vec<_>>()
+    };
+    // Newest first; a made them, so they are a's own and b's from a peer.
+    let expected = |local| {
+        vec![
+            (ChangeKind::Deleted, "renamed.txt".to_owned(), local),
+            (ChangeKind::Renamed, "renamed.txt".to_owned(), local),
+            (ChangeKind::Added, "notes.txt".to_owned(), local),
+        ]
+    };
+    assert_eq!(kinds(&engine_a), expected(true));
+    eventually("b logged everything", || {
+        kinds(&engine_b) == expected(false)
+    })
+    .await;
+    let on_b = engine_b.activity(FOLDER, 100).unwrap();
+    assert_eq!(on_b[1].old_path.as_deref(), Some("notes.txt"));
+    assert_eq!(on_b[0].device, engine_a.id());
+    assert_eq!(on_b[0].device_name, "laptop");
+    assert_eq!(engine_b.activity(FOLDER, 1).unwrap().len(), 1);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    assert!((now - on_b[2].time_ms).abs() < 60_000, "{:?}", on_b[2]);
+
+    // The log survives a restart, and a restart logs nothing again.
+    engine_b.shutdown().await;
+    let engine_b = b.start(&user, Vec::new()).await;
+    assert_eq!(kinds(&engine_b), expected(false));
+    b.write("more.txt", b"two");
+    engine_b.scan(FOLDER).await.unwrap();
+    let mut after = expected(false);
+    after.insert(0, (ChangeKind::Added, "more.txt".to_owned(), true));
+    assert_eq!(kinds(&engine_b), after);
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

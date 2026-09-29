@@ -152,6 +152,12 @@ class PairAndSyncTest {
                 eventually("the laptop has the phone's photo") {
                     laptopFolder.resolve("camera/new.jpg").let { it.exists() && it.readText() == "new photo" }
                 }
+                // The phone's activity, newest first: its own photo, then the laptop's (ADR 0030).
+                val activity = node.activity(offer.id, 10u)
+                assertEquals(listOf("camera/new.jpg", "beach.jpg"), activity.map { it.path })
+                assertEquals(listOf(true, false), activity.map { it.local })
+                assertEquals(listOf(ChangeKind.ADDED, ChangeKind.ADDED), activity.map { it.kind })
+                assertEquals(placeholder.author, activity.last().device)
                 eventually("events") {
                     events.any { it is NodeEvent.FileUpdated && it.path == "beach.jpg" }
                 }

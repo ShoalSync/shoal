@@ -28,6 +28,7 @@ the same pull request that introduces it.
 | **Conflict** | Two concurrent versions of the same entry. Every replica shows the same winner (edits win over deletes, then the later modification); the losing version is kept as a conflict copy until the user resolves the conflict (ADR 0029). |
 | **Conflict copy** | A losing concurrent version, kept until the conflict is resolved. Not written to disk. One with the same content as the winner, or a delete an edit beat, needs no decision. |
 | **Folder state** | What a folder is doing on one device: idle, scanning, syncing, paused or error (ADR 0030). |
+| **Activity log** | A device's record of what it applied to a folder: files added, changed, deleted, renamed, restored or in conflict, when, and which device made each change. Kept for 30 days or 10,000 entries and not synced (ADR 0030). |
 | **Path problem** | A path in a folder that failed to scan, fetch, write or delete, with why, since when and how many attempts. It clears when the path succeeds (ADR 0030). |
 | **Resolve** | Deciding a conflict: keep one version, which sends the others to every recycle bin, or keep both, which makes each other version a file of its own. |
 | **Index** | A replica's record of the versions it holds for a folder, each numbered with an index sequence. |

@@ -137,6 +137,15 @@ enum Command {
     },
     /// Check this device's clock, space, folders, watching and connectivity, with advice.
     Doctor,
+    /// What this device applied to a folder, newest first: who changed which file, and whether
+    /// the change came from another device.
+    Activity {
+        /// Folder ID.
+        folder: String,
+        /// Most changes to list.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// Write a diagnostics bundle to attach to a report: a zip file describing this device,
     /// with paths and names hashed. Look inside before sending it.
     Diagnostics {
@@ -536,6 +545,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                     if include_paths { "included" } else { "hashed" }
                 )
             });
+        }
+        Command::Activity { folder, limit } => {
+            let activity = client.activity(&folder, limit).await.map_err(e)?;
+            print(json, &activity, |a| format::activity(a));
         }
         Command::Doctor => {
             let checks = client.doctor().await.map_err(e)?;

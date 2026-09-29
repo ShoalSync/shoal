@@ -110,6 +110,7 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
             post(sharing::link_upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/folders/{id}/recycle", get(handlers::recycle))
+        .route("/folders/{id}/activity", get(handlers::activity))
         .route("/folders/{id}/history", get(handlers::history))
         .route("/folders/{id}/conflict", get(conflicts::conflict))
         .route("/folders/{id}/conflict/open", get(conflicts::open))

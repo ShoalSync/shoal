@@ -11,7 +11,7 @@ mod recycle;
 mod resolve;
 mod snapshot;
 
-pub use folder::{copy_id, Applied, Folder, StoredVersion};
+pub use folder::{copy_id, Applied, Change, ChangeKind, Folder, StoredVersion};
 pub use layout::Layout;
 pub use recycle::{RecycleBin, Recycled, Retention};
 

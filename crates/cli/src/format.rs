@@ -3,9 +3,9 @@
 use std::fmt::Write as _;
 
 use tidefell_sdk::types::{
-    Check, CheckLevel, Crash, Direction, Event, File, Folder, FolderState, KnownPeer, Limits,
-    LocalDeletes, LogSettings, Mode, Operation, PathKind, PathProblem, Peer, PeerState, Problem,
-    ProblemKind, Recycled, Status, SyncOptions, Version, VersionKind,
+    Activity, ChangeKind, Check, CheckLevel, Crash, Direction, Event, File, Folder, FolderState,
+    KnownPeer, Limits, LocalDeletes, LogSettings, Mode, Operation, PathKind, PathProblem, Peer,
+    PeerState, Problem, ProblemKind, Recycled, Status, SyncOptions, Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -214,6 +214,37 @@ pub(crate) fn zip_entries(zip: &[u8]) -> Vec<(String, u64)> {
         .collect()
 }
 
+/// A folder's activity, one change per line.
+pub(crate) fn activity(activity: &[Activity]) -> String {
+    if activity.is_empty() {
+        return "no activity".into();
+    }
+    activity
+        .iter()
+        .map(|a| {
+            let what = match a.kind {
+                ChangeKind::Added => "added",
+                ChangeKind::Changed => "changed",
+                ChangeKind::Deleted => "deleted",
+                ChangeKind::Renamed => "renamed",
+                ChangeKind::Restored => "restored",
+                ChangeKind::Conflict => "conflict",
+            };
+            let path = match &a.old_path {
+                Some(old) => format!("{old} -> {}", a.path),
+                None => a.path.clone(),
+            };
+            let who = if a.local {
+                "this device"
+            } else {
+                &a.device_name
+            };
+            format!("{}  {what:<8}  {path}  by {who}", time(a.time_ms))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// `tidefell doctor`'s checks, one per line, with advice under warnings and failures.
 pub(crate) fn checks(checks: &[Check]) -> String {
     checks
@@ -402,9 +433,14 @@ pub(crate) fn files(files: &[File]) -> String {
         } else {
             format!("  [{}]", notes.join(", "))
         };
+        let by = if f.author_name.is_empty() {
+            String::new()
+        } else {
+            format!("  by {}", f.author_name)
+        };
         let _ = writeln!(
             out,
-            "{:>10}  {}  {}{notes}",
+            "{:>10}  {}  {}{by}{notes}",
             size(f.size),
             time(f.modified_ms),
             f.path
@@ -643,6 +679,28 @@ mod tests {
         );
         folder.mode = Mode::Partial;
         assert!(only_here(&folder).unwrap().ends_with("until one does)"));
+    }
+
+    #[test]
+    fn activity_lines() {
+        let change = |kind, old_path: Option<&str>, local| Activity {
+            time_ms: 0,
+            kind,
+            path: "b.txt".into(),
+            old_path: old_path.map(Into::into),
+            device: "ab".repeat(32),
+            device_name: "phone".into(),
+            local,
+        };
+        assert_eq!(activity(&[]), "no activity");
+        assert_eq!(
+            activity(&[
+                change(ChangeKind::Renamed, Some("a.txt"), false),
+                change(ChangeKind::Added, None, true),
+            ]),
+            "1970-01-01 00:00  renamed   a.txt -> b.txt  by phone\n\
+             1970-01-01 00:00  added     b.txt  by this device"
+        );
     }
 
     #[test]

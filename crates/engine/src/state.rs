@@ -502,10 +502,12 @@ pub(crate) struct FolderState {
     pub(crate) pins: BTreeSet<String>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
     removed: bool,
+    /// Lines in the activity log's file, so it is rewritten once it grows (ADR 0030).
+    activity_lines: std::cell::Cell<usize>,
 }
 
 impl FolderState {
@@ -551,6 +553,7 @@ impl FolderState {
             ignores,
             dir,
             removed: false,
+            activity_lines: std::cell::Cell::new(0),
         };
         let state_path = state.dir.join("state");
         if state_path.exists() {
@@ -616,6 +619,10 @@ impl FolderState {
                 state.catch_up_bases();
             }
         }
+        match crate::activity_log::compact(&state.dir, crate::now_ms()) {
+            Ok(lines) => state.activity_lines.set(lines),
+            Err(e) => tracing::warn!(error = %e, "compacting the activity log failed"),
+        }
         Ok(state)
     }
 
@@ -659,6 +666,16 @@ impl FolderState {
             return Ok(());
         }
         self.meta.save(&self.dir.join("meta"))?;
+        // What the saved changes did, for the activity log (ADR 0030). Only a record: a failure
+        // to write it does not stop the save.
+        if let Err(e) = crate::activity_log::record(
+            &self.dir,
+            &self.activity_lines,
+            &self.meta.take_changes(),
+            crate::now_ms(),
+        ) {
+            tracing::warn!(error = %e, "writing the activity log failed");
+        }
         let persisted = Persisted {
             manifests: self.manifests.values().cloned().collect(),
             local: self

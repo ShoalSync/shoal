@@ -10,11 +10,11 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::types::{
-    ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, DiagnosticsRequest, Event,
-    FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel, LogSettings, NewFolder,
-    NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem,
-    Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Version,
-    VersionRequest,
+    Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, DiagnosticsRequest,
+    Event, FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel, LogSettings,
+    NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest,
+    Problem, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions,
+    Version, VersionRequest,
 };
 
 /// Client errors.
@@ -431,6 +431,12 @@ impl Client {
     /// Checks this device's clock, space, folders, watching and connectivity (ADR 0030).
     pub async fn doctor(&self) -> Result<Vec<Check>, Error> {
         self.get("/v1/doctor").await
+    }
+
+    /// What the daemon applied to a folder, newest first, at most `limit` changes (ADR 0030).
+    pub async fn activity(&self, folder: &str, limit: usize) -> Result<Vec<Activity>, Error> {
+        self.get(&format!("/v1/folders/{folder}/activity?limit={limit}"))
+            .await
     }
 
     /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).

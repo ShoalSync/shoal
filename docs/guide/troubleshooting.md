@@ -25,6 +25,18 @@ allowed on this system, changed while writing), the error, since when and how ma
 One file that fails does not hold up the others. A file in a directory that cannot be read is
 not taken for deleted.
 
+## What changed, and who changed it
+
+```sh
+tidefell activity <folder id>             # the last 50 changes
+tidefell activity <folder id> --limit 500
+```
+
+lists what this device applied to the folder, newest first: files added, changed, deleted,
+renamed, restored or in conflict, when, and which device made each change, or "this device".
+Each device keeps its own log for 30 days or 10,000 changes; it is not synced. `tidefell
+files` and the web also say which device made each file's current version.
+
 ## Checking a device
 
 ```sh

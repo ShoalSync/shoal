@@ -81,6 +81,41 @@ pub struct Folder {
     pub(crate) recycle: RecycleBin,
     /// Where live entries go on disk, computed on demand and cleared when entries change.
     pub(crate) layout: OnceLock<Layout>,
+    /// What stored versions did to their entries since [`Folder::take_changes`] was last
+    /// called, for the activity log (ADR 0030). Not persisted.
+    pub(crate) changes: std::cell::RefCell<Vec<Change>>,
+}
+
+/// What a stored version did to its entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// A new file.
+    Added,
+    /// New content.
+    Changed,
+    /// Deleted.
+    Deleted,
+    /// Moved to another path, perhaps with new content.
+    Renamed,
+    /// Live again after it was deleted.
+    Restored,
+    /// A version made apart from the current one arrived, and waits for a decision.
+    Conflict,
+}
+
+/// One change to a folder, for its activity log (ADR 0030).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    /// The entry.
+    pub entry: EntryId,
+    /// What happened.
+    pub kind: ChangeKind,
+    /// Its path now.
+    pub path: String,
+    /// Its path before, for a rename.
+    pub old_path: Option<String>,
+    /// The device that made the change.
+    pub author: DeviceId,
 }
 
 impl Folder {
@@ -102,6 +137,7 @@ impl Folder {
             entries: HashMap::new(),
             layout: OnceLock::new(),
             recycle: RecycleBin::new(retention),
+            changes: std::cell::RefCell::default(),
         }
     }
 
@@ -342,6 +378,57 @@ impl Folder {
         self.local_change(key, entry, &old.path, old.kind, now_ms)
     }
 
+    /// The changes stored versions made since the last call, oldest first (ADR 0030).
+    pub fn take_changes(&self) -> Vec<Change> {
+        std::mem::take(&mut *self.changes.borrow_mut())
+    }
+
+    /// Notes what the version just stored did: it is the current version now, or it waits as a
+    /// conflict. `before` is the entry's current version before it.
+    fn note_change(
+        &self,
+        before: Option<&EntryVersion>,
+        current: &StoredVersion,
+        others: &[StoredVersion],
+    ) {
+        let newest = others
+            .iter()
+            .chain(std::iter::once(current))
+            .max_by_key(|s| s.sequence)
+            .expect("the version just stored");
+        let after = &current.version;
+        let live = |v: &EntryVersion| !matches!(v.kind, EntryKind::Tombstone);
+        let kind = if newest.sequence != current.sequence {
+            // It lost to the current version: a conflict, unless it needs no decision.
+            (!settled(&newest.version.kind, Some(&after.kind))).then_some(ChangeKind::Conflict)
+        } else if before.is_some_and(|b| {
+            others.iter().any(|s| s.version == *b) && !settled(&b.kind, Some(&after.kind))
+        }) {
+            // It won over the version it was made apart from, which now waits for a decision.
+            Some(ChangeKind::Conflict)
+        } else {
+            match before {
+                None => live(after).then_some(ChangeKind::Added),
+                Some(b) if !live(b) && live(after) => Some(ChangeKind::Restored),
+                Some(b) if live(b) && !live(after) => Some(ChangeKind::Deleted),
+                Some(b) if live(b) && b.path != after.path => Some(ChangeKind::Renamed),
+                Some(b) if live(b) && b.kind != after.kind => Some(ChangeKind::Changed),
+                _ => None,
+            }
+        };
+        if let Some(kind) = kind {
+            self.changes.borrow_mut().push(Change {
+                entry: after.entry,
+                kind,
+                path: after.path.clone(),
+                old_path: before
+                    .filter(|_| kind == ChangeKind::Renamed)
+                    .map(|b| b.path.clone()),
+                author: newest.version.author,
+            });
+        }
+    }
+
     /// Restores a version kept in the recycle bin after it lost a conflict, as a new file at
     /// `path`, and returns the signed version to send to peers. `path` is normally
     /// `<stem> (<device>, <date>)<extension>` beside the file it was a version of.
@@ -404,6 +491,7 @@ impl Folder {
         self.layout.take();
         let existing = self.entries.remove(&entry_id);
         let is_new = existing.is_none();
+        let before = existing.as_ref().map(|e| e.current.version.clone());
 
         let mut survivors = Vec::new();
         let mut superseded = Vec::new();
@@ -513,6 +601,7 @@ impl Folder {
                 conflict_of: Some(entry_id),
             });
         }
+        self.note_change(before.as_ref(), &current, &survivors);
         let conflicted = !survivors.is_empty();
         self.entries.insert(
             entry_id,
