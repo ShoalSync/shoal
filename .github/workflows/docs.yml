@@ -6,13 +6,18 @@ on:
   pull_request:
     paths: ["docs/**", ".github/workflows/docs.yml"]
 
+permissions:
+  contents: read
+
 jobs:
   docs:
     name: mdBook
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
           tool: mdbook@0.5.4
       - name: Every ADR is in the book

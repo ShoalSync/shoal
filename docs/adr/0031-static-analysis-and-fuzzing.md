@@ -113,6 +113,15 @@ with a large cleanup, and every new finding fails CI.
   findings of medium severity or higher fail CI.
 - Pinning actions by commit is Phase 5c step 5; this lands with or after it, so `zizmor` then
   keeps them pinned.
+- Step 6 decided:
+  - It pins the actions itself, in all four repositories, each with its version in a comment;
+    the rest of Phase 5c step 5 stays to do. `dtolnay/rust-toolchain`, whose branches name the
+    toolchain, is pinned to a commit with the toolchain as an input.
+  - Checkouts do not persist the token, since no job pushes; workflows default to reading
+    contents, and only the release's publishing job writes; the release does not use the
+    Gradle cache, which a pull request's job could have filled.
+  - A `Workflows` job in each repository's CI installs pinned `actionlint` and `zizmor` and runs
+    them; `zizmor` runs offline, and its findings of medium severity or higher fail the job.
 
 ### Android
 
