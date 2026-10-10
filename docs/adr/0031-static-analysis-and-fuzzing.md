@@ -129,6 +129,12 @@ with a large cleanup, and every new finding fails CI.
   `lint-baseline.xml`.
 - `detekt`, with its formatting rules, checks the Kotlin code, starting from a baseline of
   existing findings.
+- Step 7 decided:
+  - Warnings fail as well as errors. `detekt` runs from its pinned CLI, since its Gradle plugin
+    is built against an older Kotlin than the app's.
+  - Lint's checks for newer releases (`AndroidGradlePluginVersion`, `GradleDependency`,
+    `NewerVersionAvailable`) are off. They ask the network, so a Gradle or Kotlin release
+    upstream failed a build that changed nothing.
 
 ### Smaller checks
 

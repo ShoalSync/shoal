@@ -290,7 +290,12 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   implemented. Step 5 (fuzzing) is implemented: nine targets and a nightly job on `main`.
   Step 6 (workflow checks) is implemented here, with the actions pinned by commit, which is the
   action-pinning part of Phase 5c step 5. Step 8 (shell, Nix and spelling checks) is
-  implemented here as flake checks.
+  implemented here as flake checks. Step 7 (Android Lint and `detekt`) and steps 6 and 8 for
+  infra, the site and the Android app are in those repositories.
+- Phase 5g is complete. On 2026-10-10, probe pull requests failed CI as the exit criterion
+  requires: an unchecked index in `proto` on clippy, a new Android Lint error, and an unpinned
+  action on `zizmor` in all four repositories. The fuzz job ran every target for ten minutes on
+  `main` without a crash.
 
 ### Phase 2 work breakdown
 
