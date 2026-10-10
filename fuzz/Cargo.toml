@@ -1,0 +1,84 @@
+# Fuzz targets for what arrives from outside (ADR 0031). Built by `cargo fuzz` with the nightly
+# toolchain in `rust-toolchain.toml`; not part of the main workspace.
+[package]
+name = "tidefell-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-only"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+postcard = { version = "1", features = ["alloc"] }
+tidefell-engine = { path = "../crates/engine" }
+tidefell-meta = { path = "../crates/meta" }
+tidefell-proto = { path = "../crates/proto" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "sync_frame"
+path = "fuzz_targets/sync_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "blobs_frame"
+path = "fuzz_targets/blobs_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pair_frame"
+path = "fuzz_targets/pair_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "signed_version"
+path = "fuzz_targets/signed_version.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "certificate"
+path = "fuzz_targets/certificate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "path"
+path = "fuzz_targets/path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pairing_code"
+path = "fuzz_targets/pairing_code.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "meta_snapshot"
+path = "fuzz_targets/meta_snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_state"
+path = "fuzz_targets/engine_state.rs"
+test = false
+doc = false
+bench = false

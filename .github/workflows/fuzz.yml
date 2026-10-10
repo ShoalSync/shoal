@@ -1,0 +1,49 @@
+name: Fuzz
+
+# Every fuzz target for ten minutes each night on main (ADR 0031). Not on pull requests: three
+# self-hosted runners on one machine serve every repository.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz targets
+    runs-on: self-hosted
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain and cargo-fuzz
+        working-directory: fuzz
+        # The nightly pinned in fuzz/rust-toolchain.toml, used for nothing else.
+        run: |
+          rustup toolchain install
+          if ! cargo fuzz --version 2>/dev/null | grep -q " 0.13.2"; then
+            cargo install cargo-fuzz --locked --version 0.13.2 --force
+          fi
+      - name: Run each target
+        working-directory: fuzz
+        # The corpus each run grows is kept on the runner; the seeds in fuzz/corpus are read only.
+        run: |
+          corpus="$HOME/.cache/tidefell-fuzz/corpus"
+          failed=0
+          for target in $(cargo fuzz list); do
+            mkdir -p "$corpus/$target"
+            seeds=()
+            if [ -d "corpus/$target" ]; then seeds=("corpus/$target"); fi
+            if ! cargo fuzz run "$target" "$corpus/$target" "${seeds[@]}" -- -max_total_time=600; then
+              echo "::error::$target found a crash"
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          retention-days: 7
+          name: fuzz-crashes
+          path: fuzz/artifacts

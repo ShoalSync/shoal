@@ -93,6 +93,19 @@ with a large cleanup, and every new finding fails CI.
   toolchain used for nothing else. It does not run on pull requests, because three self-hosted
   runners on one machine serve every repository.
 - A crash becomes a regression test in the crate it hit, and its input joins the corpus.
+- Step 5 decided:
+  - Nine targets: `sync_frame`, `blobs_frame` and `pair_frame` decode frames; `signed_version`
+    decodes, verifies and checks a version against its author; `certificate` verifies a device
+    certificate; `path` checks that an accepted path has only normal components; `pairing_code`
+    parses a code and round-trips what it accepts; `meta_snapshot` loads a metadata snapshot
+    and reloads what it saves; `engine_state` opens a folder whose metadata and state files are
+    the input, split by its first byte, through `tidefell_engine::fuzzing`, built only under
+    `cfg(fuzzing)`.
+  - `fuzz/` is its own workspace with its own lock file and the pinned toolchain in
+    `fuzz/rust-toolchain.toml`, so the main workspace's checks and MSRV are unaffected.
+  - `fuzz/corpus/<target>` holds seeds, starting with the frames of the spec's test vectors.
+    The nightly job keeps the corpus it grows on the runner and reads the seeds only; crash
+    inputs are uploaded for a week.
 
 ### Workflow checks
 

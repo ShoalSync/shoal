@@ -287,7 +287,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   metrics scrape and the site came with its pins.
 - Phase 5g: step 2 (`cargo machete` and `cargo semver-checks` in CI) is in place. Step 3
   (stricter lints in `proto`, `net` and `store`) is implemented. Step 4 (property tests) is
-  implemented.
+  implemented. Step 5 (fuzzing) is implemented: nine targets and a nightly job on `main`.
 
 ### Phase 2 work breakdown
 

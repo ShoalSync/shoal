@@ -1,0 +1,4 @@
+[toolchain]
+# Pinned for the fuzz targets only (ADR 0031).
+channel = "nightly-2026-09-25"
+profile = "minimal"

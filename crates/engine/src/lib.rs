@@ -52,6 +52,11 @@ mod runtime;
 mod scan;
 mod setaside;
 mod state;
+
+/// Entry points for the fuzz targets in `fuzz/` (ADR 0031), built only by `cargo fuzz`.
+#[cfg(fuzzing)]
+#[doc(hidden)]
+pub mod fuzzing;
 mod views;
 mod watch;
 
