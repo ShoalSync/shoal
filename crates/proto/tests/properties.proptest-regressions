@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f43ab694b7e6cbac764d674df8eae014037d20b7571590a1d28cb5d1c92d1187 # shrinks to device = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], secret = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], relay = None, addrs = [[::ffff:0.0.0.0%1]:0]
+cc 9e7b51281a5248ad6ccf8600ab75c392dd94b289ee9fcb4f32018c29d48296e9 # shrinks to message = Complete { certificate: Signed { signer: PublicKey(3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29), body_len: 66, .. }, relay: None, addrs: [[::ffff:0.0.0.0%1]:0], folders: [] }

@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3b0a7f8ab7fa08f62d8c1c59b15f3dc751e414c65e4618a452d8e6e71c009d81 # shrinks to (made, shuffled) = ([Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }, Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }, Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }], [Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }, Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }, Signed { signer: PublicKey(ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1), body_len: 153, .. }])

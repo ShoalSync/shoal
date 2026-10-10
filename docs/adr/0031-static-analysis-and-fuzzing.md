@@ -59,6 +59,27 @@ with a large cleanup, and every new finding fails CI.
 - `meta`: replicas that apply the same versions in any order reach the same state, the same
   winners and the same recycle bin (convergence); version vector comparison is a partial order.
 - They use `proptest`, which the chunker already uses, and run with the normal tests.
+- Step 4 decided:
+  - `proto`: sync/1, blobs/1 and pair/1 messages survive framing; signed versions and
+    certificates survive signing, encoding and verifying, and a version's signed body is its
+    one encoding; pairing codes and IDs survive their text forms. Arbitrary bytes and text go
+    through every decoder, verifier, pairing-code and path parser without a panic, and a path
+    that is accepted has no empty, `.` or `..` component, no leading `/` and no backslash.
+    Comparing vectors is reflexive, antisymmetric and transitive, and a merge is at least both
+    sides.
+  - `meta`: three replicas make random changes and sync in random pairs; applying every
+    version they made, in order, reversed and shuffled, gives the same winners and conflict
+    copies.
+  - **The recycle bin is not the same everywhere.** A delete or a decision recycles the version
+    it replaced on the replicas that stored that version (ADR 0027, ADR 0029); a replica that
+    received the decision first never stores the version, so it has nothing to keep. The
+    property checks instead that every recycled item is a version that was made; a deleted
+    entry's version only while the entry is deleted; and a lost conflict under the ID derived
+    from its signed form, never the winner or an open conflict.
+  - **IPv6 scopes are not carried.** serde, and so postcard, encodes a socket address without
+    an IPv6 address's scope and flow information, so a link-local address in a pairing code or
+    `Complete.addrs` arrives without its interface. Carrying it is a wire change and is not made
+    here; the property generates addresses as the wire carries them.
 
 ### Fuzzing
 

@@ -286,7 +286,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5f is complete: `v0.13.0` released steps 3 to 7, and the Android screens, the infra
   metrics scrape and the site came with its pins.
 - Phase 5g: step 2 (`cargo machete` and `cargo semver-checks` in CI) is in place. Step 3
-  (stricter lints in `proto`, `net` and `store`) is implemented.
+  (stricter lints in `proto`, `net` and `store`) is implemented. Step 4 (property tests) is
+  implemented.
 
 ### Phase 2 work breakdown
 

@@ -4087,6 +4087,7 @@ dependencies = [
  "blake3",
  "ed25519-dalek",
  "postcard",
+ "proptest",
  "serde",
  "tempfile",
  "thiserror 2.0.20",
@@ -4117,6 +4118,7 @@ version = "0.13.0"
 dependencies = [
  "ed25519-dalek",
  "postcard",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
