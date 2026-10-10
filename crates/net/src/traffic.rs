@@ -1,5 +1,6 @@
 //! File content sent and received, for status displays and metrics (ADR 0030).
 
+use crate::locks::Locked;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -26,19 +27,22 @@ impl Counter {
 
     fn add(&self, second: u64, bytes: u64) {
         self.total.fetch_add(bytes, Ordering::Relaxed);
-        let mut recent = self.recent.lock().unwrap();
+        let mut recent = self.recent.locked();
         match recent.back_mut() {
-            Some((s, b)) if *s == second => *b += bytes,
+            Some((s, b)) if *s == second => *b = b.saturating_add(bytes),
             _ => recent.push_back((second, bytes)),
         }
-        while recent.front().is_some_and(|(s, _)| *s + WINDOW < second) {
+        while recent
+            .front()
+            .is_some_and(|(s, _)| s.saturating_add(WINDOW) < second)
+        {
             recent.pop_front();
         }
     }
 
     /// Bytes per second over the last full seconds, not counting the one under way.
     fn rate(&self, second: u64) -> u64 {
-        let recent = self.recent.lock().unwrap();
+        let recent = self.recent.locked();
         let from = second.saturating_sub(WINDOW);
         let bytes: u64 = recent
             .iter()

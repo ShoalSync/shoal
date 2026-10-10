@@ -11,6 +11,17 @@
 //!
 //! Chunks are written to `tmp/` and renamed, so a crash never leaves a partial chunk under
 //! `chunks/`. Every read is verified against the chunk's hash.
+// Peers' data is handled here: an unchecked index, overflow or unwrap must be a reviewed
+// exception (ADR 0031). Tests may panic.
+#![cfg_attr(
+    not(test),
+    warn(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::unwrap_used,
+        clippy::expect_used
+    )
+)]
 
 mod availability;
 
@@ -127,7 +138,7 @@ impl BlockStore {
     }
 
     fn record(&mut self, hash: ChunkHash, len: u64) {
-        self.clock += 1;
+        self.clock = self.clock.saturating_add(1);
         if let Some(old) = self.chunks.insert(
             hash,
             Meta {
@@ -136,16 +147,16 @@ impl BlockStore {
             },
         ) {
             self.lru.remove(&old.used);
-            self.total_bytes -= old.len;
+            self.total_bytes = self.total_bytes.saturating_sub(old.len);
         }
         self.lru.insert(self.clock, hash);
-        self.total_bytes += len;
+        self.total_bytes = self.total_bytes.saturating_add(len);
     }
 
     fn touch(&mut self, hash: &ChunkHash) {
         if let Some(meta) = self.chunks.get_mut(hash) {
             self.lru.remove(&meta.used);
-            self.clock += 1;
+            self.clock = self.clock.saturating_add(1);
             meta.used = self.clock;
             self.lru.insert(self.clock, *hash);
         }
@@ -176,6 +187,10 @@ impl BlockStore {
         self.write(expected, data)
     }
 
+    #[expect(
+        clippy::expect_used,
+        reason = "a chunk's path is always inside its shard directory"
+    )]
     fn write(&mut self, hash: ChunkHash, data: &[u8]) -> Result<()> {
         if self.chunks.contains_key(&hash) {
             self.touch(&hash);
@@ -236,7 +251,7 @@ impl BlockStore {
         match self.chunks.remove(hash) {
             Some(meta) => {
                 self.lru.remove(&meta.used);
-                self.total_bytes -= meta.len;
+                self.total_bytes = self.total_bytes.saturating_sub(meta.len);
                 true
             }
             None => false,
@@ -266,7 +281,10 @@ impl BlockStore {
     /// Which of a manifest's chunks are stored.
     pub fn availability(&self, manifest: &Manifest) -> Availability {
         Availability::from_fn(manifest.chunks.len(), |i| {
-            self.contains(&manifest.chunks[i].hash)
+            manifest
+                .chunks
+                .get(i)
+                .is_some_and(|c| self.contains(&c.hash))
         })
     }
 
@@ -286,7 +304,7 @@ impl BlockStore {
                 break;
             }
             if !pinned(hash) {
-                projected -= self.chunks[hash].len;
+                projected = projected.saturating_sub(self.chunks.get(hash).map_or(0, |m| m.len));
                 candidates.push(*hash);
             }
         }

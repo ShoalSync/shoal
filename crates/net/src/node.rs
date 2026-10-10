@@ -18,6 +18,7 @@ use tracing::{debug, warn};
 use crate::backend::Backend;
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
 use crate::limits::{Limits, RateLimiter};
+use crate::locks::{Locked, ReadWrite};
 use crate::now_ms;
 use crate::sync::{self, Peer};
 use crate::{Error, Result};
@@ -161,7 +162,7 @@ impl PeerHandle {
 
     /// Folders currently shared with this peer.
     pub fn shared_folders(&self) -> BTreeSet<FolderId> {
-        self.peer.shared.read().unwrap().clone()
+        self.peer.shared.read_locked().clone()
     }
 
     /// Requests the manifest of `content` in `folder`.
@@ -219,21 +220,21 @@ async fn run_session(
         let ready = ready.clone();
         move |peer: Peer| {
             let handle = PeerHandle { conn, peer };
-            peers.lock().unwrap().insert(device, handle.clone());
-            let mut records = records.lock().unwrap();
+            peers.locked().insert(device, handle.clone());
+            let mut records = records.locked();
             let record = records.entry(device).or_default();
             record.connected_since_ms = Some(now_ms());
             record.last_error = None;
             record.name = Some(handle.certificate().name.clone());
             record.clock_offset_ms = handle.peer.clock_offset_ms;
-            if let Some(tx) = ready.lock().unwrap().take() {
+            if let Some(tx) = ready.locked().take() {
                 let _ = tx.send(Ok(handle));
             }
         }
     };
     let result = sync::run(conn.clone(), backend, initiator, on_ready).await;
     let ended = {
-        let mut peers = peers.lock().unwrap();
+        let mut peers = peers.locked();
         let current = peers
             .get(&device)
             .is_some_and(|h| h.conn.stable_id() == conn.stable_id());
@@ -244,7 +245,7 @@ async fn run_session(
     };
     // A session replaced by a newer one leaves the record to that one.
     if ended {
-        let mut records = records.lock().unwrap();
+        let mut records = records.locked();
         let record = records.entry(device).or_default();
         record.connected_since_ms = None;
         record.disconnected_ms = Some(now_ms());
@@ -255,7 +256,7 @@ async fn run_session(
     if let Err(e) = &result {
         debug!(%device, error = %e, "sync session ended with an error");
     }
-    let pending = ready.lock().unwrap().take();
+    let pending = ready.locked().take();
     if let Some(tx) = pending {
         let _ = tx.send(Err(result.err().unwrap_or(Error::Closed)));
     }
@@ -387,12 +388,7 @@ impl Node {
             Ok(conn) => conn,
             Err(e) => {
                 let e = Error::Connect(e.to_string());
-                self.records
-                    .lock()
-                    .unwrap()
-                    .entry(device)
-                    .or_default()
-                    .last_error = Some(e.to_string());
+                self.records.locked().entry(device).or_default().last_error = Some(e.to_string());
                 return Err(e);
             }
         };
@@ -413,8 +409,7 @@ impl Node {
     pub fn peer_status(&self, device: &DeviceId) -> PeerStatus {
         let record = self
             .records
-            .lock()
-            .unwrap()
+            .locked()
             .get(device)
             .cloned()
             .unwrap_or_default();
@@ -450,7 +445,7 @@ impl Node {
 
     /// Devices this node has connected to, or tried to, since it started.
     pub fn recorded_peers(&self) -> Vec<DeviceId> {
-        self.records.lock().unwrap().keys().copied().collect()
+        self.records.locked().keys().copied().collect()
     }
 
     /// The relays this node uses and what it knows of its network (ADR 0030).
@@ -501,17 +496,17 @@ impl Node {
 
     /// Peers with an active sync session.
     pub fn peers(&self) -> Vec<PeerHandle> {
-        self.peers.lock().unwrap().values().cloned().collect()
+        self.peers.locked().values().cloned().collect()
     }
 
     /// The sync session with `device`, if connected.
     pub fn peer(&self, device: &DeviceId) -> Option<PeerHandle> {
-        self.peers.lock().unwrap().get(device).cloned()
+        self.peers.locked().get(device).cloned()
     }
 
     async fn blob_conn(&self, addr: EndpointAddr) -> Result<Connection> {
         let id = addr.id;
-        if let Some(conn) = self.blob_conns.lock().unwrap().get(&id) {
+        if let Some(conn) = self.blob_conns.locked().get(&id) {
             if conn.close_reason().is_none() {
                 return Ok(conn.clone());
             }
@@ -521,7 +516,7 @@ impl Node {
             .connect(addr, ALPN_BLOBS_V1)
             .await
             .map_err(|e| Error::Connect(e.to_string()))?;
-        self.blob_conns.lock().unwrap().insert(id, conn.clone());
+        self.blob_conns.locked().insert(id, conn.clone());
         Ok(conn)
     }
 

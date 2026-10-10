@@ -8,10 +8,35 @@ use super::Engine;
 use crate::views::{Check, CheckLevel};
 
 /// A peer's clock this far off is worth a warning: conflicts are decided by modification time.
-const CLOCK_WARN_MS: i64 = 2 * 60 * 1000;
+const CLOCK_WARN_MS: u64 = 2 * 60 * 1000;
 /// Less free space than this fails a check; less than the second, or than 5%, warns.
 const SPACE_FAIL: u64 = 100 << 20;
 const SPACE_WARN: u64 = 1 << 30;
+
+/// How far `name`'s clock is from this device's, `offset` milliseconds ahead. The offset comes
+/// from the peer, so any value, however absurd, gives a check.
+fn clock_check(name: &str, offset: i64) -> Check {
+    let distance = offset.unsigned_abs();
+    let detail = if distance < 1000 {
+        format!("{name}'s clock agrees with this device's")
+    } else {
+        let way = if offset > 0 { "ahead of" } else { "behind" };
+        format!("{name}'s clock is {}s {way} this device's", distance / 1000)
+    };
+    if distance > CLOCK_WARN_MS {
+        check(
+            "clock",
+            CheckLevel::Warning,
+            detail,
+            Some(
+                "Set both devices to take the time from the network. Conflicting edits are \
+                 decided by modification time, so a wrong clock can pick the older edit.",
+            ),
+        )
+    } else {
+        check("clock", CheckLevel::Pass, detail, None)
+    }
+}
 
 fn check(name: &str, level: CheckLevel, detail: impl Into<String>, advice: Option<&str>) -> Check {
     Check {
@@ -138,32 +163,9 @@ impl Engine {
 
         for peer in self.peer_states().into_iter().filter(|p| p.connected) {
             let name = peer.name.clone().unwrap_or_else(|| peer.device.to_string());
-            let Some(offset) = peer.clock_offset_ms else {
-                continue;
-            };
-            let detail = if offset.abs() < 1000 {
-                format!("{name}'s clock agrees with this device's")
-            } else {
-                let way = if offset > 0 { "ahead of" } else { "behind" };
-                format!(
-                    "{name}'s clock is {}s {way} this device's",
-                    offset.abs() / 1000
-                )
-            };
-            checks.push(if offset.abs() > CLOCK_WARN_MS {
-                check(
-                    "clock",
-                    CheckLevel::Warning,
-                    detail,
-                    Some(
-                        "Set both devices to take the time from the network. Conflicting \
-                         edits are decided by modification time, so a wrong clock can pick \
-                         the older edit.",
-                    ),
-                )
-            } else {
-                check("clock", CheckLevel::Pass, detail, None)
-            });
+            if let Some(offset) = peer.clock_offset_ms {
+                checks.push(clock_check(&name, offset));
+            }
         }
 
         // One check per volume is enough; folders often share one.
@@ -315,5 +317,24 @@ impl Engine {
             ));
         }
         checks
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn any_clock_offset_gives_a_check() {
+        assert_eq!(clock_check("laptop", 300).level, CheckLevel::Pass);
+        let ahead = clock_check("laptop", 5 * 60 * 1000);
+        assert_eq!(ahead.level, CheckLevel::Warning);
+        assert_eq!(
+            ahead.detail,
+            "laptop's clock is 300s ahead of this device's"
+        );
+        for extreme in [i64::MIN, i64::MAX] {
+            assert_eq!(clock_check("laptop", extreme).level, CheckLevel::Warning);
+        }
     }
 }

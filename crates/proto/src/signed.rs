@@ -19,6 +19,10 @@ pub trait SignedKind: Serialize + DeserializeOwned {
     const KIND: &'static str;
 
     /// The body to sign: the postcard encoding, unless the kind specifies another.
+    #[expect(
+        clippy::expect_used,
+        reason = "postcard fails to encode only sequences of unknown length, which no message has"
+    )]
     fn encode(&self) -> Vec<u8> {
         postcard::to_stdvec(self).expect("in-memory encoding cannot fail")
     }
@@ -73,6 +77,11 @@ impl<T> PartialEq for Signed<T> {
 impl<T> Eq for Signed<T> {}
 
 /// The byte string a signature covers: domain, kind tag length and bytes, then the body.
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::expect_used,
+    reason = "kind tags are short constants, and the lengths are of values already in memory"
+)]
 pub fn signing_bytes(kind: &str, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(SIGNATURE_DOMAIN.len() + 1 + kind.len() + body.len());
     out.extend_from_slice(SIGNATURE_DOMAIN);

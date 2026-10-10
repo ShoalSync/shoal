@@ -4,11 +4,23 @@
 //! `tidefell/blobs/1`, and can approve a pairing (`tidefell/pair/1`); a new device uses a
 //! [`PairingServer`] instead until it has a certificate. It reaches folder metadata and chunks only through the [`Backend`] trait,
 //! which `engine` implements, so this crate does not depend on `meta` or `store`.
+// Peers' data is handled here: an unchecked index, overflow or unwrap must be a reviewed
+// exception (ADR 0031). Tests may panic.
+#![cfg_attr(
+    not(test),
+    warn(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::unwrap_used,
+        clippy::expect_used
+    )
+)]
 
 mod backend;
 mod blobs;
 mod frame_io;
 mod limits;
+mod locks;
 mod node;
 mod pair;
 mod sync;

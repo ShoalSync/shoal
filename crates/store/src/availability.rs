@@ -45,7 +45,9 @@ impl Availability {
     /// If `i >= len()`.
     pub fn get(&self, i: usize) -> bool {
         assert!(i < self.len, "chunk index {i} out of range {}", self.len);
-        self.bits[i / 8] & (1 << (i % 8)) != 0
+        self.bits
+            .get(i / 8)
+            .is_some_and(|b| b & (1 << (i % 8)) != 0)
     }
 
     /// Marks chunk `i` available or not.
@@ -55,10 +57,12 @@ impl Availability {
     /// If `i >= len()`.
     pub fn set(&mut self, i: usize, available: bool) {
         assert!(i < self.len, "chunk index {i} out of range {}", self.len);
-        if available {
-            self.bits[i / 8] |= 1 << (i % 8);
-        } else {
-            self.bits[i / 8] &= !(1 << (i % 8));
+        if let Some(b) = self.bits.get_mut(i / 8) {
+            if available {
+                *b |= 1 << (i % 8);
+            } else {
+                *b &= !(1 << (i % 8));
+            }
         }
     }
 

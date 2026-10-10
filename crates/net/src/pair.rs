@@ -18,6 +18,7 @@ use tidefell_proto::{DeviceId, PublicKey, Signed, ALPN_PAIR_V1};
 use tokio::sync::mpsc;
 use tracing::debug;
 
+use crate::locks::Locked;
 use crate::node::{bind_endpoint, NodeConfig, RelayConfig};
 use crate::{frame_io, Error, Result};
 
@@ -123,7 +124,8 @@ impl PairingServer {
             name,
             state: Arc::new(Mutex::new(CodeState {
                 secret,
-                expires: Instant::now() + ttl,
+                // An impossibly long lifetime expires the code at once rather than overflow.
+                expires: Instant::now().checked_add(ttl).unwrap_or_else(Instant::now),
                 used: false,
                 busy: false,
                 failures: 0,
@@ -211,7 +213,7 @@ impl PairProtocol {
             }
         };
         let secret = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.locked();
             if state.used
                 || state.busy
                 || state.failures >= MAX_FAILURES
@@ -219,7 +221,7 @@ impl PairProtocol {
             {
                 None
             } else if !pairing::verify_proof(&state.secret, &approver_id, &self.device, &proof) {
-                state.failures += 1;
+                state.failures = state.failures.saturating_add(1);
                 Some(Err(()))
             } else {
                 state.busy = true;
@@ -271,7 +273,7 @@ impl PairProtocol {
                     )
                     .await;
                 }
-                self.state.lock().unwrap().used = true;
+                self.state.locked().used = true;
                 let id = EndpointId::from_bytes(approver_id.as_bytes())
                     .map_err(|_| Error::Auth("invalid approver ID"))?;
                 let mut approver_addr = EndpointAddr::new(id);
@@ -299,7 +301,7 @@ struct Busy<'a>(&'a Mutex<CodeState>);
 
 impl Drop for Busy<'_> {
     fn drop(&mut self) {
-        self.0.lock().unwrap().busy = false;
+        self.0.locked().busy = false;
     }
 }
 

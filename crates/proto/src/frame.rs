@@ -10,9 +10,13 @@ use crate::Error;
 pub const MAX_FRAME_LEN: u64 = 16 * 1024 * 1024;
 
 /// Encodes `message` as one frame.
+#[expect(
+    clippy::expect_used,
+    reason = "postcard fails to encode only sequences of unknown length, which no message has"
+)]
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
     let body = postcard::to_stdvec(message).expect("in-memory encoding cannot fail");
-    let mut out = Vec::with_capacity(body.len() + 4);
+    let mut out = Vec::with_capacity(body.len().saturating_add(10));
     write_varint(&mut out, body.len() as u64);
     out.extend_from_slice(&body);
     out
@@ -24,7 +28,10 @@ pub fn decode<T: Message>(input: &[u8]) -> Result<(T, usize), Error> {
     if len > MAX_FRAME_LEN {
         return Err(Error::FrameTooLarge(len));
     }
-    let end = header + len as usize;
+    let end = usize::try_from(len)
+        .ok()
+        .and_then(|len| header.checked_add(len))
+        .ok_or(Error::FrameTooLarge(len))?;
     let body = input.get(header..end).ok_or(Error::Truncated)?;
     Ok((T::decode_body(body)?, end))
 }
@@ -71,6 +78,10 @@ fn write_varint(out: &mut Vec<u8>, mut value: u64) {
     }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "i < 10: shifts stay below 64 bits and i + 1 cannot overflow"
+)]
 fn read_varint(input: &[u8]) -> Result<(u64, usize), Error> {
     let mut value = 0u64;
     for (i, &byte) in input.iter().enumerate().take(10) {

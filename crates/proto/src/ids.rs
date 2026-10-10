@@ -53,7 +53,10 @@ macro_rules! id {
                 }
                 let mut out = [0u8; $len];
                 for (byte, pair) in out.iter_mut().zip(s.chunks_exact(2)) {
-                    *byte = (hex_val(pair[0])? << 4) | hex_val(pair[1])?;
+                    let &[high, low] = pair else {
+                        return Err(Error::InvalidHex);
+                    };
+                    *byte = (hex_val(high)? << 4) | hex_val(low)?;
                 }
                 Ok(Self(out))
             }
@@ -73,6 +76,10 @@ impl From<UserId> for PublicKey {
     }
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "each subtraction is within the range its arm matched"
+)]
 fn hex_val(c: u8) -> Result<u8, Error> {
     match c {
         b'0'..=b'9' => Ok(c - b'0'),

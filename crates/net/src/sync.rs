@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::backend::Backend;
+use crate::locks::{Locked, ReadWrite};
 use crate::{frame_io, now_ms, Error, Result};
 
 /// Most versions sent in one `IndexBatch` (ADR 0024).
@@ -52,7 +53,7 @@ pub(crate) struct Peer {
 
 impl Peer {
     pub(crate) fn shares(&self, folder: &FolderId) -> bool {
-        self.shared.read().unwrap().contains(folder)
+        self.shared.read_locked().contains(folder)
     }
 }
 
@@ -129,7 +130,9 @@ async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) ->
     };
     // Measured when the peer's Hello arrived; the time it took on the way is small next to the
     // two minutes that matter.
-    let clock_offset_ms = clock.map(|theirs| theirs - now_ms());
+    // The peer's clock is its to set: saturate rather than overflow on nonsense, and keep the
+    // offset's magnitude representable.
+    let clock_offset_ms = clock.map(|theirs| theirs.saturating_sub(now_ms()).max(-i64::MAX));
 
     // Share what both sides named, and only folders the peer may sync now. Folders added or
     // removed since our `Hello` are announced by `reoffer` once the session runs.
@@ -170,7 +173,7 @@ impl Session {
     /// Recomputes the shared set. Returns folders that became shared.
     fn reshare(&mut self) -> Vec<FolderId> {
         let now: BTreeSet<FolderId> = self.theirs.intersection(&self.offered).copied().collect();
-        let mut shared = self.peer.shared.write().unwrap();
+        let mut shared = self.peer.shared.write_locked();
         let added = now.difference(&shared).copied().collect();
         *shared = now;
         added
@@ -216,6 +219,10 @@ enum Outgoing {
 /// pushing, so versions are not echoed back to where they came from (ADR 0024).
 type Received = Arc<std::sync::Mutex<std::collections::HashSet<[u8; 32]>>>;
 
+#[expect(
+    clippy::expect_used,
+    reason = "postcard fails to encode only sequences of unknown length, which no message has"
+)]
 fn version_hash(version: &Signed<tidefell_proto::sync::EntryVersion>) -> [u8; 32] {
     *blake3::hash(&postcard::to_stdvec(version).expect("in-memory encoding cannot fail")).as_bytes()
 }
@@ -240,7 +247,7 @@ pub(crate) async fn run(
     )
     .await?;
     let device = peer.certificate.device;
-    let initial: Vec<FolderId> = peer.shared.read().unwrap().iter().copied().collect();
+    let initial: Vec<FolderId> = peer.shared.read_locked().iter().copied().collect();
     debug!(%device, shared = initial.len(), "sync session started");
     on_ready(peer.clone());
 
@@ -437,7 +444,7 @@ async fn send_index(
         }
         first = false;
         let versions: Vec<_> = {
-            let mut received = received.lock().unwrap();
+            let mut received = received.locked();
             page.versions
                 .into_iter()
                 .filter(|v| !received.remove(&version_hash(v)))
@@ -540,7 +547,7 @@ fn handle(
             }
             debug!(%device, %folder, versions = versions.len(), last, "index received");
             {
-                let mut received = session.received.lock().unwrap();
+                let mut received = session.received.locked();
                 // Versions we already had are never pushed, so their hashes would stay; bound the
                 // set. Forgetting only means some versions may be echoed.
                 if received.len() > MAX_RECEIVED {
@@ -585,7 +592,7 @@ async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Sh
             let request = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv));
             let response = match request.await {
                 Ok(SyncMessage::ManifestRequest { folder, content }) => {
-                    if !shared.read().unwrap().contains(&folder) {
+                    if !shared.read_locked().contains(&folder) {
                         SyncMessage::Error {
                             code: ErrorCode::NotAMember,
                         }

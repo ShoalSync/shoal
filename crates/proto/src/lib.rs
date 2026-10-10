@@ -3,6 +3,17 @@
 //! Everything in this crate is part of the wire contract described in `specs/`. Changing the
 //! field order or types of any serialised struct or enum is a breaking change and requires a
 //! new ALPN version. See ADR 0006.
+// Peers' data is parsed here: an unchecked index, overflow or unwrap must be a reviewed
+// exception (ADR 0031). Tests may panic.
+#![cfg_attr(
+    not(test),
+    warn(
+        clippy::indexing_slicing,
+        clippy::arithmetic_side_effects,
+        clippy::unwrap_used,
+        clippy::expect_used
+    )
+)]
 
 pub mod blobs;
 mod bytes;

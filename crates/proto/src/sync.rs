@@ -60,6 +60,10 @@ impl SignedKind for EntryVersion {
     /// The postcard encoding, except that a vector without holes leaves out the empty list of
     /// holes that would end it, so such a version has the encoding it had before vectors had
     /// holes.
+    #[expect(
+        clippy::expect_used,
+        reason = "postcard fails to encode only sequences of unknown length, which no message has"
+    )]
     fn encode(&self) -> Vec<u8> {
         let mut body = postcard::to_stdvec(self).expect("in-memory encoding cannot fail");
         if !self.version.has_holes() {

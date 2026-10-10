@@ -283,6 +283,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   Android pin. Step 6 (metrics) is implemented in `tidefelld`; the scrape option in
   `tidefell/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
   implemented; the app's screen follows with the next Android pin.
+- Phase 5f is complete: `v0.13.0` released steps 3 to 7, and the Android screens, the infra
+  metrics scrape and the site came with its pins.
+- Phase 5g: step 2 (`cargo machete` and `cargo semver-checks` in CI) is in place. Step 3
+  (stricter lints in `proto`, `net` and `store`) is implemented.
 
 ### Phase 2 work breakdown
 

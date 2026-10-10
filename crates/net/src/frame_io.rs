@@ -35,13 +35,16 @@ where
     T: Message,
 {
     let mut len: u64 = 0;
-    for i in 0..10 {
+    // Ten bytes of seven bits each, the most a varint of 64 bits takes.
+    for shift in (0u32..70).step_by(7) {
         let byte = match reader.read_u8().await {
             Ok(byte) => byte,
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && i == 0 => return Ok(None),
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof && shift == 0 => {
+                return Ok(None)
+            }
             Err(e) => return Err(Error::Stream(e.to_string())),
         };
-        len |= u64::from(byte & 0x7f) << (7 * i);
+        len |= u64::from(byte & 0x7f).checked_shl(shift).unwrap_or(0);
         if byte & 0x80 == 0 {
             if len > max.min(MAX_FRAME_LEN) {
                 return Err(Error::Protocol(format!("frame of {len} bytes")));

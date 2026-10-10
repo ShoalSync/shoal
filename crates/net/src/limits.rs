@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use crate::locks::Locked;
 use iroh::endpoint::Connection;
 use iroh::TransportAddr;
 use tokio::time::Instant;
@@ -15,6 +16,8 @@ pub const MIN_BYTES_PER_SEC: u64 = 64 * 1024;
 /// chunk at the lowest limit it stays within the requester's deadline; beyond it the responder
 /// answers `Busy`.
 pub(crate) const MAX_BACKLOG: Duration = Duration::from_secs(10);
+/// Half of [`MAX_BACKLOG`].
+const HALF_BACKLOG: Duration = Duration::from_secs(5);
 
 /// How fast this device may send and receive file content.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -57,10 +60,10 @@ impl Bucket {
     /// Reserves `bytes` at `rate` and returns how long to wait before sending them.
     fn reserve(&self, bytes: usize, rate: u64) -> Duration {
         let now = Instant::now();
-        let mut free_at = self.free_at.lock().unwrap();
+        let mut free_at = self.free_at.locked();
         let start = (*free_at).max(now);
-        *free_at = start + Duration::from_secs_f64(bytes as f64 / rate as f64);
-        start - now
+        *free_at = after(start, bytes, rate);
+        start.saturating_duration_since(now)
     }
 
     /// Like [`Bucket::reserve`], but only while the backlog is at most `max`, checked and
@@ -68,35 +71,43 @@ impl Bucket {
     /// returns how long to wait before trying again.
     fn try_reserve(&self, bytes: usize, rate: u64, max: Duration) -> Result<Duration, Duration> {
         let now = Instant::now();
-        let mut free_at = self.free_at.lock().unwrap();
+        let mut free_at = self.free_at.locked();
         let backlog = free_at.saturating_duration_since(now);
         if backlog > max {
             return Err(retry_after(backlog));
         }
         let start = (*free_at).max(now);
-        *free_at = start + Duration::from_secs_f64(bytes as f64 / rate as f64);
-        Ok(start - now)
+        *free_at = after(start, bytes, rate);
+        Ok(start.saturating_duration_since(now))
     }
 
     /// How long the bytes already reserved will take to go.
     fn backlog(&self) -> Duration {
         self.free_at
-            .lock()
-            .unwrap()
+            .locked()
             .saturating_duration_since(Instant::now())
     }
 
     /// Forgets what was reserved, as when the rate changes.
     fn reset(&self) {
-        *self.free_at.lock().unwrap() = Instant::now();
+        *self.free_at.locked() = Instant::now();
     }
+}
+
+/// When `bytes` sent at `rate` from `start` are gone. A rate is never 0 (see [`Limits::clamped`]).
+fn after(start: Instant, bytes: usize, rate: u64) -> Instant {
+    let seconds = bytes as f64 / rate.max(1) as f64;
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .and_then(|d| start.checked_add(d))
+        .unwrap_or(start)
 }
 
 /// When a busy sender is worth asking again: once its backlog has drained to half the budget,
 /// and never sooner than a second, so requesters do not storm it.
 fn retry_after(backlog: Duration) -> Duration {
     backlog
-        .saturating_sub(MAX_BACKLOG / 2)
+        .saturating_sub(HALF_BACKLOG)
         .max(Duration::from_secs(1))
 }
 
@@ -121,11 +132,11 @@ impl RateLimiter {
     }
 
     pub(crate) fn limits(&self) -> Limits {
-        *self.limits.lock().unwrap()
+        *self.limits.locked()
     }
 
     pub(crate) fn set(&self, limits: Limits) {
-        *self.limits.lock().unwrap() = limits.clamped();
+        *self.limits.locked() = limits.clamped();
         // A backlog reserved at the old rate would hold up the new one.
         self.upload.reset();
         self.download.reset();

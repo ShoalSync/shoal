@@ -102,10 +102,11 @@ impl VersionVector {
         let mut out = Vec::new();
         let mut next = 1;
         for &(_, a, b) in self.holes.iter().filter(|(d, ..)| d == device) {
+            // A peer's vector may not be checked yet: saturate rather than overflow.
             if a > next {
-                out.push((next, a - 1));
+                out.push((next, a.saturating_sub(1)));
             }
-            next = b + 1;
+            next = b.saturating_add(1);
         }
         if max >= next {
             out.push((next, max));
@@ -125,9 +126,9 @@ impl VersionVector {
                 let mut next = 1;
                 for &(a, b) in ranges {
                     if a > next {
-                        self.holes.push((device, next, a - 1));
+                        self.holes.push((device, next, a.saturating_sub(1)));
                     }
-                    next = b + 1;
+                    next = b.saturating_add(1);
                 }
                 self.holes.sort_unstable();
             }
@@ -154,7 +155,7 @@ impl VersionVector {
             .into_iter()
             .flat_map(|(a, b)| {
                 if a <= n && n <= b {
-                    vec![(a, n - 1), (n + 1, b)]
+                    vec![(a, n.saturating_sub(1)), (n.saturating_add(1), b)]
                 } else {
                     vec![(a, b)]
                 }
@@ -184,9 +185,9 @@ impl VersionVector {
                 .holes
                 .iter()
                 .all(|(d, a, b)| *a >= 1 && a <= b && *b < self.get(d))
-            && self.holes.windows(2).all(|w| {
-                let ((d1, _, b1), (d2, a2, _)) = (w[0], w[1]);
-                d1 < d2 || (d1 == d2 && b1.saturating_add(1) < a2)
+            && self.holes.windows(2).all(|w| match w {
+                [(d1, _, b1), (d2, a2, _)] => d1 < d2 || (d1 == d2 && b1.saturating_add(1) < *a2),
+                _ => true,
             });
         counters && holes
     }
@@ -286,6 +287,20 @@ mod tests {
 
     fn vv(pairs: &[(u8, u64)]) -> VersionVector {
         pairs.iter().map(|&(n, c)| (d(n), c)).collect()
+    }
+
+    #[test]
+    fn unchecked_holes_do_not_overflow() {
+        // A peer's vector, not yet checked against the ceiling, with a hole to the very end.
+        let mut v = vv(&[(1, 5)]);
+        v.holes.push((d(1), 2, u64::MAX));
+        assert!(!v.within_ceiling());
+        let mut other = v.clone();
+        other.add(d(1), 7);
+        other.remove(d(1), 1);
+        let mut merged = vv(&[(1, 3)]);
+        merged.merge(&v);
+        let _ = v.compare(&merged);
     }
 
     #[test]

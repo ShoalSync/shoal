@@ -37,6 +37,20 @@ with a large cleanup, and every new finding fails CI.
   code. CI's `-D warnings` makes them failures.
 - An existing site that is correct is annotated `#[expect(lint, reason = "...")]` saying why it
   cannot panic, so the reason is reviewed with the code.
+- Step 3 decided:
+  - The lints are set at the top of each crate's `lib.rs` for builds that are not tests, so
+    test code may still unwrap.
+  - Most sites were fixed rather than annotated: saturating counters and lengths, `get` in
+    place of indexing, checked frame lengths and deadlines. Annotated are postcard encoding
+    in memory, shifts bounded by a loop, base32 and hex digits, and a chunk's shard directory.
+  - Locks in `net` are taken through one helper that passes a poisoned lock's panic on, since
+    the panic that poisoned it has already stopped the node (ADR 0030).
+  - The clock offset from a peer's `Hello` could overflow on a clock the peer made up: a
+    panic in a debug build, a wrapped value in a release one. It now saturates, and the
+    doctor, which took its absolute value, handles any offset, with a test. A version
+    vector whose hole ends at the largest counter overflowed the same way when its ranges were
+    read; `meta` refuses such vectors before reading them, but `proto` no longer relies on
+    that, with a test.
 
 ### Property tests
 

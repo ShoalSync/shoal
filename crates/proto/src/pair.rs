@@ -28,6 +28,10 @@ pub struct PairingCode {
 impl PairingCode {
     /// The text form: [`CODE_PREFIX`] followed by the postcard encoding in unpadded RFC 4648
     /// base32 (upper case, which QR codes store compactly).
+    #[expect(
+        clippy::expect_used,
+        reason = "postcard fails to encode only sequences of unknown length, which no message has"
+    )]
     pub fn to_text(&self) -> String {
         let bytes = postcard::to_stdvec(self).expect("in-memory encoding cannot fail");
         format!("{CODE_PREFIX}{}", base32_encode(&bytes))
@@ -110,6 +114,11 @@ pub enum PairMessage {
 
 const ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    reason = "bits stays below 13, and an index masked with 31 is within the 32-letter alphabet"
+)]
 fn base32_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(5) * 8);
     let (mut buffer, mut bits) = (0u32, 0u32);
@@ -127,6 +136,10 @@ fn base32_encode(bytes: &[u8]) -> String {
     out
 }
 
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "bits stays below 13, and a length times 5 fits when the text is in memory"
+)]
 fn base32_decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 5 / 8);
     let (mut buffer, mut bits) = (0u32, 0u32);
