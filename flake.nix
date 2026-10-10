@@ -138,6 +138,27 @@
           };
         };
 
+      # Shell, Nix and spelling checks over the source (ADR 0031).
+      lintChecks =
+        pkgs:
+        let
+          check =
+            name: tools: script:
+            pkgs.runCommand name { nativeBuildInputs = tools; } ''
+              cd ${self}
+              ${script}
+              touch $out
+            '';
+        in
+        {
+          shellcheck = check "shellcheck" [ pkgs.shellcheck ] ''
+            find . -name '*.sh' -print0 | xargs -0 --no-run-if-empty shellcheck
+          '';
+          statix = check "statix" [ pkgs.statix ] "statix check .";
+          deadnix = check "deadnix" [ pkgs.deadnix ] "deadnix --fail .";
+          typos = check "typos" [ pkgs.typos ] "typos";
+        };
+
       # Evaluates the NixOS module and builds its systemd unit and checked configuration.
       nixosModuleCheck =
         let
@@ -188,10 +209,12 @@
       });
 
       # `nix flake check` runs these: formatting, clippy, the tests, the crate boundaries, the MSRV
-      # build and the package, all sharing the compiled dependencies, and the NixOS module.
+      # build and the package, all sharing the compiled dependencies, the NixOS module, and the
+      # shell, Nix and spelling checks.
       checks = forAllSystems (
         pkgs:
         (rust pkgs).checks
+        // lintChecks pkgs
         // {
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
         }

@@ -1,0 +1,16 @@
+# Spelling (ADR 0031). The same file is in every Tidefell repository: add project words here and
+# copy the change to the others.
+
+[default]
+extend-ignore-re = [
+  # RFC 4648 base32 test vectors: "f", "fo", "foo" and so on.
+  '\("fo", "MZXQ"\)',
+]
+
+[default.extend-words]
+# As in UPnP.
+Pn = "Pn"
+
+[files]
+# Vendored, minified code.
+extend-exclude = ["*.min.js"]

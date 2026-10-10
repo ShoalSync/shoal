@@ -136,6 +136,12 @@ with a large cleanup, and every new finding fails CI.
 - `statix` and `deadnix` on the Nix files of the monorepo, infra and site, as flake checks, so
   `nix flake check` runs them locally and in CI.
 - `typos` on code, comments and docs in every repository, with a shared list of project words.
+- Step 8 decided:
+  - In the monorepo, infra and the site, `shellcheck`, `statix`, `deadnix --fail` and `typos`
+    are flake checks, so `nix flake check` runs them. The Android repository has no Nix files and
+    no flake; its CI runs `shellcheck` and `typos`.
+  - The project words are `_typos.toml`, the same file in every repository. Vendored minified
+    files are left out.
 
 ### Not adopted
 

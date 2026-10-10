@@ -68,7 +68,7 @@ in
     };
 
     settings = lib.mkOption {
-      type = settingsFormat.type;
+      inherit (settingsFormat) type;
       default = { };
       description = ''
         Contents of the tidefelld configuration file. Run `tidefelld config schema` for the
