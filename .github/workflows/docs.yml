@@ -18,6 +18,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        # It downloads under $HOME, which the runners on this machine share; a HOME of
+        # each job's own keeps jobs running at once from overwriting each other's files.
+        env:
+          HOME: ${{ runner.temp }}
         with:
           tool: mdbook@0.5.4
       - name: Every ADR is in the book

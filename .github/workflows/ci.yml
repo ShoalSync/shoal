@@ -61,6 +61,10 @@ jobs:
           toolchain: stable
       # The action runs in a container; installing the binary avoids needing Docker on the runner.
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        # It downloads under $HOME, which the runners on this machine share; a HOME of
+        # each job's own keeps jobs running at once from overwriting each other's files.
+        env:
+          HOME: ${{ runner.temp }}
         with:
           tool: cargo-deny,cargo-machete,cargo-semver-checks
       - name: Check
@@ -158,6 +162,10 @@ jobs:
         with:
           persist-credentials: false
       - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
+        # It downloads under $HOME, which the runners on this machine share; a HOME of
+        # each job's own keeps jobs running at once from overwriting each other's files.
+        env:
+          HOME: ${{ runner.temp }}
         with:
           tool: zizmor@1.30.1
       - name: actionlint
