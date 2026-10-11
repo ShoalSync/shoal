@@ -47,6 +47,7 @@ mod ignores;
 mod materialize;
 pub mod pairing;
 mod pins;
+mod probe;
 mod redact;
 mod root;
 mod runtime;
@@ -66,6 +67,7 @@ pub use config::{
     SyncOptions,
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
+pub use probe::{Filesystem, NameLength};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::{ChangeKind, Retention};
 pub use tidefell_net::{Limits, PathKind, RelayConfig, RelayUrl, Transfer, MIN_BYTES_PER_SEC};

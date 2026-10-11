@@ -210,6 +210,15 @@ impl Engine {
                     Some("Give the user that runs Tidefell read and write access to the folder."),
                 ),
             });
+            // What the drive does with names (ADR 0033), probed when the folder opened.
+            if let Ok(filesystem) = self.filesystem(folder.id) {
+                checks.push(check(
+                    "filesystem",
+                    CheckLevel::Pass,
+                    format!("{path}: {}", filesystem.describe()),
+                    None,
+                ));
+            }
             if let Some(reason) = &folder.watch_error {
                 let limit = watch_limit()
                     .map(|n| format!(" (the system allows {n} watched directories)"))

@@ -290,6 +290,19 @@ fn open_folder(
     }
     let (id, root) = (state.config.id, state.config.path.clone());
     let unavailable = root::check(&root, id);
+    let mut state = state;
+    // What the drive does with names, so files are written where it can keep them apart
+    // (ADR 0033). A folder that cannot be probed, such as an unavailable one, is assumed to
+    // keep every name.
+    if unavailable.is_none() {
+        match crate::probe::probe(&root) {
+            Ok(filesystem) => {
+                debug!(folder = %id, filesystem = %filesystem.describe(), "probed the folder's drive");
+                state.filesystem = filesystem;
+            }
+            Err(e) => warn!(folder = %id, error = %e, "cannot probe the folder's drive"),
+        }
+    }
     match &unavailable {
         // Before the first scan, which would otherwise record the file as deleted.
         None => crate::history::recover(&root),
@@ -658,6 +671,20 @@ impl Engine {
     /// [`crate::MIN_BYTES_PER_SEC`] are raised to it.
     pub fn set_limits(&self, limits: crate::Limits) {
         self.node.set_limits(limits);
+    }
+
+    /// What the filesystem of `folder` does with names, as probed when the folder opened
+    /// (ADR 0033).
+    pub fn filesystem(&self, folder: FolderId) -> Result<crate::Filesystem> {
+        Ok(self.inner.folder(&folder)?.lock().filesystem.clone())
+    }
+
+    /// Treats `folder` as if its filesystem did what `filesystem` says with names, instead of
+    /// what the probe found: for tests, and for a drive the probe cannot judge (ADR 0033).
+    pub fn assume_filesystem(&self, folder: FolderId, filesystem: crate::Filesystem) -> Result<()> {
+        self.inner.folder(&folder)?.lock().filesystem = filesystem;
+        self.inner.changes.send_modify(|n| *n += 1);
+        Ok(())
     }
 
     /// Adds a fixed delay before every request this engine sends to a peer, as a slow link's

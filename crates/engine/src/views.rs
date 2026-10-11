@@ -194,8 +194,8 @@ pub enum CheckLevel {
 /// One check of `tidefell doctor` (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
-    /// What was checked: `state`, `clock`, `space`, `folder`, `watch`, `relay`, `network` or
-    /// `peers`.
+    /// What was checked: `state`, `clock`, `space`, `folder`, `filesystem`, `watch`, `relay`,
+    /// `network` or `peers`.
     pub name: String,
     /// How it came out.
     pub level: CheckLevel,

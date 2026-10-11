@@ -511,6 +511,9 @@ pub(crate) struct FolderState {
     pub(crate) pins: BTreeSet<String>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
+    /// What the folder's filesystem does with names, probed when it opens (ADR 0033). Not
+    /// saved: a folder that moved may be on another filesystem.
+    pub(crate) filesystem: crate::probe::Filesystem,
     pub(crate) dir: PathBuf,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
@@ -560,6 +563,7 @@ impl FolderState {
             history: BTreeMap::new(),
             pins: BTreeSet::new(),
             ignores,
+            filesystem: crate::probe::Filesystem::default(),
             dir,
             removed: false,
             activity_lines: std::cell::Cell::new(0),

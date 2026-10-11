@@ -165,3 +165,30 @@ async fn one_name_written_two_ways_is_one_file_and_a_problem() {
     assert_eq!(problems[0].path, NFC);
     assert_eq!(problems[0].kind, ProblemKind::NameNotAllowed);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_doctor_reports_what_the_drive_does_with_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 10);
+    let engine = a.start(&user).await;
+    // The test machine keeps every name as given.
+    assert!(!engine.filesystem(FOLDER).unwrap().case_insensitive);
+    let doctor = tokio::task::spawn_blocking(move || {
+        let checks = engine.doctor();
+        (engine, checks)
+    })
+    .await
+    .unwrap()
+    .1;
+    let check = doctor.iter().find(|c| c.name == "filesystem").unwrap();
+    assert!(
+        check
+            .detail
+            .contains("names differing in case are different files")
+            || check
+                .detail
+                .contains("Names differing in case are different files"),
+        "{check:?}"
+    );
+}

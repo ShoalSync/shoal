@@ -306,7 +306,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   replicas or a lone peer. It also carries Phase 5g's checks. The protocol is unchanged.
 - Phase 5i: step 2 (reproduction) is in `tidefell/android` (ADR 0033 records what 0.14.0
   does). Step 3 (NFC) is implemented: paths are NFC on the wire, and names keep their spelling
-  on disk.
+  on disk. Step 4 (probing) is implemented, with a `filesystem` check in `tidefell doctor`.
 
 ### Phase 2 work breakdown
 

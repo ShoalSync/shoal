@@ -70,6 +70,17 @@ change back and forth on every scan. A name the phone cannot store fails to writ
     is a `NameNotAllowed` problem.
   - Paths from the API, the web's uploads and keep-both copy names, which take a device's
     name, are converted to NFC.
+- Step 4 decided:
+  - The probe runs every time a folder opens, in a directory of its own under `.tidefell/`, so
+    a moved folder is probed again without anything being saved. A folder that is unavailable
+    or read-only is assumed to keep every name until it is probed.
+  - Each name is created and counts as stored only if the directory then lists exactly that
+    name: case and Unicode-form matching; `< > : " | ? *` and a control character; Windows'
+    reserved names, alone and with an extension; trailing dots and spaces; and the longest
+    name, in bytes, or in characters if as many two-byte characters fit.
+  - `tidefell doctor` reports the result for each folder as a `filesystem` check, which the API
+    serves with the others. `Engine::assume_filesystem` sets the result instead, for tests and
+    for a drive the probe cannot judge.
 
 ## Consequences
 
