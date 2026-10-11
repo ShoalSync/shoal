@@ -6,6 +6,17 @@
     "and a major update waits for approval on the dependency dashboard."
   ],
   "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "bench/**"
+  ],
   "timezone": "Etc/UTC",
   "schedule": ["before 6am on monday"],
   "prConcurrentLimit": 3,

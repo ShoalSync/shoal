@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "xtask"]
 # The fuzz targets build with a nightly toolchain and have their own workspace (ADR 0031).
-exclude = ["fuzz"]
+exclude = ["fuzz", "bench"]
 resolver = "2"
 
 [workspace.package]

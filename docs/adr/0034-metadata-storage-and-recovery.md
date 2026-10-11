@@ -83,6 +83,37 @@ progress, confirmed copies, kept files and history).
 
 ### Steps
 
+- Step 2 measured (`bench/metadata`, `cargo run --release` there), applying one batch of 512
+  versions from another device to a folder of signed versions, on the CI machine's disk
+  (ZFS). Times include applying the batch in memory and checking its signatures.
+
+  | Entries | Today: rewrite `meta` | redb, by entry | SQLite, by entry |
+  | --- | --- | --- | --- |
+  | 10,000 | 61 ms, 2.9 MB | 146 ms, 2.2 MB | 273 ms, 3.6 MB |
+  | 100,000 | 388 ms, 29 MB | 100 ms, 3.0 MB | 192 ms, 14.7 MB |
+  | 1,000,000 | 2,841 ms, 290 MB | 129 ms, 3.9 MB | 205 ms, 15.0 MB |
+
+  Today's figure is the `meta` file alone; the engine's `state` file is written on top. Keyed
+  by entry, every database rewrites a page for each of the 512 entries it touches, about 3 MB.
+  Keyed by the sequence this device stored each version under, a batch appends: redb writes
+  0.33 MB per batch at any size. Superseded versions are removed later, in one sorted pass once
+  there are as many as live ones. Over 400 batches at 100,000 entries, clean-ups included:
+
+  | Engine | Batch, mean / slowest | Written per batch | File: loaded / grown / compacted |
+  | --- | --- | --- | --- |
+  | redb | 58 / 82 ms | 0.47 MB | 67 / 270 / 65 MB |
+  | SQLite | 59 / 97 ms | 0.76 MB | 63 / 127 / 70 MB |
+
+- Step 2 decided:
+  - redb, as decided above: it writes less, is pure Rust, and needs no C toolchain for the
+    Android build. Versions are kept by sequence; where each entry's versions are is kept in
+    memory and rebuilt on open; superseded versions are removed in one sorted pass once there
+    are as many as live ones, and the database is then compacted, since redb does not give
+    freed pages back to the file system on its own. A folder's database takes about twice the
+    space of today's `meta` file.
+  - Signatures are checked before the folder is locked, so the lock covers applying the batch
+    in memory; the commit happens outside it, and peers are sent only committed versions.
+
 - Step 3 decided: every rename into place in the engine, `tidefell-meta`'s snapshot and the web
   peer's accounts and shares files syncs the directories it touches afterwards. A filesystem
   that cannot sync a directory, as some FUSE mounts cannot, keeps the rename without the
