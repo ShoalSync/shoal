@@ -38,6 +38,7 @@ mod batch;
 mod config;
 mod content;
 mod copies;
+mod db;
 pub mod device;
 pub mod diagnostics;
 mod engine;
@@ -54,6 +55,7 @@ mod runtime;
 mod scan;
 mod setaside;
 mod state;
+mod tracked;
 
 /// Entry points for the fuzz targets in `fuzz/` (ADR 0031), built only by `cargo fuzz`.
 #[cfg(fuzzing)]

@@ -133,6 +133,12 @@ impl Folder {
     /// journal.
     pub fn full_journal(&mut self) -> Journal {
         self.pending = Pending::default();
+        self.all_records()
+    }
+
+    /// Everything the folder holds, as [`Folder::full_journal`] gives it, leaving the journal
+    /// as it is.
+    pub fn all_records(&self) -> Journal {
         let mut stored: Vec<(u64, Signed<EntryVersion>)> = self
             .entries
             .values()

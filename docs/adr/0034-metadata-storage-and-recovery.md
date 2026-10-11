@@ -120,6 +120,22 @@ progress, confirmed copies, kept files and history).
   guarantee rather than failing it. The block store's chunk files do not: a lost chunk is fetched
   again, and a directory sync per chunk would cost transfers more than it saves. Transfer times
   of Phase 5h's measurement are unchanged.
+- Step 4 decided, so far:
+  - `tidefell-meta` keeps a journal of what each change stored, dropped and recycled, and
+    rebuilds a folder from what was written, choosing each entry's current version as storing
+    does, so nothing per entry is rewritten. Versions are not verified again on open; they were
+    when they arrived, and the database's checksums cover what was written since. Checking a
+    remote version is separate from storing it, so it can be done before the folder is locked.
+  - Each folder's database is `folder.redb` in its state directory, with a header table, the
+    versions by sequence, an append-only table of dropped sequences, the recycle bin, and one
+    table for each of the engine's records. Those records sit in maps that note which keys
+    change, so a change the engine makes without saving it does not compile; a development
+    build also reads the whole database back after each save, for folders of up to 2,000
+    entries, and fails if it differs from memory.
+  - A save commits only what changed, durably. The `meta` and `state` files of earlier
+    versions are converted when a folder opens and then deleted.
+  - Closing a folder's database is part of shutting the engine down, since redb locks the
+    file: Android restarts its engine in the same process.
 
 ## Consequences
 

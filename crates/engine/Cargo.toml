@@ -17,6 +17,7 @@ getrandom.workspace = true
 ignore.workspace = true
 notify.workspace = true
 postcard.workspace = true
+redb.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 tidefell-chunker.workspace = true

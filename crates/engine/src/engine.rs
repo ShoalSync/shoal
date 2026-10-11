@@ -737,7 +737,7 @@ impl Engine {
             if let Some(scanner) = handle.scanner.lock().unwrap().take() {
                 scanner.abort();
             }
-            if let Err(e) = handle.lock().save() {
+            if let Err(e) = handle.lock().close() {
                 warn!(folder = %id, error = %e, "saving state on shutdown failed");
             }
         }

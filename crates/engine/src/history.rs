@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tidefell_chunker::{chunk_reader, Params};
-use tidefell_proto::ContentHash;
+use tidefell_proto::{ContentHash, EntryId};
 
 use crate::scan::{stat, RESERVED_DIR};
 use crate::state::{FolderState, LocalFile};
@@ -176,8 +176,17 @@ pub(crate) fn keep(
 pub(crate) fn purge(state: &mut FolderState, now_ms: i64) {
     let days = state.meta.recycle_bin().retention().days();
     let mut removed = Vec::new();
-    for versions in state.history.values_mut() {
-        removed.extend(thin(versions, now_ms, days));
+    // Only entries whose history thins change, so only those are saved again (ADR 0034).
+    let entries: Vec<EntryId> = state.history.keys().copied().collect();
+    for entry in entries {
+        let Some(mut versions) = state.history.get(&entry).cloned() else {
+            continue;
+        };
+        let gone = thin(&mut versions, now_ms, days);
+        if !gone.is_empty() {
+            removed.extend(gone);
+            state.history.insert(entry, versions);
+        }
     }
     state.history.retain(|_, v| !v.is_empty());
     if removed.is_empty() {

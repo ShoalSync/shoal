@@ -144,7 +144,7 @@ pub(crate) fn discard(state: &mut FolderState, entry: Option<&EntryId>) -> Vec<S
     let root = state.config.path.clone();
     let removed: Vec<SetAside> = match entry {
         Some(entry) => state.set_aside.remove(entry).into_iter().collect(),
-        None => std::mem::take(&mut state.set_aside).into_values().collect(),
+        None => state.set_aside.take_all().into_values().collect(),
     };
     for item in &removed {
         remove_file(&root, item);

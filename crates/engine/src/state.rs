@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -14,8 +13,10 @@ use tidefell_proto::version::LegacyVersionVector;
 use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
+use crate::db::{Changes, FolderDb};
 use crate::history::Previous;
 use crate::ignores::Ignores;
+use crate::tracked::{encode, Tracked, TrackedSet};
 use crate::{io_err, random_bytes, Error, Result};
 
 /// How a device tells a folder's names apart (ADR 0033): in NFC, and without regard to case
@@ -155,11 +156,14 @@ impl From<LocalFileV3> for LocalFile {
 pub(crate) struct LocalFiles {
     files: BTreeMap<String, LocalFile>,
     by_content: HashMap<ContentHash, BTreeSet<String>>,
+    /// Paths recorded or forgotten since last saved (ADR 0034).
+    changed: BTreeSet<String>,
 }
 
 impl LocalFiles {
     /// Records the file at `path`, replacing what was recorded there.
     pub(crate) fn insert(&mut self, path: String, file: LocalFile) -> Option<LocalFile> {
+        self.changed.insert(path.clone());
         self.by_content
             .entry(file.content)
             .or_default()
@@ -174,8 +178,38 @@ impl LocalFiles {
     /// Forgets the file at `path`.
     pub(crate) fn remove(&mut self, path: &str) -> Option<LocalFile> {
         let old = self.files.remove(path)?;
+        self.changed.insert(path.to_owned());
         self.unindex(path, old.content);
         Some(old)
+    }
+
+    /// The paths recorded or forgotten since last asked, encoded for the database.
+    pub(crate) fn take_changed(&mut self) -> Vec<crate::tracked::Changed> {
+        std::mem::take(&mut self.changed)
+            .into_iter()
+            .map(|path| {
+                let file = self.files.get(&path).map(encode);
+                (encode(&path), file)
+            })
+            .collect()
+    }
+
+    /// Every file, encoded for the database.
+    pub(crate) fn all(&self) -> Vec<crate::tracked::Changed> {
+        self.files
+            .iter()
+            .map(|(p, f)| (encode(p), Some(encode(f))))
+            .collect()
+    }
+
+    /// Loads what [`LocalFiles::all`] and [`LocalFiles::take_changed`] wrote.
+    fn decode(records: Vec<(Vec<u8>, Vec<u8>)>) -> std::result::Result<Self, postcard::Error> {
+        let mut files = LocalFiles::default();
+        for (path, file) in records {
+            files.insert(postcard::from_bytes(&path)?, postcard::from_bytes(&file)?);
+        }
+        files.changed.clear();
+        Ok(files)
     }
 
     /// Paths of the files on disk with `content`.
@@ -211,6 +245,7 @@ impl FromIterator<(String, LocalFile)> for LocalFiles {
         for (path, file) in iter {
             out.insert(path, file);
         }
+        out.changed.clear();
         out
     }
 }
@@ -494,39 +529,41 @@ pub(crate) struct FolderState {
     pub(crate) config: FolderConfig,
     pub(crate) members: FolderMembers,
     pub(crate) meta: Folder,
-    pub(crate) manifests: HashMap<ContentHash, Manifest>,
+    pub(crate) manifests: Tracked<ContentHash, Manifest>,
     pub(crate) index: ChunkIndex,
     pub(crate) local: LocalFiles,
-    pub(crate) progress: HashMap<DeviceId, (u64, u64)>,
+    pub(crate) progress: Tracked<DeviceId, (u64, u64)>,
     /// When each file on disk was last opened or written, in milliseconds since the Unix
     /// epoch, for evicting the least recently used files of a partial replica.
-    pub(crate) used: BTreeMap<String, i64>,
+    pub(crate) used: Tracked<String, i64>,
     /// Confirmed copies (ADR 0022): for content this device made, the full replicas that
     /// reported holding all of it, and when, in milliseconds since the Unix epoch.
-    pub(crate) copies: HashMap<ContentHash, BTreeMap<DeviceId, i64>>,
+    pub(crate) copies: Tracked<ContentHash, BTreeMap<DeviceId, i64>>,
     /// Certificate names of the devices in `copies`, as they were when they confirmed.
-    pub(crate) copy_names: BTreeMap<DeviceId, String>,
+    pub(crate) copy_names: Tracked<DeviceId, String>,
     /// Live entries dropped from this device only (ADR 0025): not written to disk again, even
     /// for new versions, until opened.
-    pub(crate) dropped: BTreeSet<EntryId>,
+    pub(crate) dropped: TrackedSet<EntryId>,
     /// Files removed from this device only and kept for the recycle bin (ADR 0025).
-    pub(crate) set_aside: BTreeMap<EntryId, SetAside>,
+    pub(crate) set_aside: Tracked<EntryId, SetAside>,
     /// Content deleted by other devices whose file was moved into the folder's reserved
     /// directory instead of being copied into the block store, by content: the file name there
     /// (ADR 0027). Removed once nothing references the content.
-    pub(crate) kept: BTreeMap<ContentHash, String>,
+    pub(crate) kept: Tracked<ContentHash, String>,
     /// Previous versions of entries that the engine replaced on this device (ADR 0029), newest
     /// first after each purge.
-    pub(crate) history: BTreeMap<EntryId, Vec<Previous>>,
+    pub(crate) history: Tracked<EntryId, Vec<Previous>>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
     /// and everything below them.
-    pub(crate) pins: BTreeSet<String>,
+    pub(crate) pins: TrackedSet<String>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
     /// What the folder's filesystem does with names, probed when it opens (ADR 0033). Not
     /// saved: a folder that moved may be on another filesystem.
     pub(crate) filesystem: crate::probe::Filesystem,
     pub(crate) dir: PathBuf,
+    /// The folder's database (ADR 0034).
+    db: Option<FolderDb>,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
     removed: bool,
@@ -538,7 +575,7 @@ impl FolderState {
     /// True if `folder` has saved state under `data_dir`, so it is not being created or joined.
     pub(crate) fn exists(data_dir: &Path, folder: FolderId) -> bool {
         let dir = data_dir.join("folders").join(folder.to_string());
-        dir.join("meta").exists() || dir.join("state").exists()
+        FolderDb::exists(&dir) || dir.join("meta").exists() || dir.join("state").exists()
     }
 
     /// Loads the folder's state from `data_dir`, or creates it.
@@ -547,39 +584,100 @@ impl FolderState {
         fs::create_dir_all(&dir).map_err(io_err(&dir))?;
         let members = FolderMembers::new(config.id, config.members.iter().copied());
 
-        let meta_path = dir.join("meta");
-        let meta = if meta_path.exists() {
-            let mut meta = Folder::load(&meta_path)?;
-            meta.set_retention(config.retention);
-            meta
-        } else {
-            let epoch = u64::from_le_bytes(random_bytes()?).max(1);
-            Folder::new(config.id, device, epoch, config.retention)
-        };
-
         let ignores = Ignores::load(&config.path);
+        let retention = config.retention;
         let mut state = Self {
+            meta: Folder::new(config.id, device, 1, retention),
             config,
             members,
-            meta,
-            manifests: HashMap::new(),
+            manifests: Tracked::default(),
             index: ChunkIndex::new(),
             local: LocalFiles::default(),
-            progress: HashMap::new(),
-            used: BTreeMap::new(),
-            copies: HashMap::new(),
-            copy_names: BTreeMap::new(),
-            dropped: BTreeSet::new(),
-            set_aside: BTreeMap::new(),
-            kept: BTreeMap::new(),
-            history: BTreeMap::new(),
-            pins: BTreeSet::new(),
+            progress: Tracked::default(),
+            used: Tracked::default(),
+            copies: Tracked::default(),
+            copy_names: Tracked::default(),
+            dropped: TrackedSet::default(),
+            set_aside: Tracked::default(),
+            kept: Tracked::default(),
+            history: Tracked::default(),
+            pins: TrackedSet::default(),
             ignores,
             filesystem: crate::probe::Filesystem::default(),
             dir,
+            db: None,
             removed: false,
             activity_lines: std::cell::Cell::new(0),
         };
+        if FolderDb::exists(&state.dir) {
+            state.load()?;
+        } else {
+            // A new folder, or one saved as files by an earlier version: those are converted,
+            // then deleted (ADR 0034).
+            state.load_files(device)?;
+            let mut db = FolderDb::create(&state.dir)?;
+            db.commit(Changes {
+                header: state.meta.header(),
+                journal: state.meta.full_journal(),
+                maps: state.all_maps(),
+                durable: true,
+            })?;
+            state.db = Some(db);
+            for name in ["meta", "state"] {
+                let path = state.dir.join(name);
+                match fs::remove_file(&path) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(io_err(&path)(e)),
+                }
+            }
+        }
+        state.meta.set_retention(retention);
+        match crate::activity_log::compact(&state.dir, crate::now_ms()) {
+            Ok(lines) => state.activity_lines.set(lines),
+            Err(e) => tracing::warn!(error = %e, "compacting the activity log failed"),
+        }
+        Ok(state)
+    }
+
+    /// Loads the folder's database.
+    fn load(&mut self) -> Result<()> {
+        let (db, loaded) = FolderDb::open(&self.dir)?;
+        let corrupt = |_| Error::CorruptState(self.dir.join(crate::db::FILE));
+        let mut maps = loaded.maps;
+        let mut take = |name: &str| maps.remove(name).unwrap_or_default();
+        self.meta = Folder::from_records(loaded.header, loaded.versions, loaded.recycled)?;
+        let manifests: Tracked<ContentHash, Manifest> =
+            Tracked::decode(take("manifests")).map_err(corrupt)?;
+        for manifest in manifests.values() {
+            self.index.insert(manifest);
+        }
+        self.manifests = manifests;
+        self.local = LocalFiles::decode(take("local")).map_err(corrupt)?;
+        self.progress = Tracked::decode(take("progress")).map_err(corrupt)?;
+        self.used = Tracked::decode(take("used")).map_err(corrupt)?;
+        self.copies = Tracked::decode(take("copies")).map_err(corrupt)?;
+        self.copy_names = Tracked::decode(take("copy_names")).map_err(corrupt)?;
+        self.dropped = TrackedSet::decode(take("dropped_entries")).map_err(corrupt)?;
+        self.set_aside = Tracked::decode(take("set_aside")).map_err(corrupt)?;
+        self.kept = Tracked::decode(take("kept")).map_err(corrupt)?;
+        self.history = Tracked::decode(take("history")).map_err(corrupt)?;
+        self.pins = TrackedSet::decode(take("pins")).map_err(corrupt)?;
+        self.db = Some(db);
+        Ok(())
+    }
+
+    /// Loads the folder's `meta` and `state` files, as earlier versions saved them, or starts
+    /// a new folder if there are none.
+    fn load_files(&mut self, device: DeviceId) -> Result<()> {
+        let meta_path = self.dir.join("meta");
+        self.meta = if meta_path.exists() {
+            Folder::load(&meta_path)?
+        } else {
+            let epoch = u64::from_le_bytes(random_bytes()?).max(1);
+            Folder::new(self.config.id, device, epoch, self.config.retention)
+        };
+        let state = self;
         let state_path = state.dir.join("state");
         if state_path.exists() {
             let bytes = fs::read(&state_path).map_err(io_err(&state_path))?;
@@ -644,11 +742,41 @@ impl FolderState {
                 state.catch_up_bases();
             }
         }
-        match crate::activity_log::compact(&state.dir, crate::now_ms()) {
-            Ok(lines) => state.activity_lines.set(lines),
-            Err(e) => tracing::warn!(error = %e, "compacting the activity log failed"),
-        }
-        Ok(state)
+        Ok(())
+    }
+
+    /// Every map the database holds, encoded, as if all of it had changed.
+    fn all_maps(&self) -> Vec<(&'static str, Vec<crate::tracked::Changed>)> {
+        vec![
+            ("manifests", self.manifests.all()),
+            ("local", self.local.all()),
+            ("progress", self.progress.all()),
+            ("used", self.used.all()),
+            ("copies", self.copies.all()),
+            ("copy_names", self.copy_names.all()),
+            ("dropped_entries", self.dropped.all()),
+            ("set_aside", self.set_aside.all()),
+            ("kept", self.kept.all()),
+            ("history", self.history.all()),
+            ("pins", self.pins.all()),
+        ]
+    }
+
+    /// What changed in each map since the last save, encoded.
+    fn changed_maps(&mut self) -> Vec<(&'static str, Vec<crate::tracked::Changed>)> {
+        vec![
+            ("manifests", self.manifests.take_changed()),
+            ("local", self.local.take_changed()),
+            ("progress", self.progress.take_changed()),
+            ("used", self.used.take_changed()),
+            ("copies", self.copies.take_changed()),
+            ("copy_names", self.copy_names.take_changed()),
+            ("dropped_entries", self.dropped.take_changed()),
+            ("set_aside", self.set_aside.take_changed()),
+            ("kept", self.kept.take_changed()),
+            ("history", self.history.take_changed()),
+            ("pins", self.pins.take_changed()),
+        ]
     }
 
     /// How this device tells the folder's names apart (ADR 0033).
@@ -687,6 +815,14 @@ impl FolderState {
             .unwrap_or_else(|| path.to_owned())
     }
 
+    /// Saves the folder and closes its database, so another engine in this process can open
+    /// it, as Android's does when it restarts. Later saves do nothing.
+    pub(crate) fn close(&mut self) -> Result<()> {
+        let saved = self.save();
+        self.db = None;
+        saved
+    }
+
     /// Brings the base of each file on disk that is its current version up to that version's
     /// vector (ADR 0029). The file already is that content, so it corresponds to every version
     /// with that content and every settled delete: a resolve another device made to keep this
@@ -722,15 +858,17 @@ impl FolderState {
     /// Marks the folder removed and returns its state directory for deletion.
     pub(crate) fn mark_removed(&mut self) -> PathBuf {
         self.removed = true;
+        self.db = None;
         self.dir.clone()
     }
 
     /// Writes metadata and engine state atomically.
-    pub(crate) fn save(&self) -> Result<()> {
-        if self.removed {
+    pub(crate) fn save(&mut self) -> Result<()> {
+        // A removed folder's state directory is gone, and a closed one belongs to the next
+        // engine: tasks still finishing their work must not write to either.
+        if self.removed || self.db.is_none() {
             return Ok(());
         }
-        self.meta.save(&self.dir.join("meta"))?;
         // What the saved changes did, for the activity log (ADR 0030). Only a record: a failure
         // to write it does not stop the save.
         if let Err(e) = crate::activity_log::record(
@@ -741,49 +879,73 @@ impl FolderState {
         ) {
             tracing::warn!(error = %e, "writing the activity log failed");
         }
-        let persisted = Persisted {
-            manifests: self.manifests.values().cloned().collect(),
-            local: self
-                .local
-                .iter()
-                .map(|(p, l)| (p.clone(), l.clone()))
-                .collect(),
-            progress: self
-                .progress
-                .iter()
-                .map(|(d, (e, s))| (*d, *e, *s))
-                .collect(),
-            used: self.used.iter().map(|(p, t)| (p.clone(), *t)).collect(),
-            copies: self
-                .copies
-                .iter()
-                .flat_map(|(c, devices)| devices.iter().map(|(d, at)| (*c, *d, *at)))
-                .collect(),
-            copy_names: self
-                .copy_names
-                .iter()
-                .map(|(d, n)| (*d, n.clone()))
-                .collect(),
-            dropped: self.dropped.iter().copied().collect(),
-            set_aside: self
-                .set_aside
-                .iter()
-                .map(|(e, s)| (*e, s.clone()))
-                .collect(),
-            kept: self.kept.iter().map(|(c, f)| (*c, f.clone())).collect(),
-            history: self.history.iter().map(|(e, v)| (*e, v.clone())).collect(),
-            pins: self.pins.iter().cloned().collect(),
+        // Only what changed, in one transaction (ADR 0034).
+        let changes = Changes {
+            header: self.meta.header(),
+            journal: self.meta.take_journal(),
+            maps: self.changed_maps(),
+            durable: true,
         };
-        let mut bytes = STATE_HEADER.to_vec();
-        bytes.extend(postcard::to_stdvec(&persisted).expect("in-memory encoding cannot fail"));
-        let path = self.dir.join("state");
-        let tmp = self.dir.join("state.tmp");
-        {
-            let mut file = fs::File::create(&tmp).map_err(io_err(&tmp))?;
-            file.write_all(&bytes).map_err(io_err(&tmp))?;
-            file.sync_all().map_err(io_err(&tmp))?;
+        let db = self
+            .db
+            .as_mut()
+            .ok_or_else(|| Error::CorruptState(self.dir.join(crate::db::FILE)))?;
+        db.commit(changes)?;
+        #[cfg(debug_assertions)]
+        self.check_saved();
+        Ok(())
+    }
+
+    /// In development builds, that the database holds exactly what is in memory, for folders
+    /// small enough to read back after every save: a change made without being recorded would
+    /// otherwise be lost only at the next start.
+    #[cfg(debug_assertions)]
+    fn check_saved(&self) {
+        if self.meta.entries().nth(2000).is_some() {
+            return;
         }
-        crate::rename_durably(&tmp, &path).map_err(io_err(&path))
+        let Some(db) = &self.db else {
+            return;
+        };
+        let mut loaded = db.read_all().expect("the database reads back");
+        let sorted = |mut records: Vec<(Vec<u8>, Vec<u8>)>| {
+            records.sort();
+            records
+        };
+        for (name, records) in self.all_maps() {
+            let in_memory: Vec<(Vec<u8>, Vec<u8>)> = records
+                .into_iter()
+                .filter_map(|(k, v)| Some((k, v?)))
+                .collect();
+            let saved = loaded.maps.remove(name).unwrap_or_default();
+            assert_eq!(
+                sorted(saved),
+                sorted(in_memory),
+                "the {name} table differs from memory"
+            );
+        }
+        let records = self.meta.all_records();
+        assert_eq!(loaded.header, self.meta.header(), "the header differs");
+        let saved: Vec<(u64, Vec<u8>)> = loaded
+            .versions
+            .iter()
+            .map(|(s, v)| (*s, v.body.clone()))
+            .collect();
+        let in_memory: Vec<(u64, Vec<u8>)> = records
+            .stored
+            .iter()
+            .map(|(s, v)| (*s, v.body.clone()))
+            .collect();
+        assert_eq!(saved, in_memory, "the stored versions differ from memory");
+        let mut saved: Vec<String> = loaded.recycled.iter().map(|r| format!("{r:?}")).collect();
+        let mut in_memory: Vec<String> = records
+            .recycle
+            .iter()
+            .filter_map(|(_, r)| r.as_ref().map(|r| format!("{r:?}")))
+            .collect();
+        saved.sort();
+        in_memory.sort();
+        assert_eq!(saved, in_memory, "the recycle bin differs from memory");
     }
 
     /// Replaces the member list.
@@ -929,7 +1091,7 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v1).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let state = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        let mut state = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
         assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
         assert!(
             state.local["a.txt"].base.iter().next().is_none(),
@@ -938,11 +1100,9 @@ mod tests {
         assert_eq!(state.progress.get(&DeviceId([7; 32])), Some(&(1, 2)));
         assert!(state.used.is_empty());
 
-        // Saving upgrades it to the current version.
         state.save().unwrap();
-        assert!(fs::read(dir.join("state"))
-            .unwrap()
-            .starts_with(STATE_HEADER));
+        // Opening converted it to the folder's database and deleted the file (ADR 0034).
+        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
     }
     #[test]
     fn loads_version_3_state_without_bases() {
@@ -990,9 +1150,9 @@ mod tests {
         file.base = base.clone();
         state.local.insert("a.txt".into(), file);
         state.save().unwrap();
-        assert!(fs::read(dir.join("state"))
-            .unwrap()
-            .starts_with(STATE_HEADER));
+        // Opening converted it to the folder's database and deleted the file (ADR 0034).
+        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
+        drop(state);
         let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
         assert_eq!(reopened.local["a.txt"].base, base);
     }
@@ -1053,7 +1213,11 @@ mod tests {
             .meta
             .local_change(key.signing_key(), other, "c.txt", file(3), 2)
             .unwrap();
-        state.save().unwrap();
+        // As an earlier version left it: the metadata in files, and no database.
+        let dir = tmp.path().join("folders").join(config.id.to_string());
+        state.meta.save(&dir.join("meta")).unwrap();
+        drop(state);
+        fs::remove_file(dir.join(crate::db::FILE)).unwrap();
         let legacy = |entry, content: u8, base: &VersionVector| LocalFileV8 {
             entry,
             content: ContentHash([content; 32]),
@@ -1078,7 +1242,6 @@ mod tests {
             history: Vec::new(),
             pins: Vec::new(),
         };
-        let dir = tmp.path().join("folders").join(config.id.to_string());
         let mut bytes = STATE_HEADER_V8.to_vec();
         bytes.extend(postcard::to_stdvec(&v8).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
@@ -1139,9 +1302,9 @@ mod tests {
             },
         );
         state.save().unwrap();
-        assert!(fs::read(dir.join("state"))
-            .unwrap()
-            .starts_with(STATE_HEADER));
+        // Opening converted it to the folder's database and deleted the file (ADR 0034).
+        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
+        drop(state);
         let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
         assert!(reopened.dropped.contains(&EntryId([9; 16])));
         assert_eq!(reopened.set_aside[&local.entry].removed_at_ms, 77);
@@ -1182,6 +1345,7 @@ mod tests {
             .or_default()
             .insert(DeviceId([9; 32]), 1234);
         state.save().unwrap();
+        drop(state);
         let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
         assert_eq!(
             reopened
