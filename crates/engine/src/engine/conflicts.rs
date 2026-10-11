@@ -76,11 +76,13 @@ pub(crate) fn copy_path(
     };
     (1..1000)
         .map(|n| {
-            if n == 1 {
+            let name = if n == 1 {
                 format!("{dir}{stem} ({label}){ext}")
             } else {
                 format!("{dir}{stem} ({label}, {n}){ext}")
-            }
+            };
+            // A device's name may be in any Unicode form; paths are in NFC (ADR 0033).
+            crate::state::recorded(&name).into_owned()
         })
         .find(|c| tidefell_proto::sync::is_valid_path(c) && !taken(c))
 }

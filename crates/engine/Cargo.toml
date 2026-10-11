@@ -25,6 +25,7 @@ tidefell-identity.workspace = true
 tidefell-meta.workspace = true
 tidefell-net.workspace = true
 tidefell-proto.workspace = true
+unicode-normalization.workspace = true
 tidefell-store.workspace = true
 tokio.workspace = true
 tracing.workspace = true

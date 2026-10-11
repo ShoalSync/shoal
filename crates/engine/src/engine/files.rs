@@ -7,7 +7,7 @@ use tidefell_proto::{EntryId, FolderId};
 
 use super::{run_scan, Engine};
 use crate::scan::Scope;
-use crate::state::FolderState;
+use crate::state::{recorded, FolderState};
 use crate::views::{CopyInfo, Event, FileInfo};
 use crate::{copies, evict, materialize, now_ms, Error, Result};
 
@@ -37,7 +37,7 @@ impl Engine {
                         executable,
                         on_disk: state
                             .local
-                            .get(path)
+                            .get(&state.on_disk(path))
                             .is_some_and(|l| l.entry == v.entry && l.content == content),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author,
@@ -60,6 +60,8 @@ impl Engine {
     /// The full replicas that confirmed holding the current version of `path` (ADR 0022).
     /// Empty for files made on other devices, which are not tracked.
     pub fn copies(&self, folder: FolderId, path: &str) -> Result<Vec<CopyInfo>> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let handle = self.inner.folder(&folder)?;
         let state = handle.lock();
         let content = state
@@ -88,16 +90,18 @@ impl Engine {
 
     /// Where a live file of `folder` is on this device's disk, if its current version is there.
     pub fn local_path(&self, folder: FolderId, path: &str) -> Result<Option<PathBuf>> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let handle = self.inner.folder(&folder)?;
         let state = handle.lock();
         let on_disk = state.meta.find_path(path).is_some_and(|v| match v.kind {
             EntryKind::File { content, .. } => state
                 .local
-                .get(path)
+                .get(&state.on_disk(path))
                 .is_some_and(|l| l.entry == v.entry && l.content == content),
             _ => false,
         });
-        Ok(on_disk.then(|| state.config.path.join(path)))
+        Ok(on_disk.then(|| state.config.path.join(state.on_disk(path))))
     }
 
     /// Makes the live file at `path` available on disk and returns where it is, fetching it
@@ -105,6 +109,8 @@ impl Engine {
     /// in a partial replica, or a file still pending in a full one). The file stays pinned,
     /// and so is never evicted, until a matching [`Engine::close`].
     pub async fn open(&self, folder: FolderId, path: &str) -> Result<PathBuf> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let handle = self.inner.folder(&folder)?;
         // Fetching takes the file lock itself once the content has arrived, so it is not held
         // here while waiting on peers (ADR 0024).
@@ -123,16 +129,13 @@ impl Engine {
         if self.local_path(folder, path)?.is_none() {
             return Err(Error::Unavailable(path.to_owned()));
         }
-        *handle
-            .open
-            .lock()
-            .unwrap()
-            .entry(path.to_owned())
-            .or_insert(0) += 1;
+        // Kept open, and used, by the name the file has on disk.
+        let disk = handle.lock().on_disk(path);
+        *handle.open.lock().unwrap().entry(disk.clone()).or_insert(0) += 1;
         let abs = {
             let mut state = handle.lock();
-            state.used.insert(path.to_owned(), now_ms());
-            state.config.path.join(path)
+            state.used.insert(disk.clone(), now_ms());
+            state.config.path.join(&disk)
         };
         // Opening may have pushed a partial replica over its budget.
         evict::evict(&self.inner, folder, &handle)?;
@@ -143,6 +146,8 @@ impl Engine {
     /// fetched in the background, kept up to date and never evicted, and does not count against
     /// the folder's budget. Pins are this device's own and are not synced.
     pub async fn pin(&self, folder: FolderId, path: &str) -> Result<()> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let path = path.trim_end_matches('/');
         if !tidefell_proto::sync::is_valid_path(path) {
             return Err(Error::Invalid(format!("invalid path {path:?}")));
@@ -168,6 +173,8 @@ impl Engine {
     /// Removes the pin at `path`. The files it covered become ordinary cached files again, and
     /// may be evicted to keep the folder within its budget.
     pub async fn unpin(&self, folder: FolderId, path: &str) -> Result<()> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let path = path.trim_end_matches('/');
         let handle = self.inner.folder(&folder)?;
         {
@@ -193,12 +200,15 @@ impl Engine {
 
     /// Releases one [`Engine::open`] of `path`.
     pub fn close(&self, folder: FolderId, path: &str) -> Result<()> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let handle = self.inner.folder(&folder)?;
+        let disk = handle.lock().on_disk(path);
         let mut open = handle.open.lock().unwrap();
-        if let Some(count) = open.get_mut(path) {
+        if let Some(count) = open.get_mut(&disk) {
             *count -= 1;
             if *count == 0 {
-                open.remove(path);
+                open.remove(&disk);
             }
         }
         Ok(())
@@ -209,14 +219,19 @@ impl Engine {
     /// at the next scan. It is recorded even at an ignored path: this is an explicit save, and
     /// a mounted folder shows only recorded files (ADR 0029).
     pub async fn write(&self, folder: FolderId, path: &str, source: &Path) -> Result<()> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         if !tidefell_proto::sync::is_valid_path(path) {
             return Err(Error::Invalid(format!("invalid path {path:?}")));
         }
         let handle = self.inner.folder(&folder)?;
         {
             let _guard = handle.disk().await?;
-            let root = handle.lock().config.path.clone();
-            let target = root.join(path);
+            let (root, disk) = {
+                let state = handle.lock();
+                (state.config.path.clone(), state.on_disk(path))
+            };
+            let target = root.join(&disk);
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
             }
@@ -225,7 +240,7 @@ impl Engine {
             let replaced = handle
                 .lock()
                 .local
-                .get(path)
+                .get(&disk)
                 .filter(|l| crate::scan::unchanged(&target, l))
                 .cloned();
             let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
@@ -234,14 +249,14 @@ impl Engine {
                 u64::from_le_bytes(crate::random_bytes()?)
             ));
             match replaced {
-                Some(recorded) => {
+                Some(previous) => {
                     // The new content goes next to the folder first, so the swap is one
                     // filesystem's rename.
                     std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
                     if std::fs::rename(source, &tmp).is_err() {
                         std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
                     }
-                    crate::history::keep(&mut handle.lock(), path, &recorded, Some(&tmp))?;
+                    crate::history::keep(&mut handle.lock(), &disk, &previous, Some(&tmp))?;
                 }
                 None => {
                     if std::fs::rename(source, &target).is_err() {
@@ -253,9 +268,10 @@ impl Engine {
             }
         }
         // Only the saved file's directory needs a look.
+        let disk = handle.lock().on_disk(path);
         let mut scope = Scope::default();
-        scope.add(path.rsplit_once('/').map_or("", |(dir, _)| dir), false);
-        run_scan(&self.inner, folder, Some(scope), Some(path.to_owned()))
+        scope.add(disk.rsplit_once('/').map_or("", |(dir, _)| dir), false);
+        run_scan(&self.inner, folder, Some(scope), Some(disk))
             .await
             .map(drop)
     }
@@ -263,6 +279,8 @@ impl Engine {
     /// Deletes the live file at `path`, sending it to peers' recycle bins. Works on placeholders
     /// too, which scans would otherwise never delete.
     pub async fn delete(&self, folder: FolderId, path: &str) -> Result<()> {
+        // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
+        let path = &*recorded(path);
         let handle = self.inner.folder(&folder)?;
         {
             let _guard = handle.disk().await?;
@@ -272,10 +290,11 @@ impl Engine {
                 _ => return Err(Error::NoSuchFile(path.to_owned())),
             };
             let root = state.config.path.clone();
+            let disk = state.on_disk(path);
             // A delete of content on disk that is older than a version since received must not
             // supersede that version (ADR 0024).
-            let base = crate::scan::base_of(&state, path, entry);
-            remove_local(&mut state, &root, path)?;
+            let base = crate::scan::base_of(&state, &disk, entry);
+            remove_local(&mut state, &root, &disk)?;
             state.meta.local_change_from(
                 self.inner.key.signing_key(),
                 entry,
@@ -299,6 +318,7 @@ impl Engine {
     /// Entries keep their identity and content, so a placeholder moves without being fetched.
     /// A live file already at a destination is deleted first.
     pub async fn rename(&self, folder: FolderId, from: &str, to: &str) -> Result<()> {
+        let (from, to) = (&*recorded(from), &*recorded(to));
         if !tidefell_proto::sync::is_valid_path(to) {
             return Err(Error::Invalid(format!("invalid path {to:?}")));
         }
@@ -349,8 +369,9 @@ impl Engine {
                     .filter(|v| v.entry != entry && matches!(v.kind, EntryKind::File { .. }))
                     .map(|v| v.entry);
                 if let Some(replaced) = replaced {
-                    let base = crate::scan::base_of(&state, &new, replaced);
-                    remove_local(&mut state, &root, &new)?;
+                    let new_disk = state.on_disk(&new);
+                    let base = crate::scan::base_of(&state, &new_disk, replaced);
+                    remove_local(&mut state, &root, &new_disk)?;
                     state.meta.local_change_from(
                         key,
                         replaced,
@@ -362,6 +383,7 @@ impl Engine {
                 }
                 // A file on disk moves with its content, so the move builds on that content's
                 // base, which becomes the move's own vector (ADR 0029).
+                let old = state.on_disk(&old);
                 let base = crate::scan::base_of(&state, &old, entry);
                 let (_, vector) =
                     state

@@ -35,7 +35,11 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
         .get(path)
         .cloned()
         .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
-    if state.meta.disk_path(&local.entry) != Some(path) {
+    if !state
+        .meta
+        .disk_path(&local.entry)
+        .is_some_and(|p| state.same_place(path, p))
+    {
         return Err(Error::NoSuchFile(path.to_owned()));
     }
     let abs = root.join(path);

@@ -214,9 +214,12 @@ pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
                     .meta
                     .disk_path(&version.entry)
                     .unwrap_or(&version.path);
-                let current = here.is_some_and(|(p, l)| {
-                    p.as_str() == path && l.content == content && l.executable == executable
-                });
+                // A file on disk is at this path if its name is recorded as it, whatever form
+                // the name has on disk (ADR 0033).
+                let in_place = here.is_some_and(|(p, _)| state.same_place(p, path));
+                let current = in_place
+                    && here
+                        .is_some_and(|(_, l)| l.content == content && l.executable == executable);
                 // Files dropped from this device stay off it until opened (ADR 0025), and
                 // ignored paths are never written (ADR 0029).
                 let dropped = state.dropped.contains(&version.entry);
@@ -226,14 +229,15 @@ pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
                 if !current && !ignored && (here.is_some() || pinned || (!partial && !dropped)) {
                     writes.push(PendingWrite {
                         entry: version.entry,
-                        path: path.to_owned(),
+                        path: match here {
+                            Some((p, _)) if in_place => (*p).clone(),
+                            _ => path.to_owned(),
+                        },
                         content,
                         size,
                         executable,
                         modified_ms: version.modified_ms,
-                        old_path: here
-                            .map(|(p, _)| (*p).clone())
-                            .filter(|p| p.as_str() != path),
+                        old_path: here.map(|(p, _)| (*p).clone()).filter(|_| !in_place),
                         base: state.meta.current_vector(&version.entry),
 
                         unavailable: std::sync::Mutex::default(),
@@ -431,13 +435,13 @@ pub(crate) async fn fetch_one(
         let old_path = state
             .local
             .iter()
-            .find(|(p, l)| l.entry == version.entry && *p != path)
+            .find(|(p, l)| l.entry == version.entry && !state.same_place(p, path))
             .map(|(p, _)| p.clone());
         (
             state.config.path.clone(),
             PendingWrite {
                 entry: version.entry,
-                path: path.to_owned(),
+                path: state.on_disk(path),
                 content,
                 size,
                 executable,

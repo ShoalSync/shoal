@@ -391,4 +391,19 @@ proptest! {
             prop_assert!(path.split('/').all(|c| !c.is_empty() && c != "." && c != ".."));
         }
     }
+
+    /// An accepted path is in normalisation form C, and a path's NFC form is accepted when the
+    /// path is otherwise valid (ADR 0033).
+    #[test]
+    fn accepted_paths_are_nfc(path in "[a-z/\\u{300}-\\u{36f}\\u{c0}-\\u{17f}]{1,12}") {
+        use unicode_normalization::UnicodeNormalization;
+        if is_valid_path(&path) {
+            prop_assert!(unicode_normalization::is_nfc(&path));
+        }
+        let nfc: String = path.nfc().collect();
+        let others_valid = !path.is_empty() && path.split('/').all(|c| !c.is_empty());
+        if others_valid {
+            prop_assert!(is_valid_path(&nfc), "{nfc:?}");
+        }
+    }
 }

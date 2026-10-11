@@ -47,6 +47,29 @@ change back and forth on every scan. A name the phone cannot store fails to writ
   escaped name that came back as a local change would rename the file on every device.
 - **Local changes** keep the case and characters the user typed. A rename that only changes
   case, which case-insensitive filesystems allow, is recorded as a rename.
+- Step 2 observed, on an emulator against 0.14.0 (`FileNamesTest` in `tidefell/android`):
+  - Android's shared storage matches names without regard to case and accepts `:`, `?`, `CON`
+    and trailing dots. A virtual SD card that Android formats as FAT also folds case, refuses
+    `:` and accepts `CON`; the refusal reaches apps as `EPERM`, not `EINVAL`, so a probe must
+    try names rather than read error codes.
+  - In shared storage, of `Photo.jpg` and `photo.jpg` only `Photo.jpg` was written; `photo.jpg`
+    was listed as not on the phone, skipped on every pass with no problem shown. The daemon's
+    files were unchanged.
+  - On the card, `a:b.txt` failed on every pass as "permission denied"; `ok.txt` arrived.
+  - Reading the code found two more: a remote rename that only changes case is never applied
+    on such a device, and once applied, the clean-up of its old path would delete the file
+    just written; a local rename that only changes case becomes a second entry.
+- Step 3 decided:
+  - `is_valid_path` requires NFC, using `unicode-normalization`. A received version whose path
+    is not NFC fails the path rules and is dropped, like any version that fails them, and the
+    rest of its batch is applied.
+  - The scanner records each name's NFC form. The engine keeps the name as it is on disk and
+    treats a file on disk as at a recorded path when its NFC form is that path, so a file
+    named in NFD is neither renamed nor written a second time. Of two names on disk with one
+    NFC form, which Linux allows, the one the engine already had keeps the path and the other
+    is a `NameNotAllowed` problem.
+  - Paths from the API, the web's uploads and keep-both copy names, which take a device's
+    name, are converted to NFC.
 
 ## Consequences
 

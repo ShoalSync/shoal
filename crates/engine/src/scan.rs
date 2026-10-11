@@ -1,6 +1,6 @@
 //! Detecting local changes by scanning a folder on disk.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -14,7 +14,7 @@ use crate::activity::Failure;
 use crate::config::LocalDeletes;
 use crate::engine::{FolderHandle, Inner};
 use crate::ignores::{Ignores, IGNORE_FILE};
-use crate::state::{FolderState, LocalFile};
+use crate::state::{recorded, FolderState, LocalFile};
 use crate::views::{Operation, ProblemKind};
 use crate::{now_ms, random_bytes, Result};
 
@@ -184,7 +184,7 @@ fn walk(root: &Path, dir: &Path, ignores: &Ignores, recursive: bool, found: &mut
                 walk(root, &path, ignores, true, found);
             }
         } else {
-            if !is_valid_path(&rel) {
+            if !is_valid_path(&recorded(&rel)) {
                 warn!(path = %rel, "skipping path that cannot be synced");
                 found.failures.push(Failure::new(
                     &rel,
@@ -214,6 +214,48 @@ fn file_content(kind: &EntryKind) -> Option<tidefell_proto::ContentHash> {
         EntryKind::File { content, .. } => Some(*content),
         _ => None,
     }
+}
+
+/// Keeps one file for each path the files found are recorded as. Two names on disk can be one
+/// path as recorded, such as a name in two Unicode forms on a filesystem that keeps both: the
+/// one this device already has keeps it, or else the first, and the others are problems
+/// (ADR 0033).
+fn one_per_path(
+    found: Vec<(String, DiskStat)>,
+    known: &BTreeMap<String, LocalFile>,
+    failures: &mut Vec<Failure>,
+) -> Vec<(String, DiskStat)> {
+    let mut by_path: BTreeMap<String, Vec<(String, DiskStat)>> = BTreeMap::new();
+    for (rel, stat) in found {
+        by_path
+            .entry(recorded(&rel).into_owned())
+            .or_default()
+            .push((rel, stat));
+    }
+    let mut kept = Vec::new();
+    for (path, mut names) in by_path {
+        if names.len() > 1 {
+            let keep = names
+                .iter()
+                .position(|(rel, _)| known.contains_key(rel))
+                .unwrap_or(0);
+            let first = names.swap_remove(keep);
+            for (rel, _) in names {
+                warn!(path = %rel, recorded = %path, "skipping a second name for one path");
+                failures.push(Failure::new(
+                    &rel,
+                    Operation::Scan,
+                    ProblemKind::NameNotAllowed,
+                    format!("{} has the same name, written another way", first.0),
+                ));
+            }
+            kept.push(first);
+        } else {
+            kept.extend(names);
+        }
+    }
+    kept.sort_by(|a, b| a.0.cmp(&b.0));
+    kept
 }
 
 struct Changed {
@@ -278,6 +320,8 @@ pub(crate) fn scan(
     } = walker;
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup_by(|a, b| a.0 == b.0);
+    let found = one_per_path(found, &known, &mut failures);
+    let mut found = found;
     if let Some(rel) = saved.filter(|rel| *rel != IGNORE_FILE && ignores.is_ignored(rel, false)) {
         if let Some(stat) = stat(&root.join(rel)) {
             found.push((rel.to_owned(), stat));
@@ -341,19 +385,21 @@ pub(crate) fn scan(
     let now = now_ms();
     for c in changed {
         let content = c.manifest.content;
+        // Recorded in NFC, whatever form the name has on disk (ADR 0033).
+        let path = recorded(&c.rel).into_owned();
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {
             Some(entry) => entry,
             // A file this device never had on disk here (a placeholder, a file dropped from
             // this device, or any file of a send-only folder) is the same entry only if it has
             // the same content. Otherwise it is a new file that happens to share the path, and
             // both are kept (ADR 0024) instead of it replacing the other device's file.
-            None => match state.meta.find_path(&c.rel) {
+            None => match state.meta.find_path(&path) {
                 Some(v) if file_content(&v.kind) == Some(content) => v.entry,
                 _ => EntryId(random_bytes()?),
             },
         };
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
-            state.meta.disk_path(&entry) == Some(c.rel.as_str())
+            state.meta.disk_path(&entry) == Some(path.as_str())
                 && matches!(v.kind, EntryKind::File { content: current, executable, .. }
                     if current == content && executable == c.stat.executable)
         });
@@ -369,7 +415,7 @@ pub(crate) fn scan(
                 inner.key.signing_key(),
                 entry,
                 &base,
-                &c.rel,
+                &path,
                 EntryKind::File {
                     content,
                     size: c.stat.size,
@@ -440,7 +486,10 @@ pub(crate) fn scan(
         state.used.remove(&rel);
         let live_here = state.meta.current(&local.entry).is_some_and(|v| {
             !matches!(v.kind, EntryKind::Tombstone)
-                && state.meta.disk_path(&local.entry) == Some(rel.as_str())
+                && state
+                    .meta
+                    .disk_path(&local.entry)
+                    .is_some_and(|p| state.same_place(&rel, p))
         });
         if live_here && deletes_here_only {
             // ADR 0025: dropped from this device only; it stays on every other device.
@@ -456,7 +505,7 @@ pub(crate) fn scan(
                 inner.key.signing_key(),
                 local.entry,
                 &base,
-                &rel,
+                &recorded(&rel),
                 EntryKind::Tombstone,
                 now_ms(),
             )?;

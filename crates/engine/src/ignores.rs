@@ -55,7 +55,9 @@ impl Ignores {
                 };
                 let include = include.trim();
                 includes.push(include.to_owned());
-                match is_valid_path(include).then(|| fs::read_to_string(root.join(include))) {
+                match is_valid_path(&crate::state::recorded(include))
+                    .then(|| fs::read_to_string(root.join(include)))
+                {
                     Some(Ok(text)) => text.lines().for_each(|line| add(&mut builder, line)),
                     _ => {
                         warn!(folder = %root.display(), path = include, "cannot include ignore patterns")

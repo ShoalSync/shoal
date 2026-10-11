@@ -55,7 +55,9 @@ fn upload_path(dir: &str, file_name: &str) -> Option<String> {
         return None;
     }
     parts.push(name);
-    let path = parts.join("/");
+    // Browsers may send a name in any Unicode form; paths are in NFC (ADR 0033).
+    let path: String =
+        unicode_normalization::UnicodeNormalization::nfc(parts.join("/").as_str()).collect();
     tidefell_proto::sync::is_valid_path(&path).then_some(path)
 }
 

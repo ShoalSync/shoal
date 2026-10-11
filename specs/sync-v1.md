@@ -195,7 +195,8 @@ must complete within 10 seconds.
    waits on writing.
 4. The requester verifies each version (signature, signer equals author, folder, path rules,
    counter ceiling) and applies it if its author is vouched for (see Membership); otherwise
-   it holds the version and requests the author's certificate. It records `epoch` and `up_to`
+   it holds the version and requests the author's certificate. A version that fails these
+   checks is dropped; the rest of the batch is applied. It records `epoch` and `up_to`
    only after handling the batch marked `last`.
 5. A peer that needs a file's chunk list opens a manifest stream, sends `ManifestRequest` and
    receives `ManifestResponse` or `Error`. A manifest that fails the checks above, or fails

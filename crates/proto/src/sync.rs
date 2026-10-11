@@ -124,11 +124,11 @@ impl From<LegacyEntryVersion> for EntryVersion {
 }
 
 /// Checks the path rules from `specs/sync-v1.md`: relative, `/`-separated, non-empty
-/// components, no `.` or `..`, not under [`RESERVED_DIR`], no NUL or backslash.
-///
-/// NFC normalisation is the author's responsibility and is not checked here.
+/// components, no `.` or `..`, not under [`RESERVED_DIR`], no NUL or backslash, and in Unicode
+/// normalisation form C (ADR 0033).
 pub fn is_valid_path(path: &str) -> bool {
     !path.is_empty()
+        && unicode_normalization::is_nfc(path)
         && !path.contains(['\\', '\0'])
         && path.split('/').next() != Some(RESERVED_DIR)
         && path
@@ -237,6 +237,8 @@ mod tests {
             "a..b",
             "dir/.tidefell",
             ".tidefellx",
+            // "é" as one code point, NFC.
+            "r\u{e9}sum\u{e9}.txt",
         ] {
             assert!(is_valid_path(ok), "{ok}");
         }
@@ -252,6 +254,8 @@ mod tests {
             "a\0b",
             ".tidefell",
             ".tidefell/tmp/x",
+            // "é" as "e" and a combining accent, NFD.
+            "re\u{301}sume\u{301}.txt",
         ] {
             assert!(!is_valid_path(bad), "{bad:?}");
         }

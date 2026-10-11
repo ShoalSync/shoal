@@ -18,6 +18,15 @@ use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
+/// The path a name on disk is recorded as: its NFC form, as sync/1 requires (ADR 0033).
+pub(crate) fn recorded(name: &str) -> std::borrow::Cow<'_, str> {
+    use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
+    match is_nfc_quick(name.chars()) {
+        IsNormalized::Yes => std::borrow::Cow::Borrowed(name),
+        _ => std::borrow::Cow::Owned(name.nfc().collect()),
+    }
+}
+
 const STATE_HEADER: &[u8] = b"tidefell-engine-folder 9\n";
 /// Format 7, before pins (ADR 0029).
 /// Format 8, whose version vectors had no holes.
@@ -626,6 +635,25 @@ impl FolderState {
         Ok(state)
     }
 
+    /// True if the file on disk at `disk` is the one recorded at `path`: the names are the same
+    /// as this device tells names apart (ADR 0033).
+    pub(crate) fn same_place(&self, disk: &str, path: &str) -> bool {
+        disk == path || recorded(disk) == path
+    }
+
+    /// Where the file recorded at `path` is on disk: the name of a file already there that is
+    /// recorded as `path`, which keeps the spelling it has on disk (ADR 0033), or else `path`.
+    pub(crate) fn on_disk(&self, path: &str) -> String {
+        if path.is_ascii() || self.local.contains_key(path) {
+            return path.to_owned();
+        }
+        self.local
+            .keys()
+            .find(|disk| self.same_place(disk, path))
+            .cloned()
+            .unwrap_or_else(|| path.to_owned())
+    }
+
     /// Brings the base of each file on disk that is its current version up to that version's
     /// vector (ADR 0029). The file already is that content, so it corresponds to every version
     /// with that content and every settled delete: a resolve another device made to keep this
@@ -640,7 +668,11 @@ impl FolderState {
                 matches!(v.kind, EntryKind::File { content, executable, .. }
                     if content == local.content && executable == local.executable)
             });
-            if current && self.meta.disk_path(&local.entry) == Some(path.as_str()) {
+            let here = self
+                .meta
+                .disk_path(&local.entry)
+                .is_some_and(|p| self.same_place(path, p));
+            if current && here {
                 let vector = self.meta.current_vector(&local.entry);
                 if !local.base.dominates(&vector) {
                     let mut local = local.clone();

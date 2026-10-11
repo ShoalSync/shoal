@@ -17,6 +17,7 @@ ed25519-dalek.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
