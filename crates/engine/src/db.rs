@@ -71,6 +71,10 @@ pub(crate) struct Changes {
     /// Wait for the disk before returning: for changes peers may be told about, or that the
     /// engine cannot make again, such as signed versions and index progress.
     pub(crate) durable: bool,
+    /// What the changes did, for the activity log (ADR 0030), written once they are committed.
+    pub(crate) activity: Vec<tidefell_meta::Change>,
+    /// When they were applied.
+    pub(crate) at_ms: i64,
 }
 
 /// What a database holds.
@@ -270,7 +274,7 @@ impl FolderDb {
     }
 
     /// Writes `changes` in one transaction, then removes dropped versions if it is time.
-    pub(crate) fn commit(&mut self, changes: Changes) -> Result<()> {
+    pub(crate) fn commit(&mut self, changes: &Changes) -> Result<()> {
         let path = self.path.clone();
         let e = |x: redb::Error| err(&path)(x);
         let mut tx = self.db.begin_write().map_err(|x| e(x.into()))?;
@@ -330,7 +334,7 @@ impl FolderDb {
                 }
             }
         }
-        for (name, records) in &maps {
+        for (name, records) in maps {
             if records.is_empty() {
                 continue;
             }
@@ -425,7 +429,7 @@ mod tests {
             version: tidefell_proto::VersionVector::new(),
         };
         let signed = |n: u8| Signed::sign(&version(n), key);
-        db.commit(Changes {
+        db.commit(&Changes {
             header: header(2),
             journal: Journal {
                 stored: vec![(1, signed(1)), (2, signed(2))],
@@ -433,9 +437,11 @@ mod tests {
             },
             maps: vec![("pins", vec![(b"a".to_vec(), Some(Vec::new()))])],
             durable: true,
+            activity: Vec::new(),
+            at_ms: 0,
         })
         .unwrap();
-        db.commit(Changes {
+        db.commit(&Changes {
             header: header(3),
             journal: Journal {
                 stored: vec![(3, signed(3))],
@@ -447,6 +453,8 @@ mod tests {
                 vec![(b"a".to_vec(), None), (b"b".to_vec(), Some(Vec::new()))],
             )],
             durable: false,
+            activity: Vec::new(),
+            at_ms: 0,
         })
         .unwrap();
         drop(db);
@@ -479,7 +487,7 @@ mod tests {
             )
         };
         let n = CLEAN_AT_LEAST * 2;
-        db.commit(Changes {
+        db.commit(&Changes {
             header: header(n),
             journal: Journal {
                 stored: (1..=n).map(|s| (s, signed(s))).collect(),
@@ -487,9 +495,11 @@ mod tests {
             },
             maps: Vec::new(),
             durable: true,
+            activity: Vec::new(),
+            at_ms: 0,
         })
         .unwrap();
-        db.commit(Changes {
+        db.commit(&Changes {
             header: header(n),
             journal: Journal {
                 dropped: (1..=CLEAN_AT_LEAST).collect(),
@@ -497,6 +507,8 @@ mod tests {
             },
             maps: Vec::new(),
             durable: true,
+            activity: Vec::new(),
+            at_ms: 0,
         })
         .unwrap();
         // As many dropped as live: removed, and the file compacted.

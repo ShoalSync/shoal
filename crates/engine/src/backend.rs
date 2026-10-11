@@ -46,11 +46,19 @@ impl Backend for EngineBackend {
     ) -> Option<IndexPage> {
         let handle = self.0.folder(folder).ok()?;
         let state = handle.lock();
+        // Only versions on disk, so a peer is never told of one a crash here could lose
+        // (ADR 0034); the rest follow once they are committed.
+        let committed = state.committed();
         let (versions, up_to) = state.meta.index_since(epoch, since, limit);
+        let versions: Vec<Signed<EntryVersion>> = versions
+            .into_iter()
+            .take_while(|s| s.sequence <= committed)
+            .map(|s| s.signed.clone())
+            .collect();
         Some(IndexPage {
             epoch: state.meta.epoch(),
-            up_to,
-            versions: versions.into_iter().map(|s| s.signed.clone()).collect(),
+            up_to: up_to.min(committed),
+            versions,
         })
     }
 
@@ -65,18 +73,29 @@ impl Backend for EngineBackend {
         };
         let mut changed = false;
         let mut conflicts = Vec::new();
+        // Checking signatures is most of the work, and needs no lock (ADR 0034).
+        let verified: Vec<tidefell_meta::Verified> = versions
+            .into_iter()
+            .filter_map(
+                |version| match tidefell_meta::verify_remote(*folder, version) {
+                    Ok(verified) => Some(verified),
+                    Err(e) => {
+                        debug!(%peer, error = %e, "rejected a version");
+                        None
+                    }
+                },
+            )
+            .collect();
         {
             let mut state = handle.lock();
             let now = crate::now_ms();
-            for version in versions {
-                let entry = <EntryVersion as tidefell_proto::SignedKind>::decode(&version.body)
-                    .ok()
-                    .map(|v| v.entry);
+            for version in verified {
+                let entry = Some(version.version().entry);
                 let open = |state: &crate::state::FolderState| {
                     entry.map_or(0, |e| state.meta.open_conflicts(&e).count())
                 };
                 let before = open(&state);
-                match state.meta.apply_remote(version, now) {
+                match state.meta.apply_verified(version, now) {
                     Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
                 }

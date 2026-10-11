@@ -215,6 +215,17 @@ impl Inner {
         self.materialize.notify_one();
     }
 
+    /// Tells peers about the versions each commit of `handle`'s folder makes visible
+    /// (ADR 0034), from now on.
+    pub(crate) fn watch_commits(self: &Arc<Self>, handle: &FolderHandle) {
+        let inner = Arc::downgrade(self);
+        handle.lock().on_commit(Box::new(move || {
+            if let Some(inner) = inner.upgrade() {
+                inner.changes.send_modify(|n| *n += 1);
+            }
+        }));
+    }
+
     pub(crate) fn emit(&self, event: Event) {
         // No subscribers is fine.
         let _ = self.events.send(event);
@@ -514,6 +525,7 @@ impl Engine {
         info!(device = %device, "engine started");
 
         for (id, handle) in inner.folders.read().unwrap().iter() {
+            inner.watch_commits(handle);
             spawn_scanner(&inner, *id, handle);
         }
 

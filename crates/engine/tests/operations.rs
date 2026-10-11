@@ -256,17 +256,22 @@ async fn membership_granted_at_runtime() {
     })
     .await;
 
-    let mut saw_update = false;
-    while let Ok(event) = events.try_recv() {
-        if event
-            == (Event::FileUpdated {
-                folder: FOLDER,
-                path: "for-bob.txt".into(),
-            })
-        {
-            saw_update = true;
+    // The file is in place a moment before the event for it is emitted.
+    let updated = Event::FileUpdated {
+        folder: FOLDER,
+        path: "for-bob.txt".into(),
+    };
+    let saw_update = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match events.recv().await {
+                Ok(event) if event == updated => return true,
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(_) => return false,
+            }
         }
-    }
+    })
+    .await
+    .unwrap_or(false);
     assert!(saw_update, "a FileUpdated event was emitted");
 
     // The last member cannot be removed.

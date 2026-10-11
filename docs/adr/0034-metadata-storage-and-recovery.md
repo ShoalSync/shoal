@@ -120,7 +120,7 @@ progress, confirmed copies, kept files and history).
   guarantee rather than failing it. The block store's chunk files do not: a lost chunk is fetched
   again, and a directory sync per chunk would cost transfers more than it saves. Transfer times
   of Phase 5h's measurement are unchanged.
-- Step 4 decided, so far:
+- Step 4 decided:
   - `tidefell-meta` keeps a journal of what each change stored, dropped and recycled, and
     rebuilds a folder from what was written, choosing each entry's current version as storing
     does, so nothing per entry is rewritten. Versions are not verified again on open; they were
@@ -136,6 +136,16 @@ progress, confirmed copies, kept files and history).
     versions are converted when a folder opens and then deleted.
   - Closing a folder's database is part of shutting the engine down, since redb locks the
     file: Android restarts its engine in the same process.
+  - A save takes what changed while the folder is locked and queues it; a thread of the folder's
+    own commits the queue in order, retrying a commit that fails, then writes the activity log.
+    Peers are sent versions only up to the last sequence committed, so a local change or a
+    received batch is on disk before any peer hears of it, and an index response never names
+    progress beyond it. Last-use times alone are committed without waiting for the disk.
+  - Remote versions are verified before the folder is locked. With 100,000 entries, a batch of
+    512 holds the lock for at most 3.4 ms and writes 0.55 MB, clean-ups included
+    (`a_batch_at_100000_entries`). A daemon killed twice during a first sync of 1,500 files
+    completes it after restarting, with every file intact and nothing doubled
+    (`killed_during_a_first_sync_loses_nothing`).
 
 ## Consequences
 

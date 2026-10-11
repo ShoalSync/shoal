@@ -12,6 +12,7 @@ use tidefell_proto::sync::EntryKind;
 use tidefell_proto::version::LegacyVersionVector;
 use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
 
+use crate::committer::Committer;
 use crate::config::FolderConfig;
 use crate::db::{Changes, FolderDb};
 use crate::history::Previous;
@@ -562,13 +563,12 @@ pub(crate) struct FolderState {
     /// saved: a folder that moved may be on another filesystem.
     pub(crate) filesystem: crate::probe::Filesystem,
     pub(crate) dir: PathBuf,
-    /// The folder's database (ADR 0034).
-    db: Option<FolderDb>,
+    /// Commits the folder's changes to its database, in order, off the folder lock
+    /// (ADR 0034). `None` once the folder is closed.
+    committer: Option<Committer>,
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
     removed: bool,
-    /// Lines in the activity log's file, so it is rewritten once it grows (ADR 0030).
-    activity_lines: std::cell::Cell<usize>,
 }
 
 impl FolderState {
@@ -605,24 +605,24 @@ impl FolderState {
             ignores,
             filesystem: crate::probe::Filesystem::default(),
             dir,
-            db: None,
+            committer: None,
             removed: false,
-            activity_lines: std::cell::Cell::new(0),
         };
-        if FolderDb::exists(&state.dir) {
-            state.load()?;
+        let db = if FolderDb::exists(&state.dir) {
+            state.load()?
         } else {
             // A new folder, or one saved as files by an earlier version: those are converted,
             // then deleted (ADR 0034).
             state.load_files(device)?;
             let mut db = FolderDb::create(&state.dir)?;
-            db.commit(Changes {
+            db.commit(&Changes {
                 header: state.meta.header(),
                 journal: state.meta.full_journal(),
                 maps: state.all_maps(),
                 durable: true,
+                activity: Vec::new(),
+                at_ms: 0,
             })?;
-            state.db = Some(db);
             for name in ["meta", "state"] {
                 let path = state.dir.join(name);
                 match fs::remove_file(&path) {
@@ -631,17 +631,24 @@ impl FolderState {
                     Err(e) => return Err(io_err(&path)(e)),
                 }
             }
-        }
+            db
+        };
         state.meta.set_retention(retention);
-        match crate::activity_log::compact(&state.dir, crate::now_ms()) {
-            Ok(lines) => state.activity_lines.set(lines),
-            Err(e) => tracing::warn!(error = %e, "compacting the activity log failed"),
-        }
+        let lines = crate::activity_log::compact(&state.dir, crate::now_ms()).unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "compacting the activity log failed");
+            0
+        });
+        state.committer = Some(Committer::start(
+            db,
+            state.meta.sequence(),
+            state.dir.clone(),
+            lines,
+        ));
         Ok(state)
     }
 
-    /// Loads the folder's database.
-    fn load(&mut self) -> Result<()> {
+    /// Loads the folder's database, and returns it to commit to.
+    fn load(&mut self) -> Result<FolderDb> {
         let (db, loaded) = FolderDb::open(&self.dir)?;
         let corrupt = |_| Error::CorruptState(self.dir.join(crate::db::FILE));
         let mut maps = loaded.maps;
@@ -663,8 +670,7 @@ impl FolderState {
         self.kept = Tracked::decode(take("kept")).map_err(corrupt)?;
         self.history = Tracked::decode(take("history")).map_err(corrupt)?;
         self.pins = TrackedSet::decode(take("pins")).map_err(corrupt)?;
-        self.db = Some(db);
-        Ok(())
+        Ok(db)
     }
 
     /// Loads the folder's `meta` and `state` files, as earlier versions saved them, or starts
@@ -818,9 +824,11 @@ impl FolderState {
     /// Saves the folder and closes its database, so another engine in this process can open
     /// it, as Android's does when it restarts. Later saves do nothing.
     pub(crate) fn close(&mut self) -> Result<()> {
-        let saved = self.save();
-        self.db = None;
-        saved
+        self.save()?;
+        match self.committer.take() {
+            Some(committer) => committer.close(),
+            None => Ok(()),
+        }
     }
 
     /// Brings the base of each file on disk that is its current version up to that version's
@@ -858,7 +866,7 @@ impl FolderState {
     /// Marks the folder removed and returns its state directory for deletion.
     pub(crate) fn mark_removed(&mut self) -> PathBuf {
         self.removed = true;
-        self.db = None;
+        self.committer = None;
         self.dir.clone()
     }
 
@@ -866,34 +874,53 @@ impl FolderState {
     pub(crate) fn save(&mut self) -> Result<()> {
         // A removed folder's state directory is gone, and a closed one belongs to the next
         // engine: tasks still finishing their work must not write to either.
-        if self.removed || self.db.is_none() {
+        if self.removed || self.committer.is_none() {
             return Ok(());
         }
-        // What the saved changes did, for the activity log (ADR 0030). Only a record: a failure
-        // to write it does not stop the save.
-        if let Err(e) = crate::activity_log::record(
-            &self.dir,
-            &self.activity_lines,
-            &self.meta.take_changes(),
-            crate::now_ms(),
-        ) {
-            tracing::warn!(error = %e, "writing the activity log failed");
-        }
-        // Only what changed, in one transaction (ADR 0034).
+        // Only what changed, committed in order off the folder lock (ADR 0034). Last-use times
+        // alone are not worth waiting for the disk.
+        let journal = self.meta.take_journal();
+        let maps = self.changed_maps();
+        let durable = !journal.is_empty()
+            || maps
+                .iter()
+                .any(|(name, records)| *name != "used" && !records.is_empty());
         let changes = Changes {
             header: self.meta.header(),
-            journal: self.meta.take_journal(),
-            maps: self.changed_maps(),
-            durable: true,
+            journal,
+            maps,
+            durable,
+            // What the saved changes did, for the activity log (ADR 0030), which the committer
+            // writes too.
+            activity: self.meta.take_changes(),
+            at_ms: crate::now_ms(),
         };
-        let db = self
-            .db
-            .as_mut()
-            .ok_or_else(|| Error::CorruptState(self.dir.join(crate::db::FILE)))?;
-        db.commit(changes)?;
+        if let Some(committer) = &self.committer {
+            committer.submit(changes);
+        }
         #[cfg(debug_assertions)]
         self.check_saved();
         Ok(())
+    }
+
+    /// The last sequence whose versions are on disk: peers are sent nothing later (ADR 0034).
+    pub(crate) fn committed(&self) -> u64 {
+        self.committer
+            .as_ref()
+            .map_or(self.meta.sequence(), Committer::committed)
+    }
+
+    /// The committer, to wait for what was saved so far to be on disk, without the folder's
+    /// lock held.
+    pub(crate) fn committer(&self) -> Option<&Committer> {
+        self.committer.as_ref()
+    }
+
+    /// Calls `on_commit` after each of the folder's commits.
+    pub(crate) fn on_commit(&self, on_commit: crate::committer::OnCommit) {
+        if let Some(committer) = &self.committer {
+            committer.on_commit(on_commit);
+        }
     }
 
     /// In development builds, that the database holds exactly what is in memory, for folders
@@ -904,10 +931,11 @@ impl FolderState {
         if self.meta.entries().nth(2000).is_some() {
             return;
         }
-        let Some(db) = &self.db else {
+        let Some(committer) = &self.committer else {
             return;
         };
-        let mut loaded = db.read_all().expect("the database reads back");
+        committer.flush().expect("the changes commit");
+        let mut loaded = committer.read_all().expect("the database reads back");
         let sorted = |mut records: Vec<(Vec<u8>, Vec<u8>)>| {
             records.sort();
             records
@@ -1054,6 +1082,109 @@ impl FolderState {
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
+
+    /// ADR 0034's exit criterion: at 100,000 entries, a batch of 512 versions from a peer
+    /// writes under 1 MB and holds the folder lock for under 50 ms. Slow, so only when asked:
+    /// `cargo test --release -p tidefell-engine --lib -- --ignored a_batch_at_100000_entries`.
+    #[test]
+    #[ignore = "a measurement; run it in release with --ignored"]
+    fn a_batch_at_100000_entries() {
+        use tidefell_identity::DeviceKey;
+        const ENTRIES: usize = 100_000;
+        const BATCH: usize = 512;
+        const ROUNDS: usize = 20;
+        let written = || {
+            fs::read_to_string("/proc/self/io")
+                .ok()
+                .and_then(|io| {
+                    io.lines()
+                        .find_map(|l| l.strip_prefix("write_bytes: ")?.trim().parse::<u64>().ok())
+                })
+                .unwrap_or(0)
+        };
+        let base = std::env::current_dir().unwrap().join("target");
+        fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(&base).unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+        };
+        let mine = DeviceKey::from_seed([5; 32]);
+        let other = DeviceKey::from_seed([6; 32]);
+        let mut state = FolderState::open(tmp.path(), config, mine.id()).unwrap();
+        let entry = |n: usize| {
+            let mut id = [0u8; 16];
+            id[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            EntryId(id)
+        };
+        let file = |n: usize, round: usize| EntryKind::File {
+            content: ContentHash([(n % 251) as u8 ^ round as u8; 32]),
+            size: n as u64 + round as u64,
+            executable: false,
+        };
+        for n in 0..ENTRIES {
+            state
+                .meta
+                .local_change(
+                    mine.signing_key(),
+                    entry(n),
+                    &format!("photos/{:02}/IMG_{n:07}.jpg", n % 50),
+                    file(n, 0),
+                    1,
+                )
+                .unwrap();
+        }
+        state.save().unwrap();
+        state.committer.as_ref().unwrap().flush().unwrap();
+
+        let (mut slowest, mut bytes) = (Duration::ZERO, 0u64);
+        for round in 1..=ROUNDS {
+            let versions: Vec<_> = (0..BATCH)
+                .map(|i| {
+                    let n = (i * 7919 + round * 104_729) % ENTRIES;
+                    let current = state.meta.current(&entry(n)).unwrap().clone();
+                    let mut vector = state.meta.current_vector(&entry(n));
+                    vector.increment(other.id());
+                    let changed = tidefell_proto::sync::EntryVersion {
+                        kind: file(n, round),
+                        author: other.id(),
+                        version: vector,
+                        ..current
+                    };
+                    tidefell_proto::Signed::sign(&changed, other.signing_key())
+                })
+                .collect();
+            // Checked before the lock, as the engine does.
+            let verified: Vec<_> = versions
+                .into_iter()
+                .map(|v| tidefell_meta::verify_remote(FolderId([3; 32]), v).unwrap())
+                .collect();
+            let before = written();
+            // What the engine does while it holds the folder's lock.
+            let start = std::time::Instant::now();
+            for version in verified {
+                state.meta.apply_verified(version, 1).unwrap();
+            }
+            state.save().unwrap();
+            slowest = slowest.max(start.elapsed());
+            state.committer.as_ref().unwrap().flush().unwrap();
+            bytes += written().saturating_sub(before);
+        }
+        let per_batch = bytes / ROUNDS as u64;
+        println!(
+            "{ENTRIES} entries, {ROUNDS} batches of {BATCH}: lock held at most {:.1} ms, \
+             {:.2} MB written per batch",
+            slowest.as_secs_f64() * 1000.0,
+            per_batch as f64 / 1e6
+        );
+        assert!(slowest < Duration::from_millis(50), "{slowest:?}");
+        assert!(per_batch < 1_000_000, "{per_batch}");
+    }
 
     use tidefell_meta::Retention;
     use tidefell_proto::{FolderId, UserId};

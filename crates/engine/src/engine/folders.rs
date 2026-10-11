@@ -225,6 +225,7 @@ impl Engine {
             .write()
             .unwrap()
             .insert(id, handle.clone());
+        self.inner.watch_commits(&handle);
         self.inner.save_runtime()?;
         spawn_scanner(&self.inner, id, &handle);
         info!(folder = %id, "folder added");

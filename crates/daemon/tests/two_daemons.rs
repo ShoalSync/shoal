@@ -486,3 +486,74 @@ bind = "127.0.0.1:{port}"
         .unwrap();
     assert_eq!(fs::read(fetched.local_path).unwrap(), b"sand and sea");
 }
+
+/// The files at `dir` and below, by path relative to it.
+fn files_under(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    let mut found = std::collections::BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&d) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|n| n == ".tidefell") {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(data) = fs::read(&path) {
+                let rel = path
+                    .strip_prefix(dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                found.insert(rel, data);
+            }
+        }
+    }
+    found
+}
+
+/// ADR 0034's exit criterion: killing tidefelld during a first sync loses nothing when it
+/// restarts.
+#[test]
+fn killed_during_a_first_sync_loses_nothing() {
+    const FILES: usize = 1500;
+    let root = tempfile::tempdir().unwrap();
+    let user_key = root.path().join("user.key");
+    let a = init(root.path(), "a", &user_key);
+    let b = init(root.path(), "b", &user_key);
+    let user = field(
+        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        "user",
+    );
+    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let mut expected = std::collections::BTreeMap::new();
+    for n in 0..FILES {
+        let rel = format!("d{}/file-{n:04}.txt", n % 20);
+        let data = format!("content of file {n}, {}", "x".repeat(n % 97)).into_bytes();
+        let path = a.folder().join(&rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, &data).unwrap();
+        expected.insert(rel, data);
+    }
+    let _da = a.start(&folder_id, &user, &b);
+
+    // Killed twice: early in the first sync, and well into it.
+    for at_least in [50, FILES / 2] {
+        let db = b.start(&folder_id, &user, &a);
+        wait_for("part of the first sync", &[&a, &b], || {
+            files_under(&b.folder()).len() >= at_least
+        });
+        drop(db);
+    }
+    let _db = b.start(&folder_id, &user, &a);
+    wait_for("every file on b after restarting", &[&a, &b], || {
+        files_under(&b.folder()) == expected
+    });
+    // Nothing doubled, no conflicts, and a's files unchanged.
+    std::thread::sleep(Duration::from_secs(3));
+    assert_eq!(files_under(&b.folder()), expected);
+    assert_eq!(files_under(&a.folder()), expected);
+}

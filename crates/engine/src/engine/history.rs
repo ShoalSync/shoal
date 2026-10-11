@@ -126,8 +126,15 @@ impl Engine {
     /// (ADR 0030). At most `limit` entries; the log keeps 30 days or 10,000 entries.
     pub fn activity(&self, folder: FolderId, limit: usize) -> Result<Vec<crate::ActivityEntry>> {
         let handle = self.inner.folder(&folder)?;
-        // Read without the folder's lock: a line being appended meanwhile is skipped.
-        let dir = handle.lock().dir.clone();
+        // Read without the folder's lock: a line being appended meanwhile is skipped. The log
+        // is written after each commit, so wait for what was saved before (ADR 0034).
+        let (dir, waiter) = {
+            let state = handle.lock();
+            (state.dir.clone(), state.committer().map(|c| c.waiter()))
+        };
+        if let Some(waiter) = waiter {
+            let _ = waiter.flush();
+        }
         let lines = crate::activity_log::read(&dir, crate::now_ms());
         let state = handle.lock();
         let me = self.id();
