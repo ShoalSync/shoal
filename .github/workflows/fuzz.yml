@@ -22,7 +22,12 @@ jobs:
       - name: Toolchain and cargo-fuzz
         working-directory: fuzz
         # The nightly pinned in fuzz/rust-toolchain.toml, used for nothing else.
+        # Each runner has its own CARGO_HOME, which not every runner's PATH includes; the other
+        # workflows get it from dtolnay/rust-toolchain.
         run: |
+          bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+          export PATH="$bin:$PATH"
+          echo "$bin" >> "$GITHUB_PATH"
           rustup toolchain install
           if ! cargo fuzz --version 2>/dev/null | grep -q " 0.13.2"; then
             cargo install cargo-fuzz --locked --version 0.13.2 --force
