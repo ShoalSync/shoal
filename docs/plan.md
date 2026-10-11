@@ -301,6 +301,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   is implemented: the small files take 38.8 s. Step 4 (single-chunk files) is implemented: 26.3 s.
   Step 5 (fewer requests) is implemented: 14.1 s, and the large file 8.4 s, which meets the exit
   criterion.
+- `v0.14.0` releases Phase 5h: several files written at once, small files fetched without
+  their manifest, and chunk requests batched across files with no availability query to full
+  replicas or a lone peer. It also carries Phase 5g's checks. The protocol is unchanged.
 
 ### Phase 2 work breakdown
 
