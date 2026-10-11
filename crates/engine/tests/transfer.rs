@@ -185,8 +185,9 @@ async fn requests_are_counted() {
     .await;
 
     let r = Requests::of(&engine_b);
-    assert!(r.manifest >= 5.0, "{r:?}");
     assert!(r.chunks >= 1.0 && r.chunks_requested >= 5.0, "{r:?}");
+    // A file smaller than a chunk is fetched without its manifest.
+    assert_eq!(r.manifest, 0.0, "{r:?}");
     assert_eq!(Requests::of(&engine_a).chunks, 0.0);
 }
 

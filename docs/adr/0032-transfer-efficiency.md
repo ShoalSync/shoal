@@ -82,6 +82,14 @@ changes wait for sync/2 and blobs/2 (ADR 0023).
     dropped.
   - With 100 ms per request, the 1,000 small files take 38.8 s instead of 308 s; the 256 MiB
     file takes 8.7 s.
+- Step 4 decided:
+  - The shortcut covers files under 64 KiB, the empty file included, which has no chunks.
+    The one-chunk manifest is recorded before the fetch, so this device serves the chunk, and
+    compaction keeps it, like any other.
+  - If the chunk cannot be fetched, the guessed manifest is dropped and peers are asked for
+    theirs; when it differs, its chunks are fetched instead.
+  - With 100 ms per request, the 1,000 small files take 26.3 s, at 2 streams each; the
+    256 MiB file takes 8.6 s.
 
 ### For sync/2 and blobs/2
 

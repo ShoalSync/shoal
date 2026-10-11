@@ -298,7 +298,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   `main` without a crash.
 - Phase 5h: step 2 (measurement) is in place. With 100 ms per request, 1,000 files of 2 KB
   take 308 s and the 256 MiB file 8.8 s (ADR 0032 has the counts). Step 3 (concurrent writes)
-  is implemented: the small files take 38.8 s.
+  is implemented: the small files take 38.8 s. Step 4 (single-chunk files) is implemented: 26.3 s.
 
 ### Phase 2 work breakdown
 

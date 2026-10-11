@@ -12,7 +12,7 @@ use tidefell_fetch::{fetch, ChunkSource, Config};
 use tidefell_net::{ChunkResult, EndpointId, Node};
 use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{
-    ChunkHash, ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector,
+    ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector,
 };
 use tracing::{debug, info, warn};
 
@@ -488,22 +488,42 @@ fn manifest_fits(manifest: &Manifest, content: ContentHash, size: u64) -> bool {
     manifest.content == content && manifest.len() == size
 }
 
-async fn manifest_for(
+/// The manifest already here for `content`, if it fits the file. One that does not is dropped.
+fn cached_manifest(handle: &FolderHandle, content: ContentHash, size: u64) -> Option<Manifest> {
+    let mut state = handle.lock();
+    let manifest = state.manifests.get(&content)?;
+    if manifest_fits(manifest, content, size) {
+        return Some(manifest.clone());
+    }
+    state.remove_manifest(&content);
+    None
+}
+
+/// The manifest the reference chunker gives a file smaller than its smallest chunk: the whole
+/// file as one chunk, whose hash is the content hash (ADR 0032). `None` for larger files.
+fn single_chunk(content: ContentHash, size: u64) -> Option<Manifest> {
+    let len = u32::try_from(size)
+        .ok()
+        .filter(|len| *len < tidefell_chunker::Params::DEFAULT.min)?;
+    let chunks = match len {
+        0 => Vec::new(),
+        len => vec![ChunkRef {
+            hash: ChunkHash(content.0),
+            len,
+        }],
+    };
+    Some(Manifest { content, chunks })
+}
+
+/// Asks connected peers for the manifest of `content`, one after another, and keeps the first
+/// that fits.
+async fn request_manifest(
     node: &Node,
     handle: &FolderHandle,
     id: FolderId,
     content: ContentHash,
     size: u64,
-) -> Result<Option<Manifest>> {
-    {
-        let mut state = handle.lock();
-        if let Some(m) = state.manifests.get(&content) {
-            if manifest_fits(m, content, size) {
-                return Ok(Some(m.clone()));
-            }
-            state.remove_manifest(&content);
-        }
-    }
+) -> Option<Manifest> {
     for peer in node.peers() {
         if !peer.shared_folders().contains(&id) {
             continue;
@@ -511,13 +531,13 @@ async fn manifest_for(
         match peer.request_manifest(id, content).await {
             Ok(manifest) if manifest_fits(&manifest, content, size) => {
                 handle.lock().add_manifest(manifest.clone());
-                return Ok(Some(manifest));
+                return Some(manifest);
             }
             Ok(_) => debug!(peer = %peer.device(), "manifest does not match the file's size"),
             Err(e) => debug!(peer = %peer.device(), error = %e, "manifest request failed"),
         }
     }
-    Ok(None)
+    None
 }
 
 /// Writes one file. Returns false if it could not be completed yet (content unavailable or
@@ -722,59 +742,109 @@ async fn fetch_content(
         .filter(|p| p.shared_folders().contains(&id))
         .map(|p| p.device())
         .collect();
-    let Some(manifest) = manifest_for(node, handle, id, write.content, write.size).await? else {
+    let unavailable = |reason: String| {
+        if !peers.is_empty() && !inner.is_paused(&id) {
+            *write.unavailable.lock().unwrap() = Some(reason);
+        }
+    };
+    // A small file is one chunk named by its content hash, so it is fetched without asking for
+    // its manifest first (ADR 0032). The manifest is recorded before the fetch, so this device
+    // serves the chunk and compaction keeps it like any other.
+    let (manifest, guessed) = match cached_manifest(handle, write.content, write.size) {
+        Some(manifest) => (Some(manifest), false),
+        None => match single_chunk(write.content, write.size) {
+            Some(manifest) => {
+                handle.lock().add_manifest(manifest.clone());
+                (Some(manifest), true)
+            }
+            None => (
+                request_manifest(node, handle, id, write.content, write.size).await,
+                false,
+            ),
+        },
+    };
+    let Some(manifest) = manifest else {
         if !peers.is_empty() {
             inner.counters.fetch_failed(FetchFailure::Unavailable);
-            *write.unavailable.lock().unwrap() =
-                Some("no connected device has this version".to_owned());
         }
+        unavailable("no connected device has this version".to_owned());
         return Ok(None);
     };
-    // Chunks already here, in the block store or in any file on disk, are not fetched.
-    let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
-    if manifest.chunks.iter().any(|c| !store_has(&c.hash)) {
-        inner.fetching.lock().unwrap().insert(manifest.content);
-        let source = Arc::new(PeerSource {
-            node: node.clone(),
-            folder: id,
-            inner: inner.clone(),
-        });
-        let download = fetch(
-            source,
-            &manifest,
-            &peers,
-            store_has,
-            Config::default(),
-            |hash, data| {
-                inner
-                    .store
-                    .lock()
-                    .unwrap()
-                    .put_verified(hash, &data)
-                    .map_err(|e| e.to_string())
-            },
-        );
-        // Pausing the folder stops the download: dropping it cancels the requests in flight.
-        let fetched = tokio::select! {
-            fetched = download => fetched.map_err(|e| {
-                inner.counters.fetch_failed(match e {
-                    tidefell_fetch::FetchError::Unobtainable(_) => FetchFailure::Unavailable,
-                    tidefell_fetch::FetchError::Sink(_) => FetchFailure::Storage,
-                });
-                e.to_string()
-            }),
-            () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
-        };
-        if let Err(e) = fetched {
-            inner.fetching.lock().unwrap().remove(&manifest.content);
-            debug!(path = %write.path, error = %e, "content not available yet");
-            if !inner.is_paused(&id) {
-                *write.unavailable.lock().unwrap() = Some(e);
+    let error = match download(inner, node, handle, id, &manifest, &peers).await {
+        Ok(()) => return Ok(Some(manifest)),
+        Err(e) => e,
+    };
+    // Peers that split the file otherwise do not have that chunk: ask for theirs.
+    if guessed && !inner.is_paused(&id) {
+        handle.lock().remove_manifest(&write.content);
+        if let Some(theirs) = request_manifest(node, handle, id, write.content, write.size).await {
+            if theirs != manifest {
+                return match download(inner, node, handle, id, &theirs, &peers).await {
+                    Ok(()) => Ok(Some(theirs)),
+                    Err(e) => {
+                        debug!(path = %write.path, error = %e, "content not available yet");
+                        unavailable(e);
+                        Ok(None)
+                    }
+                };
             }
-            return Ok(None);
         }
     }
-    Ok(Some(manifest))
+    debug!(path = %write.path, error = %error, "content not available yet");
+    unavailable(error);
+    Ok(None)
+}
+
+/// Fetches the chunks of `manifest` that are not here yet from `peers`.
+async fn download(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    handle: &FolderHandle,
+    id: FolderId,
+    manifest: &Manifest,
+    peers: &[DeviceId],
+) -> std::result::Result<(), String> {
+    // Chunks already here, in the block store or in any file on disk, are not fetched.
+    let store_has = |h: &ChunkHash| crate::content::has_chunk(inner, &handle.lock(), h);
+    if manifest.chunks.iter().all(|c| store_has(&c.hash)) {
+        return Ok(());
+    }
+    inner.fetching.lock().unwrap().insert(manifest.content);
+    let source = Arc::new(PeerSource {
+        node: node.clone(),
+        folder: id,
+        inner: inner.clone(),
+    });
+    let download = fetch(
+        source,
+        manifest,
+        peers,
+        store_has,
+        Config::default(),
+        |hash, data| {
+            inner
+                .store
+                .lock()
+                .unwrap()
+                .put_verified(hash, &data)
+                .map_err(|e| e.to_string())
+        },
+    );
+    // Pausing the folder stops the download: dropping it cancels the requests in flight.
+    let fetched = tokio::select! {
+        fetched = download => fetched.map(|_| ()).map_err(|e| {
+            inner.counters.fetch_failed(match e {
+                tidefell_fetch::FetchError::Unobtainable(_) => FetchFailure::Unavailable,
+                tidefell_fetch::FetchError::Sink(_) => FetchFailure::Storage,
+            });
+            e.to_string()
+        }),
+        () = until_paused(inner, id) => Err("the folder was paused".to_owned()),
+    };
+    if fetched.is_err() {
+        inner.fetching.lock().unwrap().remove(&manifest.content);
+    }
+    fetched
 }
 
 /// Forgets that a content is being downloaded when dropped.
@@ -833,8 +903,6 @@ async fn until_paused(inner: &Inner, folder: FolderId) {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::ChunkRef;
-
     use super::*;
 
     fn manifest(content: u8, lens: &[u32]) -> Manifest {
@@ -899,6 +967,23 @@ mod tests {
                 vec![3],
             ]
         );
+    }
+
+    #[test]
+    fn small_files_are_one_chunk_named_by_their_content() {
+        let data = b"a small file";
+        let content = ContentHash(*blake3::hash(data).as_bytes());
+        let size = data.len() as u64;
+        // What the chunker makes of the file.
+        let chunked =
+            tidefell_chunker::chunk_reader(&data[..], tidefell_chunker::Params::DEFAULT, |_, _| {
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(single_chunk(content, size), Some(chunked));
+        assert_eq!(single_chunk(content, 0).unwrap().chunks, []);
+        assert!(single_chunk(content, 64 * 1024 - 1).is_some());
+        assert!(single_chunk(content, 64 * 1024).is_none());
     }
 
     #[test]
