@@ -113,7 +113,13 @@ impl AccountStore {
             out.write_all(&json).map_err(self.io())?;
             out.sync_all().map_err(self.io())?;
         }
-        fs::rename(&tmp, &self.path).map_err(self.io())
+        fs::rename(&tmp, &self.path).map_err(self.io())?;
+        // So the rename survives a power cut (ADR 0034), where the filesystem allows it.
+        #[cfg(unix)]
+        if let Some(dir) = self.path.parent() {
+            let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        }
+        Ok(())
     }
 
     /// All accounts.

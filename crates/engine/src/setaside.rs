@@ -64,7 +64,7 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
         removed_at_ms: now_ms,
     };
     let dest = file_path(&root, &item);
-    fs::rename(&abs, &dest).map_err(io_err(&abs))?;
+    crate::rename_durably(&abs, &dest).map_err(io_err(&abs))?;
     let entry = item.local.entry;
     if let Some(older) = state.set_aside.insert(entry, item.clone()) {
         remove_file(&root, &older);
@@ -98,7 +98,7 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
         fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
     let source = file_path(&root, &item);
-    fs::rename(&source, &target).map_err(io_err(&source))?;
+    crate::rename_durably(&source, &target).map_err(io_err(&source))?;
     let disk = stat(&target).ok_or_else(|| Error::Io {
         path: target.clone(),
         source: std::io::Error::other("file vanished after restoring"),

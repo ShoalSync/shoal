@@ -160,6 +160,12 @@ impl Folder {
             file.sync_all()?;
         }
         fs::rename(&tmp, path)?;
+        // So the rename survives a power cut (ADR 0034); some filesystems cannot sync a
+        // directory, and keep the rename without that guarantee.
+        #[cfg(unix)]
+        if let Some(dir) = path.parent() {
+            let _ = fs::File::open(dir).and_then(|d| d.sync_all());
+        }
         Ok(())
     }
 

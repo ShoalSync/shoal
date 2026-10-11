@@ -138,7 +138,7 @@ pub(crate) fn keep_deleted(
         state.local.paths_with(&content).next().is_some() || state.kept.contains_key(&content);
     if elsewhere {
         return match new {
-            Some(new) => fs::rename(new, abs).map_err(io_err(abs)),
+            Some(new) => crate::rename_durably(new, abs).map_err(io_err(abs)),
             None => fs::remove_file(abs).map_err(io_err(abs)),
         };
     }
@@ -153,7 +153,7 @@ pub(crate) fn keep_deleted(
     match new {
         Some(new) => crate::history::swap_in(&state.config.path, new, abs, &dir.join(&name))
             .map_err(io_err(abs))?,
-        None => fs::rename(abs, dir.join(&name)).map_err(io_err(abs))?,
+        None => crate::rename_durably(abs, dir.join(&name)).map_err(io_err(abs))?,
     }
     state.kept.insert(content, name);
     Ok(())

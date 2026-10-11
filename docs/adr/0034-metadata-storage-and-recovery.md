@@ -81,6 +81,15 @@ progress, confirmed copies, kept files and history).
 - Existing `meta` and `state` files are converted on first start and then deleted; a folder whose
   files do not convert is rebuilt.
 
+### Steps
+
+- Step 3 decided: every rename into place in the engine, `tidefell-meta`'s snapshot and the web
+  peer's accounts and shares files syncs the directories it touches afterwards. A filesystem
+  that cannot sync a directory, as some FUSE mounts cannot, keeps the rename without the
+  guarantee rather than failing it. The block store's chunk files do not: a lost chunk is fetched
+  again, and a directory sync per chunk would cost transfers more than it saves. Transfer times
+  of Phase 5h's measurement are unchanged.
+
 ## Consequences
 
 - Saving costs roughly the size of the change, not of the folder, and never blocks readers,

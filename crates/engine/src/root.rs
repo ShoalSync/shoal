@@ -47,7 +47,7 @@ fn write(root: &Path, folder: FolderId, device: DeviceId) -> Result<()> {
         format!("{HEADER}\nfolder = {folder}\ndevice = {device}\n"),
     )
     .map_err(io_err(&tmp))?;
-    fs::rename(&tmp, &marker).map_err(io_err(&marker))
+    crate::rename_durably(&tmp, &marker).map_err(io_err(&marker))
 }
 
 /// Creates `root` for a folder being created or joined, and marks it as the folder's.

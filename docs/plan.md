@@ -315,6 +315,7 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   device makes only for a name it found on disk in another Unicode form; otherwise the protocol
   is unchanged. The exit criterion passed on the emulator against this release's code before it
   was tagged; the Android pin runs it in CI.
+- Phase 5j: step 3 (durable renames) is implemented.
 
 ### Phase 2 work breakdown
 

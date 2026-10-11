@@ -535,7 +535,7 @@ fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Res
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
-    fs::rename(&src, &dst).map_err(io_err(&src))?;
+    crate::rename_durably(&src, &dst).map_err(io_err(&src))?;
     state.local.remove(from);
     state.local.insert(to.to_owned(), local);
     if let Some(used) = state.used.remove(from) {
@@ -728,7 +728,7 @@ async fn write_file(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io_err(parent))?;
         }
-        fs::rename(&tmp, &target).map_err(io_err(&target))?;
+        crate::rename_durably(&tmp, &target).map_err(io_err(&target))?;
     }
     state.used.insert(write.path.clone(), crate::now_ms());
     state.dropped.remove(&write.entry);
@@ -815,7 +815,7 @@ pub(crate) async fn write_copy(
     let mut permissions = fs::metadata(&tmp).map_err(io_err(&tmp))?.permissions();
     permissions.set_readonly(true);
     fs::set_permissions(&tmp, permissions).map_err(io_err(&tmp))?;
-    fs::rename(&tmp, dest).map_err(io_err(dest))?;
+    crate::rename_durably(&tmp, dest).map_err(io_err(dest))?;
     Ok(true)
 }
 

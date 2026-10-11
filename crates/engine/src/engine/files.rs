@@ -259,16 +259,16 @@ impl Engine {
                     // The new content goes next to the folder first, so the swap is one
                     // filesystem's rename.
                     std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
-                    if std::fs::rename(source, &tmp).is_err() {
+                    if crate::rename_durably(source, &tmp).is_err() {
                         std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
                     }
                     crate::history::keep(&mut handle.lock(), &disk, &previous, Some(&tmp))?;
                 }
                 None => {
-                    if std::fs::rename(source, &target).is_err() {
+                    if crate::rename_durably(source, &target).is_err() {
                         std::fs::create_dir_all(&tmp_dir).map_err(crate::io_err(&tmp_dir))?;
                         std::fs::copy(source, &tmp).map_err(crate::io_err(source))?;
-                        std::fs::rename(&tmp, &target).map_err(crate::io_err(&target))?;
+                        crate::rename_durably(&tmp, &target).map_err(crate::io_err(&target))?;
                     }
                 }
             }
@@ -400,7 +400,7 @@ impl Engine {
                     if let Some(parent) = dst.parent() {
                         std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
                     }
-                    std::fs::rename(&src, &dst).map_err(crate::io_err(&src))?;
+                    crate::rename_durably(&src, &dst).map_err(crate::io_err(&src))?;
                     local.base = vector;
                     state.local.insert(new.clone(), local);
                     if let Some(used) = state.used.remove(&old) {

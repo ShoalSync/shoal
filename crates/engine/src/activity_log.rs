@@ -136,7 +136,7 @@ pub(crate) fn compact(dir: &Path, now_ms: i64) -> std::io::Result<usize> {
     }
     let tmp = dir.join("activity.tmp");
     fs::write(&tmp, text)?;
-    fs::rename(tmp, path)?;
+    crate::rename_durably(tmp, path)?;
     Ok(kept)
 }
 

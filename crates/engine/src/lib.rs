@@ -152,6 +152,34 @@ pub(crate) fn io_err(path: impl Into<std::path::PathBuf>) -> impl FnOnce(std::io
     move |source| Error::Io { path, source }
 }
 
+/// Renames `from` to `to`, then syncs the directories holding them, so the rename survives a
+/// power cut (ADR 0034). A filesystem that cannot sync a directory, as some FUSE mounts cannot,
+/// keeps the rename without that guarantee.
+pub(crate) fn rename_durably(
+    from: impl AsRef<std::path::Path>,
+    to: impl AsRef<std::path::Path>,
+) -> std::io::Result<()> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    std::fs::rename(from, to)?;
+    sync_dir_of(to);
+    if from.parent() != to.parent() {
+        sync_dir_of(from);
+    }
+    Ok(())
+}
+
+/// Syncs the directory holding `path`, if the filesystem allows it.
+pub(crate) fn sync_dir_of(path: &std::path::Path) {
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        if let Err(e) = std::fs::File::open(dir).and_then(|d| d.sync_all()) {
+            tracing::debug!(dir = %dir.display(), error = %e, "cannot sync directory");
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+}
+
 pub(crate) fn random_bytes<const N: usize>() -> Result<[u8; N]> {
     let mut out = [0u8; N];
     getrandom::fill(&mut out).map_err(|_| Error::Random)?;

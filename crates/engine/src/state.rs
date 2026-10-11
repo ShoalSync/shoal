@@ -783,7 +783,7 @@ impl FolderState {
             file.write_all(&bytes).map_err(io_err(&tmp))?;
             file.sync_all().map_err(io_err(&tmp))?;
         }
-        fs::rename(&tmp, &path).map_err(io_err(&path))
+        crate::rename_durably(&tmp, &path).map_err(io_err(&path))
     }
 
     /// Replaces the member list.

@@ -54,7 +54,7 @@ pub(crate) fn swap_in(root: &Path, new: &Path, target: &Path, aside: &Path) -> i
         use rustix::io::Errno;
         match renameat_with(CWD, new, CWD, target, RenameFlags::EXCHANGE) {
             // `new` now holds the old file.
-            Ok(()) => return fs::rename(new, aside),
+            Ok(()) => return crate::rename_durably(new, aside),
             // Not supported by this filesystem, such as FAT or Android's shared storage.
             Err(Errno::INVAL | Errno::NOSYS | Errno::OPNOTSUPP) => {}
             Err(e) => return Err(e.into()),
@@ -62,7 +62,7 @@ pub(crate) fn swap_in(root: &Path, new: &Path, target: &Path, aside: &Path) -> i
     }
     // A second name keeps the old file while the new one replaces it.
     if fs::hard_link(target, aside).is_ok() {
-        return fs::rename(new, target);
+        return crate::rename_durably(new, target);
     }
     // Neither works: two renames, and a marker so a crash between them is undone.
     let marker = marker(root);
@@ -71,8 +71,8 @@ pub(crate) fn swap_in(root: &Path, new: &Path, target: &Path, aside: &Path) -> i
         format!("{}\n{}\n", target.display(), aside.display()),
     )?;
     fs::File::open(&marker)?.sync_all()?;
-    fs::rename(target, aside)?;
-    fs::rename(new, target)?;
+    crate::rename_durably(target, aside)?;
+    crate::rename_durably(new, target)?;
     fs::remove_file(&marker)
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn recover(root: &Path) {
     if let (Some(target), Some(aside)) = (lines.next(), lines.next()) {
         let (target, aside) = (Path::new(target), Path::new(aside));
         if !target.exists() && aside.exists() {
-            let _ = fs::rename(aside, target);
+            let _ = crate::rename_durably(aside, target);
         }
     }
     let _ = fs::remove_file(&marker);
@@ -136,7 +136,7 @@ pub(crate) fn keep(
     let (target, aside) = (root.join(path), dir.join(&file));
     match new {
         Some(new) => swap_in(&root, new, &target, &aside).map_err(io_err(&target))?,
-        None => fs::rename(&target, &aside).map_err(io_err(&target))?,
+        None => crate::rename_durably(&target, &aside).map_err(io_err(&target))?,
     }
     let disk = stat(&aside).ok_or_else(|| Error::Io {
         path: aside.clone(),
@@ -197,7 +197,9 @@ pub(crate) fn purge(state: &mut FolderState, now_ms: i64) {
         if needed.contains(&version.content) && !elsewhere {
             let dir = crate::content::kept_dir(&root);
             let name = format!("{}-{:016x}", version.content, version.id);
-            if fs::create_dir_all(&dir).is_ok() && fs::rename(&path, dir.join(&name)).is_ok() {
+            if fs::create_dir_all(&dir).is_ok()
+                && crate::rename_durably(&path, dir.join(&name)).is_ok()
+            {
                 state.kept.insert(version.content, name);
                 continue;
             }
