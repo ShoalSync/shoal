@@ -119,6 +119,8 @@ pub(crate) struct RateLimiter {
     download: Bucket,
     /// Every chunk passes through here, limited or not, so this is where it is counted.
     pub(crate) traffic: crate::traffic::Traffic,
+    /// Added before every request to a peer, to measure what round trips cost (ADR 0032).
+    request_delay: Mutex<Duration>,
 }
 
 impl RateLimiter {
@@ -128,6 +130,20 @@ impl RateLimiter {
             upload: Bucket::new(),
             download: Bucket::new(),
             traffic: crate::traffic::Traffic::new(),
+            request_delay: Mutex::new(Duration::ZERO),
+        }
+    }
+
+    pub(crate) fn set_request_delay(&self, delay: Duration) {
+        *self.request_delay.locked() = delay;
+    }
+
+    /// Before sending a request to a peer: counts it, and waits out the request delay.
+    pub(crate) async fn request(&self, request: crate::traffic::Request) {
+        self.traffic.request(request);
+        let delay = *self.request_delay.locked();
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
         }
     }
 

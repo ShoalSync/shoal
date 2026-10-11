@@ -642,6 +642,12 @@ impl Engine {
         self.node.set_limits(limits);
     }
 
+    /// Adds a fixed delay before every request this engine sends to a peer, as a slow link's
+    /// round trips would, to measure what they cost (ADR 0032). Zero unless set.
+    pub fn set_request_delay(&self, delay: Duration) {
+        self.node.set_request_delay(delay);
+    }
+
     /// Addresses peers can use to reach this engine.
     pub fn addr(&self) -> EndpointAddr {
         self.node.addr()

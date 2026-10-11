@@ -12,6 +12,7 @@ use tidefell_proto::{ChunkHash, ContentHash, FolderId, Signed};
 use crate::backend::Backend;
 use crate::limits::RateLimiter;
 use crate::sync::verify_peer;
+use crate::traffic::Request;
 use crate::{frame_io, Error, Result};
 
 /// The outcome for one requested chunk.
@@ -154,9 +155,17 @@ async fn reject(send: &mut SendStream, code: BlobsErrorCode) -> Result<()> {
 
 async fn open(
     conn: &Connection,
+    limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     request: BlobsMessage,
 ) -> Result<RecvStream> {
+    limiter
+        .request(match &request {
+            BlobsMessage::Request { chunks, .. } => Request::Chunks(chunks.len()),
+            BlobsMessage::AvailabilityRequest { .. } => Request::Availability,
+            _ => Request::Replica,
+        })
+        .await;
     crate::within(
         crate::REQUEST_TIMEOUT,
         open_stream(conn, certificate, request),
@@ -192,6 +201,7 @@ pub(crate) async fn fetch_chunks(
     }
     let mut recv = open(
         conn,
+        limiter,
         certificate,
         BlobsMessage::Request {
             folder,
@@ -234,12 +244,14 @@ pub(crate) async fn fetch_chunks(
 /// Asks which chunks of `content` the peer holds. Returns `(chunk_count, bitmap)`.
 pub(crate) async fn availability(
     conn: &Connection,
+    limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,
     content: ContentHash,
 ) -> Result<(u32, Vec<u8>)> {
     let mut recv = open(
         conn,
+        limiter,
         certificate,
         BlobsMessage::AvailabilityRequest { folder, content },
     )
@@ -266,10 +278,17 @@ pub(crate) async fn availability(
 /// Asks whether the peer is a full replica of `folder` (ADR 0022).
 pub(crate) async fn replica(
     conn: &Connection,
+    limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,
 ) -> Result<bool> {
-    let mut recv = open(conn, certificate, BlobsMessage::ReplicaRequest { folder }).await?;
+    let mut recv = open(
+        conn,
+        limiter,
+        certificate,
+        BlobsMessage::ReplicaRequest { folder },
+    )
+    .await?;
     let response = crate::within(crate::REQUEST_TIMEOUT, frame_io::expect(&mut recv)).await?;
     match response {
         BlobsMessage::Replica { full } => Ok(full),

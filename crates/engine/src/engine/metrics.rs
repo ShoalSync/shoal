@@ -122,6 +122,21 @@ impl Engine {
             "Chunks of file content sent to peers.",
             &[(&[], traffic.chunks_served)],
         );
+        page.counter(
+            "tidefell_requests",
+            "Requests sent to peers, by kind; each opens a stream.",
+            &[
+                (&[("kind", "manifest")], traffic.manifest_requests),
+                (&[("kind", "availability")], traffic.availability_requests),
+                (&[("kind", "replica")], traffic.replica_requests),
+                (&[("kind", "chunks")], traffic.chunk_requests),
+            ],
+        );
+        page.counter(
+            "tidefell_chunks_requested",
+            "Chunks of file content asked for in requests to peers.",
+            &[(&[], traffic.chunks_requested)],
+        );
         let reasons: Vec<[(&str, &str); 1]> = FetchFailure::ALL
             .iter()
             .map(|r| [("reason", r.label())])

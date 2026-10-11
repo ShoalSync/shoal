@@ -296,6 +296,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   requires: an unchecked index in `proto` on clippy, a new Android Lint error, and an unpinned
   action on `zizmor` in all four repositories. The fuzz job ran every target for ten minutes on
   `main` without a crash.
+- Phase 5h: step 2 (measurement) is in place. With 100 ms per request, 1,000 files of 2 KB
+  take 308 s and the 256 MiB file 8.8 s (ADR 0032 has the counts).
 
 ### Phase 2 work breakdown
 

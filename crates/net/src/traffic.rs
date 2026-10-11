@@ -1,4 +1,5 @@
-//! File content sent and received, for status displays and metrics (ADR 0030).
+//! File content sent and received, and requests made of peers, for status displays and metrics
+//! (ADR 0030, ADR 0032).
 
 use crate::locks::Locked;
 use std::collections::VecDeque;
@@ -66,6 +67,27 @@ pub(crate) struct Traffic {
     received_local: AtomicU64,
     received_remote: AtomicU64,
     chunks_served: AtomicU64,
+    requests: Requests,
+}
+
+/// Requests this node made of peers, by kind (ADR 0032). Each opens a stream of its own.
+#[derive(Debug, Default)]
+struct Requests {
+    manifests: AtomicU64,
+    availability: AtomicU64,
+    replica: AtomicU64,
+    chunks: AtomicU64,
+    chunks_requested: AtomicU64,
+}
+
+/// A request made of a peer, as counted (ADR 0032).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Request {
+    Manifest,
+    Availability,
+    Replica,
+    /// A request for this many chunks.
+    Chunks(usize),
 }
 
 /// Counts since the node started, for metrics (ADR 0030).
@@ -81,6 +103,16 @@ pub struct TrafficCounts {
     pub received_remote: u64,
     /// Chunks sent to peers.
     pub chunks_served: u64,
+    /// Manifests requested from peers.
+    pub manifest_requests: u64,
+    /// Availability queries sent to peers.
+    pub availability_requests: u64,
+    /// Full-replica queries sent to peers.
+    pub replica_requests: u64,
+    /// Chunk requests sent to peers, each of up to 64 chunks.
+    pub chunk_requests: u64,
+    /// Chunks asked for in those requests.
+    pub chunks_requested: u64,
 }
 
 /// Totals since start and current rates of file content moved, in bytes and bytes per second.
@@ -108,6 +140,7 @@ impl Traffic {
             received_local: AtomicU64::new(0),
             received_remote: AtomicU64::new(0),
             chunks_served: AtomicU64::new(0),
+            requests: Requests::default(),
         }
     }
 
@@ -139,6 +172,20 @@ impl Traffic {
         self.chunks_served.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn request(&self, request: Request) {
+        let r = &self.requests;
+        let counter = match request {
+            Request::Manifest => &r.manifests,
+            Request::Availability => &r.availability,
+            Request::Replica => &r.replica,
+            Request::Chunks(n) => {
+                r.chunks_requested.fetch_add(n as u64, Ordering::Relaxed);
+                &r.chunks
+            }
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn counts(&self) -> TrafficCounts {
         TrafficCounts {
             sent_local: self.sent_local.load(Ordering::Relaxed),
@@ -146,6 +193,11 @@ impl Traffic {
             received_local: self.received_local.load(Ordering::Relaxed),
             received_remote: self.received_remote.load(Ordering::Relaxed),
             chunks_served: self.chunks_served.load(Ordering::Relaxed),
+            manifest_requests: self.requests.manifests.load(Ordering::Relaxed),
+            availability_requests: self.requests.availability.load(Ordering::Relaxed),
+            replica_requests: self.requests.replica.load(Ordering::Relaxed),
+            chunk_requests: self.requests.chunks.load(Ordering::Relaxed),
+            chunks_requested: self.requests.chunks_requested.load(Ordering::Relaxed),
         }
     }
 
@@ -186,6 +238,9 @@ mod tests {
         traffic.sent(40, false);
         traffic.received(7, false);
         traffic.chunk_served();
+        traffic.request(Request::Manifest);
+        traffic.request(Request::Chunks(8));
+        traffic.request(Request::Chunks(3));
         assert_eq!(
             traffic.counts(),
             TrafficCounts {
@@ -194,6 +249,10 @@ mod tests {
                 received_local: 0,
                 received_remote: 7,
                 chunks_served: 1,
+                manifest_requests: 1,
+                chunk_requests: 2,
+                chunks_requested: 11,
+                ..TrafficCounts::default()
             }
         );
         assert_eq!(traffic.transfer().sent, 140);

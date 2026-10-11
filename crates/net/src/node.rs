@@ -147,6 +147,7 @@ pub struct PeerStatus {
 pub struct PeerHandle {
     conn: Connection,
     peer: Peer,
+    limiter: Arc<RateLimiter>,
 }
 
 impl PeerHandle {
@@ -171,7 +172,7 @@ impl PeerHandle {
         folder: FolderId,
         content: ContentHash,
     ) -> Result<Manifest> {
-        sync::request_manifest(&self.conn, folder, content).await
+        sync::request_manifest(&self.conn, &self.limiter, folder, content).await
     }
 }
 
@@ -180,6 +181,7 @@ struct SyncProtocol {
     backend: Arc<dyn Backend>,
     peers: Peers,
     records: Records,
+    limiter: Arc<RateLimiter>,
 }
 
 impl std::fmt::Debug for SyncProtocol {
@@ -195,6 +197,7 @@ impl ProtocolHandler for SyncProtocol {
             self.backend.clone(),
             self.peers.clone(),
             self.records.clone(),
+            self.limiter.clone(),
             false,
             None,
         )
@@ -208,6 +211,7 @@ async fn run_session(
     backend: Arc<dyn Backend>,
     peers: Peers,
     records: Records,
+    limiter: Arc<RateLimiter>,
     initiator: bool,
     ready: Option<oneshot::Sender<Result<PeerHandle>>>,
 ) {
@@ -219,7 +223,11 @@ async fn run_session(
         let records = records.clone();
         let ready = ready.clone();
         move |peer: Peer| {
-            let handle = PeerHandle { conn, peer };
+            let handle = PeerHandle {
+                conn,
+                peer,
+                limiter,
+            };
             peers.locked().insert(device, handle.clone());
             let mut records = records.locked();
             let record = records.entry(device).or_default();
@@ -338,6 +346,7 @@ impl Node {
                     backend: backend.clone(),
                     peers: peers.clone(),
                     records: records.clone(),
+                    limiter: limiter.clone(),
                 },
             )
             .accept(
@@ -370,6 +379,12 @@ impl Node {
         self.limiter.set(limits);
     }
 
+    /// Adds a fixed delay before every request this node sends to a peer, as a slow link's
+    /// round trips would, to measure what they cost (ADR 0032). Zero unless set.
+    pub fn set_request_delay(&self, delay: std::time::Duration) {
+        self.limiter.set_request_delay(delay);
+    }
+
     /// This device's ID (the endpoint's public key).
     pub fn id(&self) -> DeviceId {
         DeviceId(*self.endpoint.id().as_bytes())
@@ -398,6 +413,7 @@ impl Node {
             self.backend.clone(),
             self.peers.clone(),
             self.records.clone(),
+            self.limiter.clone(),
             true,
             Some(tx),
         ));
@@ -546,7 +562,14 @@ impl Node {
         content: ContentHash,
     ) -> Result<(u32, Vec<u8>)> {
         let conn = self.blob_conn(peer.into()).await?;
-        blobs::availability(&conn, self.backend.certificate(), folder, content).await
+        blobs::availability(
+            &conn,
+            &self.limiter,
+            self.backend.certificate(),
+            folder,
+            content,
+        )
+        .await
     }
 
     /// Asks a peer whether it is a full replica of `folder` (ADR 0022). Peers that predate
@@ -557,7 +580,7 @@ impl Node {
         folder: FolderId,
     ) -> Result<bool> {
         let conn = self.blob_conn(peer.into()).await?;
-        blobs::replica(&conn, self.backend.certificate(), folder).await
+        blobs::replica(&conn, &self.limiter, self.backend.certificate(), folder).await
     }
 
     /// Starts pairing, as the approver, with the new device in `code` (ADR 0015). Returns once

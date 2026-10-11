@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 use crate::backend::Backend;
+use crate::limits::RateLimiter;
 use crate::locks::{Locked, ReadWrite};
 use crate::{frame_io, now_ms, Error, Result};
 
@@ -619,9 +620,11 @@ async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Sh
 /// Requests a manifest from a connected peer on a new stream.
 pub(crate) async fn request_manifest(
     conn: &Connection,
+    limiter: &RateLimiter,
     folder: FolderId,
     content: ContentHash,
 ) -> Result<Manifest> {
+    limiter.request(crate::traffic::Request::Manifest).await;
     crate::within(
         crate::REQUEST_TIMEOUT,
         manifest_exchange(conn, folder, content),

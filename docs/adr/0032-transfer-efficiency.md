@@ -58,6 +58,17 @@ changes wait for sync/2 and blobs/2 (ADR 0023).
 - **Measured.** A test syncs 1,000 files of 2 KB and one file of 256 MiB between two daemons,
   counting streams and requests per file and adding a fixed delay to every request. It records
   the numbers before and after each change in its pull request.
+- Step 2 decided:
+  - The test is `crates/engine/tests/transfer.rs`, between two engines on localhost, and runs
+    only when asked (`cargo test --release -p tidefell-engine --test transfer -- --ignored`).
+    `Engine::set_request_delay` adds the delay before every request the device sends: manifest,
+    availability, replica and chunk requests. It is zero unless set.
+  - Requests are counted by kind, and the metrics show them as `tidefell_requests_total` with
+    `kind` (`manifest`, `availability`, `replica`, `chunks`) and `tidefell_chunks_requested_total`.
+    Each request opens a stream.
+  - Baseline, 100 ms per request: 1,000 files of 2 KB take 308 s, at 3 streams each (one
+    manifest, one availability query and one chunk request); the 256 MiB file takes 8.8 s, in
+    105 chunk requests for its 834 chunks, plus one manifest and one availability query.
 
 ### For sync/2 and blobs/2
 
