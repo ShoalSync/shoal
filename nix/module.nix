@@ -133,7 +133,12 @@ in
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = "read-only";
-        ReadWritePaths = [ (toString cfg.dataDir) ] ++ folderPaths;
+        ReadWritePaths = [
+          (toString cfg.dataDir)
+        ]
+        ++ folderPaths
+        # Folder metadata kept apart from data_dir, such as on an SSD (ADR 0034).
+        ++ lib.optional (cfg.settings ? metadata_dir) (toString cfg.settings.metadata_dir);
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectControlGroups = true;

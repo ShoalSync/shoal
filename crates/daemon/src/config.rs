@@ -18,8 +18,14 @@ use tidefell_proto::{DeviceId, FolderId, UserId};
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// State directory: device key, certificate, block store and folder metadata.
+    /// State directory: device key, certificate, block store, logs and settings.
     pub data_dir: PathBuf,
+    /// Where each folder's metadata database is kept, and nothing else: `<data_dir>/metadata`
+    /// by default. Point it at fast storage, such as an SSD, when `data_dir` and the folders
+    /// are on slow disks (ADR 0034). To change it on a device in use, stop `tidefelld`, move
+    /// the directory, and set this; `tidefelld` will not start without the databases.
+    #[serde(default)]
+    pub metadata_dir: Option<PathBuf>,
     /// Network settings.
     #[serde(default)]
     pub network: Network,
@@ -363,6 +369,7 @@ impl Config {
         self.mounts()?;
         Ok(EngineConfig {
             data_dir: self.data_dir.clone(),
+            metadata_dir: self.metadata_dir.clone(),
             relay,
             address_lookup: self.network.address_lookup,
             local_discovery: self.network.local_discovery,

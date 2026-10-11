@@ -36,6 +36,7 @@ impl Device {
             Engine::start(
                 EngineConfig {
                     data_dir: data.clone(),
+                    metadata_dir: None,
                     relay: RelayConfig::Disabled,
                     address_lookup: false,
                     local_discovery: false,

@@ -105,6 +105,18 @@ pub enum Error {
     /// Engine state on disk is unreadable.
     #[error("corrupt engine state in {0}")]
     CorruptState(std::path::PathBuf),
+    /// The folders' databases are in the metadata directory used before, not the one set now
+    /// (ADR 0034).
+    #[error(
+        "the folder metadata is in {from}, not in metadata_dir {to}; move it there, or set \
+         metadata_dir back"
+    )]
+    MetadataLeftBehind {
+        /// Where the databases are.
+        from: std::path::PathBuf,
+        /// Where they are expected.
+        to: std::path::PathBuf,
+    },
     /// A folder named in a request is not configured.
     #[error("unknown folder {0}")]
     UnknownFolder(tidefell_proto::FolderId),

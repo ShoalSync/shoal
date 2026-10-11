@@ -123,6 +123,8 @@ pub(crate) struct Inner {
     /// The user this device belongs to, from its certificate.
     pub(crate) user: UserId,
     pub(crate) data_dir: PathBuf,
+    /// Where the folders' databases are (ADR 0034).
+    pub(crate) metadata_dir: PathBuf,
     pub(crate) store: Mutex<BlockStore>,
     /// Contents being downloaded, whose chunks the block store keeps until they are written.
     pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
@@ -283,17 +285,18 @@ impl std::fmt::Debug for Engine {
 
 fn open_folder(
     data_dir: &Path,
+    metadata_dir: &Path,
     config: FolderConfig,
     device: DeviceId,
     configured: bool,
 ) -> Result<FolderHandle> {
     // Only a folder being created or joined gets its root created (ADR 0037); an existing
     // folder whose root is missing is unavailable, not empty.
-    let new = !FolderState::exists(data_dir, config.id);
+    let new = !FolderState::exists(data_dir, metadata_dir, config.id);
     if new {
         root::create(&config.path, config.id, device)?;
     }
-    let state = FolderState::open(data_dir, config, device)?;
+    let state = FolderState::open(data_dir, metadata_dir, config, device)?;
     if !new {
         if let Err(e) = root::adopt(&state, device) {
             warn!(folder = %state.config.id, error = %e, "marking the folder's root failed");
@@ -449,6 +452,47 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
     }
 }
 
+/// Where the folders' databases go: the configured `metadata_dir`, or `<data_dir>/metadata`
+/// (ADR 0034). Fails if they are still where an earlier `metadata_dir` put them, rather than
+/// start each folder afresh; records the directory otherwise.
+fn metadata_dir(config: &EngineConfig, runtime: &Runtime) -> Result<PathBuf> {
+    let default = config.data_dir.join("metadata");
+    let dir = config
+        .metadata_dir
+        .clone()
+        .unwrap_or_else(|| default.clone());
+    let marker = config.data_dir.join("metadata-dir");
+    let previous = std::fs::read_to_string(&marker)
+        .ok()
+        .map(|p| PathBuf::from(p.trim_end()))
+        .unwrap_or(default);
+    if previous != dir {
+        let ids = config
+            .folders
+            .iter()
+            .map(|f| f.id)
+            .chain(runtime.folders.iter().map(|f| f.id));
+        for id in ids {
+            let (here, there) = (
+                crate::state::db_path(&dir, id),
+                crate::state::db_path(&previous, id),
+            );
+            if !here.exists() && there.exists() {
+                return Err(Error::MetadataLeftBehind {
+                    from: previous,
+                    to: dir,
+                });
+            }
+        }
+    }
+    std::fs::create_dir_all(&dir).map_err(crate::io_err(&dir))?;
+    if previous != dir || !marker.exists() {
+        std::fs::write(&marker, dir.to_string_lossy().as_bytes())
+            .map_err(crate::io_err(&marker))?;
+    }
+    Ok(dir)
+}
+
 impl Engine {
     /// Opens state under `config.data_dir`, binds the network endpoint and starts scanning,
     /// syncing and materialising every configured and previously added folder.
@@ -465,10 +509,17 @@ impl Engine {
         std::fs::create_dir_all(&config.data_dir).map_err(crate::io_err(&config.data_dir))?;
         let store = BlockStore::open(config.data_dir.join("blocks"))?;
         let runtime = Runtime::load(&config.data_dir)?;
+        let metadata_dir = metadata_dir(&config, &runtime)?;
 
         let mut folders = BTreeMap::new();
         for folder in &config.folders {
-            let handle = open_folder(&config.data_dir, folder.clone(), device, true)?;
+            let handle = open_folder(
+                &config.data_dir,
+                &metadata_dir,
+                folder.clone(),
+                device,
+                true,
+            )?;
             folders.insert(folder.id, Arc::new(handle));
         }
         for stored in runtime.folders {
@@ -479,7 +530,13 @@ impl Engine {
             let id = folder.id;
             folders.insert(
                 id,
-                Arc::new(open_folder(&config.data_dir, folder, device, false)?),
+                Arc::new(open_folder(
+                    &config.data_dir,
+                    &metadata_dir,
+                    folder,
+                    device,
+                    false,
+                )?),
             );
         }
 
@@ -488,6 +545,7 @@ impl Engine {
             certificate,
             user,
             data_dir: config.data_dir.clone(),
+            metadata_dir: metadata_dir.clone(),
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
             batches: Arc::default(),
@@ -667,6 +725,11 @@ impl Engine {
     /// The engine's state directory.
     pub fn data_dir(&self) -> &Path {
         &self.inner.data_dir
+    }
+
+    /// Where each folder's metadata database is kept (ADR 0034).
+    pub fn metadata_dir(&self) -> &Path {
+        &self.inner.metadata_dir
     }
 
     /// Whether this device announces itself and finds known devices on the local network.

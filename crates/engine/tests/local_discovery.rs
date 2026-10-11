@@ -20,6 +20,7 @@ const FOLDER: FolderId = FolderId([29; 32]);
 async fn start(dir: &Path, key: &DeviceKey, user: &UserKey, peers: Vec<PeerAddr>) -> Engine {
     let config = EngineConfig {
         data_dir: dir.join("data"),
+        metadata_dir: None,
         relay: RelayConfig::Disabled,
         address_lookup: false,
         local_discovery: true,

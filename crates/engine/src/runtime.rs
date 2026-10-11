@@ -57,7 +57,7 @@ impl From<RuntimeV3> for Runtime {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct StoredFolder {
-    id: FolderId,
+    pub(crate) id: FolderId,
     path: PathBuf,
     /// `None` for a full replica, otherwise the partial replica's byte budget.
     partial_budget: Option<u64>,

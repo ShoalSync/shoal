@@ -38,6 +38,7 @@ async fn control_api_end_to_end() {
         Engine::start(
             EngineConfig {
                 data_dir: data_dir.clone(),
+                metadata_dir: None,
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
                 local_discovery: false,
@@ -468,6 +469,7 @@ async fn logging_through_the_api() {
         Engine::start(
             EngineConfig {
                 data_dir: data_dir.clone(),
+                metadata_dir: None,
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
                 local_discovery: false,

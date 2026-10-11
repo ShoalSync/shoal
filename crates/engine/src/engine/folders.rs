@@ -219,7 +219,13 @@ impl Engine {
         if config.path.as_os_str().is_empty() {
             return Err(Error::Invalid("a folder needs a path".into()));
         }
-        let handle = Arc::new(open_folder(&self.inner.data_dir, config, self.id(), false)?);
+        let handle = Arc::new(open_folder(
+            &self.inner.data_dir,
+            &self.inner.metadata_dir,
+            config,
+            self.id(),
+            false,
+        )?);
         self.inner
             .folders
             .write()

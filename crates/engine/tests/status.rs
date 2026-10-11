@@ -34,6 +34,7 @@ impl Replica {
     async fn start(&self, user: &UserKey, peers: Vec<PeerAddr>) -> Engine {
         let config = EngineConfig {
             data_dir: self.data.clone(),
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,

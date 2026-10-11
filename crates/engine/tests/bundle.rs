@@ -43,6 +43,7 @@ async fn bundles_hold_no_names_ids_or_addresses() {
     let engine = Engine::start(
         EngineConfig {
             data_dir: data.clone(),
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,

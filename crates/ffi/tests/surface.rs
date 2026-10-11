@@ -56,6 +56,7 @@ async fn pair_join_open_and_save() {
         Engine::start(
             EngineConfig {
                 data_dir: tmp.path().join("laptop/data"),
+                metadata_dir: None,
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
                 local_discovery: false,

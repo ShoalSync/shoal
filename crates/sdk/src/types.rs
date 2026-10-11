@@ -31,6 +31,9 @@ pub struct Status {
     /// File content sent and received since the daemon started.
     #[serde(default)]
     pub transfer: Transfer,
+    /// Where each folder's metadata database is kept (ADR 0034).
+    #[serde(default)]
+    pub metadata_dir: String,
 }
 
 /// How a connection reaches its peer.

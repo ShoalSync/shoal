@@ -147,6 +147,15 @@ progress, confirmed copies, kept files and history).
     completes it after restarting, with every file intact and nothing doubled
     (`killed_during_a_first_sync_loses_nothing`).
 
+- Step 5 decided:
+  - Each folder's database is `<metadata_dir>/<folder id>.redb`. The activity log stays in
+    `<data_dir>/folders/<id>/` with what else is not metadata.
+  - `data_dir` records the metadata directory in use, in `metadata-dir`. If `metadata_dir` is
+    set elsewhere and a folder has a database in the recorded place but none in the new one,
+    `tidefelld` does not start, and says where the databases are and where they are expected.
+  - `tidefell status` and the API's status show the directory; it is set only in the
+    configuration file.
+
 ## Consequences
 
 - Saving costs roughly the size of the change, not of the folder, and never blocks readers,

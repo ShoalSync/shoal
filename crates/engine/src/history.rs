@@ -326,7 +326,8 @@ mod tests {
             sync: Default::default(),
         };
         let key = DeviceKey::from_seed([5; 32]);
-        let mut state = FolderState::open(tmp.path(), config, key.id()).unwrap();
+        let mut state =
+            FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, key.id()).unwrap();
         // Another entry's current version has this content and it is on disk nowhere else, as
         // for a file dropped from this device: its old version here must not be lost.
         let needed = ContentHash([7; 32]);

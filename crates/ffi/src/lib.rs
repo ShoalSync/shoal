@@ -1042,6 +1042,7 @@ impl Node {
         let certificate = device::certificate(&data_dir, &key)?.ok_or(TidefellError::NotPaired)?;
         let config = EngineConfig {
             data_dir,
+            metadata_dir: None,
             relay: network.relay()?,
             address_lookup: network.address_lookup,
             local_discovery: network.local_discovery,

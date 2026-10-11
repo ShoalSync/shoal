@@ -194,6 +194,7 @@ async fn web_peer_end_to_end() {
         Engine::start(
             EngineConfig {
                 data_dir: data_dir.clone(),
+                metadata_dir: None,
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
                 local_discovery: false,
@@ -410,6 +411,7 @@ async fn serve_folder(
         Engine::start(
             EngineConfig {
                 data_dir: data_dir.clone(),
+                metadata_dir: None,
                 relay: RelayConfig::Disabled,
                 address_lookup: false,
                 local_discovery: false,
@@ -931,6 +933,7 @@ async fn laptop(tmp: &std::path::Path) -> Engine {
     Engine::start(
         EngineConfig {
             data_dir: tmp.join("laptop-data"),
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,

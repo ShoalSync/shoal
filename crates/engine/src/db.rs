@@ -19,9 +19,6 @@ use tidefell_proto::{DeviceId, FolderId, Signed};
 use crate::tracked::Changed;
 use crate::{Error, Result};
 
-/// The database's file name in the folder's state directory.
-pub(crate) const FILE: &str = "folder.redb";
-
 /// The layout of the tables below; a database of another format is not read.
 const FORMAT: u32 = 1;
 
@@ -127,14 +124,17 @@ fn encode<T: Serialize>(value: &T) -> Vec<u8> {
 }
 
 impl FolderDb {
-    /// Whether the folder has a database in `dir`.
-    pub(crate) fn exists(dir: &Path) -> bool {
-        dir.join(FILE).exists()
+    /// Whether there is a database at `path`.
+    pub(crate) fn exists(path: &Path) -> bool {
+        path.exists()
     }
 
-    /// Creates a database in `dir`, holding nothing yet.
-    pub(crate) fn create(dir: &Path) -> Result<Self> {
-        let path = dir.join(FILE);
+    /// Creates a database at `path`, holding nothing yet.
+    pub(crate) fn create(path: &Path) -> Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).map_err(crate::io_err(dir))?;
+        }
+        let path = path.to_path_buf();
         let db = Database::create(&path).map_err(|e| err(&path)(e.into()))?;
         // Every table exists from the start, so reading never meets a missing one.
         let tx = db.begin_write().map_err(|e| err(&path)(e.into()))?;
@@ -159,9 +159,9 @@ impl FolderDb {
         })
     }
 
-    /// Opens the database in `dir` and reads everything in it.
-    pub(crate) fn open(dir: &Path) -> Result<(Self, Loaded)> {
-        let path = dir.join(FILE);
+    /// Opens the database at `path` and reads everything in it.
+    pub(crate) fn open(path: &Path) -> Result<(Self, Loaded)> {
+        let path = path.to_path_buf();
         let db = Database::open(&path).map_err(|e| err(&path)(e.into()))?;
         let mut folder = Self {
             db,
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn what_was_committed_is_read_back() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = FolderDb::create(dir.path()).unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
         let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let version = |n: u8| EntryVersion {
@@ -458,7 +458,7 @@ mod tests {
         })
         .unwrap();
         drop(db);
-        let (db, loaded) = FolderDb::open(dir.path()).unwrap();
+        let (db, loaded) = FolderDb::open(&dir.path().join("f.redb")).unwrap();
         assert_eq!(loaded.header, header(3));
         let sequences: Vec<u64> = loaded.versions.iter().map(|(s, _)| *s).collect();
         assert_eq!(sequences, [2, 3]);
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn dropped_versions_are_removed_in_one_pass() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = FolderDb::create(dir.path()).unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
         let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let signed = |n: u64| {
@@ -514,7 +514,7 @@ mod tests {
         // As many dropped as live: removed, and the file compacted.
         assert_eq!((db.live, db.dropped), (CLEAN_AT_LEAST, 0));
         drop(db);
-        let (_, loaded) = FolderDb::open(dir.path()).unwrap();
+        let (_, loaded) = FolderDb::open(&dir.path().join("f.redb")).unwrap();
         assert_eq!(loaded.versions.len() as u64, CLEAN_AT_LEAST);
         assert_eq!(loaded.versions[0].0, CLEAN_AT_LEAST + 1);
     }

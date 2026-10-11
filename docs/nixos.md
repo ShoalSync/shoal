@@ -37,6 +37,8 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
   It is checked with `tidefelld config check` when the system is built, so an invalid
   configuration fails `nixos-rebuild` rather than the service.
 - `data_dir` defaults to `services.tidefelld.dataDir` (`/var/lib/tidefell`).
+- `metadata_dir`, if set, is writable by the service like `data_dir`; put it on fast storage
+  when `dataDir` and the folders are on slow disks.
 - `settings.web.bind` enables the web peer (see the example configuration). Create accounts
   on the host with `sudo -u tidefell tidefelld web account add --data-dir /var/lib/tidefell
   --username <name>`, and put a TLS reverse proxy in front of it.

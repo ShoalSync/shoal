@@ -318,7 +318,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5j: step 2 (measurement) is done: redb, with versions kept by sequence, writes 0.47 MB
   per 512-version batch at 100,000 entries, clean-ups included (ADR 0034). Step 3 (durable
   renames) is implemented. Step 4 (per-folder databases) is implemented: at 100,000 entries a
-  512-version batch holds the folder lock for 3.4 ms and writes 0.55 MB.
+  512-version batch holds the folder lock for 3.4 ms and writes 0.55 MB. Step 5
+  (`metadata_dir`) is implemented.
 
 ### Phase 2 work breakdown
 

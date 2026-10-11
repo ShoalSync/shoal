@@ -34,6 +34,7 @@ impl Replica {
         fs::create_dir_all(&self.root).unwrap();
         let config = EngineConfig {
             data_dir: self.data.clone(),
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,

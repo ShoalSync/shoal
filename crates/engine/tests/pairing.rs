@@ -36,6 +36,7 @@ async fn a_new_device_pairs_then_syncs() {
     let laptop = Engine::start(
         EngineConfig {
             data_dir: tmp.path().join("laptop/data"),
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,
@@ -112,6 +113,7 @@ async fn a_new_device_pairs_then_syncs() {
     let phone = Engine::start(
         EngineConfig {
             data_dir: phone_data,
+            metadata_dir: None,
             relay: RelayConfig::Disabled,
             address_lookup: false,
             local_discovery: false,

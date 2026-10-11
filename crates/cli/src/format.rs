@@ -60,6 +60,9 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         s.version,
         if s.local_discovery { "on" } else { "off" }
     );
+    if !s.metadata_dir.is_empty() {
+        out.push_str(&format!("\nmetadata: {}", s.metadata_dir));
+    }
     if s.paused {
         out.push_str("\nsyncing paused on this device: `tidefell resume` to continue");
     }

@@ -136,6 +136,9 @@ pub struct PeerAddr {
 pub struct EngineConfig {
     /// State directory (block store, metadata, engine state).
     pub data_dir: PathBuf,
+    /// Where each folder's metadata database is kept, such as on an SSD when `data_dir` is on
+    /// slow disks (ADR 0034); `<data_dir>/metadata` if `None`. It holds nothing else.
+    pub metadata_dir: Option<PathBuf>,
     /// Relay servers.
     pub relay: RelayConfig,
     /// Publish and resolve addresses through DNS/pkarr.

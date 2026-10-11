@@ -250,6 +250,7 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
             .map(convert::peer_state)
             .collect(),
         transfer: convert::transfer(engine.transfer()),
+        metadata_dir: engine.metadata_dir().display().to_string(),
     }))
 }
 

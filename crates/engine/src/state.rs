@@ -20,6 +20,11 @@ use crate::ignores::Ignores;
 use crate::tracked::{encode, Tracked, TrackedSet};
 use crate::{io_err, random_bytes, Error, Result};
 
+/// Where folder `id`'s database is: `<metadata_dir>/<id>.redb` (ADR 0034).
+pub(crate) fn db_path(metadata_dir: &Path, id: FolderId) -> PathBuf {
+    metadata_dir.join(format!("{id}.redb"))
+}
+
 /// How a device tells a folder's names apart (ADR 0033): in NFC, and without regard to case
 /// on a drive that ignores it.
 #[derive(Debug, Clone, Copy)]
@@ -563,6 +568,8 @@ pub(crate) struct FolderState {
     /// saved: a folder that moved may be on another filesystem.
     pub(crate) filesystem: crate::probe::Filesystem,
     pub(crate) dir: PathBuf,
+    /// The folder's database, in the metadata directory (ADR 0034).
+    db_path: PathBuf,
     /// Commits the folder's changes to its database, in order, off the folder lock
     /// (ADR 0034). `None` once the folder is closed.
     committer: Option<Committer>,
@@ -573,15 +580,23 @@ pub(crate) struct FolderState {
 
 impl FolderState {
     /// True if `folder` has saved state under `data_dir`, so it is not being created or joined.
-    pub(crate) fn exists(data_dir: &Path, folder: FolderId) -> bool {
+    pub(crate) fn exists(data_dir: &Path, metadata_dir: &Path, folder: FolderId) -> bool {
         let dir = data_dir.join("folders").join(folder.to_string());
-        FolderDb::exists(&dir) || dir.join("meta").exists() || dir.join("state").exists()
+        FolderDb::exists(&db_path(metadata_dir, folder))
+            || dir.join("meta").exists()
+            || dir.join("state").exists()
     }
 
     /// Loads the folder's state from `data_dir`, or creates it.
-    pub(crate) fn open(data_dir: &Path, config: FolderConfig, device: DeviceId) -> Result<Self> {
+    pub(crate) fn open(
+        data_dir: &Path,
+        metadata_dir: &Path,
+        config: FolderConfig,
+        device: DeviceId,
+    ) -> Result<Self> {
         let dir = data_dir.join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        let path = db_path(metadata_dir, config.id);
         let members = FolderMembers::new(config.id, config.members.iter().copied());
 
         let ignores = Ignores::load(&config.path);
@@ -605,16 +620,17 @@ impl FolderState {
             ignores,
             filesystem: crate::probe::Filesystem::default(),
             dir,
+            db_path: path,
             committer: None,
             removed: false,
         };
-        let db = if FolderDb::exists(&state.dir) {
+        let db = if FolderDb::exists(&state.db_path) {
             state.load()?
         } else {
             // A new folder, or one saved as files by an earlier version: those are converted,
             // then deleted (ADR 0034).
             state.load_files(device)?;
-            let mut db = FolderDb::create(&state.dir)?;
+            let mut db = FolderDb::create(&state.db_path)?;
             db.commit(&Changes {
                 header: state.meta.header(),
                 journal: state.meta.full_journal(),
@@ -649,8 +665,8 @@ impl FolderState {
 
     /// Loads the folder's database, and returns it to commit to.
     fn load(&mut self) -> Result<FolderDb> {
-        let (db, loaded) = FolderDb::open(&self.dir)?;
-        let corrupt = |_| Error::CorruptState(self.dir.join(crate::db::FILE));
+        let (db, loaded) = FolderDb::open(&self.db_path)?;
+        let corrupt = |_| Error::CorruptState(self.db_path.clone());
         let mut maps = loaded.maps;
         let mut take = |name: &str| maps.remove(name).unwrap_or_default();
         self.meta = Folder::from_records(loaded.header, loaded.versions, loaded.recycled)?;
@@ -1116,7 +1132,8 @@ mod tests {
         };
         let mine = DeviceKey::from_seed([5; 32]);
         let other = DeviceKey::from_seed([6; 32]);
-        let mut state = FolderState::open(tmp.path(), config, mine.id()).unwrap();
+        let mut state =
+            FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, mine.id()).unwrap();
         let entry = |n: usize| {
             let mut id = [0u8; 16];
             id[..8].copy_from_slice(&(n as u64).to_le_bytes());
@@ -1222,7 +1239,13 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v1).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let mut state = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        let mut state = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config.clone(),
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
         assert!(
             state.local["a.txt"].base.iter().next().is_none(),
@@ -1233,7 +1256,10 @@ mod tests {
 
         state.save().unwrap();
         // Opening converted it to the folder's database and deleted the file (ADR 0034).
-        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
+        assert!(
+            !dir.join("state").exists()
+                && FolderDb::exists(&db_path(&tmp.path().join("metadata"), config.id))
+        );
     }
     #[test]
     fn loads_version_3_state_without_bases() {
@@ -1268,7 +1294,13 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v3).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        let mut state = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config.clone(),
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
         assert_eq!(
             state.copy_names.get(&DeviceId([9; 32])).map(String::as_str),
@@ -1282,9 +1314,18 @@ mod tests {
         state.local.insert("a.txt".into(), file);
         state.save().unwrap();
         // Opening converted it to the folder's database and deleted the file (ADR 0034).
-        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
+        assert!(
+            !dir.join("state").exists()
+                && FolderDb::exists(&db_path(&tmp.path().join("metadata"), config.id))
+        );
         drop(state);
-        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        let reopened = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config,
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(reopened.local["a.txt"].base, base);
     }
 
@@ -1310,7 +1351,13 @@ mod tests {
         };
         let entry = EntryId([1; 16]);
         let other = EntryId([2; 16]);
-        let mut state = FolderState::open(tmp.path(), config.clone(), key.id()).unwrap();
+        let mut state = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config.clone(),
+            key.id(),
+        )
+        .unwrap();
         // Written at a.txt, then renamed to b.txt. An older release left the base at the first
         // version, and its rename kept the record.
         let (_, first) = state
@@ -1348,7 +1395,7 @@ mod tests {
         let dir = tmp.path().join("folders").join(config.id.to_string());
         state.meta.save(&dir.join("meta")).unwrap();
         drop(state);
-        fs::remove_file(dir.join(crate::db::FILE)).unwrap();
+        fs::remove_file(db_path(&tmp.path().join("metadata"), config.id)).unwrap();
         let legacy = |entry, content: u8, base: &VersionVector| LocalFileV8 {
             entry,
             content: ContentHash([content; 32]),
@@ -1377,7 +1424,8 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v8).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let state = FolderState::open(tmp.path(), config, key.id()).unwrap();
+        let state =
+            FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, key.id()).unwrap();
         assert_eq!(state.local["b.txt"].base, state.meta.current_vector(&entry));
         assert_eq!(state.local["c.txt"].base, stale);
     }
@@ -1418,7 +1466,13 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v4).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        let mut state = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config.clone(),
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(state.local.get("a.txt"), Some(&local));
         assert!(state.dropped.is_empty() && state.set_aside.is_empty());
 
@@ -1434,9 +1488,18 @@ mod tests {
         );
         state.save().unwrap();
         // Opening converted it to the folder's database and deleted the file (ADR 0034).
-        assert!(!dir.join("state").exists() && FolderDb::exists(&dir));
+        assert!(
+            !dir.join("state").exists()
+                && FolderDb::exists(&db_path(&tmp.path().join("metadata"), config.id))
+        );
         drop(state);
-        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        let reopened = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config,
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert!(reopened.dropped.contains(&EntryId([9; 16])));
         assert_eq!(reopened.set_aside[&local.entry].removed_at_ms, 77);
     }
@@ -1465,7 +1528,13 @@ mod tests {
         bytes.extend(postcard::to_stdvec(&v2).unwrap());
         fs::write(dir.join("state"), bytes).unwrap();
 
-        let mut state = FolderState::open(tmp.path(), config.clone(), DeviceId([8; 32])).unwrap();
+        let mut state = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config.clone(),
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(state.used.get("a.txt"), Some(&99));
         assert!(state.copies.is_empty());
 
@@ -1477,7 +1546,13 @@ mod tests {
             .insert(DeviceId([9; 32]), 1234);
         state.save().unwrap();
         drop(state);
-        let reopened = FolderState::open(tmp.path(), config, DeviceId([8; 32])).unwrap();
+        let reopened = FolderState::open(
+            tmp.path(),
+            &tmp.path().join("metadata"),
+            config,
+            DeviceId([8; 32]),
+        )
+        .unwrap();
         assert_eq!(
             reopened
                 .copies
