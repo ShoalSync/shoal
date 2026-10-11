@@ -131,6 +131,55 @@ fn folder_wide(error: &Error) -> bool {
     matches!(error, Error::FolderUnavailable(..) | Error::Crashed(_))
 }
 
+/// Files fetched and written at once (ADR 0032).
+const MAX_WRITES: usize = 8;
+
+/// The most file content fetched at once, by the sizes of the files being written; a larger
+/// file is written on its own (ADR 0032).
+const MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+/// The paths a write touches: its own and, if it moved, its previous one.
+fn touched(write: &PendingWrite) -> impl Iterator<Item = &str> {
+    std::iter::once(write.path.as_str()).chain(write.old_path.as_deref())
+}
+
+/// The folders above `path`, nearest first.
+fn ancestors(path: &str) -> impl Iterator<Item = &str> {
+    path.char_indices()
+        .rev()
+        .filter(|(_, c)| *c == '/')
+        .filter_map(|(i, _)| path.get(..i))
+}
+
+/// For each write, the earlier writes it must wait for: those touching the same path, or a
+/// path inside or above one of its own, so writes to one place happen in plan order (ADR 0032).
+fn blockers(writes: &[Arc<PendingWrite>]) -> Vec<Vec<usize>> {
+    // Earlier writes by each path they touch, and by each folder above those paths.
+    let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut under: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut all = Vec::with_capacity(writes.len());
+    for (i, write) in writes.iter().enumerate() {
+        let mut before: Vec<usize> = Vec::new();
+        for path in touched(write) {
+            before.extend(at.get(path).into_iter().flatten());
+            before.extend(under.get(path).into_iter().flatten());
+            for folder in ancestors(path) {
+                before.extend(at.get(folder).into_iter().flatten());
+            }
+        }
+        before.sort_unstable();
+        before.dedup();
+        all.push(before);
+        for path in touched(write) {
+            at.entry(path).or_default().push(i);
+            for folder in ancestors(path) {
+                under.entry(folder).or_default().push(i);
+            }
+        }
+    }
+    all
+}
+
 /// What materialising `state` would do now: the files to write and the paths to delete. A
 /// send-only replica writes nothing (ADR 0025).
 pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
@@ -199,7 +248,7 @@ pub(crate) async fn materialize(
     inner: &Arc<Inner>,
     node: &Arc<Node>,
     id: FolderId,
-    handle: &FolderHandle,
+    handle: &Arc<FolderHandle>,
 ) -> Result<()> {
     let (root, writes, deletes) = {
         let mut state = handle.lock();
@@ -234,8 +283,80 @@ pub(crate) async fn materialize(
             }
         }
     }
-    for write in writes {
-        match write_file(inner, node, handle, id, &root, &write).await {
+    // Several files at once, each fetched without the file lock (ADR 0032).
+    let writes: Vec<Arc<PendingWrite>> = writes.into_iter().map(Arc::new).collect();
+    let blockers = blockers(&writes);
+    let mut waiting_on: Vec<usize> = blockers.iter().map(Vec::len).collect();
+    let mut unblocks: Vec<Vec<usize>> = vec![Vec::new(); writes.len()];
+    for (i, before) in blockers.iter().enumerate() {
+        for &j in before {
+            if let Some(list) = unblocks.get_mut(j) {
+                list.push(i);
+            }
+        }
+    }
+    // Writes free to start, in plan order.
+    let mut ready: std::collections::BTreeSet<usize> = waiting_on
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| **n == 0)
+        .map(|(i, _)| i)
+        .collect();
+    let mut running = tokio::task::JoinSet::new();
+    let mut bytes: u64 = 0;
+    loop {
+        let fits = |i: &usize, bytes: u64, idle: bool| {
+            idle || writes
+                .get(*i)
+                .is_some_and(|w| bytes.saturating_add(w.size) <= MAX_BYTES)
+        };
+        while running.len() < MAX_WRITES {
+            let Some(i) = ready
+                .iter()
+                .copied()
+                .find(|i| fits(i, bytes, running.is_empty()))
+            else {
+                break;
+            };
+            ready.remove(&i);
+            let Some(write) = writes.get(i).cloned() else {
+                continue;
+            };
+            bytes = bytes.saturating_add(write.size);
+            let (inner, node, handle, root) =
+                (inner.clone(), node.clone(), handle.clone(), root.clone());
+            running.spawn(async move {
+                let result = write_file(&inner, &node, &handle, id, &root, &write).await;
+                (i, result)
+            });
+        }
+        let Some(joined) = running.join_next().await else {
+            break;
+        };
+        let (i, result) = match joined {
+            Ok(done) => done,
+            Err(e) => {
+                let message = inner.fail(
+                    "write",
+                    e.try_into_panic()
+                        .unwrap_or_else(|e| Box::new(e.to_string())),
+                );
+                return Err(Error::Crashed(message));
+            }
+        };
+        let Some(write) = writes.get(i) else {
+            continue;
+        };
+        bytes = bytes.saturating_sub(write.size);
+        for &next in unblocks.get(i).into_iter().flatten() {
+            if let Some(n) = waiting_on.get_mut(next) {
+                *n = n.saturating_sub(1);
+                if *n == 0 {
+                    ready.insert(next);
+                }
+            }
+        }
+        match result {
             Ok(true) => {
                 info!(folder = %id, path = %write.path, "updated");
                 inner.emit(Event::FileUpdated {
@@ -254,7 +375,7 @@ pub(crate) async fn materialize(
                 }
             }
             // An unmounted drive or a crash is the folder's problem, shown in its state, not
-            // one per file.
+            // one per file. Dropping the set stops the other writes.
             Err(e) if folder_wide(&e) => return Err(e),
             Err(e) => {
                 warn!(folder = %id, path = %write.path, error = %e, "update failed");
@@ -415,10 +536,10 @@ async fn write_file(
     // Assembled below; the chunks stay in the block store until the next compaction.
     let _fetched = Fetching(inner, manifest.content);
 
-    // Fetching is done; only now take the folder's file lock, so a slow peer never holds up
-    // scans or file operations (ADR 0024).
-    let _guard = handle.disk().await?;
     // Assemble into a temporary file and verify the whole content before it becomes visible.
+    // That happens before taking the folder's file lock, like fetching, so neither a slow peer
+    // nor a large file holds up scans, file operations or opening a placeholder (ADR 0024,
+    // ADR 0032).
     let tmp_dir = root.join(RESERVED_DIR).join("tmp");
     fs::create_dir_all(&tmp_dir).map_err(io_err(&tmp_dir))?;
     let tmp = tmp_dir.join(format!(
@@ -426,7 +547,15 @@ async fn write_file(
         write.entry,
         u64::from_le_bytes(random_bytes()?)
     ));
-    match assemble(inner, handle, &manifest, &tmp, write) {
+    let assembled = assemble(inner, handle, &manifest, &tmp, write);
+    let _guard = handle.disk().await?;
+    // A chunk read from another file as it was being replaced or moved makes a bad copy or
+    // none; under the lock no file changes, so a second failure is the real outcome.
+    let assembled = match assembled {
+        Ok(true) => Ok(true),
+        _ => assemble(inner, handle, &manifest, &tmp, write),
+    };
+    match assembled {
         Ok(true) => {}
         Ok(false) => {
             // The manifest's chunks do not make up its content: drop it so the next attempt
@@ -719,6 +848,57 @@ mod tests {
                 })
                 .collect(),
         }
+    }
+
+    fn pending(path: &str, old_path: Option<&str>) -> Arc<PendingWrite> {
+        Arc::new(PendingWrite {
+            entry: EntryId([path.len() as u8; 16]),
+            path: path.to_owned(),
+            content: ContentHash([0; 32]),
+            size: 0,
+            executable: false,
+            modified_ms: 0,
+            old_path: old_path.map(str::to_owned),
+            base: VersionVector::new(),
+            unavailable: std::sync::Mutex::default(),
+        })
+    }
+
+    #[test]
+    fn folders_above_a_path() {
+        assert_eq!(ancestors("a/b/c.txt").collect::<Vec<_>>(), ["a/b", "a"]);
+        assert_eq!(ancestors("c.txt").count(), 0);
+    }
+
+    #[test]
+    fn writes_to_one_place_wait_for_earlier_ones() {
+        let writes = [
+            pending("a/x.txt", None),
+            pending("b.txt", None),
+            // The same path as 0.
+            pending("a/x.txt", None),
+            // A file where 0 and 2 have a folder.
+            pending("a", None),
+            // Moves 1 away: waits for it, and is waited for at both paths.
+            pending("c.txt", Some("b.txt")),
+            pending("b.txt", None),
+            // Unrelated, and only a shared prefix with "a".
+            pending("ab.txt", None),
+            pending("a/y/z.txt", None),
+        ];
+        assert_eq!(
+            blockers(&writes),
+            [
+                vec![],
+                vec![],
+                vec![0],
+                vec![0, 2],
+                vec![1],
+                vec![1, 4],
+                vec![],
+                vec![3],
+            ]
+        );
     }
 
     #[test]

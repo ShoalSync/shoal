@@ -69,6 +69,19 @@ changes wait for sync/2 and blobs/2 (ADR 0023).
   - Baseline, 100 ms per request: 1,000 files of 2 KB take 308 s, at 3 streams each (one
     manifest, one availability query and one chunk request); the 256 MiB file takes 8.8 s, in
     105 chunk requests for its 834 chunks, plus one manifest and one availability query.
+- Step 3 decided:
+  - A pass writes up to 8 files at once, in plan order. A write waits for every earlier one
+    that touches the same path, or a path inside or above one of its own, counting the
+    previous path of a moved file.
+  - The 64 MiB is counted by the sizes of the files being written; a larger file is written
+    on its own.
+  - Files are assembled into their temporary file before the folder's file lock is taken, so
+    the lock is held only to put the file in place, and opening a placeholder waits for no
+    download or assembly. A file assembled while a file it reads chunks from was being
+    replaced fails its hash; it is assembled again under the lock before its manifest is
+    dropped.
+  - With 100 ms per request, the 1,000 small files take 38.8 s instead of 308 s; the 256 MiB
+    file takes 8.7 s.
 
 ### For sync/2 and blobs/2
 
