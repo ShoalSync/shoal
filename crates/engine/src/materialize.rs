@@ -31,6 +31,8 @@ struct PeerSource {
     folder: FolderId,
     /// To stop a fetch already running once its folder is paused (ADR 0029).
     inner: Arc<Inner>,
+    /// Peers that are full replicas of the folder, so hold every current file (ADR 0032).
+    full: Vec<DeviceId>,
 }
 
 impl PeerSource {
@@ -78,15 +80,21 @@ impl ChunkSource for PeerSource {
             .collect())
     }
 
+    fn holds_everything(&self, peer: &DeviceId) -> bool {
+        self.full.contains(peer)
+    }
+
     async fn fetch(
         &self,
         peer: &DeviceId,
         chunks: &[ChunkHash],
     ) -> std::result::Result<tidefell_fetch::Fetched, String> {
         self.check_paused()?;
+        // Sent with other downloads' requests to the same peer (ADR 0032).
         let results = self
-            .node
-            .fetch_chunks(endpoint(peer)?, self.folder, chunks)
+            .inner
+            .batches
+            .fetch(&self.node, *peer, self.folder, chunks.to_vec())
             .await
             .map_err(|e| self.failed(FetchFailure::Request, e))?;
         let mut fetched = tidefell_fetch::Fetched::default();
@@ -810,10 +818,21 @@ async fn download(
         return Ok(());
     }
     inner.fetching.lock().unwrap().insert(manifest.content);
+    // With one peer there is nothing to choose between, so whether it is a full replica does
+    // not matter (ADR 0032).
+    let mut full = Vec::new();
+    if peers.len() > 1 {
+        for peer in peers {
+            if is_full_replica(inner, node, *peer, id).await {
+                full.push(*peer);
+            }
+        }
+    }
     let source = Arc::new(PeerSource {
         node: node.clone(),
         folder: id,
         inner: inner.clone(),
+        full,
     });
     let download = fetch(
         source,
@@ -845,6 +864,40 @@ async fn download(
         inner.fetching.lock().unwrap().remove(&manifest.content);
     }
     fetched
+}
+
+/// How long a peer's answer to whether it is a full replica is trusted. A stale one costs an
+/// availability query, not a wrong file.
+const REPLICA_ANSWER_KEPT: Duration = Duration::from_secs(600);
+
+/// Whether `peer` is a full replica of `folder`, asked at most once per [`REPLICA_ANSWER_KEPT`]
+/// (ADR 0032). A peer that cannot say counts as a partial replica.
+async fn is_full_replica(inner: &Inner, node: &Node, peer: DeviceId, folder: FolderId) -> bool {
+    let known = |inner: &Inner| {
+        inner
+            .full_replicas
+            .lock()
+            .unwrap()
+            .get(&(peer, folder))
+            .filter(|(_, at)| at.elapsed() < REPLICA_ANSWER_KEPT)
+            .map(|(full, _)| *full)
+    };
+    if let Some(full) = known(inner) {
+        return full;
+    }
+    let _asking = inner.replica_query.lock().await;
+    if let Some(full) = known(inner) {
+        return full;
+    }
+    let full = match EndpointId::from_bytes(peer.as_bytes()) {
+        Ok(endpoint) => node
+            .is_full_replica(endpoint, folder)
+            .await
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+    inner.remember_replica(peer, folder, full);
+    full
 }
 
 /// Forgets that a content is being downloaded when dropped.

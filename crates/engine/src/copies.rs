@@ -82,7 +82,9 @@ pub(crate) async fn confirm(
         let Ok(endpoint) = EndpointId::from_bytes(device.as_bytes()) else {
             continue;
         };
-        match node.is_full_replica(endpoint, id).await {
+        let full = node.is_full_replica(endpoint, id).await;
+        inner.remember_replica(device, id, matches!(full, Ok(true)));
+        match full {
             Ok(true) => names.push((device, peer.certificate().name.clone())),
             Ok(false) => continue,
             Err(e) => {

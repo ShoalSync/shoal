@@ -26,7 +26,10 @@ struct Sim {
     liars: Vec<&'static str>,
     /// Requests a peer answers with one chunk and then Busy.
     busy: HashMap<&'static str, AtomicU32>,
+    /// Peers that say they hold everything (ADR 0032).
+    full: Vec<&'static str>,
     requests: Mutex<BTreeMap<&'static str, usize>>,
+    queries: Mutex<BTreeMap<&'static str, usize>>,
 }
 
 impl ChunkSource for Sim {
@@ -37,7 +40,12 @@ impl ChunkSource for Sim {
         peer: &&'static str,
         _: &Manifest,
     ) -> Result<Vec<ChunkHash>, String> {
+        *self.queries.lock().unwrap().entry(peer).or_default() += 1;
         Ok(self.holdings.get(peer).cloned().unwrap_or_default())
+    }
+
+    fn holds_everything(&self, peer: &&'static str) -> bool {
+        self.full.contains(peer)
     }
 
     async fn fetch(&self, peer: &&'static str, chunks: &[ChunkHash]) -> Result<Fetched, String> {
@@ -226,4 +234,96 @@ async fn a_busy_peer_is_asked_again_later_not_dropped() {
     assert_eq!(got, (1..=10).map(h).collect::<Vec<_>>());
     // Busy answers made the fetcher wait before asking again, instead of failing.
     assert!(start.elapsed() >= Duration::from_secs(2));
+}
+
+fn queries(sim: &Sim, peer: &'static str) -> usize {
+    sim.queries.lock().unwrap().get(peer).copied().unwrap_or(0)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lone_peer_is_not_asked_what_it_holds() {
+    let mut sim = Sim::default();
+    sim.holdings
+        .insert("a", manifest(4).chunks.iter().map(|c| c.hash).collect());
+    let sim = Arc::new(sim);
+    let report = fetch(
+        sim.clone(),
+        &manifest(4),
+        &["a"],
+        |_| false,
+        Config::default(),
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 4);
+    assert_eq!(queries(&sim, "a"), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_full_replica_is_not_asked_what_it_holds() {
+    let mut sim = Sim::default();
+    let all: Vec<ChunkHash> = manifest(4).chunks.iter().map(|c| c.hash).collect();
+    sim.holdings.insert("full", all.clone());
+    sim.holdings.insert("partial", all[..2].to_vec());
+    sim.full.push("full");
+    let sim = Arc::new(sim);
+    let report = fetch(
+        sim.clone(),
+        &manifest(4),
+        &["full", "partial"],
+        |_| false,
+        Config::default(),
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 4);
+    assert_eq!(queries(&sim, "full"), 0);
+    assert_eq!(queries(&sim, "partial"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_full_replica_short_of_a_chunk_does_not_stop_the_fetch() {
+    let mut sim = Sim::default();
+    let all: Vec<ChunkHash> = manifest(4).chunks.iter().map(|c| c.hash).collect();
+    // It says it is a full replica, but has not got chunk 4 yet; another peer has.
+    sim.holdings.insert("full", all[..3].to_vec());
+    sim.holdings.insert("other", all[3..].to_vec());
+    sim.full.push("full");
+    let sim = Arc::new(sim);
+    let report = fetch(
+        sim.clone(),
+        &manifest(4),
+        &["full", "other"],
+        |_| false,
+        Config::default(),
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 4);
+    assert_eq!(report.per_peer[&"full"], 3);
+    assert_eq!(report.per_peer[&"other"], 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lone_peer_without_the_chunks_leaves_them_unobtainable() {
+    let mut sim = Sim::default();
+    sim.holdings.insert("a", vec![h(1)]);
+    let sim = Arc::new(sim);
+    let result = fetch(
+        sim.clone(),
+        &manifest(3),
+        &["a"],
+        |_| false,
+        Config::default(),
+        |_, _| Ok(()),
+    )
+    .await;
+    assert!(
+        matches!(result, Err(FetchError::Unobtainable(ref c)) if c.len() == 2),
+        "{result:?}"
+    );
+    assert_eq!(queries(&sim, "a"), 1);
 }

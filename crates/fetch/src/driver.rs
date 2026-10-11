@@ -1,6 +1,6 @@
 //! Runs a [`Scheduler`] against a [`ChunkSource`].
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Debug;
 use std::future::Future;
 use std::hash::Hash;
@@ -24,6 +24,14 @@ pub trait ChunkSource: Send + Sync + 'static {
         peer: &Self::Peer,
         manifest: &Manifest,
     ) -> impl Future<Output = Result<Vec<ChunkHash>, String>> + Send;
+
+    /// True if `peer` is known to hold every chunk of every current file, as a full replica
+    /// does (ADR 0032). Its chunks are then requested without asking for its availability
+    /// first, unless it answers that one is missing.
+    fn holds_everything(&self, peer: &Self::Peer) -> bool {
+        let _ = peer;
+        false
+    }
 
     /// Requests `chunks` from `peer`. Returns data for each chunk the peer has; chunks absent
     /// from the result are treated as missing, unless the peer said it is busy. Implementations
@@ -68,7 +76,9 @@ pub struct FetchReport<P: Ord> {
 }
 
 /// Fetches every chunk of `manifest` for which `have` returns false from `peers`, passing each
-/// chunk to `sink` as it arrives.
+/// chunk to `sink` as it arrives. Peers are asked which chunks they hold first, except a peer
+/// that holds everything and a lone peer, which are assumed to hold them all until one is
+/// missing (ADR 0032).
 pub async fn fetch<S: ChunkSource>(
     source: Arc<S>,
     manifest: &Manifest,
@@ -87,8 +97,15 @@ pub async fn fetch<S: ChunkSource>(
         return Ok(report);
     }
 
+    // Peers assumed to hold every chunk; asked for their availability once one is missing.
+    let mut assumed: BTreeSet<S::Peer> = BTreeSet::new();
     let mut queries = JoinSet::new();
     for peer in peers {
+        if peers.len() == 1 || source.holds_everything(peer) {
+            scheduler.set_availability(peer.clone(), manifest.chunks.iter().map(|c| c.hash));
+            assumed.insert(peer.clone());
+            continue;
+        }
         let (source, peer, manifest) = (source.clone(), peer.clone(), manifest.clone());
         queries.spawn(async move {
             let has = source.availability(&peer, &manifest).await;
@@ -152,6 +169,7 @@ pub async fn fetch<S: ChunkSource>(
                         .collect();
                     scheduler.busy(&request.peer, &rest, (Instant::now() + wait).into_std());
                 }
+                let mut missing = false;
                 for hash in &request.chunks {
                     match delivered.remove(hash) {
                         Some(data) => {
@@ -162,7 +180,21 @@ pub async fn fetch<S: ChunkSource>(
                             scheduler.received(&request.peer, hash);
                         }
                         None if fetched.busy_for.is_some() => {}
-                        None => scheduler.missing(&request.peer, hash),
+                        None => {
+                            scheduler.missing(&request.peer, hash);
+                            missing = true;
+                        }
+                    }
+                }
+                // A peer assumed to hold everything does not: ask what it holds after all.
+                if missing && assumed.remove(&request.peer) {
+                    if let Ok(has) = source.availability(&request.peer, manifest).await {
+                        // Not the ones it just said it lacks, whatever the answer says.
+                        let has: Vec<ChunkHash> = has
+                            .into_iter()
+                            .filter(|h| !request.chunks.contains(h))
+                            .collect();
+                        scheduler.set_availability(request.peer.clone(), has);
                     }
                 }
             }

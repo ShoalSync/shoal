@@ -126,6 +126,13 @@ pub(crate) struct Inner {
     pub(crate) store: Mutex<BlockStore>,
     /// Contents being downloaded, whose chunks the block store keeps until they are written.
     pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
+    /// Chunk requests waiting to go to each peer together (ADR 0032).
+    pub(crate) batches: Arc<crate::batch::Batches>,
+    /// Whether each peer said it is a full replica of each folder, and when (ADR 0032).
+    pub(crate) full_replicas: Mutex<HashMap<(DeviceId, FolderId), (bool, std::time::Instant)>>,
+    /// Held while asking a peer whether it is a full replica, so downloads starting together
+    /// ask once.
+    pub(crate) replica_query: tokio::sync::Mutex<()>,
     folders: RwLock<BTreeMap<FolderId, Arc<FolderHandle>>>,
     configured_peers: Vec<PeerAddr>,
     runtime_peers: RwLock<Vec<PeerAddr>>,
@@ -169,6 +176,14 @@ impl Inner {
         });
         self.emit(Event::Crashed(message.clone()));
         message
+    }
+
+    /// Records whether `peer` said it is a full replica of `folder` (ADR 0032).
+    pub(crate) fn remember_replica(&self, peer: DeviceId, folder: FolderId, full: bool) {
+        self.full_replicas
+            .lock()
+            .unwrap()
+            .insert((peer, folder), (full, std::time::Instant::now()));
     }
 
     pub(crate) fn folder(&self, id: &FolderId) -> Result<Arc<FolderHandle>> {
@@ -451,6 +466,9 @@ impl Engine {
             data_dir: config.data_dir.clone(),
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
+            batches: Arc::default(),
+            full_replicas: Mutex::default(),
+            replica_query: tokio::sync::Mutex::default(),
             counters: crate::engine::metrics::Counters::default(),
             folders: RwLock::new(folders),
             configured_peers: config.peers.clone(),

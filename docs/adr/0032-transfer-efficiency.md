@@ -90,6 +90,18 @@ changes wait for sync/2 and blobs/2 (ADR 0023).
     theirs; when it differs, its chunks are fetched instead.
   - With 100 ms per request, the 1,000 small files take 26.3 s, at 2 streams each; the
     256 MiB file takes 8.6 s.
+- Step 5 decided:
+  - The first chunk request for a peer waits 2 ms for others; those for the same peer and
+    folder then go as one request of up to 64 distinct chunks, and each download gets the
+    answers for its own. A busy answer ends each download's answers where the peer stopped.
+  - A peer's answer to whether it is a full replica is kept for ten minutes, and refreshed
+    whenever copies are confirmed; one that cannot say counts as partial. It is only asked
+    when more than one peer could send a file.
+  - A peer assumed to hold everything that answers `Missing` is asked for its availability,
+    then treated like any other.
+  - With 100 ms per request, the 1,000 small files take 14.1 s, at 0.21 streams each, 22 times
+    faster than the baseline; the 256 MiB file takes 8.4 s, without an availability query.
+    That meets the exit criterion.
 
 ### For sync/2 and blobs/2
 

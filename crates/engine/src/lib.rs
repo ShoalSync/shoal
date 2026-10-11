@@ -34,6 +34,7 @@
 mod activity;
 mod activity_log;
 mod backend;
+mod batch;
 mod config;
 mod content;
 mod copies;
