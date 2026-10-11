@@ -570,6 +570,9 @@ pub(crate) struct FolderState {
     pub(crate) dir: PathBuf,
     /// The folder's database, in the metadata directory (ADR 0034).
     db_path: PathBuf,
+    /// The recycle bin as the kept files' sidecars last recorded it, to rewrite them only when
+    /// it changes (ADR 0034).
+    pub(crate) sidecars_for: u64,
     /// Commits the folder's changes to its database, in order, off the folder lock
     /// (ADR 0034). `None` once the folder is closed.
     committer: Option<Committer>,
@@ -621,6 +624,7 @@ impl FolderState {
             filesystem: crate::probe::Filesystem::default(),
             dir,
             db_path: path,
+            sidecars_for: 0,
             committer: None,
             removed: false,
         };
@@ -660,6 +664,8 @@ impl FolderState {
             state.dir.clone(),
             lines,
         ));
+        // Files kept by earlier versions have no sidecar yet (ADR 0034).
+        state.refresh_sidecars();
         Ok(state)
     }
 
@@ -932,6 +938,22 @@ impl FolderState {
         self.committer.as_ref()
     }
 
+    /// Rewrites the sidecars of kept files if the recycle bin changed since they were last
+    /// written, and writes any that are missing.
+    pub(crate) fn refresh_sidecars(&mut self) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        for item in self.meta.recycle_bin().iter() {
+            (item.version.entry, item.deleted_at_ms).hash(&mut hasher);
+        }
+        (self.kept.len(), self.history.len(), self.set_aside.len()).hash(&mut hasher);
+        let fingerprint = hasher.finish().max(1);
+        if fingerprint != self.sidecars_for {
+            crate::sidecar::refresh(self);
+            self.sidecars_for = fingerprint;
+        }
+    }
+
     /// Calls `on_commit` after each of the folder's commits.
     pub(crate) fn on_commit(&self, on_commit: crate::committer::OnCommit) {
         if let Some(committer) = &self.committer {
@@ -1083,7 +1105,9 @@ impl FolderState {
             .collect();
         for content in unkept {
             if let Some(name) = self.kept.remove(&content) {
-                let _ = fs::remove_file(crate::content::kept_dir(&self.config.path).join(name));
+                let file = crate::content::kept_dir(&self.config.path).join(name);
+                let _ = fs::remove_file(&file);
+                crate::sidecar::remove(&file);
             }
         }
         let mut orphaned = Vec::new();

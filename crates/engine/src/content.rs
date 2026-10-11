@@ -155,6 +155,7 @@ pub(crate) fn keep_deleted(
             .map_err(io_err(abs))?,
         None => crate::rename_durably(abs, dir.join(&name)).map_err(io_err(abs))?,
     }
+    crate::sidecar::write(&dir.join(&name), &crate::sidecar::kept(state, content));
     state.kept.insert(content, name);
     Ok(())
 }
@@ -162,6 +163,7 @@ pub(crate) fn keep_deleted(
 /// Deletes kept files that are no longer needed: their content is back in a file in the folder,
 /// or nothing references it any more.
 fn tidy_kept(state: &mut FolderState) {
+    state.refresh_sidecars();
     if state.kept.is_empty() {
         return;
     }
@@ -192,7 +194,8 @@ fn tidy_kept(state: &mut FolderState) {
     let dir = kept_dir(&state.config.path);
     for content in unneeded {
         if let Some(name) = state.kept.remove(&content) {
-            let _ = fs::remove_file(dir.join(name));
+            let _ = fs::remove_file(dir.join(&name));
+            crate::sidecar::remove(&dir.join(name));
         }
     }
     if let Err(e) = state.save() {

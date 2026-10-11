@@ -22,6 +22,11 @@ fn recycle_dir(root: &Path) -> PathBuf {
     root.join(RESERVED_DIR).join("recycle")
 }
 
+/// Where a set-aside file is kept.
+pub(crate) fn file_of(root: &Path, item: &SetAside) -> PathBuf {
+    file_path(root, item)
+}
+
 fn file_path(root: &Path, item: &SetAside) -> PathBuf {
     recycle_dir(root).join(&item.file)
 }
@@ -66,6 +71,7 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
     let dest = file_path(&root, &item);
     crate::rename_durably(&abs, &dest).map_err(io_err(&abs))?;
     let entry = item.local.entry;
+    crate::sidecar::write(&dest, &crate::sidecar::aside(entry, &item));
     if let Some(older) = state.set_aside.insert(entry, item.clone()) {
         remove_file(&root, &older);
     }
@@ -99,6 +105,7 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
     }
     let source = file_path(&root, &item);
     crate::rename_durably(&source, &target).map_err(io_err(&source))?;
+    crate::sidecar::remove(&source);
     let disk = stat(&target).ok_or_else(|| Error::Io {
         path: target.clone(),
         source: std::io::Error::other("file vanished after restoring"),
@@ -173,6 +180,7 @@ pub(crate) fn purge(state: &mut FolderState, now_ms: i64) -> Vec<SetAside> {
 
 fn remove_file(root: &Path, item: &SetAside) {
     let path = file_path(root, item);
+    crate::sidecar::remove(&path);
     match fs::remove_file(&path) {
         Ok(()) => debug!(path = %item.path, "removed set-aside file"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

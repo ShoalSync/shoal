@@ -155,6 +155,14 @@ progress, confirmed copies, kept files and history).
     `tidefelld` does not start, and says where the databases are and where they are expected.
   - `tidefell status` and the API's status show the directory; it is set only in the
     configuration file.
+- Step 6 decided, so far:
+  - Sidecars are written when a file is kept, removed with it, and written on open for files
+    that have none, as those kept by earlier versions do not. A kept file's sidecar lists the
+    recycle-bin items with its content, and is rewritten when the recycle bin changes; a
+    history file's holds its entry and record; a set-aside file's its entry and record.
+    Records holding version vectors, which JSON cannot key by device, are kept exactly as
+    their postcard encoding in hex beside a readable path. A sidecar that cannot be written
+    costs only what a rebuild could restore, so it never fails the operation.
 
 ## Consequences
 

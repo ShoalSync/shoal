@@ -55,6 +55,7 @@ mod root;
 mod runtime;
 mod scan;
 mod setaside;
+mod sidecar;
 mod state;
 mod tracked;
 

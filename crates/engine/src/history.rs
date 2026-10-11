@@ -153,20 +153,22 @@ pub(crate) fn keep(
         state.add_manifest(manifest);
         content
     };
-    let versions = state.history.entry(recorded.entry).or_default();
-    versions.insert(
-        0,
-        Previous {
-            id,
-            content,
-            size: disk.size,
-            executable: disk.executable,
-            modified_ms: (disk.mtime_ns / 1_000_000) as i64,
-            kept_ms: now_ms(),
-            path: path.to_owned(),
-            file,
-        },
-    );
+    let previous = Previous {
+        id,
+        content,
+        size: disk.size,
+        executable: disk.executable,
+        modified_ms: (disk.mtime_ns / 1_000_000) as i64,
+        kept_ms: now_ms(),
+        path: path.to_owned(),
+        file,
+    };
+    crate::sidecar::write(&aside, &crate::sidecar::history(recorded.entry, &previous));
+    state
+        .history
+        .entry(recorded.entry)
+        .or_default()
+        .insert(0, previous);
     Ok(())
 }
 
@@ -203,12 +205,15 @@ pub(crate) fn purge(state: &mut FolderState, now_ms: i64) {
                 .values()
                 .flatten()
                 .any(|v| v.content == version.content);
+        crate::sidecar::remove(&path);
         if needed.contains(&version.content) && !elsewhere {
             let dir = crate::content::kept_dir(&root);
             let name = format!("{}-{:016x}", version.content, version.id);
             if fs::create_dir_all(&dir).is_ok()
                 && crate::rename_durably(&path, dir.join(&name)).is_ok()
             {
+                let record = crate::sidecar::kept(state, version.content);
+                crate::sidecar::write(&dir.join(&name), &record);
                 state.kept.insert(version.content, name);
                 continue;
             }

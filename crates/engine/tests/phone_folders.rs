@@ -84,8 +84,13 @@ impl Device {
     }
 
     fn set_aside_files(&self) -> usize {
+        // Not counting the sidecar each has (ADR 0034).
         fs::read_dir(self.root.join(".tidefell").join("recycle"))
-            .map(|d| d.count())
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| !e.file_name().to_string_lossy().ends_with(".json"))
+                    .count()
+            })
             .unwrap_or(0)
     }
 }
