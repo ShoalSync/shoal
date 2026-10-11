@@ -147,6 +147,7 @@ impl Folder {
             layout: std::sync::OnceLock::new(),
             unfolded: std::sync::OnceLock::new(),
             folding: crate::Folding::None,
+            pending: crate::journal::Pending::default(),
             changes: std::cell::RefCell::default(),
         })
     }

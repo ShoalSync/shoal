@@ -32,7 +32,7 @@ pub(crate) struct Entry {
 }
 
 impl Entry {
-    fn all(&self) -> impl Iterator<Item = &StoredVersion> {
+    pub(crate) fn all(&self) -> impl Iterator<Item = &StoredVersion> {
         std::iter::once(&self.current).chain(&self.conflicts)
     }
 }
@@ -85,9 +85,44 @@ pub struct Folder {
     pub(crate) unfolded: OnceLock<Layout>,
     /// How this device's filesystem tells names apart (ADR 0033). Not persisted.
     pub(crate) folding: Folding,
+    /// What changed since [`Folder::take_journal`] was last called, for saving only that
+    /// (ADR 0034). Not persisted.
+    pub(crate) pending: crate::journal::Pending,
     /// What stored versions did to their entries since [`Folder::take_changes`] was last
     /// called, for the activity log (ADR 0030). Not persisted.
     pub(crate) changes: std::cell::RefCell<Vec<Change>>,
+}
+
+/// A remote version whose signature, folder, path and counters were checked, ready for
+/// [`Folder::apply_verified`]. Checking takes most of the time applying a version does, so it is
+/// done before the folder is locked (ADR 0034).
+#[derive(Debug, Clone)]
+pub struct Verified {
+    version: EntryVersion,
+    signed: Signed<EntryVersion>,
+}
+
+impl Verified {
+    /// The checked version.
+    pub fn version(&self) -> &EntryVersion {
+        &self.version
+    }
+}
+
+/// Checks a remote version for folder `folder`: its author's signature, its folder, its path
+/// and its counters.
+pub fn verify_remote(folder: FolderId, signed: Signed<EntryVersion>) -> Result<Verified> {
+    let version = signed.verify_authored()?;
+    if version.folder != folder {
+        return Err(Error::WrongFolder);
+    }
+    if !is_valid_path(&version.path) {
+        return Err(Error::InvalidPath(version.path));
+    }
+    if !version.version.within_ceiling() {
+        return Err(Error::CounterCeiling);
+    }
+    Ok(Verified { version, signed })
 }
 
 /// What a stored version did to its entry.
@@ -143,6 +178,7 @@ impl Folder {
             unfolded: OnceLock::new(),
             folding: Folding::None,
             recycle: RecycleBin::new(retention),
+            pending: crate::journal::Pending::default(),
             changes: std::cell::RefCell::default(),
         }
     }
@@ -257,19 +293,28 @@ impl Folder {
     /// Removes recycle-bin items whose retention has expired and returns them, so the caller
     /// can release their content.
     pub fn purge_expired(&mut self, now_ms: i64) -> Vec<Recycled> {
-        self.recycle.purge_expired(now_ms)
+        let purged = self.recycle.purge_expired(now_ms);
+        for item in &purged {
+            self.pending.recycled(item.version.entry);
+        }
+        purged
     }
 
     /// Removes `entry` from this replica's recycle bin, so it can no longer be restored here,
     /// and returns it so the caller can release its content. Other replicas keep their copy.
     pub fn discard(&mut self, entry: &EntryId) -> Option<Recycled> {
+        self.pending.recycled(*entry);
         self.recycle.remove(entry)
     }
 
     /// Empties this replica's recycle bin and returns what it held. Other replicas keep
     /// their copies.
     pub fn discard_all(&mut self) -> Vec<Recycled> {
-        self.recycle.take_all()
+        let all = self.recycle.take_all();
+        for item in &all {
+            self.pending.recycled(item.version.entry);
+        }
+        all
     }
 
     /// Records a local change built on the entry's current content: see
@@ -381,17 +426,16 @@ impl Folder {
         signed: Signed<EntryVersion>,
         received_ms: i64,
     ) -> Result<Applied> {
-        let version = signed.verify_authored()?;
-        if version.folder != self.id {
+        let verified = verify_remote(self.id, signed)?;
+        self.apply_verified(verified, received_ms)
+    }
+
+    /// Stores a remote version checked by [`verify_remote`], as [`Folder::apply_remote`] does.
+    pub fn apply_verified(&mut self, verified: Verified, received_ms: i64) -> Result<Applied> {
+        if verified.version.folder != self.id {
             return Err(Error::WrongFolder);
         }
-        if !is_valid_path(&version.path) {
-            return Err(Error::InvalidPath(version.path));
-        }
-        if !version.version.within_ceiling() {
-            return Err(Error::CounterCeiling);
-        }
-        Ok(self.store(version, signed, received_ms))
+        Ok(self.store(verified.version, verified.signed, received_ms))
     }
 
     /// Restores a deleted entry from the recycle bin as a new local change.
@@ -588,6 +632,7 @@ impl Folder {
                     if decided {
                         lost.push(stored.clone());
                     }
+                    self.pending.dropped(stored.sequence);
                     superseded.push(stored.version);
                 } else {
                     survivors.push(stored);
@@ -601,6 +646,7 @@ impl Folder {
                     .or_else(|| superseded.first())
                     .filter(|v| !matches!(v.kind, EntryKind::Tombstone));
                 if let Some(removed) = removed {
+                    self.pending.recycled(entry_id);
                     self.recycle.insert(Recycled {
                         version: removed.clone(),
                         deleted_at_ms: recorded_ms,
@@ -611,6 +657,7 @@ impl Folder {
         }
 
         self.sequence += 1;
+        self.pending.stored(entry_id, self.sequence);
         survivors.push(StoredVersion {
             version,
             signed,
@@ -620,8 +667,10 @@ impl Folder {
         let current = survivors.swap_remove(win);
         survivors.sort_by_key(|s| s.sequence);
 
-        if !matches!(current.version.kind, EntryKind::Tombstone) {
-            self.recycle.remove(&entry_id);
+        if !matches!(current.version.kind, EntryKind::Tombstone)
+            && self.recycle.remove(&entry_id).is_some()
+        {
+            self.pending.recycled(entry_id);
         }
         for stored in lost {
             let id = copy_id(&stored.signed);
@@ -631,6 +680,7 @@ impl Folder {
             }
             let mut version = stored.version;
             version.entry = id;
+            self.pending.recycled(id);
             self.recycle.insert(Recycled {
                 version,
                 deleted_at_ms: recorded_ms,

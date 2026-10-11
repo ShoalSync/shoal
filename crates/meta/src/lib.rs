@@ -6,12 +6,16 @@
 //! on the same state regardless of the order versions arrive in.
 
 mod folder;
+mod journal;
 mod layout;
 mod recycle;
 mod resolve;
 mod snapshot;
 
-pub use folder::{copy_id, Applied, Change, ChangeKind, Folder, StoredVersion};
+pub use folder::{
+    copy_id, verify_remote, Applied, Change, ChangeKind, Folder, StoredVersion, Verified,
+};
+pub use journal::{Header, Journal};
 pub use layout::{Folding, Layout};
 pub use recycle::{RecycleBin, Recycled, Retention};
 
