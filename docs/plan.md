@@ -309,6 +309,12 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   on disk. Step 4 (probing) is implemented, with a `filesystem` check in `tidefell doctor`.
   Step 5 (collisions and refused names) is implemented, with `tidefell rename`, the API's
   rename and the web peer's offer to rename; the app's offer comes with the next Android pin.
+- `v0.15.0` releases Phase 5i: NFC paths on the wire, each folder's drive probed, names that fold
+  together kept apart on a drive that cannot tell them apart, refused names listed as problems,
+  and renaming everywhere. A 0.15 device drops versions whose paths are not NFC, which a 0.14
+  device makes only for a name it found on disk in another Unicode form; otherwise the protocol
+  is unchanged. The exit criterion passed on the emulator against this release's code before it
+  was tagged; the Android pin runs it in CI.
 
 ### Phase 2 work breakdown
 
