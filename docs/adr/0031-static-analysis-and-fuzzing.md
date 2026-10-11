@@ -134,7 +134,11 @@ with a large cleanup, and every new finding fails CI.
     is built against an older Kotlin than the app's.
   - Lint's checks for newer releases (`AndroidGradlePluginVersion`, `GradleDependency`,
     `NewerVersionAvailable`) are off. They ask the network, so a Gradle or Kotlin release
-    upstream failed a build that changed nothing.
+    upstream failed a build that changed nothing. Renovate proposes updates instead, in every
+    repository (`renovate.json`, the same file in each): weekly, minor and patch updates
+    grouped, a major update only once approved on its dependency dashboard, and nothing newer
+    than three days. The Tidefell release each repository builds against and the Rust
+    toolchains are still bumped by hand.
 
 ### Smaller checks
 

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Dependency updates (ADR 0031). The same file in every repository.",
+    "Three self-hosted runners on one machine serve them all, so updates come once a week, grouped,",
+    "and a major update waits for approval on the dependency dashboard."
+  ],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests", ":semanticCommits"],
+  "timezone": "Etc/UTC",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3,
+  "prHourlyLimit": 2,
+  "minimumReleaseAge": "3 days",
+  "nix": {
+    "description": "flake.lock is updated by lock file maintenance, with Cargo.lock.",
+    "enabled": true
+  },
+  "rust-toolchain": {
+    "description": "Toolchains are bumped deliberately: stable follows itself, and the fuzzing nightly is pinned.",
+    "enabled": false
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "groupName": "non-major dependencies",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"]
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
+      "description": "iroh is the wire, so it comes in its own pull request.",
+      "groupName": "iroh",
+      "matchPackageNames": ["iroh", "iroh-*"]
+    },
+    {
+      "description": "The monorepo release that infra runs, and the relay built to match it, are bumped deliberately with each release (as is the app's, which Renovate does not see).",
+      "matchManagers": ["nix"],
+      "matchDepNames": ["tidefell", "iroh"],
+      "enabled": false
+    }
+  ]
+}
