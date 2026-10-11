@@ -298,7 +298,7 @@ fn open_folder(
         match crate::probe::probe(&root) {
             Ok(filesystem) => {
                 debug!(folder = %id, filesystem = %filesystem.describe(), "probed the folder's drive");
-                state.filesystem = filesystem;
+                state.set_filesystem(filesystem);
             }
             Err(e) => warn!(folder = %id, error = %e, "cannot probe the folder's drive"),
         }
@@ -682,7 +682,10 @@ impl Engine {
     /// Treats `folder` as if its filesystem did what `filesystem` says with names, instead of
     /// what the probe found: for tests, and for a drive the probe cannot judge (ADR 0033).
     pub fn assume_filesystem(&self, folder: FolderId, filesystem: crate::Filesystem) -> Result<()> {
-        self.inner.folder(&folder)?.lock().filesystem = filesystem;
+        self.inner
+            .folder(&folder)?
+            .lock()
+            .set_filesystem(filesystem);
         self.inner.changes.send_modify(|n| *n += 1);
         Ok(())
     }

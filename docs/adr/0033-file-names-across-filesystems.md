@@ -81,6 +81,22 @@ change back and forth on every scan. A name the phone cannot store fails to writ
   - `tidefell doctor` reports the result for each folder as a `filesystem` check, which the API
     serves with the others. `Engine::assume_filesystem` sets the result instead, for tests and
     for a drive the probe cannot judge.
+- Step 5 decided:
+  - Case is folded with Unicode's lowercase mapping, after NFC. It approximates FAT, NTFS, APFS
+    and Android's shared storage, which each fold a little differently.
+  - `tidefell-meta`'s layout takes the device's folding, which is not saved and defaults to
+    none, so every device that tells names apart lays out exactly as before. A device that folds
+    groups paths by their folded form for the same-path rule and spells folders as the lowest
+    entry beneath them does. Writes in one pass are ordered by folded path.
+  - A file on disk is at its entry's place when the names fold together. A file whose name
+    differs from that place only in case is renamed in place, which applies another device's
+    case-only rename; a scan that finds a file under a new case records a rename.
+  - A change to an entry that gave way only because of this device's folding keeps the entry's
+    recorded path; one that gave way on every device follows ADR 0024 and records its name.
+  - A name the drive refuses is not written. It is a `NameNotAllowed` problem for the write,
+    with the reason, is listed as not on this device, and is not counted as pending.
+  - The test is `crates/engine/tests/file_names.rs`, with the device told its drive is FAT-like
+    through `Engine::assume_filesystem`; the emulator test checks the real drives.
 
 ## Consequences
 

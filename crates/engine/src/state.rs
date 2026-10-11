@@ -18,6 +18,18 @@ use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::{io_err, random_bytes, Error, Result};
 
+/// How a device tells a folder's names apart (ADR 0033): in NFC, and without regard to case
+/// on a drive that ignores it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NameFolding(pub(crate) tidefell_meta::Folding);
+
+impl NameFolding {
+    /// `name` as this device compares names.
+    pub(crate) fn fold(self, name: &str) -> String {
+        self.0.fold(&recorded(name)).into_owned()
+    }
+}
+
 /// The path a name on disk is recorded as: its NFC form, as sync/1 requires (ADR 0033).
 pub(crate) fn recorded(name: &str) -> std::borrow::Cow<'_, str> {
     use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
@@ -639,16 +651,33 @@ impl FolderState {
         Ok(state)
     }
 
+    /// How this device tells the folder's names apart (ADR 0033).
+    pub(crate) fn folding(&self) -> NameFolding {
+        NameFolding(match self.filesystem.case_insensitive {
+            true => tidefell_meta::Folding::Case,
+            false => tidefell_meta::Folding::None,
+        })
+    }
+
+    /// Records what the folder's drive does with names (ADR 0033), which decides where entries
+    /// whose names fold together are written.
+    pub(crate) fn set_filesystem(&mut self, filesystem: crate::probe::Filesystem) {
+        self.filesystem = filesystem;
+        let folding = self.folding().0;
+        self.meta.set_folding(folding);
+    }
+
     /// True if the file on disk at `disk` is the one recorded at `path`: the names are the same
     /// as this device tells names apart (ADR 0033).
     pub(crate) fn same_place(&self, disk: &str, path: &str) -> bool {
-        disk == path || recorded(disk) == path
+        disk == path || self.folding().fold(disk) == self.folding().fold(path)
     }
 
     /// Where the file recorded at `path` is on disk: the name of a file already there that is
-    /// recorded as `path`, which keeps the spelling it has on disk (ADR 0033), or else `path`.
+    /// at `path` as this device tells names apart, which keeps the spelling it has on disk
+    /// (ADR 0033), or else `path`.
     pub(crate) fn on_disk(&self, path: &str) -> String {
-        if path.is_ascii() || self.local.contains_key(path) {
+        if self.local.contains_key(path) || (path.is_ascii() && !self.filesystem.case_insensitive) {
             return path.to_owned();
         }
         self.local

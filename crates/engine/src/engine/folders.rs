@@ -52,7 +52,7 @@ impl Engine {
             .map(|h| {
                 let state = h.lock();
                 let id = state.config.id;
-                let (writes, _) = crate::materialize::plan(&state);
+                let writes = crate::materialize::plan(&state).writes;
                 let pending_bytes = writes.iter().map(|w| w.size).sum();
                 let activity = h.activity.lock().unwrap();
                 let unavailable = h.unavailable.lock().unwrap().clone();
@@ -415,7 +415,7 @@ impl Engine {
             }
         }
         // What materialising would write now (ADR 0030).
-        status.pending = crate::materialize::plan(&state).0.len();
+        status.pending = crate::materialize::plan(&state).writes.len();
         Ok(status)
     }
 }

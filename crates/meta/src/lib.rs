@@ -12,7 +12,7 @@ mod resolve;
 mod snapshot;
 
 pub use folder::{copy_id, Applied, Change, ChangeKind, Folder, StoredVersion};
-pub use layout::Layout;
+pub use layout::{Folding, Layout};
 pub use recycle::{RecycleBin, Recycled, Retention};
 
 /// Metadata errors.

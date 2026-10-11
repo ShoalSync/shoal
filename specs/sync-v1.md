@@ -262,6 +262,14 @@ while apart. Every replica writes them to disk the same way, without making new 
 The first local change to an entry that gave way, including a rename, records its current name
 as its path.
 
+A replica whose filesystem cannot store two names apart, such as one that ignores case, applies
+these rules to paths as it compares them, so that both entries are written; directories whose
+paths compare equal are one directory, spelled as the entry with the lowest `EntryId` beneath it
+spells it. This changes only where that replica writes them. A local change to an entry that
+gave way only there keeps the entry's path, and a replica does not write an entry whose name its
+filesystem refuses. (Informative: the reference implementation folds case with Unicode's
+lowercase mapping.)
+
 ## Content addressing (informative)
 
 The reference chunker uses FastCDC (2020) with minimum 64 KiB, average 256 KiB and maximum
@@ -271,4 +279,3 @@ interoperate; they only deduplicate less.
 ## Open questions
 
 - Certificate revocation.
-- Paths that differ only in case, on case-insensitive filesystems.

@@ -15,7 +15,16 @@
     {% for p in problems %}
       <tr>
         <td class="mono">{{ p.path }}</td>
-        <td>{{ p.what }}<div class="muted">{{ p.message }}</div></td>
+        <td>{{ p.what }}<div class="muted">{{ p.message }}</div>
+          {% if p.rename %}
+          <form method="post" action="/folders/{{ id }}/rename" class="inline">
+            <input type="hidden" name="csrf" value="{{ csrf }}">
+            <input type="hidden" name="from" value="{{ p.path }}">
+            <label>Rename everywhere to <input name="to" value="{{ p.path }}" required></label>
+            <button type="submit">Rename</button>
+          </form>
+          {% endif %}
+        </td>
         <td>{{ p.since }}</td>
         <td class="num">{{ p.attempts }}</td>
       </tr>

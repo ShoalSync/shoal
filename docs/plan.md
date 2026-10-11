@@ -307,6 +307,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5i: step 2 (reproduction) is in `tidefell/android` (ADR 0033 records what 0.14.0
   does). Step 3 (NFC) is implemented: paths are NFC on the wire, and names keep their spelling
   on disk. Step 4 (probing) is implemented, with a `filesystem` check in `tidefell doctor`.
+  Step 5 (collisions and refused names) is implemented, with `tidefell rename`, the API's
+  rename and the web peer's offer to rename; the app's offer comes with the next Android pin.
 
 ### Phase 2 work breakdown
 

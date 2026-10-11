@@ -78,6 +78,8 @@ pub(crate) struct ProblemRow {
     pub(crate) message: String,
     pub(crate) since: String,
     pub(crate) attempts: u32,
+    /// The name cannot be stored here, so renaming it everywhere is offered (ADR 0033).
+    pub(crate) rename: bool,
 }
 
 pub(crate) struct PeerRow {

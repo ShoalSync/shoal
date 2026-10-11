@@ -105,6 +105,16 @@ enum Command {
         /// Path within the folder.
         path: String,
     },
+    /// Rename or move a file, or a directory and everything in it, on every device: for
+    /// example one whose name a device's drive cannot store.
+    Rename {
+        /// Folder ID.
+        folder: String,
+        /// Its path within the folder.
+        from: String,
+        /// Its new path within the folder.
+        to: String,
+    },
     /// Keep a file or directory on this partial replica: fetched now, never evicted, and not
     /// counted against the budget.
     Pin {
@@ -785,6 +795,12 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &client.fetch(&folder, &path).await.map_err(e)?, |f| {
                 f.local_path.clone()
             })
+        }
+        Command::Rename { folder, from, to } => {
+            client.rename(&folder, &from, &to).await.map_err(e)?;
+            print(json, &(), |_| {
+                format!("renamed {from} to {to} on every device")
+            });
         }
         Command::Pin { folder, path } => {
             client.pin(&folder, &path).await.map_err(e)?;

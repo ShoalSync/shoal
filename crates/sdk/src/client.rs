@@ -13,8 +13,8 @@ use crate::types::{
     Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, CrashReport,
     DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel,
     LogSettings, NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
-    PinRequest, Problem, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
-    SyncOptions, Version, VersionRequest,
+    PinRequest, Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest,
+    RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
 };
 
 /// Client errors.
@@ -320,6 +320,20 @@ impl Client {
             &format!("/v1/folders/{folder}/fetch"),
             Some(&FetchRequest {
                 path: path.to_owned(),
+            }),
+        )
+        .await
+    }
+
+    /// Renames or moves a file, or a directory and everything in it, on every device: for
+    /// example one whose name a device's drive cannot store (ADR 0033).
+    pub async fn rename(&self, folder: &str, from: &str, to: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/rename"),
+            Some(&RenameRequest {
+                from: from.to_owned(),
+                to: to.to_owned(),
             }),
         )
         .await

@@ -79,6 +79,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/folders/{id}/files", get(handlers::files))
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))
         .route("/v1/folders/{id}/remove-here", post(handlers::remove_here))
+        .route("/v1/folders/{id}/rename", post(handlers::rename))
         .route("/v1/folders/{id}/pin", post(handlers::pin))
         .route("/v1/folders/{id}/unpin", post(handlers::unpin))
         .route("/v1/folders/{id}/pins", get(handlers::pins))

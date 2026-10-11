@@ -413,6 +413,15 @@ pub struct PinRequest {
     pub path: String,
 }
 
+/// A file or directory to rename or move on every device.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RenameRequest {
+    /// Its path within the folder.
+    pub from: String,
+    /// Its new path within the folder.
+    pub to: String,
+}
+
 /// A file to remove from this device only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct RemoveHereRequest {

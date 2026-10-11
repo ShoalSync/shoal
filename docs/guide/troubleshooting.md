@@ -49,6 +49,8 @@ checks, and says what to do about anything that is not right:
   modification time, so a clock more than two minutes off is a warning;
 - free space where the data directory and each folder live;
 - that each folder can be read and written, and is watched for changes;
+- what each folder's drive does with names: whether case matters, which characters it refuses
+  and how long a name may be (see [names other drives cannot keep](folders.md#names-other-drives-cannot-keep));
 - the connection to the relay, and whether direct connections can work (UDP over IPv4 and IPv6,
   the kind of NAT, a sign-in page blocking the network).
 

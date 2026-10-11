@@ -88,6 +88,26 @@ waiting in each folder, and `tidefell events` reports each new conflict.
 Deleting a file that has a conflict does not decide it: the other version comes back as the
 file.
 
+## Names other drives cannot keep
+
+Not every drive can store every name. A phone's storage, SD cards, and Mac and Windows drives
+treat `Photo.jpg` and `photo.jpg` as one file, and FAT drives and Windows refuse characters
+such as `:` and `?`. Each device finds out what its drive does when a folder opens, and
+`tidefell doctor` shows it.
+
+- Two files whose names differ only in case are both kept on such a device: one under its own
+  name and the other as `photo (conflict <id>).jpg`. Every other device keeps both names as
+  they are, and editing either file changes it everywhere without renaming it.
+- A file whose name a device cannot store is listed there as on other devices, with a problem
+  that says why. Rename it everywhere to a name every device can keep:
+
+  ```sh
+  tidefell rename <folder id> "notes: draft.txt" "notes - draft.txt"
+  ```
+
+  The web peer and the app offer the same next to the problem.
+- Renaming a file only in case, which those drives allow, renames it on every device.
+
 ## Ignoring files
 
 A `.tidefellignore` file at a folder's root lists paths this device neither sends nor writes.

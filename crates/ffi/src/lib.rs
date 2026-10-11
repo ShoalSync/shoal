@@ -1394,6 +1394,15 @@ impl Node {
         Ok(())
     }
 
+    /// Renames or moves a file, or a directory and everything in it, on every device: for
+    /// example one whose name this phone's storage cannot keep (ADR 0033).
+    pub async fn rename(&self, folder: String, from: String, to: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.rename(folder, &from, &to).await }).await??;
+        Ok(())
+    }
+
     /// Pins a file or directory on this partial replica (ADR 0029): fetched in the background,
     /// kept up to date, never evicted, and not counted against the budget.
     pub async fn pin(&self, folder: String, path: String) -> Result<()> {

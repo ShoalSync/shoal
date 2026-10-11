@@ -20,7 +20,7 @@ use crate::activity::Failure;
 use crate::config::{Direction, ReplicaMode};
 use crate::engine::{FolderHandle, Inner};
 use crate::scan::{stat, unchanged, RESERVED_DIR};
-use crate::state::{FolderState, LocalFile};
+use crate::state::{FolderState, LocalFile, NameFolding};
 use crate::views::Event;
 use crate::views::{Operation, ProblemKind};
 use crate::{io_err, random_bytes, Error, Result};
@@ -160,15 +160,17 @@ fn ancestors(path: &str) -> impl Iterator<Item = &str> {
 }
 
 /// For each write, the earlier writes it must wait for: those touching the same path, or a
-/// path inside or above one of its own, so writes to one place happen in plan order (ADR 0032).
-fn blockers(writes: &[Arc<PendingWrite>]) -> Vec<Vec<usize>> {
+/// path inside or above one of its own, as this device tells names apart, so writes to one
+/// place happen in plan order (ADR 0032, ADR 0033).
+fn blockers(writes: &[Arc<PendingWrite>], folding: NameFolding) -> Vec<Vec<usize>> {
     // Earlier writes by each path they touch, and by each folder above those paths.
-    let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
-    let mut under: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut at: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut under: HashMap<String, Vec<usize>> = HashMap::new();
     let mut all = Vec::with_capacity(writes.len());
     for (i, write) in writes.iter().enumerate() {
+        let paths: Vec<String> = touched(write).map(|p| folding.fold(p)).collect();
         let mut before: Vec<usize> = Vec::new();
-        for path in touched(write) {
+        for path in &paths {
             before.extend(at.get(path).into_iter().flatten());
             before.extend(under.get(path).into_iter().flatten());
             for folder in ancestors(path) {
@@ -178,26 +180,39 @@ fn blockers(writes: &[Arc<PendingWrite>]) -> Vec<Vec<usize>> {
         before.sort_unstable();
         before.dedup();
         all.push(before);
-        for path in touched(write) {
-            at.entry(path).or_default().push(i);
+        for path in &paths {
+            at.entry(path.clone()).or_default().push(i);
             for folder in ancestors(path) {
-                under.entry(folder).or_default().push(i);
+                under.entry(folder.to_owned()).or_default().push(i);
             }
         }
     }
     all
 }
 
-/// What materialising `state` would do now: the files to write and the paths to delete. A
-/// send-only replica writes nothing (ADR 0025).
-pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
+/// What materialising a folder would do now.
+#[derive(Default)]
+pub(crate) struct Plan {
+    /// Files to write.
+    pub(crate) writes: Vec<PendingWrite>,
+    /// Paths to delete, as they are on disk.
+    pub(crate) deletes: Vec<String>,
+    /// Files whose names this folder's drive cannot store, and why (ADR 0033): not written,
+    /// and listed as not on this device.
+    pub(crate) refused: Vec<(String, String)>,
+    /// Files already here under a name that differs from where they go only in case, as names
+    /// on disk and where they go: renamed in place (ADR 0033).
+    pub(crate) respell: Vec<(String, String)>,
+}
+
+/// What materialising `state` would do now. A send-only replica writes nothing (ADR 0025).
+pub(crate) fn plan(state: &FolderState) -> Plan {
+    let mut plan = Plan::default();
     if state.config.sync.direction == Direction::SendOnly {
-        return (Vec::new(), Vec::new());
+        return plan;
     }
     let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
         state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
-    let mut writes = Vec::new();
-    let mut deletes = Vec::new();
     // A partial replica keeps the files it has materialised up to date and leaves the rest
     // as placeholders.
     let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
@@ -209,13 +224,15 @@ pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
                 size,
                 executable,
             } => {
-                // Where this entry goes on disk: its path, unless it shares it (ADR 0024).
+                // Where this entry goes on disk: its path, unless it shares it, also after this
+                // device's folding (ADR 0024, ADR 0033).
                 let path = state
                     .meta
                     .disk_path(&version.entry)
                     .unwrap_or(&version.path);
-                // A file on disk is at this path if its name is recorded as it, whatever form
-                // the name has on disk (ADR 0033).
+                // A file on disk is at this path if its name is the same as this device tells
+                // names apart: whatever Unicode form it has on disk, and whatever case on a
+                // drive that ignores case (ADR 0033).
                 let in_place = here.is_some_and(|(p, _)| state.same_place(p, path));
                 let current = in_place
                     && here
@@ -226,33 +243,45 @@ pub(crate) fn plan(state: &FolderState) -> (Vec<PendingWrite>, Vec<String>) {
                 let ignored = state.ignores.is_ignored(path, false);
                 // A partial replica also keeps its pinned files (ADR 0029).
                 let pinned = partial && crate::pins::is_pinned(&state.pins, path);
-                if !current && !ignored && (here.is_some() || pinned || (!partial && !dropped)) {
-                    writes.push(PendingWrite {
-                        entry: version.entry,
-                        path: match here {
-                            Some((p, _)) if in_place => (*p).clone(),
-                            _ => path.to_owned(),
-                        },
-                        content,
-                        size,
-                        executable,
-                        modified_ms: version.modified_ms,
-                        old_path: here.map(|(p, _)| (*p).clone()).filter(|_| !in_place),
-                        base: state.meta.current_vector(&version.entry),
-
-                        unavailable: std::sync::Mutex::default(),
-                    });
+                let wanted = here.is_some() || pinned || (!partial && !dropped);
+                if let Some((p, _)) = here.filter(|_| in_place) {
+                    // Renamed elsewhere in case only: the file is renamed here too.
+                    if crate::state::recorded(p) != path {
+                        plan.respell.push(((*p).clone(), path.to_owned()));
+                    }
                 }
+                if current || ignored || !wanted {
+                    continue;
+                }
+                if let Some(reason) = state.filesystem.refuses(path).filter(|_| !in_place) {
+                    plan.refused.push((path.to_owned(), reason));
+                    continue;
+                }
+                plan.writes.push(PendingWrite {
+                    entry: version.entry,
+                    path: match here {
+                        Some((p, _)) if in_place => (*p).clone(),
+                        _ => path.to_owned(),
+                    },
+                    content,
+                    size,
+                    executable,
+                    modified_ms: version.modified_ms,
+                    old_path: here.map(|(p, _)| (*p).clone()).filter(|_| !in_place),
+                    base: state.meta.current_vector(&version.entry),
+
+                    unavailable: std::sync::Mutex::default(),
+                });
             }
             EntryKind::Tombstone => {
                 if let Some((p, _)) = here.filter(|(p, _)| !state.ignores.is_ignored(p, false)) {
-                    deletes.push((*p).clone());
+                    plan.deletes.push((*p).clone());
                 }
             }
             EntryKind::Directory | EntryKind::Symlink { .. } => {}
         }
     }
-    (writes, deletes)
+    plan
 }
 
 /// Brings the folder on disk up to date with its metadata, as far as content is available.
@@ -262,7 +291,7 @@ pub(crate) async fn materialize(
     id: FolderId,
     handle: &Arc<FolderHandle>,
 ) -> Result<()> {
-    let (root, writes, deletes) = {
+    let (root, plan, fold) = {
         let mut state = handle.lock();
         // Files already on disk as their current version correspond to it (ADR 0029).
         state.catch_up_bases();
@@ -277,9 +306,15 @@ pub(crate) async fn materialize(
                 state.dropped.remove(&entry);
             }
         }
-        let (writes, deletes) = plan(&state);
-        (state.config.path.clone(), writes, deletes)
+        let fold = state.folding();
+        (state.config.path.clone(), plan(&state), fold)
     };
+    let Plan {
+        writes,
+        deletes,
+        refused,
+        respell,
+    } = plan;
 
     // One path that fails is recorded and the rest carry on (ADR 0030).
     let mut failures = Vec::new();
@@ -295,9 +330,31 @@ pub(crate) async fn materialize(
             }
         }
     }
+    // A name this folder's drive cannot store is a problem, not a write that fails on every
+    // pass (ADR 0033).
+    for (path, reason) in refused {
+        failures.push(Failure::new(
+            &path,
+            Operation::Write,
+            ProblemKind::NameNotAllowed,
+            reason,
+        ));
+    }
+    if !respell.is_empty() {
+        let _guard = handle.disk().await?;
+        for (from, to) in respell {
+            if let Err(e) = respell_file(handle, &root, &from, &to) {
+                if folder_wide(&e) {
+                    return Err(e);
+                }
+                warn!(folder = %id, path = %to, error = %e, "renaming in case failed");
+                failures.push(Failure::error(&to, Operation::Write, &e));
+            }
+        }
+    }
     // Several files at once, each fetched without the file lock (ADR 0032).
     let writes: Vec<Arc<PendingWrite>> = writes.into_iter().map(Arc::new).collect();
-    let blockers = blockers(&writes);
+    let blockers = blockers(&writes, fold);
     let mut waiting_on: Vec<usize> = blockers.iter().map(Vec::len).collect();
     let mut unblocks: Vec<Vec<usize>> = vec![Vec::new(); writes.len()];
     for (i, before) in blockers.iter().enumerate() {
@@ -462,6 +519,29 @@ pub(crate) async fn fetch_one(
         handle.lock().save()?;
     }
     Ok(written)
+}
+
+/// Renames the file at `from` to `to`, which differ only in case, if it is still what the engine
+/// last wrote: another device renamed it (ADR 0033).
+fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Result<()> {
+    let mut state = handle.lock();
+    let Some(local) = state.local.get(from).cloned() else {
+        return Ok(());
+    };
+    let (src, dst) = (root.join(from), root.join(to));
+    if !unchanged(&src, &local) {
+        return Ok(());
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).map_err(io_err(parent))?;
+    }
+    fs::rename(&src, &dst).map_err(io_err(&src))?;
+    state.local.remove(from);
+    state.local.insert(to.to_owned(), local);
+    if let Some(used) = state.used.remove(from) {
+        state.used.insert(to.to_owned(), used);
+    }
+    Ok(())
 }
 
 /// Removes `path` if it is still what the engine last wrote; forgets it either way. A file
@@ -990,6 +1070,24 @@ mod tests {
     }
 
     #[test]
+    fn on_a_drive_that_ignores_case_names_differing_in_case_are_one_place() {
+        let writes = [
+            pending("Photo.jpg", None),
+            pending("photo.jpg", None),
+            pending("Docs/a.txt", None),
+            pending("docs", None),
+        ];
+        assert_eq!(
+            blockers(&writes, NameFolding(tidefell_meta::Folding::Case)),
+            [vec![], vec![0], vec![], vec![2]]
+        );
+        assert_eq!(
+            blockers(&writes, NameFolding(tidefell_meta::Folding::None)),
+            vec![Vec::<usize>::new(); 4]
+        );
+    }
+
+    #[test]
     fn folders_above_a_path() {
         assert_eq!(ancestors("a/b/c.txt").collect::<Vec<_>>(), ["a/b", "a"]);
         assert_eq!(ancestors("c.txt").count(), 0);
@@ -1012,7 +1110,7 @@ mod tests {
             pending("a/y/z.txt", None),
         ];
         assert_eq!(
-            blockers(&writes),
+            blockers(&writes, NameFolding(tidefell_meta::Folding::None)),
             [
                 vec![],
                 vec![],

@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidefell_engine::{
-    Engine, EngineConfig, FolderConfig, ProblemKind, RelayConfig, ReplicaMode, Retention,
+    Engine, EngineConfig, Filesystem, FolderConfig, NameLength, ProblemKind, RelayConfig,
+    ReplicaMode, Retention,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_proto::FolderId;
@@ -191,4 +192,145 @@ async fn the_doctor_reports_what_the_drive_does_with_names() {
                 .contains("Names differing in case are different files"),
         "{check:?}"
     );
+}
+
+/// A drive like FAT: names match without regard to case, and `:` and the like are refused.
+fn fat() -> Filesystem {
+    Filesystem {
+        case_insensitive: true,
+        refused_characters: vec!['<', '>', ':', '"', '|', '?', '*'],
+        no_trailing_dot_or_space: true,
+        max_name: Some(NameLength::Characters(255)),
+        ..Filesystem::default()
+    }
+}
+
+/// What each file at the top of the folder holds, by its name on disk.
+fn contents(replica: &Replica) -> Vec<(String, String)> {
+    replica
+        .names()
+        .into_iter()
+        .map(|n| {
+            let text = String::from_utf8(replica.read(&n).unwrap()).unwrap();
+            (n, text)
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_drive_that_ignores_case_keeps_both_files_and_lists_refused_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 10);
+    let b = Replica::new(dir.path(), "b", 11);
+    a.write("Photo.jpg", b"upper");
+    a.write("photo.jpg", b"lower");
+    a.write("a:b.txt", b"colon");
+    a.write("ok.txt", b"fine");
+    let engine_a = a.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    let engine_b = b.start(&user).await;
+    engine_b.assume_filesystem(FOLDER, fat()).unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+
+    eventually("both photos and ok.txt on b", || b.names().len() == 3).await;
+    // Run a few more passes, as a device that keeps running would.
+    for _ in 0..3 {
+        engine_b.materialize(FOLDER).await.unwrap();
+        engine_b.scan(FOLDER).await.unwrap();
+    }
+    let on_b = contents(&b);
+    let texts: Vec<&str> = on_b.iter().map(|(_, t)| t.as_str()).collect();
+    assert!(
+        texts.contains(&"upper") && texts.contains(&"lower"),
+        "{on_b:?}"
+    );
+    assert!(
+        on_b.iter().any(|(n, _)| n.contains("(conflict ")),
+        "{on_b:?}"
+    );
+    assert!(b.read("a:b.txt").is_none());
+
+    // The refused name is listed, not on b, with one problem saying why.
+    let colon = engine_b
+        .files(FOLDER)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.path == "a:b.txt")
+        .unwrap();
+    assert!(!colon.on_disk);
+    let problems = engine_b.path_problems(FOLDER).unwrap();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems[0].path, "a:b.txt");
+    assert_eq!(problems[0].kind, ProblemKind::NameNotAllowed);
+    assert_eq!(engine_b.status(FOLDER).unwrap().pending, 0);
+
+    // a keeps both paths as they were, and b recorded nothing of its own.
+    assert_eq!(
+        contents(&a),
+        [
+            ("Photo.jpg".to_owned(), "upper".to_owned()),
+            ("a:b.txt".to_owned(), "colon".to_owned()),
+            ("ok.txt".to_owned(), "fine".to_owned()),
+            ("photo.jpg".to_owned(), "lower".to_owned()),
+        ]
+    );
+    let mut on_a = paths(&engine_a);
+    on_a.sort();
+    assert_eq!(on_a, ["Photo.jpg", "a:b.txt", "ok.txt", "photo.jpg"]);
+    let status = engine_a.status(FOLDER).unwrap();
+    assert!(
+        status.files.keys().all(|p| !p.contains("conflict")),
+        "{:?}",
+        status.files
+    );
+
+    // An edit on b to the file that gave way there keeps its name everywhere.
+    let (moved, _) = on_b.iter().find(|(n, _)| n.contains("(conflict ")).unwrap();
+    let original = if moved.starts_with("Photo") {
+        "Photo.jpg"
+    } else {
+        "photo.jpg"
+    };
+    b.write(moved, b"edited on b");
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches a under its own name", || {
+        a.read(original).as_deref() == Some(b"edited on b".as_slice())
+    })
+    .await;
+    let mut on_a = paths(&engine_a);
+    on_a.sort();
+    assert_eq!(on_a, ["Photo.jpg", "a:b.txt", "ok.txt", "photo.jpg"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn renames_that_only_change_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 10);
+    let b = Replica::new(dir.path(), "b", 11);
+    a.write("Notes.txt", b"notes");
+    let engine_a = a.start(&user).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    let engine_b = b.start(&user).await;
+    engine_b.assume_filesystem(FOLDER, fat()).unwrap();
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("Notes.txt on b", || b.read("Notes.txt").is_some()).await;
+
+    // Renamed elsewhere in case only: renamed here too, not written again or deleted.
+    engine_a
+        .rename(FOLDER, "Notes.txt", "notes.txt")
+        .await
+        .unwrap();
+    eventually("the rename reaches b", || b.names() == ["notes.txt"]).await;
+    assert_eq!(b.read("notes.txt").as_deref(), Some(b"notes".as_slice()));
+    assert_eq!(paths(&engine_b), ["notes.txt"]);
+
+    // Renamed here in case only: a rename everywhere, not a second file.
+    fs::rename(b.root.join("notes.txt"), b.root.join("NOTES.txt")).unwrap();
+    engine_b.scan(FOLDER).await.unwrap();
+    assert_eq!(paths(&engine_b), ["NOTES.txt"]);
+    eventually("the rename reaches a", || a.names() == ["NOTES.txt"]).await;
+    assert_eq!(paths(&engine_a), ["NOTES.txt"]);
+    assert_eq!(a.read("NOTES.txt").as_deref(), Some(b"notes".as_slice()));
 }

@@ -208,6 +208,37 @@ async fn control_api_end_to_end() {
     );
     client.restore(&created.id, &bin[0].entry).await.unwrap();
     assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"hello api");
+
+    // Renaming on every device, as offered for a name a drive cannot store (ADR 0033).
+    client
+        .rename(&created.id, "a.txt", "renamed/a.txt")
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(root.join("renamed/a.txt")).unwrap(),
+        b"hello api"
+    );
+    assert_eq!(
+        client.files(&created.id).await.unwrap()[0].path,
+        "renamed/a.txt"
+    );
+    assert_eq!(
+        api_error(client.rename(&created.id, "a.txt", "b.txt").await),
+        ErrorKind::NotFound
+    );
+    assert_eq!(
+        api_error(
+            client
+                .rename(&created.id, "renamed/a.txt", "../a.txt")
+                .await
+        ),
+        ErrorKind::BadRequest
+    );
+    client
+        .rename(&created.id, "renamed/a.txt", "a.txt")
+        .await
+        .unwrap();
+
     let backup_only = SyncOptions {
         direction: Direction::SendOnly,
         local_deletes: LocalDeletes::ThisDevice,

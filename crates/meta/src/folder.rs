@@ -7,7 +7,7 @@ use ed25519_dalek::SigningKey;
 use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion};
 use tidefell_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
 
-use crate::layout::Layout;
+use crate::layout::{Folding, Layout};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
 use crate::{Error, Result};
@@ -81,6 +81,10 @@ pub struct Folder {
     pub(crate) recycle: RecycleBin,
     /// Where live entries go on disk, computed on demand and cleared when entries change.
     pub(crate) layout: OnceLock<Layout>,
+    /// The same without this device's folding, for telling which entries give way only here.
+    pub(crate) unfolded: OnceLock<Layout>,
+    /// How this device's filesystem tells names apart (ADR 0033). Not persisted.
+    pub(crate) folding: Folding,
     /// What stored versions did to their entries since [`Folder::take_changes`] was last
     /// called, for the activity log (ADR 0030). Not persisted.
     pub(crate) changes: std::cell::RefCell<Vec<Change>>,
@@ -136,6 +140,8 @@ impl Folder {
             sequence: 0,
             entries: HashMap::new(),
             layout: OnceLock::new(),
+            unfolded: OnceLock::new(),
+            folding: Folding::None,
             recycle: RecycleBin::new(retention),
             changes: std::cell::RefCell::default(),
         }
@@ -198,10 +204,39 @@ impl Folder {
             .and_then(|entry| self.current(&entry))
     }
 
-    /// Where every live entry goes on disk (ADR 0024).
+    /// Where every live entry goes on disk (ADR 0024), as this device folds names (ADR 0033).
     pub fn layout(&self) -> &Layout {
-        self.layout
-            .get_or_init(|| Layout::new(self.entries.values().map(|e| &e.current.version)))
+        self.layout.get_or_init(|| {
+            Layout::folded(
+                self.entries.values().map(|e| &e.current.version),
+                self.folding,
+            )
+        })
+    }
+
+    /// Sets how this device's filesystem tells names apart (ADR 0033), which decides where
+    /// entries whose names fold together are written here.
+    pub fn set_folding(&mut self, folding: Folding) {
+        if folding != self.folding {
+            self.folding = folding;
+            self.layout.take();
+        }
+    }
+
+    /// True if `entry` is written somewhere other than its recorded path only because this
+    /// device folds names (ADR 0033): elsewhere it keeps its path, so a change made to it here
+    /// keeps that path too.
+    pub fn gives_way_here_only(&self, entry: &EntryId) -> bool {
+        if self.folding == Folding::None {
+            return false;
+        }
+        let Some(path) = self.current(entry).map(|v| v.path.as_str()) else {
+            return false;
+        };
+        let unfolded = self
+            .unfolded
+            .get_or_init(|| Layout::new(self.entries.values().map(|e| &e.current.version)));
+        unfolded.path_of(entry) == Some(path) && self.layout().path_of(entry) != Some(path)
     }
 
     /// Where `entry` goes on disk, if it is live.
@@ -489,6 +524,7 @@ impl Folder {
     ) -> Applied {
         let entry_id = version.entry;
         self.layout.take();
+        self.unfolded.take();
         let existing = self.entries.remove(&entry_id);
         let is_new = existing.is_none();
         let before = existing.as_ref().map(|e| e.current.version.clone());

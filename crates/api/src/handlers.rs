@@ -21,8 +21,8 @@ use tidefell_sdk::types::{
     Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits,
     LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest,
     Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind,
-    RecycleBinSummary, Recycled, RemoveHereRequest, ResolveRequest, RetentionUpdate, Status,
-    SyncOptions, Transfer, Version, VersionKind, VersionRequest,
+    RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
+    Status, SyncOptions, Transfer, Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -54,6 +54,7 @@ type AppState = State<Arc<Engine>>;
         files,
         fetch,
         remove_here,
+        rename,
         pin,
         unpin,
         pins,
@@ -137,7 +138,8 @@ type AppState = State<Arc<Engine>>;
         Operation,
         ProblemKind,
         Limits,
-        PinRequest
+        PinRequest,
+        RenameRequest
     ))
 )]
 pub struct ApiDoc;
@@ -444,6 +446,23 @@ pub(crate) async fn remove_here(
 ) -> ApiResult<StatusCode> {
     engine
         .remove_here(parse("folder", &id)?, &request.path)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Renames or moves a file, or a directory and everything in it, on every device: for example
+/// one whose name a device's drive cannot store (ADR 0033). Entries keep their identity.
+#[utoipa::path(post, path = "/v1/folders/{id}/rename", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = RenameRequest,
+    responses((status = 204), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn rename(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(request): Json<RenameRequest>,
+) -> ApiResult<StatusCode> {
+    engine
+        .rename(parse("folder", &id)?, &request.from, &request.to)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

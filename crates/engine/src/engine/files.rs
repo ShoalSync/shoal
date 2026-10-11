@@ -19,6 +19,13 @@ impl Engine {
         // Few devices make many files: look each name up once.
         let mut names: std::collections::HashMap<tidefell_proto::DeviceId, String> =
             std::collections::HashMap::new();
+        // Files on disk by name as this device tells names apart (ADR 0033).
+        let folding = state.folding();
+        let here: std::collections::HashMap<String, &crate::state::LocalFile> = state
+            .local
+            .iter()
+            .map(|(disk, local)| (folding.fold(disk), local))
+            .collect();
         let mut files: Vec<FileInfo> = state
             .meta
             .entries()
@@ -35,9 +42,8 @@ impl Engine {
                         size,
                         modified_ms: v.modified_ms,
                         executable,
-                        on_disk: state
-                            .local
-                            .get(&state.on_disk(path))
+                        on_disk: here
+                            .get(&folding.fold(path))
                             .is_some_and(|l| l.entry == v.entry && l.content == content),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author,

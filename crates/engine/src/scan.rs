@@ -216,6 +216,21 @@ fn file_content(kind: &EntryKind) -> Option<tidefell_proto::ContentHash> {
     }
 }
 
+/// The path to record for a change to `entry`, whose file is at `path` here: that path, unless
+/// the file is somewhere other than its recorded path only because this device folds names, in
+/// which case it keeps its recorded path, so other devices are not renamed (ADR 0033).
+fn recorded_path(state: &FolderState, entry: EntryId, path: &str) -> String {
+    match state.meta.current(&entry) {
+        Some(v)
+            if state.meta.gives_way_here_only(&entry)
+                && state.meta.disk_path(&entry) == Some(path) =>
+        {
+            v.path.clone()
+        }
+        _ => path.to_owned(),
+    }
+}
+
 /// Keeps one file for each path the files found are recorded as. Two names on disk can be one
 /// path as recorded, such as a name in two Unicode forms on a filesystem that keeps both: the
 /// one this device already has keeps it, or else the first, and the others are problems
@@ -223,12 +238,13 @@ fn file_content(kind: &EntryKind) -> Option<tidefell_proto::ContentHash> {
 fn one_per_path(
     found: Vec<(String, DiskStat)>,
     known: &BTreeMap<String, LocalFile>,
+    folding: crate::state::NameFolding,
     failures: &mut Vec<Failure>,
 ) -> Vec<(String, DiskStat)> {
     let mut by_path: BTreeMap<String, Vec<(String, DiskStat)>> = BTreeMap::new();
     for (rel, stat) in found {
         by_path
-            .entry(recorded(&rel).into_owned())
+            .entry(folding.fold(&rel))
             .or_default()
             .push((rel, stat));
     }
@@ -320,7 +336,8 @@ pub(crate) fn scan(
     } = walker;
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup_by(|a, b| a.0 == b.0);
-    let found = one_per_path(found, &known, &mut failures);
+    let folding = handle.lock().folding();
+    let found = one_per_path(found, &known, folding, &mut failures);
     let mut found = found;
     if let Some(rel) = saved.filter(|rel| *rel != IGNORE_FILE && ignores.is_ignored(rel, false)) {
         if let Some(stat) = stat(&root.join(rel)) {
@@ -398,6 +415,8 @@ pub(crate) fn scan(
                 _ => EntryId(random_bytes()?),
             },
         };
+        // The file is where its entry goes, by name as spelled apart from Unicode form: a
+        // rename that only changes case is a change (ADR 0033).
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
             state.meta.disk_path(&entry) == Some(path.as_str())
                 && matches!(v.kind, EntryKind::File { content: current, executable, .. }
@@ -411,6 +430,7 @@ pub(crate) fn scan(
             // were never written, so those become conflict copies instead of being lost.
             let base = base_of(&state, &c.rel, entry);
             let open = state.meta.open_conflicts(&entry).count();
+            let path = recorded_path(&state, entry, &path);
             let (_, vector) = state.meta.local_change_from(
                 inner.key.signing_key(),
                 entry,
@@ -429,6 +449,17 @@ pub(crate) fn scan(
             index_changed = true;
             vector
         };
+        // The same file under its old spelling, after a rename in case only (ADR 0033).
+        let stale: Vec<String> = state
+            .local
+            .iter()
+            .filter(|(k, l)| l.entry == entry && **k != c.rel && state.same_place(k, &c.rel))
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in stale {
+            state.local.remove(&k);
+            state.used.remove(&k);
+        }
         state.used.insert(c.rel.clone(), now);
         // A file put back by hand is on this device again.
         state.dropped.remove(&entry);
@@ -501,11 +532,12 @@ pub(crate) fn scan(
             } else {
                 state.meta.current_vector(&local.entry)
             };
+            let path = recorded_path(&state, local.entry, &recorded(&rel));
             state.meta.local_change_from(
                 inner.key.signing_key(),
                 local.entry,
                 &base,
-                &recorded(&rel),
+                &path,
                 EntryKind::Tombstone,
                 now_ms(),
             )?;

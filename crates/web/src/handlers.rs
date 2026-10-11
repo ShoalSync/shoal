@@ -352,6 +352,8 @@ pub(crate) async fn folder(
             .into_iter()
             .map(|p| pages::ProblemRow {
                 what: problem_what(&p),
+                // A name this server's drive cannot store can be renamed everywhere (ADR 0033).
+                rename: p.kind == tidefell_engine::ProblemKind::NameNotAllowed,
                 path: p.path,
                 message: p.message,
                 since: time(p.since_ms),
@@ -657,6 +659,38 @@ pub(crate) async fn restore_version(
 }
 
 // ---- Pins (ADR 0029) ----
+
+#[derive(Deserialize)]
+pub(crate) struct RenameForm {
+    csrf: String,
+    from: String,
+    to: String,
+}
+
+/// Renames a file on every device, as offered for a name this server's drive cannot store
+/// (ADR 0033).
+pub(crate) async fn rename(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<RenameForm>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = check_csrf(&session, &form.csrf) {
+        return response;
+    }
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    if let Err(e) = state.engine.rename(folder.id, &form.from, &form.to).await {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Could not rename it",
+            &e.to_string(),
+        );
+    }
+    Redirect::to(&format!("/folders/{}", folder.id)).into_response()
+}
 
 #[derive(Deserialize)]
 pub(crate) struct PinForm {
