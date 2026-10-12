@@ -450,6 +450,7 @@ pub(crate) fn scan(
 
     let mut state = handle.lock();
     state.ignores = ignores;
+    state.touch();
     let mut index_changed = false;
     let mut conflicts = Vec::new();
     let now = now_ms();

@@ -168,6 +168,7 @@ impl Engine {
                 ));
             }
             state.pins.insert(path.to_owned());
+            state.touch();
         }
         self.save_pins()?;
         self.inner.emit(Event::FolderChanged(folder));
@@ -189,6 +190,7 @@ impl Engine {
             if !state.pins.remove(path) {
                 return Err(Error::Invalid(format!("{path:?} is not pinned")));
             }
+            state.touch();
             drop(state);
             self.save_pins()?;
             evict::evict(&self.inner, folder, &handle)?;

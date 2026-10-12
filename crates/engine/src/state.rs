@@ -605,6 +605,8 @@ pub(crate) struct FolderState {
     pub(crate) manifests: crate::manifests::Manifests,
     /// Saves made, so changes held until committed are known to be (ADR 0035).
     saves: u64,
+    /// Changes to the folder's state, so summaries of it are made again only after one.
+    revision: u64,
     pub(crate) local: LocalFiles,
     pub(crate) progress: Tracked<DeviceId, (u64, u64)>,
     /// When each file on disk was last opened or written, in milliseconds since the Unix
@@ -703,6 +705,7 @@ impl FolderState {
             members,
             manifests: Default::default(),
             saves: 0,
+            revision: 0,
             local: LocalFiles::default(),
             progress: Tracked::default(),
             used: Tracked::default(),
@@ -1028,6 +1031,7 @@ impl FolderState {
     /// Records what the folder's drive does with names (ADR 0033), which decides where entries
     /// whose names fold together are written.
     pub(crate) fn set_filesystem(&mut self, filesystem: crate::probe::Filesystem) {
+        self.touch();
         self.filesystem = filesystem;
         let folding = self.folding().0;
         self.meta.set_folding(folding);
@@ -1057,10 +1061,12 @@ impl FolderState {
     /// it, as Android's does when it restarts. Later saves do nothing.
     pub(crate) fn close(&mut self) -> Result<()> {
         self.save()?;
-        match self.committer.take() {
+        let closed = match self.committer.take() {
             Some(committer) => committer.close(),
             None => Ok(()),
-        }
+        };
+        self.manifests.close();
+        closed
     }
 
     /// Brings the base of each file on disk that is its current version up to that version's
@@ -1099,11 +1105,25 @@ impl FolderState {
     pub(crate) fn mark_removed(&mut self) -> PathBuf {
         self.removed = true;
         self.committer = None;
+        self.manifests.close();
         self.dir.clone()
     }
 
     /// Writes metadata and engine state atomically.
+    /// Which change the folder's state is at: different after any change that a status could
+    /// show.
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Notes a change made without a save, such as to the pins.
+    pub(crate) fn touch(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
+    }
+
     pub(crate) fn save(&mut self) -> Result<()> {
+        // Anything saved may change what the folder's status shows.
+        self.touch();
         // A removed folder's state directory is gone, and a closed one belongs to the next
         // engine: tasks still finishing their work must not write to either.
         if self.removed || self.committer.is_none() {
@@ -1254,6 +1274,7 @@ impl FolderState {
     pub(crate) fn set_members(&mut self, members: Vec<tidefell_proto::UserId>) {
         self.members = FolderMembers::new(self.config.id, members.iter().copied());
         self.config.members = members;
+        self.touch();
     }
 
     pub(crate) fn add_manifest(&mut self, manifest: Manifest) {
@@ -1292,6 +1313,7 @@ impl FolderState {
     pub(crate) fn set_retention(&mut self, retention: tidefell_meta::Retention) {
         self.meta.set_retention(retention);
         self.config.retention = retention;
+        self.touch();
     }
 
     /// Purges expired recycle-bin items and forgets manifests nothing references. Returns

@@ -73,6 +73,12 @@ impl Manifests {
         self.reader = Some(reader);
     }
 
+    /// Stops reading the database, so that it closes once its committer has: it can then be
+    /// opened again at once, as after a restart. Nothing is read from it afterwards.
+    pub(crate) fn close(&mut self) {
+        self.reader = None;
+    }
+
     /// The manifest of `content`, if the folder has one.
     pub(crate) fn get(&self, content: &ContentHash) -> Option<Arc<Manifest>> {
         if let Some((manifest, _)) = self.overlay.get(content) {

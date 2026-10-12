@@ -58,6 +58,9 @@ pub(crate) struct FolderHandle {
     state: Mutex<FolderState>,
     /// Serialises scanning and materialising, so neither sees the other's half-finished work.
     pub(crate) fs_lock: tokio::sync::Mutex<()>,
+    /// What the folder's status shows that takes a pass over every entry, and the revision of
+    /// the state it was made from: made again only after a change.
+    pub(crate) summary: Mutex<Option<(u64, folders::Summary)>>,
     /// True if the folder comes from the configuration file.
     configured: bool,
     scanner: Mutex<Option<AbortHandle>>,
@@ -357,6 +360,7 @@ fn open_folder(
         open: Mutex::new(HashMap::new()),
         activity: Mutex::default(),
         rescan: Notify::new(),
+        summary: Mutex::new(None),
     })
 }
 
@@ -583,7 +587,11 @@ impl Engine {
         let mut moving_pins = false;
         for (id, handle) in &folders {
             match other_pins.remove(id) {
-                Some(pins) => handle.lock().pins = pins.into_iter().collect(),
+                Some(pins) => {
+                    let mut state = handle.lock();
+                    state.pins = pins.into_iter().collect();
+                    state.touch();
+                }
                 None => moving_pins = true,
             }
         }
@@ -975,7 +983,11 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) 
     })
     .await
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;
-    handle.lock().pins = pins;
+    {
+        let mut state = handle.lock();
+        state.pins = pins;
+        state.touch();
+    }
     let handle = Arc::new(handle);
     inner.folders.write().unwrap().insert(id, handle.clone());
     inner.watch_commits(&handle);

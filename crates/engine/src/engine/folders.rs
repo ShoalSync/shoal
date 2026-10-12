@@ -52,8 +52,7 @@ impl Engine {
             .map(|h| {
                 let state = h.lock();
                 let id = state.config.id;
-                let writes = crate::materialize::plan(&state).writes;
-                let pending_bytes = writes.iter().map(|w| w.size).sum();
+                let summary = summary(h, &state, self.inner.key.id());
                 let activity = h.activity.lock().unwrap();
                 let unavailable = h.unavailable.lock().unwrap().clone();
                 let scan_error = activity
@@ -79,7 +78,7 @@ impl Engine {
                     FolderState::Paused
                 } else if activity.scanning {
                     FolderState::Scanning
-                } else if !writes.is_empty() && !sharing.is_empty() {
+                } else if summary.pending_files > 0 && !sharing.is_empty() {
                     FolderState::Syncing
                 } else {
                     FolderState::Idle
@@ -107,33 +106,13 @@ impl Engine {
                     members: state.config.members.clone(),
                     retention: state.config.retention,
                     sync: state.config.sync,
-                    recycle_bin: recycle_summary(&state),
+                    recycle_bin: summary.recycle_bin,
                     configured: h.configured,
-                    only_here: state
-                        .meta
-                        .entries()
-                        .filter(|v| copies::only_here(&state, self.inner.key.id(), v))
-                        .count(),
+                    only_here: summary.only_here,
                     watch_error: h.watch_error.lock().unwrap().clone(),
                     unavailable: h.unavailable.lock().unwrap().clone(),
-                    pinned_bytes: state
-                        .meta
-                        .entries()
-                        .filter_map(|v| match v.kind {
-                            EntryKind::File { size, .. } => Some((v, size)),
-                            _ => None,
-                        })
-                        .filter(|(v, _)| {
-                            let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
-                            crate::pins::is_pinned(&state.pins, path)
-                        })
-                        .map(|(_, size)| size)
-                        .sum(),
-                    conflicts: state
-                        .meta
-                        .entries()
-                        .filter(|v| state.meta.open_conflicts(&v.entry).next().is_some())
-                        .count(),
+                    pinned_bytes: summary.pinned_bytes,
+                    conflicts: summary.conflicts,
                     paused: self
                         .inner
                         .paused
@@ -143,8 +122,8 @@ impl Engine {
                         .contains(&state.config.id),
                     state: state_now,
                     error,
-                    pending_files: writes.len(),
-                    pending_bytes,
+                    pending_files: summary.pending_files,
+                    pending_bytes: summary.pending_bytes,
                     last_scan_ms: activity.last_scan.as_ref().map(|(at, _, _)| *at),
                     last_scan_duration_ms: activity.last_scan.as_ref().map(|(_, took, _)| *took),
                     peers,
@@ -404,6 +383,7 @@ impl Engine {
                 return Ok(());
             }
             state.config.sync = sync;
+            state.touch();
         }
         self.inner.save_runtime()?;
         info!(folder = %id, ?sync, "sync options changed");
@@ -497,6 +477,56 @@ impl Engine {
         status.pending = crate::materialize::plan(&state).writes.len();
         Ok(status)
     }
+}
+
+/// What a folder's status shows that takes a pass over every entry (ADR 0035).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Summary {
+    pending_files: usize,
+    pending_bytes: u64,
+    only_here: usize,
+    pinned_bytes: u64,
+    conflicts: usize,
+    recycle_bin: crate::views::RecycleSummary,
+}
+
+/// The summary of `state`, made again only if it changed since the last one.
+fn summary(
+    handle: &super::FolderHandle,
+    state: &crate::state::FolderState,
+    me: DeviceId,
+) -> Summary {
+    let mut cached = handle.summary.lock().unwrap();
+    if let Some((revision, summary)) = *cached {
+        if revision == state.revision() {
+            return summary;
+        }
+    }
+    let writes = crate::materialize::plan(state).writes;
+    let mut summary = Summary {
+        pending_files: writes.len(),
+        pending_bytes: writes.iter().map(|w| w.size).sum(),
+        only_here: 0,
+        pinned_bytes: 0,
+        conflicts: 0,
+        recycle_bin: recycle_summary(state),
+    };
+    for v in state.meta.entries() {
+        if copies::only_here(state, me, v) {
+            summary.only_here += 1;
+        }
+        if let EntryKind::File { size, .. } = v.kind {
+            let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
+            if crate::pins::is_pinned(&state.pins, path) {
+                summary.pinned_bytes += size;
+            }
+        }
+        if state.meta.open_conflicts(&v.entry).next().is_some() {
+            summary.conflicts += 1;
+        }
+    }
+    *cached = Some((state.revision(), summary));
+    summary
 }
 
 /// Why `state`'s folder takes no downloads for want of space, if it does (ADR 0037).
