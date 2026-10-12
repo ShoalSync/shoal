@@ -324,6 +324,14 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   folder database starts, rebuilds that folder with its recycle bin and history, and keeps
   syncing the others, also when killed during the rebuild. Pins are in the runtime settings, so
   a rebuild keeps them. Phase 5j is complete.
+- `v0.16.0` releases Phase 5j: each folder's metadata in its own database (redb) in
+  `metadata_dir`, committed in order off the folder lock; sidecars beside kept files; integrity
+  checks, and per-folder rebuilds with `tidefell folder rebuild` and a `rebuilding` state; pins
+  in the runtime settings. The first start converts each folder's `meta` and `state` files to
+  its database and deletes them, so an earlier version cannot read a folder afterwards; the
+  runtime settings move to format 5 the same way. The protocol is unchanged. The FFI gains
+  `FolderState.REBUILDING`, `Folder.rebuild` and `Node.rebuildFolder`, which the Android pin
+  takes up.
 
 ### Phase 2 work breakdown
 
