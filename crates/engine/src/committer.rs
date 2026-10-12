@@ -38,6 +38,8 @@ struct Shared {
     /// Signalled when the queue empties.
     idle: Condvar,
     committed: AtomicU64,
+    /// The last save committed, by the folder's count (ADR 0035).
+    generation: AtomicU64,
     db: Mutex<FolderDb>,
     on_commit: Mutex<Option<OnCommit>>,
     /// The folder's state directory, where its activity log is.
@@ -81,6 +83,7 @@ impl Committer {
             work: Condvar::new(),
             idle: Condvar::new(),
             committed: AtomicU64::new(committed),
+            generation: AtomicU64::new(0),
             db: Mutex::new(db),
             on_commit: Mutex::new(None),
             dir,
@@ -111,6 +114,11 @@ impl Committer {
     }
 
     /// The last sequence whose versions are committed.
+    /// The last save committed, by the folder's count of them.
+    pub(crate) fn committed_generation(&self) -> u64 {
+        self.shared.generation.load(Ordering::Acquire)
+    }
+
     pub(crate) fn committed(&self) -> u64 {
         self.shared.committed.load(Ordering::Acquire)
     }
@@ -214,6 +222,7 @@ fn run(shared: &Shared) {
             }
         };
         let sequence = changes.header.sequence;
+        let generation = changes.generation;
         let at_ms = changes.at_ms;
         let activity = std::mem::take(&mut changes.activity);
         let mut changes = Some(changes);
@@ -256,6 +265,7 @@ fn run(shared: &Shared) {
             }
         }
         shared.committed.fetch_max(sequence, Ordering::Release);
+        shared.generation.fetch_max(generation, Ordering::Release);
         // A record only: failing to write it does not undo the commit.
         let lines = std::cell::Cell::new(shared.activity_lines.load(Ordering::Relaxed));
         if let Err(e) = crate::activity_log::record(&shared.dir, &lines, &activity, at_ms) {

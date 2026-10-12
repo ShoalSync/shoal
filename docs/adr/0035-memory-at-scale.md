@@ -27,6 +27,31 @@ ADR 0018, have 1 to 4 GB of memory.
 - A generator builds such folders from metadata alone, with sparse files, so the measurement
   needs no real data. It runs in the nightly job of ADR 0031 and fails if a target is exceeded.
 
+## Implementation notes
+
+- Step 4, first part (measurement and the largest costs):
+  - `tidefell_engine::synth` writes a folder's metadata directly beside sparse files that
+    match it, and `cargo run --release -p tidefell-engine --example memory -- run <files>
+    <bytes>` measures a separate engine process on it: resident memory after it opens the
+    folder, after a full scan, after status reads, and idle. The `Memory` workflow reports it
+    nightly for 100,000 files of 1 TiB and a phone folder of 50,000 photos, and for 1,000,000
+    files of 10 TiB when dispatched; it does not fail yet.
+  - Manifests and the chunk index are on disk, read through a small cache, with what changed
+    since the last confirmed commit kept in memory so it reads back at once. Chunks no longer
+    cost memory: 100,000 files of 1 TiB went from 3.4 GB to under 200 MB.
+  - Signed versions are read from the database to serve peers, and kept in memory only until
+    saved. Version vectors are sorted vectors, encoded exactly as before. Local records share
+    one copy of each path with their index by content. Scans compare files with the records
+    under the lock instead of copying them all, and group names only on drives that fold
+    them. The layout keeps only the paths of entries written elsewhere than their own. Each
+    folder's database caches 4 MiB.
+  - Measured, release build, glibc's allocator: 100,000 small files take 189 MB after a scan
+    (786 MB before), about 1.5 KB per file, of which some 35 MB is memory freed but kept by the
+    allocator; a phone folder of 50,000 photos takes 117 MB. Both are over the targets, which
+    allow about 300 bytes per file. What remains per file is each live entry's version with its
+    folder ID and author in full and the hash map around it (about 450 bytes), the local
+    record and its map node (about 300 bytes), and the allocator's slack.
+
 ## Consequences
 
 - A small NAS can hold a large full replica.

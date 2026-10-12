@@ -163,7 +163,10 @@ impl Backend for TestBackend {
         Some(IndexPage {
             epoch: folder.epoch(),
             up_to,
-            versions: versions.into_iter().map(|s| s.signed.clone()).collect(),
+            versions: versions
+                .into_iter()
+                .filter_map(|s| s.signed.as_deref().cloned())
+                .collect(),
         })
     }
 

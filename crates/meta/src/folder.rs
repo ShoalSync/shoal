@@ -12,15 +12,30 @@ use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
 use crate::{Error, Result};
 
-/// A version held by this replica, with its signed form and local index sequence.
+/// A version held by this replica, with its local index sequence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredVersion {
     /// The decoded version.
     pub version: EntryVersion,
-    /// The version exactly as signed by its author, for forwarding to other peers.
-    pub signed: Signed<EntryVersion>,
+    /// [`copy_id`] of the version as signed: which version this is, exactly.
+    pub id: EntryId,
+    /// The version exactly as signed by its author, until it is saved: the database keeps it
+    /// after that, for forwarding to other peers, rather than memory (ADR 0035).
+    pub signed: Option<Box<Signed<EntryVersion>>>,
     /// Local index sequence assigned when this replica stored the version.
     pub sequence: u64,
+}
+
+impl StoredVersion {
+    /// A version as received or made, to save.
+    pub(crate) fn new(version: EntryVersion, signed: Signed<EntryVersion>, sequence: u64) -> Self {
+        Self {
+            version,
+            id: copy_id(&signed),
+            signed: Some(Box::new(signed)),
+            sequence,
+        }
+    }
 }
 
 /// The versions of one entry that no other version supersedes. They are mutually concurrent;
@@ -236,7 +251,7 @@ impl Folder {
     /// displaced entry is not its recorded path.
     pub fn find_path(&self, path: &str) -> Option<&EntryVersion> {
         self.layout()
-            .entry_at(path)
+            .entry_at(path, |e| self.live_path(e))
             .and_then(|entry| self.current(&entry))
     }
 
@@ -272,12 +287,21 @@ impl Folder {
         let unfolded = self
             .unfolded
             .get_or_init(|| Layout::new(self.entries.values().map(|e| &e.current.version)));
-        unfolded.path_of(entry) == Some(path) && self.layout().path_of(entry) != Some(path)
+        let own = self.live_path(entry);
+        unfolded.path_of(entry, own) == Some(path)
+            && self.layout().path_of(entry, own) != Some(path)
     }
 
     /// Where `entry` goes on disk, if it is live.
     pub fn disk_path(&self, entry: &EntryId) -> Option<&str> {
-        self.layout().path_of(entry)
+        self.layout().path_of(entry, self.live_path(entry))
+    }
+
+    /// The path of `entry`'s current version, if it is live.
+    fn live_path(&self, entry: &EntryId) -> Option<&str> {
+        self.current(entry)
+            .filter(|v| !matches!(v.kind, EntryKind::Tombstone))
+            .map(|v| v.path.as_str())
     }
 
     /// The recycle bin.
@@ -593,13 +617,13 @@ impl Folder {
         if let Some(existing) = existing {
             let previous_current = existing.current.version.clone();
             // The versions still undecided: the current version and its open conflicts.
-            let open: Vec<Vec<u8>> = existing
+            let open: Vec<EntryId> = existing
                 .all()
                 .filter(|s| {
                     s.version == previous_current
                         || !settled(&s.version.kind, Some(&previous_current.kind))
                 })
-                .map(|s| s.signed.body.clone())
+                .map(|s| s.id)
                 .collect();
             // What the new version was made from: its vector without its own change.
             let mut made_from = version.version.clone();
@@ -629,19 +653,19 @@ impl Folder {
             }
             // An undecided version with other content that a live version replaces after
             // seeing more than its line lost a conflict (ADR 0029). It goes to the recycle bin.
-            let lines: Vec<(Vec<u8>, VersionVector)> = existing
+            let lines: Vec<(EntryId, VersionVector)> = existing
                 .all()
-                .map(|s| (s.signed.body.clone(), line(&s.version.kind)))
+                .map(|s| (s.id, line(&s.version.kind)))
                 .collect();
             for stored in std::iter::once(existing.current).chain(existing.conflicts) {
                 if version.version.compare(&stored.version.version) == Causality::After {
                     let decided = live
-                        && open.contains(&stored.signed.body)
+                        && open.contains(&stored.id)
                         && stored.version.kind != version.kind
                         && !matches!(stored.version.kind, EntryKind::Tombstone)
                         && lines
                             .iter()
-                            .find(|(body, _)| *body == stored.signed.body)
+                            .find(|(id, _)| *id == stored.id)
                             .is_some_and(|(_, line)| !line.dominates(&made_from));
                     if decided {
                         lost.push(stored.clone());
@@ -672,11 +696,7 @@ impl Folder {
 
         self.sequence += 1;
         self.pending.stored(entry_id, self.sequence);
-        survivors.push(StoredVersion {
-            version,
-            signed,
-            sequence: self.sequence,
-        });
+        survivors.push(StoredVersion::new(version, signed, self.sequence));
         let win = winner(survivors.iter().map(|s| &s.version));
         let current = survivors.swap_remove(win);
         survivors.sort_by_key(|s| s.sequence);
@@ -687,7 +707,7 @@ impl Folder {
             self.pending.recycled(entry_id);
         }
         for stored in lost {
-            let id = copy_id(&stored.signed);
+            let id = stored.id;
             // Kept both: the copy is, or was, an entry of its own.
             if self.entries.contains_key(&id) || id == entry_id {
                 continue;

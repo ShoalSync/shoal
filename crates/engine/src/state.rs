@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tidefell_chunker::ChunkIndex;
 use tidefell_identity::FolderMembers;
 use tidefell_meta::{Folder, Recycled};
 use tidefell_proto::sync::EntryKind;
@@ -160,20 +160,71 @@ impl From<LocalFileV3> for LocalFile {
 /// being kept a second time in the block store (ADR 0027).
 #[derive(Debug, Clone, Default)]
 pub(crate) struct LocalFiles {
-    files: BTreeMap<String, LocalFile>,
-    by_content: HashMap<ContentHash, BTreeSet<String>>,
+    /// Each path is kept once, shared by the index below (ADR 0035).
+    files: BTreeMap<Arc<str>, LocalFile>,
+    by_content: HashMap<ContentHash, Paths>,
     /// Paths recorded or forgotten since last saved (ADR 0034).
-    changed: BTreeSet<String>,
+    changed: BTreeSet<Arc<str>>,
+}
+
+/// The paths with one content: nearly always one.
+#[derive(Debug, Clone)]
+enum Paths {
+    One(Arc<str>),
+    Many(Vec<Arc<str>>),
+}
+
+impl Paths {
+    fn iter(&self) -> impl Iterator<Item = &Arc<str>> {
+        match self {
+            Self::One(path) => std::slice::from_ref(path).iter(),
+            Self::Many(paths) => paths.iter(),
+        }
+    }
+
+    fn insert(&mut self, path: Arc<str>) {
+        if self.iter().any(|p| *p == path) {
+            return;
+        }
+        match self {
+            Self::One(one) => *self = Self::Many(vec![one.clone(), path]),
+            Self::Many(paths) => paths.push(path),
+        }
+    }
+
+    /// Removes `path`; true if none are left.
+    fn remove(&mut self, path: &str) -> bool {
+        match self {
+            Self::One(one) => &**one == path,
+            Self::Many(paths) => {
+                paths.retain(|p| &**p != path);
+                let empty = paths.is_empty();
+                if let [one] = paths.as_slice() {
+                    let one = one.clone();
+                    *self = Self::One(one);
+                }
+                empty
+            }
+        }
+    }
 }
 
 impl LocalFiles {
     /// Records the file at `path`, replacing what was recorded there.
     pub(crate) fn insert(&mut self, path: String, file: LocalFile) -> Option<LocalFile> {
+        // The path already recorded is shared rather than kept again.
+        let path: Arc<str> = match self.files.get_key_value(path.as_str()) {
+            Some((kept, _)) => kept.clone(),
+            None => Arc::from(path),
+        };
         self.changed.insert(path.clone());
-        self.by_content
-            .entry(file.content)
-            .or_default()
-            .insert(path.clone());
+        match self.by_content.get_mut(&file.content) {
+            Some(paths) => paths.insert(path.clone()),
+            None => {
+                self.by_content
+                    .insert(file.content, Paths::One(path.clone()));
+            }
+        }
         let old = self.files.insert(path.clone(), file);
         if let Some(old) = &old {
             self.unindex(&path, old.content);
@@ -183,8 +234,8 @@ impl LocalFiles {
 
     /// Forgets the file at `path`.
     pub(crate) fn remove(&mut self, path: &str) -> Option<LocalFile> {
-        let old = self.files.remove(path)?;
-        self.changed.insert(path.to_owned());
+        let (kept, old) = self.files.remove_entry(path)?;
+        self.changed.insert(kept);
         self.unindex(path, old.content);
         Some(old)
     }
@@ -195,7 +246,7 @@ impl LocalFiles {
             .into_iter()
             .map(|path| {
                 let file = self.files.get(&path).map(encode);
-                (encode(&path), file)
+                (encode(&&*path), file)
             })
             .collect()
     }
@@ -204,7 +255,7 @@ impl LocalFiles {
     pub(crate) fn all(&self) -> Vec<crate::tracked::Changed> {
         self.files
             .iter()
-            .map(|(p, f)| (encode(p), Some(encode(f))))
+            .map(|(p, f)| (encode(&&**p), Some(encode(f))))
             .collect()
     }
 
@@ -218,9 +269,23 @@ impl LocalFiles {
         Ok(files)
     }
 
+    /// The file recorded at `path`.
+    pub(crate) fn get(&self, path: &str) -> Option<&LocalFile> {
+        self.files.get(path)
+    }
+
+    /// True if a file is recorded at `path`.
+    pub(crate) fn contains_key(&self, path: &str) -> bool {
+        self.files.contains_key(path)
+    }
+
     /// Paths of the files on disk with `content`.
-    pub(crate) fn paths_with(&self, content: &ContentHash) -> impl Iterator<Item = &String> {
-        self.by_content.get(content).into_iter().flatten()
+    pub(crate) fn paths_with(&self, content: &ContentHash) -> impl Iterator<Item = &str> {
+        self.by_content
+            .get(content)
+            .into_iter()
+            .flat_map(Paths::iter)
+            .map(|p| &**p)
     }
 
     fn unindex(&mut self, path: &str, content: ContentHash) {
@@ -228,17 +293,18 @@ impl LocalFiles {
         if self.files.get(path).is_some_and(|f| f.content == content) {
             return;
         }
-        if let Some(paths) = self.by_content.get_mut(&content) {
-            paths.remove(path);
-            if paths.is_empty() {
-                self.by_content.remove(&content);
-            }
+        if self
+            .by_content
+            .get_mut(&content)
+            .is_some_and(|paths| paths.remove(path))
+        {
+            self.by_content.remove(&content);
         }
     }
 }
 
 impl std::ops::Deref for LocalFiles {
-    type Target = BTreeMap<String, LocalFile>;
+    type Target = BTreeMap<Arc<str>, LocalFile>;
 
     fn deref(&self) -> &Self::Target {
         &self.files
@@ -535,8 +601,10 @@ pub(crate) struct FolderState {
     pub(crate) config: FolderConfig,
     pub(crate) members: FolderMembers,
     pub(crate) meta: Folder,
-    pub(crate) manifests: Tracked<ContentHash, Manifest>,
-    pub(crate) index: ChunkIndex,
+    /// Manifests and the chunk index, on disk (ADR 0035).
+    pub(crate) manifests: crate::manifests::Manifests,
+    /// Saves made, so changes held until committed are known to be (ADR 0035).
+    saves: u64,
     pub(crate) local: LocalFiles,
     pub(crate) progress: Tracked<DeviceId, (u64, u64)>,
     /// When each file on disk was last opened or written, in milliseconds since the Unix
@@ -633,8 +701,8 @@ impl FolderState {
             meta: Folder::new(config.id, device, 1, retention),
             config,
             members,
-            manifests: Tracked::default(),
-            index: ChunkIndex::new(),
+            manifests: Default::default(),
+            saves: 0,
             local: LocalFiles::default(),
             progress: Tracked::default(),
             used: Tracked::default(),
@@ -712,15 +780,23 @@ impl FolderState {
     /// Creates the folder's database and writes all of the folder to it.
     fn create_db(&mut self) -> Result<FolderDb> {
         let mut db = FolderDb::create(&self.db_path)?;
+        let (manifests, chunks) = self.manifests.all();
+        let mut maps = self.all_maps();
+        maps.push(("manifests", manifests));
         db.commit(&Changes {
             header: self.meta.header(),
             journal: self.meta.full_journal(),
-            maps: self.all_maps(),
+            maps,
             durable: true,
             rebuild: self.rebuild.clone(),
             activity: Vec::new(),
             at_ms: 0,
+            chunks,
+            generation: 0,
         })?;
+        // All of it is in the database now.
+        self.manifests = Default::default();
+        self.manifests.set_reader(db.reader());
         Ok(db)
     }
 
@@ -739,8 +815,7 @@ impl FolderState {
         }
         let epoch = u64::from_le_bytes(random_bytes()?).max(1);
         self.meta = Folder::new(self.config.id, device, epoch, self.config.retention);
-        self.manifests = Tracked::default();
-        self.index = ChunkIndex::new();
+        self.manifests = Default::default();
         self.local = LocalFiles::default();
         self.progress = Tracked::default();
         self.used = Tracked::default();
@@ -811,12 +886,9 @@ impl FolderState {
         self.rebuild = loaded.rebuild;
         self.meta = Folder::from_records(loaded.header, loaded.versions, loaded.recycled)
             .map_err(|_| Error::CorruptState(self.db_path.clone()))?;
-        let manifests: Tracked<ContentHash, Manifest> =
-            Tracked::decode(take("manifests")).map_err(corrupt)?;
-        for manifest in manifests.values() {
-            self.index.insert(manifest);
-        }
-        self.manifests = manifests;
+        // Manifests are read from the database as needed (ADR 0035).
+        self.manifests = Default::default();
+        self.manifests.set_reader(db.reader());
         self.local = LocalFiles::decode(take("local")).map_err(corrupt)?;
         self.progress = Tracked::decode(take("progress")).map_err(corrupt)?;
         self.used = Tracked::decode(take("used")).map_err(corrupt)?;
@@ -916,7 +988,6 @@ impl FolderState {
     /// Every map the database holds, encoded, as if all of it had changed.
     fn all_maps(&self) -> Vec<(&'static str, Vec<crate::tracked::Changed>)> {
         vec![
-            ("manifests", self.manifests.all()),
             ("local", self.local.all()),
             ("progress", self.progress.all()),
             ("used", self.used.all()),
@@ -933,7 +1004,6 @@ impl FolderState {
     /// What changed in each map since the last save, encoded.
     fn changed_maps(&mut self) -> Vec<(&'static str, Vec<crate::tracked::Changed>)> {
         vec![
-            ("manifests", self.manifests.take_changed()),
             ("local", self.local.take_changed()),
             ("progress", self.progress.take_changed()),
             ("used", self.used.take_changed()),
@@ -979,7 +1049,7 @@ impl FolderState {
         self.local
             .keys()
             .find(|disk| self.same_place(disk, path))
-            .cloned()
+            .map(|p| p.to_string())
             .unwrap_or_else(|| path.to_owned())
     }
 
@@ -1021,7 +1091,7 @@ impl FolderState {
             }
         }
         for (path, local) in caught_up {
-            self.local.insert(path, local);
+            self.local.insert(path.to_string(), local);
         }
     }
 
@@ -1042,7 +1112,10 @@ impl FolderState {
         // Only what changed, committed in order off the folder lock (ADR 0034). Last-use times
         // alone are not worth waiting for the disk.
         let journal = self.meta.take_journal();
-        let maps = self.changed_maps();
+        let mut maps = self.changed_maps();
+        self.saves += 1;
+        let (manifests, chunks) = self.manifests.take_changed(self.saves);
+        maps.push(("manifests", manifests));
         // A file kept for the recycle bin before its item existed, as a delete made here keeps
         // it, gets a sidecar naming the item now, not at the next tidy (ADR 0034). Only a save
         // that changed what sidecars say looks.
@@ -1066,9 +1139,13 @@ impl FolderState {
             // writes too.
             activity: self.meta.take_changes(),
             at_ms: crate::now_ms(),
+            chunks,
+            generation: self.saves,
         };
         if let Some(committer) = &self.committer {
             committer.submit(changes);
+            // What earlier saves carried and the database has, is read from it now.
+            self.manifests.committed(committer.committed_generation());
         }
         #[cfg(debug_assertions)]
         self.check_saved();
@@ -1150,24 +1227,23 @@ impl FolderState {
                 "the {name} table differs from memory"
             );
         }
-        let records = self.meta.all_records();
         assert_eq!(loaded.header, self.meta.header(), "the header differs");
-        let saved: Vec<(u64, Vec<u8>)> = loaded
+        let saved: Vec<(u64, tidefell_proto::EntryId)> = loaded
             .versions
             .iter()
-            .map(|(s, v)| (*s, v.body.clone()))
+            .map(|(s, v)| (*s, tidefell_meta::copy_id(v)))
             .collect();
-        let in_memory: Vec<(u64, Vec<u8>)> = records
-            .stored
-            .iter()
-            .map(|(s, v)| (*s, v.body.clone()))
-            .collect();
-        assert_eq!(saved, in_memory, "the stored versions differ from memory");
+        assert_eq!(
+            saved,
+            self.meta.stored_ids(),
+            "the stored versions differ from memory"
+        );
         let mut saved: Vec<String> = loaded.recycled.iter().map(|r| format!("{r:?}")).collect();
-        let mut in_memory: Vec<String> = records
-            .recycle
+        let mut in_memory: Vec<String> = self
+            .meta
+            .recycle_bin()
             .iter()
-            .filter_map(|(_, r)| r.as_ref().map(|r| format!("{r:?}")))
+            .map(|r| format!("{r:?}"))
             .collect();
         saved.sort();
         in_memory.sort();
@@ -1181,14 +1257,13 @@ impl FolderState {
     }
 
     pub(crate) fn add_manifest(&mut self, manifest: Manifest) {
-        self.index.insert(&manifest);
-        self.manifests.insert(manifest.content, manifest);
+        self.manifests.insert(manifest);
     }
 
     /// Forgets a manifest that turned out to be wrong, so it is fetched again.
     pub(crate) fn remove_manifest(&mut self, content: &ContentHash) {
-        if self.manifests.remove(content).is_some() {
-            self.index.remove(content);
+        if self.manifests.contains_key(content) {
+            self.manifests.remove(content);
         }
     }
 
@@ -1246,9 +1321,9 @@ impl FolderState {
         let referenced = self.referenced_contents();
         let unused: Vec<ContentHash> = self
             .manifests
-            .keys()
+            .contents()
+            .into_iter()
             .filter(|c| !referenced.contains(c))
-            .copied()
             .collect();
         self.copies.retain(|c, _| referenced.contains(c));
         let still_named: std::collections::HashSet<DeviceId> = self
@@ -1272,8 +1347,7 @@ impl FolderState {
         }
         let mut orphaned = Vec::new();
         for content in unused {
-            self.manifests.remove(&content);
-            orphaned.extend(self.index.remove(&content));
+            orphaned.extend(self.manifests.remove(&content));
         }
         orphaned
     }
@@ -1531,6 +1605,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         drop(db);

@@ -97,7 +97,7 @@ pub(crate) fn adopt(state: &FolderState, device: DeviceId) -> Result<()> {
     if !root.is_dir() || path(root).exists() {
         return Ok(());
     }
-    let known = state.local.is_empty() || state.local.keys().any(|p| root.join(p).exists());
+    let known = state.local.is_empty() || state.local.keys().any(|p| root.join(&**p).exists());
     if known {
         write(root, state.config.id, device)?;
     }

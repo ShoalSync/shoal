@@ -50,11 +50,23 @@ impl Backend for EngineBackend {
         // (ADR 0034); the rest follow once they are committed.
         let committed = state.committed();
         let (versions, up_to) = state.meta.index_since(epoch, since, limit);
-        let versions: Vec<Signed<EntryVersion>> = versions
+        // Signed versions are read from the database, which has every committed one, rather
+        // than kept in memory (ADR 0035).
+        let sequences: Vec<u64> = versions
             .into_iter()
             .take_while(|s| s.sequence <= committed)
-            .map(|s| s.signed.clone())
+            .map(|s| s.sequence)
             .collect();
+        let versions: Vec<Signed<EntryVersion>> = match state.manifests.reader() {
+            Some(reader) => match reader.versions(&sequences) {
+                Ok(versions) => versions,
+                Err(e) => {
+                    warn!(%folder, error = %e, "reading versions to send failed");
+                    return None;
+                }
+            },
+            None => Vec::new(),
+        };
         Some(IndexPage {
             epoch: state.meta.epoch(),
             up_to: up_to.min(committed),
@@ -171,12 +183,12 @@ impl Backend for EngineBackend {
     fn manifest(&self, folder: &FolderId, content: &ContentHash) -> Option<Manifest> {
         let handle = self.0.folder(folder).ok()?;
         let state = handle.lock();
-        state.manifests.get(content).cloned()
+        state.manifests.get(content).map(|m| (*m).clone())
     }
 
     fn chunk(&self, folder: &FolderId, hash: &ChunkHash) -> Option<Vec<u8>> {
         let handle = self.0.folder(folder).ok()?;
-        if !handle.lock().index.is_referenced(hash) {
+        if !handle.lock().manifests.is_referenced(hash) {
             return None;
         }
         // From the block store, or from a file on disk that holds it (ADR 0027).

@@ -50,8 +50,11 @@ fn position(manifest: &Manifest, hash: &ChunkHash) -> Option<(u64, u32)> {
 fn sources(state: &FolderState, hash: &ChunkHash) -> Vec<Source> {
     let root = &state.config.path;
     let mut out = Vec::new();
-    for content in state.index.contents_with(hash) {
-        let Some((offset, len)) = state.manifests.get(content).and_then(|m| position(m, hash))
+    for content in &state.manifests.contents_with(hash) {
+        let Some((offset, len)) = state
+            .manifests
+            .get(content)
+            .and_then(|m| position(&m, hash))
         else {
             continue;
         };
@@ -118,8 +121,9 @@ pub(crate) fn read_chunk(
 pub(crate) fn has_chunk(inner: &Inner, state: &FolderState, hash: &ChunkHash) -> bool {
     inner.store.lock().unwrap().contains(hash)
         || state
-            .index
+            .manifests
             .contents_with(hash)
+            .iter()
             .any(|c| state.local.paths_with(c).next().is_some() || state.kept.contains_key(c))
 }
 

@@ -30,7 +30,7 @@ fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
             return;
         }
         if let Some(manifest) = state.manifests.get(&content) {
-            out.insert(content, manifest.clone());
+            out.insert(content, (*manifest).clone());
         }
     };
     for version in state.meta.entries() {

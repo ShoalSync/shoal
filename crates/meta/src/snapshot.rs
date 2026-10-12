@@ -73,9 +73,15 @@ impl Folder {
     pub fn to_snapshot(&self) -> Vec<u8> {
         let mut versions = Vec::new();
         for entry in self.entries.values() {
-            versions.push((true, entry.current.sequence, entry.current.signed.clone()));
+            // Only versions not yet saved elsewhere are held signed (ADR 0035); a snapshot is
+            // made of a folder that has them all, such as one read from a snapshot.
+            if let Some(signed) = &entry.current.signed {
+                versions.push((true, entry.current.sequence, (**signed).clone()));
+            }
             for c in &entry.conflicts {
-                versions.push((false, c.sequence, c.signed.clone()));
+                if let Some(signed) = &c.signed {
+                    versions.push((false, c.sequence, (**signed).clone()));
+                }
             }
         }
         versions.sort_by_key(|(_, seq, _)| *seq);
@@ -113,11 +119,7 @@ impl Folder {
                 return Err(Error::WrongFolder);
             }
             let entry = version.entry;
-            let stored = StoredVersion {
-                version,
-                signed,
-                sequence,
-            };
+            let stored = StoredVersion::new(version, signed, sequence);
             if is_current {
                 currents.insert(entry, stored);
             } else {

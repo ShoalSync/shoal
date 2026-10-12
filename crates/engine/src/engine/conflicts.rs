@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tidefell_meta::{copy_id, StoredVersion};
+use tidefell_meta::StoredVersion;
 use tidefell_proto::sync::{EntryKind, EntryVersion};
 use tidefell_proto::{DeviceId, EntryId, FolderId, VersionVector};
 
@@ -24,7 +24,7 @@ pub enum Resolution {
 
 /// The ID of a conflicting version in [`crate::VersionInfo`].
 pub(crate) fn conflict_version_id(stored: &StoredVersion) -> String {
-    format!("conflict:{}", copy_id(&stored.signed))
+    format!("conflict:{}", stored.id)
 }
 
 /// Days since 1970-01-01 to a civil date (Howard Hinnant's algorithm).
@@ -67,7 +67,7 @@ pub(crate) fn copy_path(
     let taken = |candidate: &str| {
         let below = format!("{candidate}/");
         state.meta.find_path(candidate).is_some()
-            || state.meta.layout().entry_at(candidate).is_some()
+            || state.meta.find_path(candidate).is_some()
             || state
                 .meta
                 .entries()
@@ -150,7 +150,7 @@ impl Engine {
                 .join(crate::scan::RESERVED_DIR)
                 .join("tmp");
             std::fs::create_dir_all(&dir).map_err(crate::io_err(&dir))?;
-            let dest = dir.join(format!("version-{}", copy_id(&stored.signed)));
+            let dest = dir.join(format!("version-{}", stored.id));
             (stored, dest)
         };
         if dest.exists() {
@@ -206,7 +206,7 @@ impl Engine {
                             .ok_or_else(|| Error::Invalid(format!("no free name beside {path}")))?;
                         state.meta.local_change_from(
                             key,
-                            copy_id(&other.signed),
+                            other.id,
                             &VersionVector::new(),
                             &copy,
                             other.version.kind.clone(),

@@ -97,17 +97,18 @@ impl Folder {
             .copied()
             .filter(|s| new.contains(s))
             .collect();
+        // Each new version's signed form moves to the journal: once saved, the database keeps
+        // it rather than memory (ADR 0035).
         let mut stored: Vec<(u64, Signed<EntryVersion>)> = pending
             .stored
             .iter()
             .filter(|(_, s)| !dropped_new.contains(s))
             .filter_map(|(entry, sequence)| {
-                let kept = self
-                    .entries
-                    .get(entry)?
-                    .all()
+                let entry = self.entries.get_mut(entry)?;
+                let kept = std::iter::once(&mut entry.current)
+                    .chain(entry.conflicts.iter_mut())
                     .find(|v| v.sequence == *sequence)?;
-                Some((*sequence, kept.signed.clone()))
+                Some((*sequence, *kept.signed.take()?))
             })
             .collect();
         stored.sort_by_key(|(s, _)| *s);
@@ -131,19 +132,15 @@ impl Folder {
 
     /// Everything the folder holds, as a journal from nothing, to store it whole. Clears the
     /// journal.
+    /// Only versions not saved before are in it: a folder made from a database's records has
+    /// its versions there already.
     pub fn full_journal(&mut self) -> Journal {
         self.pending = Pending::default();
-        self.all_records()
-    }
-
-    /// Everything the folder holds, as [`Folder::full_journal`] gives it, leaving the journal
-    /// as it is.
-    pub fn all_records(&self) -> Journal {
         let mut stored: Vec<(u64, Signed<EntryVersion>)> = self
             .entries
-            .values()
-            .flat_map(Entry::all)
-            .map(|v| (v.sequence, v.signed.clone()))
+            .values_mut()
+            .flat_map(|e| std::iter::once(&mut e.current).chain(e.conflicts.iter_mut()))
+            .filter_map(|v| Some((v.sequence, *v.signed.take()?)))
             .collect();
         stored.sort_by_key(|(s, _)| *s);
         Journal {
@@ -157,6 +154,19 @@ impl Folder {
         }
     }
 
+    /// Every version the folder keeps, by sequence and [`crate::copy_id`], to compare with
+    /// what was saved.
+    pub fn stored_ids(&self) -> Vec<(u64, EntryId)> {
+        let mut ids: Vec<(u64, EntryId)> = self
+            .entries
+            .values()
+            .flat_map(Entry::all)
+            .map(|v| (v.sequence, v.id))
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     /// Rebuilds a folder from what a journal stored: its header, the versions it still keeps,
     /// and its recycle bin. Signatures are not checked again, as they were when each version
     /// was received; each version must be for this folder and signed by its author's key.
@@ -165,7 +175,7 @@ impl Folder {
         versions: impl IntoIterator<Item = (u64, Signed<EntryVersion>)>,
         recycled: impl IntoIterator<Item = Recycled>,
     ) -> Result<Self> {
-        let mut kept: HashMap<EntryId, Vec<StoredVersion>> = HashMap::new();
+        let mut entries: HashMap<EntryId, Entry> = HashMap::new();
         for (sequence, signed) in versions {
             let version = EntryVersion::decode(&signed.body).map_err(Error::Snapshot)?;
             if version.folder != header.id {
@@ -177,25 +187,35 @@ impl Folder {
             if sequence > header.sequence {
                 return Err(Error::UnsupportedFormat);
             }
-            kept.entry(version.entry).or_default().push(StoredVersion {
+            // The database keeps the signed form; memory keeps the version (ADR 0035).
+            let stored = StoredVersion {
+                id: crate::copy_id(&signed),
                 version,
-                signed,
+                signed: None,
                 sequence,
-            });
+            };
+            match entries.entry(stored.version.entry) {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    slot.insert(Entry {
+                        current: stored,
+                        conflicts: Vec::new(),
+                    });
+                }
+                std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    slot.get_mut().conflicts.push(stored);
+                }
+            }
         }
-        let mut entries = HashMap::with_capacity(kept.len());
-        for (id, mut versions) in kept {
+        // An entry with several versions: the winner is current, the rest in sequence order.
+        for entry in entries.values_mut().filter(|e| !e.conflicts.is_empty()) {
+            let mut versions: Vec<StoredVersion> = std::mem::take(&mut entry.conflicts);
+            versions.push(entry.current.clone());
             let win = winner(versions.iter().map(|v| &v.version));
-            let current = versions.swap_remove(win);
+            entry.current = versions.swap_remove(win);
             versions.sort_by_key(|v| v.sequence);
-            entries.insert(
-                id,
-                Entry {
-                    current,
-                    conflicts: versions,
-                },
-            );
+            entry.conflicts = versions;
         }
+        entries.shrink_to_fit();
         let mut recycle = RecycleBin::new(header.retention);
         for item in recycled {
             recycle.insert(item);

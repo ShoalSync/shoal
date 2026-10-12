@@ -48,7 +48,7 @@ fn every_version(folder: &Folder) -> Vec<Signed<EntryVersion>> {
         .index_since(folder.epoch(), 0, usize::MAX)
         .0
         .into_iter()
-        .map(|s| s.signed.clone())
+        .map(|s| (**s.signed.as_ref().expect("never saved, so held")).clone())
         .collect()
 }
 

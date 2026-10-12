@@ -213,8 +213,11 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
     if state.config.sync.direction == Direction::SendOnly {
         return plan;
     }
-    let on_disk: HashMap<EntryId, (&String, &LocalFile)> =
-        state.local.iter().map(|(p, l)| (l.entry, (p, l))).collect();
+    let on_disk: HashMap<EntryId, (&str, &LocalFile)> = state
+        .local
+        .iter()
+        .map(|(p, l)| (l.entry, (&**p, l)))
+        .collect();
     // A partial replica keeps the files it has materialised up to date and leaves the rest
     // as placeholders.
     let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
@@ -249,7 +252,7 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                 if let Some((p, _)) = here.filter(|_| in_place) {
                     // Renamed elsewhere in case only: the file is renamed here too.
                     if crate::state::recorded(p) != path {
-                        plan.respell.push(((*p).clone(), path.to_owned()));
+                        plan.respell.push(((*p).to_owned(), path.to_owned()));
                     }
                 }
                 if current || ignored || !wanted {
@@ -270,14 +273,14 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                 plan.writes.push(PendingWrite {
                     entry: version.entry,
                     path: match here {
-                        Some((p, _)) if in_place => (*p).clone(),
+                        Some((p, _)) if in_place => (*p).to_owned(),
                         _ => path.to_owned(),
                     },
                     content,
                     size,
                     executable,
                     modified_ms: version.modified_ms,
-                    old_path: here.map(|(p, _)| (*p).clone()).filter(|_| !in_place),
+                    old_path: here.map(|(p, _)| (*p).to_owned()).filter(|_| !in_place),
                     base: state.meta.current_vector(&version.entry),
 
                     unavailable: std::sync::Mutex::default(),
@@ -286,7 +289,7 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
             }
             EntryKind::Tombstone => {
                 if let Some((p, _)) = here.filter(|(p, _)| !state.ignores.is_ignored(p, false)) {
-                    plan.deletes.push((*p).clone());
+                    plan.deletes.push((*p).to_owned());
                 }
             }
             EntryKind::Directory | EntryKind::Symlink { .. } => {}
@@ -545,7 +548,7 @@ pub(crate) async fn fetch_one(
             .local
             .iter()
             .find(|(p, l)| l.entry == version.entry && !state.same_place(p, path))
-            .map(|(p, _)| p.clone());
+            .map(|(p, _)| p.to_string());
         (
             state.config.path.clone(),
             PendingWrite {
@@ -637,8 +640,8 @@ fn manifest_fits(manifest: &Manifest, content: ContentHash, size: u64) -> bool {
 fn cached_manifest(handle: &FolderHandle, content: ContentHash, size: u64) -> Option<Manifest> {
     let mut state = handle.lock();
     let manifest = state.manifests.get(&content)?;
-    if manifest_fits(manifest, content, size) {
-        return Some(manifest.clone());
+    if manifest_fits(&manifest, content, size) {
+        return Some((*manifest).clone());
     }
     state.remove_manifest(&content);
     None

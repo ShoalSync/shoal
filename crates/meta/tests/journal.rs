@@ -91,12 +91,17 @@ fn step() -> impl Strategy<Value = Step> {
     ]
 }
 
-fn every_version(folder: &Folder) -> Vec<Signed<EntryVersion>> {
+/// Every version `folder` holds, signed: from memory until saved, then from `records`, as an
+/// engine reads them from its database (ADR 0035).
+fn every_version(folder: &Folder, records: &Records) -> Vec<Signed<EntryVersion>> {
     folder
         .index_since(folder.epoch(), 0, usize::MAX)
         .0
         .into_iter()
-        .map(|s| s.signed.clone())
+        .map(|s| match &s.signed {
+            Some(signed) => (**signed).clone(),
+            None => records.versions[&s.sequence].clone(),
+        })
         .collect()
 }
 
@@ -106,7 +111,7 @@ fn everything(folder: &Folder) -> String {
         .index_since(folder.epoch(), 0, usize::MAX)
         .0
         .into_iter()
-        .map(|s| (s.sequence, s.signed.body.clone()))
+        .map(|s| (s.sequence, s.id.0.to_vec()))
         .collect();
     versions.sort();
     let current: BTreeMap<EntryId, Vec<u8>> = folder
@@ -171,7 +176,8 @@ proptest! {
                     );
                 }
                 Step::Sync { from, to } if from != to => {
-                    for v in every_version(&replicas[usize::from(from)]) {
+                    let from = usize::from(from);
+                    for v in every_version(&replicas[from], &records[from]) {
                         replicas[usize::from(to)].apply_remote(v, 1_000).unwrap();
                     }
                 }
@@ -196,11 +202,15 @@ proptest! {
         for (replica, records) in replicas.iter_mut().zip(&mut records) {
             records.save(replica);
             prop_assert_eq!(everything(&records.load()), everything(replica));
-            // Starting again from everything gives the same.
-            let mut whole = Records::default();
-            let journal = replica.full_journal();
-            whole.apply(replica.header(), journal);
-            prop_assert_eq!(everything(&whole.load()), everything(replica));
+            // Everything is saved: a full journal has nothing more, and what was saved is
+            // every version the replica keeps.
+            prop_assert!(replica.full_journal().stored.is_empty());
+            let saved: Vec<(u64, EntryId)> = records
+                .versions
+                .iter()
+                .map(|(s, v)| (*s, tidefell_meta::copy_id(v)))
+                .collect();
+            prop_assert_eq!(saved, replica.stored_ids());
         }
     }
 }

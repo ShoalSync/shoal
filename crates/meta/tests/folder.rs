@@ -489,7 +489,7 @@ fn a_change_on_a_stale_base_leaves_a_hole() {
     assert_eq!(third.get(&device(1)), 3);
     assert!(!third.contains(&device(1), 2));
     assert_eq!(a.conflicts(&E).len(), 1);
-    assert_eq!(a.conflicts(&E)[0].signed.body, second.body);
+    assert_eq!(a.conflicts(&E)[0].id, tidefell_meta::copy_id(&second));
 }
 
 /// A and B edit apart and B's edit wins. Edits to the winner, on any device, keep A's version
@@ -538,7 +538,7 @@ fn a_conflict_lasts_through_later_edits() {
     for replica in [&a, &b, &c] {
         let conflicts: Vec<_> = replica.open_conflicts(&E).collect();
         assert_eq!(conflicts.len(), 1, "A's version is still there");
-        assert_eq!(conflicts[0].signed.body, va.body);
+        assert_eq!(conflicts[0].id, tidefell_meta::copy_id(&va));
         assert_eq!(replica.current(&E), c.current(&E));
     }
 }

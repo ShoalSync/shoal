@@ -37,8 +37,84 @@ pub enum Causality {
 /// device's highest change. So every vector has exactly one encoding.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct VersionVector {
-    counters: BTreeMap<DeviceId, u64>,
+    counters: Counters,
     holes: Vec<(DeviceId, u64, u64)>,
+}
+
+/// The highest change seen per device, sorted by device: a map encoded exactly as a `BTreeMap`
+/// is, kept as a vector because most have one or two devices, and every version and every file a
+/// device keeps holds one (ADR 0035).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+struct Counters(Vec<(DeviceId, u64)>);
+
+impl Counters {
+    fn find(&self, device: &DeviceId) -> Result<usize, usize> {
+        self.0.binary_search_by(|(d, _)| d.cmp(device))
+    }
+
+    fn get(&self, device: &DeviceId) -> Option<&u64> {
+        self.find(device)
+            .ok()
+            .and_then(|i| self.0.get(i))
+            .map(|(_, c)| c)
+    }
+
+    fn insert(&mut self, device: DeviceId, counter: u64) {
+        match self.find(&device) {
+            Ok(i) => {
+                if let Some(slot) = self.0.get_mut(i) {
+                    slot.1 = counter;
+                }
+            }
+            Err(i) => {
+                self.0.reserve_exact(1);
+                self.0.insert(i, (device, counter));
+            }
+        }
+    }
+
+    fn remove(&mut self, device: &DeviceId) {
+        if let Ok(i) = self.find(device) {
+            self.0.remove(i);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn keys(&self) -> impl Iterator<Item = &DeviceId> {
+        self.0.iter().map(|(d, _)| d)
+    }
+
+    fn values(&self) -> impl Iterator<Item = &u64> {
+        self.0.iter().map(|(_, c)| c)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (&DeviceId, &u64)> {
+        self.0.iter().map(|(d, c)| (d, c))
+    }
+}
+
+impl FromIterator<(DeviceId, u64)> for Counters {
+    /// Sorted by device; a device given twice keeps the last counter, as a map would.
+    fn from_iter<I: IntoIterator<Item = (DeviceId, u64)>>(iter: I) -> Self {
+        let map: BTreeMap<DeviceId, u64> = iter.into_iter().collect();
+        Self(map.into_iter().collect())
+    }
+}
+
+impl Serialize for Counters {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.iter())
+    }
+}
+
+impl<'de> Deserialize<'de> for Counters {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let map = BTreeMap::<DeviceId, u64>::deserialize(deserializer)?;
+        Ok(map.into_iter().collect())
+    }
 }
 
 /// Inclusive ranges of changes, ascending, disjoint and not adjacent.
@@ -195,9 +271,10 @@ impl VersionVector {
     /// Adds every change `other` has seen.
     pub fn merge(&mut self, other: &VersionVector) {
         if !self.has_holes() && !other.has_holes() {
-            for (device, &counter) in &other.counters {
-                let mine = self.counters.entry(*device).or_insert(0);
-                *mine = (*mine).max(counter);
+            for (device, &counter) in other.counters.iter() {
+                if counter > self.get(device) {
+                    self.counters.insert(*device, counter);
+                }
             }
             return;
         }
@@ -388,7 +465,7 @@ mod tests {
         assert_eq!(v.holes, vec![(d(1), 2, 2), (d(1), 4, 4)]);
         assert!(v.within_ceiling());
         let bad = |holes: Vec<(DeviceId, u64, u64)>| VersionVector {
-            counters: [(d(1), 9)].into_iter().collect(),
+            counters: [(d(1), 9)].into_iter().collect::<Counters>(),
             holes,
         };
         assert!(!bad(vec![(d(1), 0, 1)]).within_ceiling(), "change 0");
@@ -408,9 +485,20 @@ mod tests {
         assert!(!bad(vec![(d(2), 1, 1)]).within_ceiling(), "unknown device");
         let many = (0..=MAX_HOLES as u64).map(|i| (d(1), 2 * i + 1, 2 * i + 1));
         let many = VersionVector {
-            counters: [(d(1), 1000)].into_iter().collect(),
+            counters: [(d(1), 1000)].into_iter().collect::<Counters>(),
             holes: many.collect(),
         };
         assert!(!many.within_ceiling(), "too many holes");
+    }
+
+    #[test]
+    fn counters_encode_as_the_map_they_replaced() {
+        let counters = [(d(3), 7), (d(1), 2), (d(2), 5), (d(1), 4)];
+        let map: BTreeMap<DeviceId, u64> = counters.into_iter().collect();
+        let vector: Counters = counters.into_iter().collect();
+        let encoded = postcard::to_stdvec(&vector).unwrap();
+        assert_eq!(encoded, postcard::to_stdvec(&map).unwrap());
+        assert_eq!(postcard::from_bytes::<Counters>(&encoded).unwrap(), vector);
+        assert_eq!(vector.get(&d(1)), Some(&4));
     }
 }

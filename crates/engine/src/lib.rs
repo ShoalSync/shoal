@@ -46,6 +46,7 @@ mod engine;
 mod evict;
 mod history;
 mod ignores;
+mod manifests;
 mod materialize;
 pub mod pairing;
 mod pins;
@@ -58,6 +59,8 @@ mod setaside;
 mod sidecar;
 mod space;
 mod state;
+#[doc(hidden)]
+pub mod synth;
 mod tracked;
 
 /// Entry points for the fuzz targets in `fuzz/` (ADR 0031), built only by `cargo fuzz`.

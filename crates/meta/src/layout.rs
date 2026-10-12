@@ -32,13 +32,40 @@ impl Folding {
     }
 }
 
-/// The on-disk path of every live entry.
+/// The on-disk path of every live entry. An entry written at its own path, as nearly every one
+/// is, takes no copy of it here (ADR 0035): callers give the entry's path, from its version.
 #[derive(Debug, Clone, Default)]
 pub struct Layout {
-    paths: HashMap<EntryId, String>,
-    /// By folded path.
-    entries: HashMap<String, EntryId>,
+    /// Live entries written somewhere other than their own path: a name that gives way, or a
+    /// folder spelled as another entry spells it.
+    moved: HashMap<EntryId, String>,
+    /// Live entries by a hash of where they are, as this device compares names. Hashes can
+    /// collide, so a lookup checks each entry's path.
+    at: HashMap<u64, Slot>,
     folding: Folding,
+}
+
+/// The entries whose places hash alike: nearly always one.
+#[derive(Debug, Clone)]
+enum Slot {
+    One(EntryId),
+    Many(Vec<EntryId>),
+}
+
+impl Slot {
+    fn iter(&self) -> impl Iterator<Item = &EntryId> {
+        match self {
+            Self::One(entry) => std::slice::from_ref(entry).iter(),
+            Self::Many(entries) => entries.iter(),
+        }
+    }
+}
+
+fn hash(folded: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    folded.hash(&mut hasher);
+    hasher.finish()
 }
 
 impl Layout {
@@ -63,6 +90,14 @@ impl Layout {
                     Cow::Borrowed(v.path.as_str()),
                     matches!(v.kind, EntryKind::Directory),
                 )
+            })
+            .collect();
+        // Each entry's own path, before folders are respelled: where it is unless it moves.
+        let own: HashMap<EntryId, &'a str> = live
+            .iter()
+            .filter_map(|(entry, path, _)| match path {
+                Cow::Borrowed(path) => Some((*entry, *path)),
+                Cow::Owned(_) => None,
             })
             .collect();
         if folding != Folding::None {
@@ -90,14 +125,20 @@ impl Layout {
             folding,
             ..Self::default()
         };
+        // Folders claimed by several entries: the lowest ID is at the place.
+        let mut folders: HashMap<String, EntryId> = HashMap::new();
         for (entry, path, directory) in &live {
             if *directory {
-                layout.paths.insert(*entry, path.to_string());
-                let lowest = layout.entries.entry(fold(path)).or_insert(*entry);
+                layout.note_moved(*entry, path, own.get(entry).copied());
+                let lowest = folders.entry(fold(path)).or_insert(*entry);
                 *lowest = (*lowest).min(*entry);
             } else {
                 claims.entry(fold(path)).or_default().push((*entry, path));
             }
+        }
+
+        for (folded, entry) in folders {
+            layout.add(hash(&folded), entry);
         }
 
         let mut taken: BTreeSet<String> = dirs.clone();
@@ -107,7 +148,7 @@ impl Layout {
             let keeps = if dirs.contains(&folded) { 0 } else { 1 };
             for (i, (id, path)) in ids.into_iter().enumerate() {
                 if i < keeps {
-                    layout.place(id, path.to_owned());
+                    layout.place(id, path.to_owned(), own.get(&id).copied());
                     taken.insert(folded.clone());
                 } else {
                     displaced.push((id, path));
@@ -121,26 +162,62 @@ impl Layout {
                 name = conflict_name(path, id, 32);
             }
             taken.insert(fold(&name));
-            layout.place(id, name);
+            layout.place(id, name, own.get(&id).copied());
         }
+        layout.moved.shrink_to_fit();
+        layout.at.shrink_to_fit();
         layout
     }
 
-    fn place(&mut self, entry: EntryId, path: String) {
-        self.entries
-            .insert(self.folding.fold(&path).into_owned(), entry);
-        self.paths.insert(entry, path);
+    fn note_moved(&mut self, entry: EntryId, path: &str, own: Option<&str>) {
+        if own != Some(path) {
+            self.moved.insert(entry, path.to_owned());
+        }
     }
 
-    /// Where `entry` is on disk, if it is live.
-    pub fn path_of(&self, entry: &EntryId) -> Option<&str> {
-        self.paths.get(entry).map(String::as_str)
+    fn add(&mut self, key: u64, entry: EntryId) {
+        match self.at.get_mut(&key) {
+            None => {
+                self.at.insert(key, Slot::One(entry));
+            }
+            Some(Slot::One(one)) => {
+                let one = *one;
+                self.at.insert(key, Slot::Many(vec![one, entry]));
+            }
+            Some(Slot::Many(entries)) => entries.push(entry),
+        }
     }
 
-    /// The live entry on disk at `path`, as this device compares names. For a directory claimed
-    /// by several entries, the one with the lowest ID.
-    pub fn entry_at(&self, path: &str) -> Option<EntryId> {
-        self.entries.get(self.folding.fold(path).as_ref()).copied()
+    fn place(&mut self, entry: EntryId, path: String, own: Option<&str>) {
+        self.add(hash(&self.folding.fold(&path)), entry);
+        if own != Some(path.as_str()) {
+            self.moved.insert(entry, path);
+        }
+    }
+
+    /// Where `entry` is on disk, given its own path if it is live (`own`).
+    pub fn path_of<'a>(&'a self, entry: &EntryId, own: Option<&'a str>) -> Option<&'a str> {
+        own?;
+        self.moved.get(entry).map(String::as_str).or(own)
+    }
+
+    /// The live entry on disk at `path`, as this device compares names, given each live
+    /// entry's own path (`own`). For a directory claimed by several entries, the one with the
+    /// lowest ID.
+    pub fn entry_at<'a>(
+        &'a self,
+        path: &str,
+        own: impl Fn(&EntryId) -> Option<&'a str>,
+    ) -> Option<EntryId> {
+        let folded = self.folding.fold(path);
+        self.at
+            .get(&hash(&folded))?
+            .iter()
+            .find(|entry| {
+                self.path_of(entry, own(entry))
+                    .is_some_and(|at| self.folding.fold(at) == folded)
+            })
+            .copied()
     }
 }
 
@@ -252,10 +329,40 @@ mod tests {
         EntryId([n; 16])
     }
 
+    /// A layout with the versions it was made from, to look entries up as a folder does.
+    struct Laid<'a> {
+        layout: Layout,
+        versions: &'a [EntryVersion],
+    }
+
+    impl<'a> Laid<'a> {
+        fn own(&self, entry: &EntryId) -> Option<&'a str> {
+            self.versions
+                .iter()
+                .find(|v| v.entry == *entry && !matches!(v.kind, EntryKind::Tombstone))
+                .map(|v| v.path.as_str())
+        }
+
+        fn path_of(&self, entry: &EntryId) -> Option<&str> {
+            self.layout.path_of(entry, self.own(entry))
+        }
+
+        fn entry_at(&self, path: &str) -> Option<EntryId> {
+            self.layout.entry_at(path, |e| self.own(e))
+        }
+    }
+
+    fn laid(versions: &[EntryVersion], folding: Folding) -> Laid<'_> {
+        Laid {
+            layout: Layout::folded(versions, folding),
+            versions,
+        }
+    }
+
     #[test]
     fn lowest_entry_keeps_the_path() {
         let versions = [file(9, "notes.txt"), file(3, "notes.txt"), file(5, "other")];
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(layout.path_of(&id(3)), Some("notes.txt"));
         assert_eq!(
             layout.path_of(&id(9)),
@@ -273,11 +380,11 @@ mod tests {
     fn names_that_fold_together_claim_one_place_on_a_case_insensitive_device() {
         let versions = [file(9, "Photo.jpg"), file(3, "photo.jpg"), file(5, "other")];
         // Every device that tells them apart keeps both names.
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(layout.path_of(&id(9)), Some("Photo.jpg"));
         assert_eq!(layout.path_of(&id(3)), Some("photo.jpg"));
         // A device that does not writes the higher ID under a conflict name.
-        let layout = Layout::folded(&versions, Folding::Case);
+        let layout = laid(&versions, Folding::Case);
         assert_eq!(layout.path_of(&id(3)), Some("photo.jpg"));
         assert_eq!(
             layout.path_of(&id(9)),
@@ -299,14 +406,14 @@ mod tests {
             file(8, "DOCS/Sub/c.txt"),
             file(2, "docs/sub/d.txt"),
         ];
-        let layout = Layout::folded(&versions, Folding::Case);
+        let layout = laid(&versions, Folding::Case);
         assert_eq!(layout.path_of(&id(4)), Some("docs/a.txt"));
         assert_eq!(layout.path_of(&id(7)), Some("docs/b.txt"));
         assert_eq!(layout.path_of(&id(8)), Some("docs/sub/c.txt"));
         assert_eq!(layout.path_of(&id(2)), Some("docs/sub/d.txt"));
         // A file and a folder whose names fold together: the folder wins, as for equal names.
         let versions = [file(1, "notes"), file(2, "Notes/x.txt")];
-        let layout = Layout::folded(&versions, Folding::Case);
+        let layout = laid(&versions, Folding::Case);
         assert_eq!(layout.path_of(&id(2)), Some("Notes/x.txt"));
         assert_eq!(layout.path_of(&id(1)), Some("notes (conflict 01010101)"));
     }
@@ -320,10 +427,7 @@ mod tests {
         ];
         let mut b = a.clone();
         b.reverse();
-        let (a, b) = (
-            Layout::folded(&a, Folding::Case),
-            Layout::folded(&b, Folding::Case),
-        );
+        let (a, b) = (laid(&a, Folding::Case), laid(&b, Folding::Case));
         for n in [9, 3, 4] {
             assert_eq!(a.path_of(&id(n)), b.path_of(&id(n)));
         }
@@ -344,7 +448,7 @@ mod tests {
             file(9, "d/x.tar.gz"),
             file(3, "d/x.tar.gz"),
         ];
-        let (la, lb) = (Layout::new(&a), Layout::new(&b));
+        let (la, lb) = (laid(&a, Folding::None), laid(&b, Folding::None));
         for n in [3, 4, 9] {
             assert_eq!(la.path_of(&id(n)), lb.path_of(&id(n)));
         }
@@ -360,7 +464,7 @@ mod tests {
             version(3, "c", EntryKind::Directory),
             file(4, "c"),
         ];
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(layout.path_of(&id(1)), Some("a (conflict 01010101)"));
         assert_eq!(layout.path_of(&id(2)), Some("a/b"));
         assert_eq!(layout.path_of(&id(3)), Some("c"));
@@ -373,7 +477,7 @@ mod tests {
             version(7, "d", EntryKind::Directory),
             version(2, "d", EntryKind::Directory),
         ];
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(layout.path_of(&id(7)), Some("d"));
         assert_eq!(layout.path_of(&id(2)), Some("d"));
         assert_eq!(layout.entry_at("d"), Some(id(2)));
@@ -382,7 +486,7 @@ mod tests {
     #[test]
     fn taken_conflict_name_uses_the_full_id() {
         let versions = [file(1, "f"), file(9, "f"), file(5, "f (conflict 09090909)")];
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(
             layout.path_of(&id(9)),
             Some("f (conflict 09090909090909090909090909090909)")
@@ -393,7 +497,7 @@ mod tests {
     #[test]
     fn tombstones_are_ignored() {
         let versions = [file(1, "f"), version(0, "f", EntryKind::Tombstone)];
-        let layout = Layout::new(&versions);
+        let layout = laid(&versions, Folding::None);
         assert_eq!(layout.path_of(&id(1)), Some("f"));
         assert_eq!(layout.path_of(&id(0)), None);
     }

@@ -1,0 +1,56 @@
+name: Memory
+
+# The engine's memory on synthetic folders each night on main (ADR 0035): a full replica of
+# 100,000 files and 1 TiB, and a phone folder of 50,000 photos. Reported, not yet enforced; the
+# full-size measurement of 1,000,000 files and 10 TiB runs when dispatched by hand.
+on:
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Also measure 1,000,000 files and 10 TiB (about an hour)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    name: Synthetic folders
+    runs-on: self-hosted
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo build --release -p tidefell-engine --example memory
+      - name: Measure
+        env:
+          FULL: ${{ inputs.full }}
+        # Folders are generated under the runner's temporary directory and removed after.
+        run: |
+          cd "$RUNNER_TEMP"
+          memory="$GITHUB_WORKSPACE/target/release/examples/memory"
+          {
+            echo '## Memory (ADR 0035)'
+            echo '### 100,000 files, 1 TiB'
+            echo '```'
+            "$memory" run 100000 1099511627776
+            echo '```'
+            echo '### Phone folder: 50,000 photos of 3 MB'
+            echo '```'
+            "$memory" run 50000 150000000000
+            echo '```'
+            if [ "$FULL" = true ]; then
+              echo '### 1,000,000 files, 10 TiB'
+              echo '```'
+              "$memory" run 1000000 10995116277760
+              echo '```'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

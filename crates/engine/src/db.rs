@@ -9,12 +9,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use tidefell_meta::{Header, Journal, Recycled, Retention};
 use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::{DeviceId, FolderId, Signed};
+use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 
 use crate::tracked::Changed;
 use crate::{Error, Result};
@@ -26,6 +27,11 @@ const HEADER: TableDefinition<&str, &[u8]> = TableDefinition::new("header");
 const VERSIONS: TableDefinition<u64, &[u8]> = TableDefinition::new("versions");
 const DROPPED: TableDefinition<u64, &[u8]> = TableDefinition::new("dropped");
 const RECYCLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("recycle");
+/// Which contents hold each chunk (ADR 0035): the chunk's hash then the content's, 64 bytes,
+/// so the contents with a chunk are one range.
+const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
+/// The manifests table, read one record at a time rather than at open (ADR 0035).
+const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
 pub(crate) const MAPS: [&str; 11] = [
@@ -86,6 +92,10 @@ pub(crate) struct Changes {
     pub(crate) activity: Vec<tidefell_meta::Change>,
     /// When they were applied.
     pub(crate) at_ms: i64,
+    /// Rows of the chunk index to add (`true`) or remove: a chunk's hash, then a content's.
+    pub(crate) chunks: Vec<([u8; 64], bool)>,
+    /// Which save this is, counted by the folder, so it knows once the changes are committed.
+    pub(crate) generation: u64,
 }
 
 /// What a database holds.
@@ -102,7 +112,8 @@ pub(crate) struct Loaded {
 
 /// One folder's database.
 pub(crate) struct FolderDb {
-    db: Database,
+    /// Shared with [`Reader`]s; only the integrity check and compaction need it alone.
+    db: Arc<RwLock<Database>>,
     path: PathBuf,
     /// Versions kept.
     live: u64,
@@ -145,6 +156,113 @@ fn err(path: &Path) -> impl Fn(redb::Error) -> Error + '_ {
     }
 }
 
+/// Each folder's database caches this much of its file (ADR 0035): redb's default, 1 GiB per
+/// database, would let a large folder's load fill memory.
+const CACHE_BYTES: usize = 4 << 20;
+
+fn builder() -> redb::Builder {
+    let mut builder = Database::builder();
+    builder.set_cache_size(CACHE_BYTES);
+    builder
+}
+
+/// The header key saying the chunk index was filled from the manifests.
+const CHUNKS_BUILT: &str = "chunks built";
+
+/// The chunk index's rows for `manifest`: each chunk's hash, then the content's.
+pub(crate) fn chunk_rows(manifest: &Manifest) -> impl Iterator<Item = [u8; 64]> + '_ {
+    manifest.chunks.iter().map(|chunk| {
+        let mut row = [0u8; 64];
+        row[..32].copy_from_slice(&chunk.hash.0);
+        row[32..].copy_from_slice(&manifest.content.0);
+        row
+    })
+}
+
+/// Reads manifests and the chunk index from a folder's database, concurrently with commits
+/// (ADR 0035). It sees what is committed; the caller overlays what is not yet.
+#[derive(Clone)]
+pub(crate) struct Reader {
+    db: Arc<RwLock<Database>>,
+    path: PathBuf,
+}
+
+impl std::fmt::Debug for Reader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reader").field("path", &self.path).finish()
+    }
+}
+
+impl Reader {
+    fn begin(&self) -> Result<redb::ReadTransaction> {
+        let tx = self.db.read().unwrap().begin_read();
+        tx.map_err(|x| err(&self.path)(x.into()))
+    }
+
+    /// The manifest of `content`, if committed.
+    pub(crate) fn manifest(&self, content: &ContentHash) -> Result<Option<Manifest>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(MANIFESTS).map_err(|x| e(x.into()))?;
+        let key = crate::tracked::encode(content);
+        match table.get(key.as_slice()).map_err(|x| e(x.into()))? {
+            Some(value) => Ok(Some(
+                postcard::from_bytes(value.value()).map_err(corrupt(&self.path))?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    /// The committed contents holding chunk `hash`.
+    pub(crate) fn contents_with(&self, hash: &ChunkHash) -> Result<Vec<ContentHash>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(CHUNKS).map_err(|x| e(x.into()))?;
+        let mut low = [0u8; 64];
+        low[..32].copy_from_slice(&hash.0);
+        let mut high = low;
+        high[32..].fill(0xff);
+        let mut out = Vec::new();
+        for row in table
+            .range(low.as_slice()..=high.as_slice())
+            .map_err(|x| e(x.into()))?
+        {
+            let (key, _) = row.map_err(|x| e(x.into()))?;
+            let mut content = [0u8; 32];
+            content.copy_from_slice(&key.value()[32..]);
+            out.push(ContentHash(content));
+        }
+        Ok(out)
+    }
+
+    /// The committed versions with `sequences`, signed, in that order; one not there is left out.
+    pub(crate) fn versions(&self, sequences: &[u64]) -> Result<Vec<Signed<EntryVersion>>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(VERSIONS).map_err(|x| e(x.into()))?;
+        let mut out = Vec::with_capacity(sequences.len());
+        for sequence in sequences {
+            if let Some(value) = table.get(*sequence).map_err(|x| e(x.into()))? {
+                out.push(postcard::from_bytes(value.value()).map_err(corrupt(&self.path))?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Every committed manifest's content, for finding those nothing references.
+    pub(crate) fn contents(&self) -> Result<Vec<ContentHash>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(MANIFESTS).map_err(|x| e(x.into()))?;
+        let mut out = Vec::new();
+        for row in table.iter().map_err(|x| e(x.into()))? {
+            let (key, _) = row.map_err(|x| e(x.into()))?;
+            out.push(postcard::from_bytes(key.value()).map_err(corrupt(&self.path))?);
+        }
+        Ok(out)
+    }
+}
+
 fn corrupt(path: &Path) -> impl Fn(postcard::Error) -> Error + '_ {
     move |_| Error::CorruptState(path.to_path_buf())
 }
@@ -169,7 +287,7 @@ impl FolderDb {
             std::fs::create_dir_all(dir).map_err(crate::io_err(dir))?;
         }
         let path = path.to_path_buf();
-        let db = Database::create(&path).map_err(|e| err(&path)(e.into()))?;
+        let db = builder().create(&path).map_err(|e| err(&path)(e.into()))?;
         // Every table exists from the start, so reading never meets a missing one.
         let tx = db.begin_write().map_err(|e| err(&path)(e.into()))?;
         {
@@ -178,6 +296,11 @@ impl FolderDb {
             tx.open_table(VERSIONS).map_err(e)?;
             tx.open_table(DROPPED).map_err(e)?;
             tx.open_table(RECYCLE).map_err(e)?;
+            tx.open_table(CHUNKS).map_err(e)?;
+            tx.open_table(HEADER)
+                .map_err(e)?
+                .insert(CHUNKS_BUILT, [].as_slice())
+                .map_err(|x| err(&path)(x.into()))?;
             for name in MAPS {
                 tx.open_table(TableDefinition::<&[u8], &[u8]>::new(name))
                     .map_err(e)?;
@@ -185,7 +308,7 @@ impl FolderDb {
         }
         tx.commit().map_err(|e| err(&path)(e.into()))?;
         Ok(Self {
-            db,
+            db: Arc::new(RwLock::new(db)),
             path,
             live: 0,
             dropped: 0,
@@ -202,18 +325,19 @@ impl FolderDb {
 
     fn open_checked(path: &Path) -> Result<(Self, Loaded)> {
         let path = path.to_path_buf();
-        let mut db = Database::open(&path).map_err(|e| err(&path)(e.into()))?;
+        let mut db = builder().open(&path).map_err(|e| err(&path)(e.into()))?;
         // The database's own check, beyond what opening it does (ADR 0034).
         if !db.check_integrity().map_err(|e| err(&path)(e.into()))? {
             tracing::warn!(path = %path.display(), "the folder's database was damaged and repaired");
         }
         let mut folder = Self {
-            db,
+            db: Arc::new(RwLock::new(db)),
             path,
             live: 0,
             dropped: 0,
             next_drop: 0,
         };
+        folder.build_chunk_index()?;
         let (loaded, dropped, next_drop) = folder.read()?;
         folder.live = loaded.versions.len() as u64;
         folder.dropped = dropped;
@@ -234,11 +358,12 @@ impl FolderDb {
         let path = self.path.clone();
         // The check reads the file as on disk: changes committed without waiting for it, as
         // last-use times are, are written first, or redb sees its own state as damaged.
-        let mut tx = self.db.begin_write().map_err(|e| err(&path)(e.into()))?;
+        let mut db = self.db.write().unwrap();
+        let mut tx = db.begin_write().map_err(|e| err(&path)(e.into()))?;
         tx.set_durability(Durability::Immediate)
             .map_err(|e| err(&path)(e.into()))?;
         tx.commit().map_err(|e| err(&path)(e.into()))?;
-        let checked = crate::diagnostics::catching(|| self.db.check_integrity())
+        let checked = crate::diagnostics::catching(|| db.check_integrity())
             .map_err(|_| Error::CorruptState(path.clone()))?;
         if !checked.map_err(|e| err(&path)(e.into()))? {
             tracing::warn!(path = %path.display(), "the folder's database was damaged and repaired");
@@ -251,7 +376,12 @@ impl FolderDb {
     fn read(&self) -> Result<(Loaded, u64, u64)> {
         let path = &self.path;
         let e = |e: redb::Error| err(path)(e);
-        let tx = self.db.begin_read().map_err(|x| e(x.into()))?;
+        let tx = self
+            .db
+            .read()
+            .unwrap()
+            .begin_read()
+            .map_err(|x| e(x.into()))?;
         let header: HeaderRecord = {
             let table = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
             let bytes = table
@@ -310,7 +440,8 @@ impl FolderDb {
             recycled.push(postcard::from_bytes(value.value()).map_err(corrupt(path))?);
         }
         let mut maps = BTreeMap::new();
-        for name in MAPS {
+        // Manifests stay on disk, read one at a time (ADR 0035).
+        for name in MAPS.into_iter().filter(|name| *name != "manifests") {
             let mut records = Vec::new();
             for row in tx
                 .open_table(TableDefinition::<&[u8], &[u8]>::new(name))
@@ -347,7 +478,12 @@ impl FolderDb {
     pub(crate) fn commit(&mut self, changes: &Changes) -> Result<()> {
         let path = self.path.clone();
         let e = |x: redb::Error| err(&path)(x);
-        let mut tx = self.db.begin_write().map_err(|x| e(x.into()))?;
+        let mut tx = self
+            .db
+            .read()
+            .unwrap()
+            .begin_write()
+            .map_err(|x| e(x.into()))?;
         tx.set_durability(if changes.durable {
             Durability::Immediate
         } else {
@@ -427,6 +563,16 @@ impl FolderDb {
                 }
             }
         }
+        if !changes.chunks.is_empty() {
+            let mut table = tx.open_table(CHUNKS).map_err(|x| e(x.into()))?;
+            for (row, add) in &changes.chunks {
+                if *add {
+                    table.insert(row.as_slice(), ()).map_err(|x| e(x.into()))?;
+                } else {
+                    table.remove(row.as_slice()).map_err(|x| e(x.into()))?;
+                }
+            }
+        }
         tx.commit().map_err(|x| e(x.into()))?;
         if dropped > 0 {
             self.next_drop = self.next_drop.saturating_add(1);
@@ -439,11 +585,53 @@ impl FolderDb {
         Ok(())
     }
 
+    /// Fills the chunk index from the manifests, once, for a database made before it existed.
+    fn build_chunk_index(&mut self) -> Result<()> {
+        let path = self.path.clone();
+        let e = |x: redb::Error| err(&path)(x);
+        let db = self.db.read().unwrap();
+        let tx = db.begin_write().map_err(|x| e(x.into()))?;
+        {
+            let mut header = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
+            if header.get(CHUNKS_BUILT).map_err(|x| e(x.into()))?.is_some() {
+                return Ok(());
+            }
+            header
+                .insert(CHUNKS_BUILT, [].as_slice())
+                .map_err(|x| e(x.into()))?;
+            let manifests = tx.open_table(MANIFESTS).map_err(|x| e(x.into()))?;
+            let mut chunks = tx.open_table(CHUNKS).map_err(|x| e(x.into()))?;
+            for row in manifests.iter().map_err(|x| e(x.into()))? {
+                let (_, value) = row.map_err(|x| e(x.into()))?;
+                let manifest: Manifest =
+                    postcard::from_bytes(value.value()).map_err(corrupt(&path))?;
+                for row in chunk_rows(&manifest) {
+                    chunks.insert(row.as_slice(), ()).map_err(|x| e(x.into()))?;
+                }
+            }
+        }
+        tx.commit().map_err(|x| e(x.into()))?;
+        Ok(())
+    }
+
+    /// A handle for reading manifests and the chunk index while the committer writes.
+    pub(crate) fn reader(&self) -> Reader {
+        Reader {
+            db: self.db.clone(),
+            path: self.path.clone(),
+        }
+    }
+
     /// Removes the dropped versions in one sorted pass, then gives the freed space back.
     fn clean(&mut self) -> Result<()> {
         let path = self.path.clone();
         let e = |x: redb::Error| err(&path)(x);
-        let tx = self.db.begin_write().map_err(|x| e(x.into()))?;
+        let tx = self
+            .db
+            .read()
+            .unwrap()
+            .begin_write()
+            .map_err(|x| e(x.into()))?;
         {
             let mut gone = Vec::new();
             {
@@ -466,7 +654,13 @@ impl FolderDb {
         tx.commit().map_err(|x| e(x.into()))?;
         self.dropped = 0;
         self.next_drop = 0;
-        while self.db.compact().map_err(|x| e(x.into()))? {}
+        while self
+            .db
+            .write()
+            .unwrap()
+            .compact()
+            .map_err(|x| e(x.into()))?
+        {}
         Ok(())
     }
 }
@@ -498,6 +692,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         db.check().unwrap();
@@ -511,6 +707,8 @@ mod tests {
                 rebuild: None,
                 activity: Vec::new(),
                 at_ms: 0,
+                chunks: Vec::new(),
+                generation: 0,
             })
             .unwrap();
         }
@@ -523,6 +721,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         assert_eq!(db.read().unwrap().0.header.sequence, 9);
@@ -541,6 +741,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         drop(db);
@@ -586,6 +788,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         db.commit(&Changes {
@@ -603,6 +807,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         drop(db);
@@ -646,6 +852,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         db.commit(&Changes {
@@ -659,6 +867,8 @@ mod tests {
             rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
         })
         .unwrap();
         // As many dropped as live: removed, and the file compacted.

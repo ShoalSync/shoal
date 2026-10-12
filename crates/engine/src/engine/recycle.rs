@@ -150,7 +150,9 @@ pub(super) fn purge(inner: &Inner, now_ms: i64) {
 fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto::ChunkHash>) {
     let handles: Vec<Arc<FolderHandle>> = inner.folders.read().unwrap().values().cloned().collect();
     let still_used = |hash: &tidefell_proto::ChunkHash| {
-        handles.iter().any(|h| h.lock().index.is_referenced(hash))
+        handles
+            .iter()
+            .any(|h| h.lock().manifests.is_referenced(hash))
     };
     let mut store = inner.store.lock().unwrap();
     for hash in chunks.into_iter().collect::<BTreeSet<_>>() {

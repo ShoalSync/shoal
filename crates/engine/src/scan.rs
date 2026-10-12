@@ -1,6 +1,6 @@
 //! Detecting local changes by scanning a folder on disk.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -236,28 +236,32 @@ fn recorded_path(state: &FolderState, entry: EntryId, path: &str) -> String {
 /// one this device already has keeps it, or else the first, and the others are problems
 /// (ADR 0033).
 fn one_per_path(
-    found: Vec<(String, DiskStat)>,
-    known: &BTreeMap<String, LocalFile>,
+    mut found: Vec<(String, DiskStat)>,
+    handle: &FolderHandle,
     folding: crate::state::NameFolding,
     failures: &mut Vec<Failure>,
 ) -> Vec<(String, DiskStat)> {
-    let mut by_path: BTreeMap<String, Vec<(String, DiskStat)>> = BTreeMap::new();
-    for (rel, stat) in found {
-        by_path
-            .entry(folding.fold(&rel))
-            .or_default()
-            .push((rel, stat));
+    // Found sorted and without repeats: on a drive that tells every name apart, names in NFC
+    // cannot collide, so there is nothing to group (ADR 0035: no copy of every path).
+    let normalized = |rel: &str| matches!(recorded(rel), std::borrow::Cow::Borrowed(_));
+    if folding.0 == tidefell_meta::Folding::None && found.iter().all(|(rel, _)| normalized(rel)) {
+        return found;
     }
-    let mut kept = Vec::new();
-    for (path, mut names) in by_path {
-        if names.len() > 1 {
-            let keep = names
-                .iter()
-                .position(|(rel, _)| known.contains_key(rel))
-                .unwrap_or(0);
-            let first = names.swap_remove(keep);
-            for (rel, _) in names {
-                warn!(path = %rel, recorded = %path, "skipping a second name for one path");
+    found.sort_by_cached_key(|(rel, _)| folding.fold(rel));
+    let mut kept: Vec<(String, DiskStat)> = Vec::with_capacity(found.len());
+    let mut group: Vec<(String, DiskStat)> = Vec::new();
+    let mut flush = |group: &mut Vec<(String, DiskStat)>, kept: &mut Vec<(String, DiskStat)>| {
+        if group.len() > 1 {
+            let keep = {
+                let state = handle.lock();
+                group
+                    .iter()
+                    .position(|(rel, _)| state.local.get(rel).is_some())
+                    .unwrap_or(0)
+            };
+            let first = group.swap_remove(keep);
+            for (rel, _) in group.drain(..) {
+                warn!(path = %rel, "skipping a second name for one path");
                 failures.push(Failure::new(
                     &rel,
                     Operation::Scan,
@@ -267,9 +271,19 @@ fn one_per_path(
             }
             kept.push(first);
         } else {
-            kept.extend(names);
+            kept.append(group);
         }
+    };
+    for item in found {
+        if group
+            .last()
+            .is_some_and(|(rel, _)| folding.fold(rel) != folding.fold(&item.0))
+        {
+            flush(&mut group, &mut kept);
+        }
+        group.push(item);
     }
+    flush(&mut group, &mut kept);
     kept.sort_by(|a, b| a.0.cmp(&b.0));
     kept
 }
@@ -320,13 +334,12 @@ pub(crate) fn scan(
     scope: Option<&Scope>,
     saved: Option<&str>,
 ) -> Result<Scanned> {
-    let (root, known, rebuilding, exchanged) = {
+    let (root, rebuilding, exchanged) = {
         let mut state = handle.lock();
         // The caller checked the root is there, so what was kept can be found (ADR 0034).
         state.restore_if_rebuilding();
         (
             state.config.path.clone(),
-            state.local.clone(),
             state.rebuilding(),
             state.exchanged(),
         )
@@ -363,27 +376,35 @@ pub(crate) fn scan(
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found.dedup_by(|a, b| a.0 == b.0);
     let folding = handle.lock().folding();
-    let found = one_per_path(found, &known, folding, &mut failures);
-    let mut found = found;
+    let mut found = one_per_path(found, handle, folding, &mut failures);
     if let Some(rel) = saved.filter(|rel| *rel != IGNORE_FILE && ignores.is_ignored(rel, false)) {
         if let Some(stat) = stat(&root.join(rel)) {
-            found.push((rel.to_owned(), stat));
+            if let Err(at) = found.binary_search_by(|(r, _)| r.as_str().cmp(rel)) {
+                found.insert(at, (rel.to_owned(), stat));
+            }
         }
     }
 
-    let mut seen = BTreeSet::new();
+    // Each file is compared with what is recorded under the folder lock, briefly, rather than
+    // with a copy of every record (ADR 0035).
     let mut changed = Vec::new();
-    for (rel, disk) in found {
-        seen.insert(rel.clone());
-        if known.get(&rel).is_some_and(|l| {
-            l.size == disk.size && l.mtime_ns == disk.mtime_ns && l.executable == disk.executable
-        }) {
+    for (rel, disk) in &found {
+        let (rel, disk) = (rel.clone(), *disk);
+        let known = {
+            let state = handle.lock();
+            state.local.get(&rel).map(|l| {
+                l.size == disk.size
+                    && l.mtime_ns == disk.mtime_ns
+                    && l.executable == disk.executable
+            })
+        };
+        if known == Some(true) {
             continue;
         }
         // While the folder is rebuilt, a file is only matched to an entry a peer sent for its
         // path, and one there is no such entry for yet is left alone: not read, not recorded,
         // and not a problem (ADR 0034).
-        if rebuilding && !known.contains_key(&rel) && !matchable(&handle.lock(), &rel, &disk) {
+        if rebuilding && known.is_none() && !matchable(&handle.lock(), &rel, &disk) {
             continue;
         }
         let path = root.join(&rel);
@@ -494,8 +515,8 @@ pub(crate) fn scan(
         let stale: Vec<String> = state
             .local
             .iter()
-            .filter(|(k, l)| l.entry == entry && **k != c.rel && state.same_place(k, &c.rel))
-            .map(|(k, _)| k.clone())
+            .filter(|(k, l)| l.entry == entry && ***k != *c.rel && state.same_place(k, &c.rel))
+            .map(|(k, _)| k.to_string())
             .collect();
         for k in stale {
             state.local.remove(&k);
@@ -531,9 +552,10 @@ pub(crate) fn scan(
     // Nothing is deleted while the folder is rebuilt: what is recorded as on disk is only what
     // was matched, and the scan after the rebuild sees everything (ADR 0034).
     let mut deleted = Vec::new();
-    for rel in known.keys() {
+    let seen = |rel: &str| found.binary_search_by(|(r, _)| r.as_str().cmp(rel)).is_ok();
+    for rel in state.local.keys() {
         if rebuilding
-            || seen.contains(rel)
+            || seen(rel)
             || !scope.is_none_or(|s| s.contains(rel))
             || state.ignores.is_ignored(rel, false)
             || unreadable
@@ -542,11 +564,11 @@ pub(crate) fn scan(
         {
             continue;
         }
-        match fs::symlink_metadata(root.join(rel)) {
+        match fs::symlink_metadata(root.join(&**rel)) {
             Ok(_) => {}
-            Err(e) if is_gone(&e) => deleted.push(rel.clone()),
+            Err(e) if is_gone(&e) => deleted.push(rel.to_string()),
             Err(e) => {
-                if !failures.iter().any(|f| f.path == *rel) {
+                if !failures.iter().any(|f| *f.path == **rel) {
                     warn!(path = %rel, error = %e, "cannot look at file");
                     failures.push(Failure::io(rel, Operation::Scan, &e));
                 }
@@ -563,7 +585,7 @@ pub(crate) fn scan(
             !deletes_here_only
                 && state
                     .local
-                    .get(*rel)
+                    .get(rel)
                     .is_some_and(|l| live_here(&state, rel, l.entry))
         })
         .cloned()
@@ -573,13 +595,13 @@ pub(crate) fn scan(
         && state
             .config
             .confirm_deletes
-            .holds(everywhere.len(), known.len())
+            .holds(everywhere.len(), state.local.len())
     {
         if state.held_deletes != everywhere {
             warn!(
                 folder = %state.config.id,
                 deletes = everywhere.len(),
-                files = known.len(),
+                files = state.local.len(),
                 "holding a scan's deletes until they are confirmed"
             );
             state.held_deletes = everywhere;
