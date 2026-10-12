@@ -1,8 +1,9 @@
 name: Memory
 
 # The engine's memory on synthetic folders each night on main (ADR 0035): a full replica of
-# 100,000 files and 1 TiB, and a phone folder of 50,000 photos. Reported, not yet enforced; the
-# full-size measurement of 1,000,000 files and 10 TiB runs when dispatched by hand.
+# 100,000 files and 1 TiB, reported, and a phone folder of 50,000 photos, which fails over its
+# target of 60 MB. The full-size measurement of 1,000,000 files and 10 TiB, target 500 MB, runs
+# when dispatched by hand.
 on:
   schedule:
     - cron: "47 4 * * *"
@@ -34,9 +35,11 @@ jobs:
         env:
           FULL: ${{ inputs.full }}
         # Folders are generated under the runner's temporary directory and removed after.
+        # Every folder is measured, and the step fails at the end if one was over its target.
         run: |
           cd "$RUNNER_TEMP"
           memory="$GITHUB_WORKSPACE/target/release/examples/memory"
+          over=0
           {
             echo '## Memory (ADR 0035)'
             echo '### 100,000 files, 1 TiB'
@@ -45,12 +48,13 @@ jobs:
             echo '```'
             echo '### Phone folder: 50,000 photos of 3 MB'
             echo '```'
-            "$memory" run 50000 150000000000
+            "$memory" run 50000 150000000000 57 || over=1
             echo '```'
             if [ "$FULL" = true ]; then
               echo '### 1,000,000 files, 10 TiB'
               echo '```'
-              "$memory" run 1000000 10995116277760
+              "$memory" run 1000000 10995116277760 476 || over=1
               echo '```'
             fi
+            exit "$over"
           } | tee -a "$GITHUB_STEP_SUMMARY"

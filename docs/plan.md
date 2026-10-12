@@ -685,8 +685,8 @@ databases they build on.
 
 Exit criterion: removing a folder's drive while `tidefelld` runs, and starting it before the
 drive mounts, deletes nothing anywhere; a full disk pauses downloads and resumes them when space
-returns; a synthetic full replica of 1,000,000 files and 10 TiB stays under 300 MB of resident
-memory; and 10,000 simulation seeds pass.
+returns; a synthetic full replica of 1,000,000 files and 10 TiB stays under 500 MB of resident
+memory (raised from 300 MB, ADR 0035); and 10,000 simulation seeds pass.
 
 ### Phase 5l work breakdown
 
