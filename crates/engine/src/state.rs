@@ -1081,7 +1081,7 @@ impl FolderState {
         for (path, local) in self.local.iter() {
             let current = self.meta.current(&local.entry).is_some_and(|v| {
                 matches!(v.kind, EntryKind::File { content, executable, .. }
-                    if content == local.content && executable == local.executable)
+                    if *content == local.content && *executable == local.executable)
             });
             let here = self
                 .meta
@@ -1297,7 +1297,7 @@ impl FolderState {
             }
         };
         for version in self.meta.entries() {
-            add(&version.kind);
+            add(version.kind);
             for conflict in self.meta.conflicts(&version.entry) {
                 add(&conflict.version.kind);
             }
@@ -1445,7 +1445,7 @@ mod tests {
             let versions: Vec<_> = (0..BATCH)
                 .map(|i| {
                     let n = (i * 7919 + round * 104_729) % ENTRIES;
-                    let current = state.meta.current(&entry(n)).unwrap().clone();
+                    let current = state.meta.current(&entry(n)).unwrap().to_version();
                     let mut vector = state.meta.current_vector(&entry(n));
                     vector.increment(other.id());
                     let changed = tidefell_proto::sync::EntryVersion {

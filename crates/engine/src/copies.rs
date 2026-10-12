@@ -3,8 +3,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use tidefell_meta::Current;
 use tidefell_net::{EndpointId, Node};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
+use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest};
 use tracing::{debug, info};
 
@@ -19,11 +20,11 @@ const MAX_CHECKS_PER_ROUND: usize = 256;
 /// that no full replica has confirmed yet, with their manifests.
 fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
     let mut out = BTreeMap::new();
-    let mut consider = |version: &EntryVersion| {
-        if version.author != me {
+    let mut consider = |author: DeviceId, kind: &EntryKind| {
+        if author != me {
             return;
         }
-        let EntryKind::File { content, .. } = version.kind else {
+        let EntryKind::File { content, .. } = *kind else {
             return;
         };
         if state.copies.contains_key(&content) {
@@ -34,19 +35,19 @@ fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
         }
     };
     for version in state.meta.entries() {
-        consider(version);
+        consider(version.author(), version.kind);
         for conflict in state.meta.conflicts(&version.entry) {
-            consider(&conflict.version);
+            consider(conflict.version.author, &conflict.version.kind);
         }
     }
     out.into_values().collect()
 }
 
 /// True if this device made `version` and no full replica has confirmed its content.
-pub(crate) fn only_here(state: &FolderState, me: DeviceId, version: &EntryVersion) -> bool {
-    match version.kind {
+pub(crate) fn only_here(state: &FolderState, me: DeviceId, version: Current<'_>) -> bool {
+    match *version.kind {
         EntryKind::File { content, .. } => {
-            version.author == me && state.copies.get(&content).is_none_or(|d| d.is_empty())
+            version.author() == me && state.copies.get(&content).is_none_or(|d| d.is_empty())
         }
         _ => false,
     }

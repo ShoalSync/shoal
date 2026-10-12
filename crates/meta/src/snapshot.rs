@@ -127,8 +127,10 @@ impl Folder {
             }
         }
         let mut entries = HashMap::new();
+        let mut devices = crate::compact::Devices::default();
         for (id, current) in currents {
             let conflicts = conflicts.remove(&id).unwrap_or_default();
+            let current = crate::compact::Slim::new(current, &mut devices);
             entries.insert(id, Entry { current, conflicts });
         }
         if !conflicts.is_empty() {
@@ -145,6 +147,7 @@ impl Folder {
             epoch: snapshot.epoch,
             sequence: snapshot.sequence,
             entries,
+            devices,
             recycle,
             layout: std::sync::OnceLock::new(),
             unfolded: std::sync::OnceLock::new(),

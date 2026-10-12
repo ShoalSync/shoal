@@ -147,6 +147,22 @@ impl VersionVector {
         Self::default()
     }
 
+    /// The vector of every change by `device` up to `counter`, and none by any other device.
+    pub fn single(device: DeviceId, counter: u64) -> Self {
+        let mut vector = Self::new();
+        vector.counters.insert(device, counter);
+        vector
+    }
+
+    /// The device and counter of a vector [`VersionVector::single`] makes, if this is one: most
+    /// versions' vectors are, and can be kept in less memory (ADR 0035).
+    pub fn as_single(&self) -> Option<(DeviceId, u64)> {
+        match self.counters.0.as_slice() {
+            [(device, counter)] if self.holes.is_empty() => Some((*device, *counter)),
+            _ => None,
+        }
+    }
+
     /// The highest change by `device` seen, or 0.
     pub fn get(&self, device: &DeviceId) -> u64 {
         self.counters.get(device).copied().unwrap_or(0)

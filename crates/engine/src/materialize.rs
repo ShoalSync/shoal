@@ -231,17 +231,14 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
             } => {
                 // Where this entry goes on disk: its path, unless it shares it, also after this
                 // device's folding (ADR 0024, ADR 0033).
-                let path = state
-                    .meta
-                    .disk_path(&version.entry)
-                    .unwrap_or(&version.path);
+                let path = state.meta.disk_path(&version.entry).unwrap_or(version.path);
                 // A file on disk is at this path if its name is the same as this device tells
                 // names apart: whatever Unicode form it has on disk, and whatever case on a
                 // drive that ignores case (ADR 0033).
                 let in_place = here.is_some_and(|(p, _)| state.same_place(p, path));
                 let current = in_place
                     && here
-                        .is_some_and(|(_, l)| l.content == content && l.executable == executable);
+                        .is_some_and(|(_, l)| l.content == *content && l.executable == *executable);
                 // Files dropped from this device stay off it until opened (ADR 0025), and
                 // ignored paths are never written (ADR 0029).
                 let dropped = state.dropped.contains(&version.entry);
@@ -276,9 +273,9 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                         Some((p, _)) if in_place => (*p).to_owned(),
                         _ => path.to_owned(),
                     },
-                    content,
-                    size,
-                    executable,
+                    content: *content,
+                    size: *size,
+                    executable: *executable,
                     modified_ms: version.modified_ms,
                     old_path: here.map(|(p, _)| (*p).to_owned()).filter(|_| !in_place),
                     base: state.meta.current_vector(&version.entry),
@@ -554,9 +551,9 @@ pub(crate) async fn fetch_one(
             PendingWrite {
                 entry: version.entry,
                 path: state.on_disk(path),
-                content,
-                size,
-                executable,
+                content: *content,
+                size: *size,
+                executable: *executable,
                 modified_ms: version.modified_ms,
                 old_path,
                 base: state.meta.current_vector(&version.entry),

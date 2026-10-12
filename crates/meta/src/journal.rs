@@ -6,11 +6,12 @@
 //! version of an entry is current is not stored either: it is the winner of the entry's kept
 //! versions, as [`Folder`] chooses it when storing.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 
 use tidefell_proto::sync::EntryVersion;
 use tidefell_proto::{DeviceId, EntryId, FolderId, PublicKey, Signed, SignedKind};
 
+use crate::compact::Slim;
 use crate::folder::{Entry, StoredVersion};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
@@ -105,10 +106,16 @@ impl Folder {
             .filter(|(_, s)| !dropped_new.contains(s))
             .filter_map(|(entry, sequence)| {
                 let entry = self.entries.get_mut(entry)?;
-                let kept = std::iter::once(&mut entry.current)
-                    .chain(entry.conflicts.iter_mut())
-                    .find(|v| v.sequence == *sequence)?;
-                Some((*sequence, *kept.signed.take()?))
+                let signed = if entry.current.sequence == *sequence {
+                    &mut entry.current.signed
+                } else {
+                    &mut entry
+                        .conflicts
+                        .iter_mut()
+                        .find(|v| v.sequence == *sequence)?
+                        .signed
+                };
+                Some((*sequence, *signed.take()?))
             })
             .collect();
         stored.sort_by_key(|(s, _)| *s);
@@ -139,8 +146,11 @@ impl Folder {
         let mut stored: Vec<(u64, Signed<EntryVersion>)> = self
             .entries
             .values_mut()
-            .flat_map(|e| std::iter::once(&mut e.current).chain(e.conflicts.iter_mut()))
-            .filter_map(|v| Some((v.sequence, *v.signed.take()?)))
+            .flat_map(|e| {
+                std::iter::once((e.current.sequence, &mut e.current.signed))
+                    .chain(e.conflicts.iter_mut().map(|v| (v.sequence, &mut v.signed)))
+            })
+            .filter_map(|(sequence, signed)| Some((sequence, *signed.take()?)))
             .collect();
         stored.sort_by_key(|(s, _)| *s);
         Journal {
@@ -160,7 +170,7 @@ impl Folder {
         let mut ids: Vec<(u64, EntryId)> = self
             .entries
             .values()
-            .flat_map(Entry::all)
+            .flat_map(Entry::stored)
             .map(|v| (v.sequence, v.id))
             .collect();
         ids.sort_unstable();
@@ -175,7 +185,19 @@ impl Folder {
         versions: impl IntoIterator<Item = (u64, Signed<EntryVersion>)>,
         recycled: impl IntoIterator<Item = Recycled>,
     ) -> Result<Self> {
-        let mut entries: HashMap<EntryId, Entry> = HashMap::new();
+        let mut folder = Folder::new(
+            header.id,
+            header.device,
+            header.epoch.max(1),
+            header.retention,
+        );
+        folder.epoch = header.epoch;
+        folder.sequence = header.sequence;
+        let versions = versions.into_iter();
+        folder.entries.reserve(versions.size_hint().0);
+        // Each entry's first version is kept compactly at once, so a large folder is never in
+        // memory in full (ADR 0035).
+        let mut several = Vec::new();
         for (sequence, signed) in versions {
             let version = EntryVersion::decode(&signed.body).map_err(Error::Snapshot)?;
             if version.folder != header.id {
@@ -194,41 +216,44 @@ impl Folder {
                 signed: None,
                 sequence,
             };
-            match entries.entry(stored.version.entry) {
+            match folder.entries.entry(stored.version.entry) {
                 std::collections::hash_map::Entry::Vacant(slot) => {
                     slot.insert(Entry {
-                        current: stored,
+                        current: Slim::new(stored, &mut folder.devices),
                         conflicts: Vec::new(),
                     });
                 }
                 std::collections::hash_map::Entry::Occupied(mut slot) => {
+                    several.push(*slot.key());
                     slot.get_mut().conflicts.push(stored);
                 }
             }
         }
         // An entry with several versions: the winner is current, the rest in sequence order.
-        for entry in entries.values_mut().filter(|e| !e.conflicts.is_empty()) {
-            let mut versions: Vec<StoredVersion> = std::mem::take(&mut entry.conflicts);
-            versions.push(entry.current.clone());
+        several.sort_unstable();
+        several.dedup();
+        for id in several {
+            let Some(entry) = folder.entries.remove(&id) else {
+                continue;
+            };
+            let mut versions = entry.conflicts;
+            versions.push(entry.current.into_stored(folder.id, &folder.devices));
             let win = winner(versions.iter().map(|v| &v.version));
-            entry.current = versions.swap_remove(win);
+            let current = versions.swap_remove(win);
             versions.sort_by_key(|v| v.sequence);
-            entry.conflicts = versions;
+            let current = Slim::new(current, &mut folder.devices);
+            folder.entries.insert(
+                id,
+                Entry {
+                    current,
+                    conflicts: versions,
+                },
+            );
         }
-        entries.shrink_to_fit();
         let mut recycle = RecycleBin::new(header.retention);
         for item in recycled {
             recycle.insert(item);
         }
-        let mut folder = Folder::new(
-            header.id,
-            header.device,
-            header.epoch.max(1),
-            header.retention,
-        );
-        folder.epoch = header.epoch;
-        folder.sequence = header.sequence;
-        folder.entries = entries;
         folder.recycle = recycle;
         Ok(folder)
     }

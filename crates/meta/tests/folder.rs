@@ -36,8 +36,11 @@ fn create_update_delete_restore() {
     let k = key(1);
     a.local_change(&k, E, "a.txt", file(1), 1000).unwrap();
     a.local_change(&k, E, "a.txt", file(2), 2000).unwrap();
-    assert_eq!(a.current(&E).unwrap().version.get(&device(1)), 2);
-    assert_eq!(a.find_path("a.txt").unwrap().kind, file(2));
+    assert_eq!(
+        a.current(&E).unwrap().to_version().version.get(&device(1)),
+        2
+    );
+    assert_eq!(a.find_path("a.txt").unwrap().to_version().kind, file(2));
 
     a.local_change(&k, E, "a.txt", EntryKind::Tombstone, 3000)
         .unwrap();
@@ -47,7 +50,7 @@ fn create_update_delete_restore() {
     assert_eq!(recycled.deleted_at_ms, 3000);
 
     a.restore(&k, E, 4000).unwrap();
-    assert_eq!(a.find_path("a.txt").unwrap().kind, file(2));
+    assert_eq!(a.find_path("a.txt").unwrap().to_version().kind, file(2));
     assert!(a.recycle_bin().is_empty());
     assert!(matches!(a.restore(&k, E, 5000), Err(Error::NotRestorable)));
 }
@@ -63,7 +66,7 @@ fn remote_updates_and_stale_versions() {
     assert_eq!(b.apply_remote(v2.clone(), NOW).unwrap(), Applied::Updated);
     assert_eq!(b.apply_remote(v1, NOW).unwrap(), Applied::Stale);
     assert_eq!(b.apply_remote(v2, NOW).unwrap(), Applied::Stale);
-    assert_eq!(b.current(&E).unwrap().kind, file(2));
+    assert_eq!(b.current(&E).unwrap().to_version().kind, file(2));
 }
 
 #[test]
@@ -89,7 +92,7 @@ fn concurrent_edits_converge_in_any_order() {
         for v in order {
             r.apply_remote((*v).clone(), NOW).unwrap();
         }
-        let current = r.current(&E).unwrap().clone();
+        let current = r.current(&E).unwrap().to_version().clone();
         let conflicts: Vec<_> = r.conflicts(&E).iter().map(|s| s.version.clone()).collect();
         results.push((current, conflicts));
     }
@@ -117,7 +120,7 @@ fn a_change_that_has_seen_every_version_resolves_a_conflict() {
     assert_eq!(c.apply_remote(vb, NOW).unwrap(), Applied::Conflict);
     assert_eq!(c.apply_remote(resolved, NOW).unwrap(), Applied::Updated);
     assert!(c.conflicts(&E).is_empty());
-    assert_eq!(c.current(&E).unwrap().kind, file(4));
+    assert_eq!(c.current(&E).unwrap().to_version().kind, file(4));
 }
 
 #[test]
@@ -136,8 +139,8 @@ fn edit_beats_concurrent_delete() {
 
     assert_eq!(a.apply_remote(edit, NOW).unwrap(), Applied::Conflict);
     assert_eq!(b.apply_remote(delete, NOW).unwrap(), Applied::Conflict);
-    assert_eq!(a.current(&E).unwrap().kind, file(2));
-    assert_eq!(b.current(&E).unwrap().kind, file(2));
+    assert_eq!(a.current(&E).unwrap().to_version().kind, file(2));
+    assert_eq!(b.current(&E).unwrap().to_version().kind, file(2));
     assert!(a.recycle_bin().is_empty(), "entry is live again");
 
     // Nothing to decide (ADR 0029), and the next edit supersedes the delete.
@@ -160,11 +163,11 @@ fn deleting_a_conflicted_file_brings_back_the_other_version() {
     let va = a.local_change(&key(1), E, "f", file(2), 2).unwrap();
     b.local_change(&key(2), E, "f", file(3), 3).unwrap();
     b.apply_remote(va, NOW).unwrap();
-    assert_eq!(b.current(&E).unwrap().kind, file(3));
+    assert_eq!(b.current(&E).unwrap().to_version().kind, file(3));
 
     b.local_change(&key(2), E, "f", EntryKind::Tombstone, 4)
         .unwrap();
-    assert_eq!(b.current(&E).unwrap().kind, file(2));
+    assert_eq!(b.current(&E).unwrap().to_version().kind, file(2));
     assert_eq!(b.open_conflicts(&E).count(), 0);
 }
 
@@ -201,7 +204,10 @@ fn tombstone_for_unknown_entry_is_kept() {
         .unwrap();
     let mut b = replica(2);
     assert_eq!(b.apply_remote(delete, NOW).unwrap(), Applied::New);
-    assert_eq!(b.current(&E).unwrap().kind, EntryKind::Tombstone);
+    assert_eq!(
+        b.current(&E).unwrap().to_version().kind,
+        EntryKind::Tombstone
+    );
     assert!(b.recycle_bin().is_empty());
 }
 
@@ -223,7 +229,7 @@ fn index_since_respects_sequence_and_epoch() {
 
     let (newer, _) = a.index_since(a.epoch(), 2, usize::MAX);
     assert_eq!(newer.len(), 1);
-    assert_eq!(newer[0].version.kind, file(3));
+    assert_eq!(newer[0].sequence, 3);
 
     let (reset, _) = a.index_since(a.epoch() + 1, 2, usize::MAX);
     assert_eq!(reset.len(), 2, "unknown epoch sends everything");
@@ -467,7 +473,7 @@ fn change_to_older_content_keeps_the_newer_remote_version() {
         .local_change_from(&key(2), E, &on_disk, "f", file(3), 3)
         .unwrap();
     assert_eq!(b.conflicts(&E).len(), 1, "v2 is kept as a conflict copy");
-    assert_eq!(b.current(&E).unwrap().kind, file(3));
+    assert_eq!(b.current(&E).unwrap().to_version().kind, file(3));
     assert_eq!(b.conflicts(&E)[0].version.kind, file(2));
 
     // A sees the same conflict.
@@ -509,7 +515,7 @@ fn a_conflict_lasts_through_later_edits() {
     c.apply_remote(va.clone(), NOW).unwrap();
     c.apply_remote(vb, NOW).unwrap();
     for replica in [&a, &b, &c] {
-        assert_eq!(replica.current(&E).unwrap().kind, file(3));
+        assert_eq!(replica.current(&E).unwrap().to_version().kind, file(3));
         assert_eq!(replica.open_conflicts(&E).count(), 1);
     }
 
@@ -634,7 +640,7 @@ fn resolving_keeps_the_other_version_in_the_recycle_bin() {
         .restore_copy(&key(1), id, "notes (Laptop, 2026-09-27).txt", NOW + 6)
         .unwrap();
     assert!(a.recycle_bin().get(&id).is_none());
-    assert_eq!(a.current(&id).unwrap().kind, file(2));
+    assert_eq!(a.current(&id).unwrap().to_version().kind, file(2));
     b.apply_remote(restored, NOW + 7).unwrap();
     assert!(b.recycle_bin().get(&id).is_none());
     assert!(matches!(
@@ -670,7 +676,7 @@ fn an_edit_made_before_the_resolve_survives_it() {
     c.apply_remote(resolve, NOW).unwrap();
     for r in [&b, &c] {
         assert!(r.recycle_bin().get(&tidefell_meta::copy_id(&va)).is_some());
-        assert_eq!(r.current(&E).unwrap().kind, file(5));
+        assert_eq!(r.current(&E).unwrap().to_version().kind, file(5));
         assert_eq!(r.open_conflicts(&E).count(), 1, "the edit and the resolve");
     }
 }
@@ -700,7 +706,7 @@ fn keeping_both_leaves_nothing_in_the_bin_whatever_arrives_first() {
             a.apply_remote(v.clone(), NOW).unwrap();
         }
         assert!(a.recycle_bin().is_empty());
-        assert_eq!(a.current(&id).unwrap().kind, file(2));
+        assert_eq!(a.current(&id).unwrap().to_version().kind, file(2));
         assert!(a.conflicts(&E).is_empty());
     }
 }
@@ -715,7 +721,7 @@ fn keeping_the_other_version_bins_the_winner() {
     b.apply_remote(resolve, NOW).unwrap();
     let id = tidefell_meta::copy_id(&vb);
     for r in [&a, &b] {
-        assert_eq!(r.current(&E).unwrap().kind, file(2));
+        assert_eq!(r.current(&E).unwrap().to_version().kind, file(2));
         assert_eq!(r.recycle_bin().get(&id).unwrap().version.kind, file(3));
     }
 }

@@ -30,10 +30,10 @@ impl Engine {
         let mut out = vec![VersionInfo {
             id: "current".into(),
             kind: VersionKind::Current,
-            size,
+            size: *size,
             modified_ms: current.modified_ms,
-            author: Some(current.author),
-            author_name: Some(self.device_name(&state, &current.author)),
+            author: Some(current.author()),
+            author_name: Some(self.device_name(&state, &current.author())),
             kept_ms: None,
             expires_ms: None,
         }];

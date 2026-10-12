@@ -51,6 +51,21 @@ ADR 0018, have 1 to 4 GB of memory.
     allow about 300 bytes per file. What remains per file is each live entry's version with its
     folder ID and author in full and the hash map around it (about 450 bytes), the local
     record and its map node (about 300 bytes), and the allocator's slack.
+- Step 4, second part (towards 300 bytes a file):
+  - The full-size measurement, 1,000,000 files of 10 TiB, before it: 1.16 GB after opening,
+    3.2 GB after a scan and idle, and 2.4 s for the first status read.
+  - Every program running the engine uses mimalloc (`tidefell_engine::Allocator`), which
+    returns freed memory and keeps less aside than glibc's allocator; the measurement uses it
+    too, so it measures what ships. 100,000 files idle at 145 MB instead of 194 MB, and
+    1,000,000 at 1.39 GB instead of 3.2 GB, though a first scan of those still peaks at 3 GB.
+  - Each entry's current version is kept compactly: the folder ID once for the folder, devices
+    numbered, and a vector of one device's changes as two numbers. Versions are handed out as
+    views and made in full only on request; development builds check each comes back exactly.
+    100,000 files idle at 130 MB.
+  - Measured with `dhat`, what remains per file at idle is about 815 bytes of heap: the hash
+    map of entries (about 300, mostly empty slots), the local records' B-tree (about 270),
+    the index of local records by content (about 90), the layout (about 55), and paths and
+    vectors held twice. The redb page cache and the network's buffers are fixed costs.
 
 ## Consequences
 

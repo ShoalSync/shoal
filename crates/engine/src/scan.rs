@@ -225,7 +225,7 @@ fn recorded_path(state: &FolderState, entry: EntryId, path: &str) -> String {
             if state.meta.gives_way_here_only(&entry)
                 && state.meta.disk_path(&entry) == Some(path) =>
         {
-            v.path.clone()
+            v.path.to_owned()
         }
         _ => path.to_owned(),
     }
@@ -322,7 +322,7 @@ fn live_here(state: &FolderState, rel: &str, entry: EntryId) -> bool {
 fn matchable(state: &FolderState, rel: &str, disk: &DiskStat) -> bool {
     state.meta.find_path(&recorded(rel)).is_some_and(|v| {
         matches!(v.kind, EntryKind::File { size, executable, .. }
-            if size == disk.size && executable == disk.executable)
+            if *size == disk.size && *executable == disk.executable)
     })
 }
 
@@ -463,7 +463,7 @@ pub(crate) fn scan(
             None if rebuilding => match state.meta.find_path(&path) {
                 Some(v)
                     if matches!(v.kind, EntryKind::File { content: c2, executable, .. }
-                    if c2 == content && executable == c.stat.executable) =>
+                    if *c2 == content && *executable == c.stat.executable) =>
                 {
                     v.entry
                 }
@@ -474,7 +474,7 @@ pub(crate) fn scan(
             // the same content. Otherwise it is a new file that happens to share the path, and
             // both are kept (ADR 0024) instead of it replacing the other device's file.
             None => match state.meta.find_path(&path) {
-                Some(v) if file_content(&v.kind) == Some(content) => v.entry,
+                Some(v) if file_content(v.kind) == Some(content) => v.entry,
                 _ => EntryId(random_bytes()?),
             },
         };
@@ -483,7 +483,7 @@ pub(crate) fn scan(
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
             state.meta.disk_path(&entry) == Some(path.as_str())
                 && matches!(v.kind, EntryKind::File { content: current, executable, .. }
-                    if current == content && executable == c.stat.executable)
+                    if *current == content && *executable == c.stat.executable)
         });
         state.add_manifest(c.manifest);
         let base = if up_to_date {

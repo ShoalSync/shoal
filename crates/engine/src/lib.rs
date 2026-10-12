@@ -70,6 +70,11 @@ pub mod fuzzing;
 mod views;
 mod watch;
 
+/// The allocator every program running the engine uses (ADR 0035): it returns freed memory to
+/// the system and keeps less aside per thread than glibc's, which matters for a long-running
+/// engine holding a large folder. Programs declare it with `#[global_allocator]`.
+pub use mimalloc::MiMalloc as Allocator;
+
 pub use config::{
     ConfirmDeletes, Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr,
     ReplicaMode, SyncOptions,

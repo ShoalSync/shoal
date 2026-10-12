@@ -178,7 +178,7 @@ fn tidy_kept(state: &mut FolderState) {
         }
     };
     for version in state.meta.entries() {
-        add(&version.kind);
+        add(version.kind);
         for conflict in state.meta.conflicts(&version.entry) {
             add(&conflict.version.kind);
         }
@@ -226,16 +226,13 @@ fn store_only(state: &FolderState) -> HashSet<ContentHash> {
         }
     };
     for version in state.meta.entries() {
-        let path = state
-            .meta
-            .disk_path(&version.entry)
-            .unwrap_or(&version.path);
+        let path = state.meta.disk_path(&version.entry).unwrap_or(version.path);
         let writes = !send_only
             && !state.dropped.contains(&version.entry)
             && !state.ignores.is_ignored(path, false)
             && (!partial || materialised.contains(&version.entry));
         if writes {
-            add(&version.kind);
+            add(version.kind);
         }
         for conflict in state.meta.conflicts(&version.entry) {
             add(&conflict.version.kind);

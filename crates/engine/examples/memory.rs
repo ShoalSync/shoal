@@ -14,6 +14,9 @@ use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMo
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_proto::FolderId;
 
+#[global_allocator]
+static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+
 const FOLDER: FolderId = FolderId([42; 32]);
 
 fn keys() -> (UserKey, DeviceKey) {

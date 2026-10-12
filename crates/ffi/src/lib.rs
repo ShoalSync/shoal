@@ -11,6 +11,9 @@
 //! Every async function runs on a runtime owned by this library, so callers can await them from
 //! any executor (Kotlin coroutines on Android).
 
+#[global_allocator]
+static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;

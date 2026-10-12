@@ -8,7 +8,7 @@
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use tidefell_proto::sync::{EntryKind, EntryVersion};
+use tidefell_proto::sync::EntryKind;
 use tidefell_proto::EntryId;
 
 /// How a device's filesystem tells names apart (ADR 0033).
@@ -70,7 +70,7 @@ fn hash(folded: &str) -> u64 {
 
 impl Layout {
     /// Lays out the current versions of live entries. Tombstones are ignored.
-    pub fn new<'a>(versions: impl IntoIterator<Item = &'a EntryVersion>) -> Self {
+    pub fn new<'a>(versions: impl IntoIterator<Item = (EntryId, &'a str, &'a EntryKind)>) -> Self {
         Self::folded(versions, Folding::None)
     }
 
@@ -78,17 +78,17 @@ impl Layout {
     /// `folding`: entries whose paths fold to one claim one place, and folders whose paths fold
     /// to one are one folder, spelled as the lowest entry ID beneath it spells it.
     pub fn folded<'a>(
-        versions: impl IntoIterator<Item = &'a EntryVersion>,
+        versions: impl IntoIterator<Item = (EntryId, &'a str, &'a EntryKind)>,
         folding: Folding,
     ) -> Self {
         let mut live: Vec<(EntryId, Cow<'a, str>, bool)> = versions
             .into_iter()
-            .filter(|v| !matches!(v.kind, EntryKind::Tombstone))
-            .map(|v| {
+            .filter(|(_, _, kind)| !matches!(kind, EntryKind::Tombstone))
+            .map(|(entry, path, kind)| {
                 (
-                    v.entry,
-                    Cow::Borrowed(v.path.as_str()),
-                    matches!(v.kind, EntryKind::Directory),
+                    entry,
+                    Cow::Borrowed(path),
+                    matches!(kind, EntryKind::Directory),
                 )
             })
             .collect();
@@ -300,6 +300,7 @@ mod tests {
     use tidefell_proto::{ContentHash, DeviceId, FolderId, VersionVector};
 
     use super::*;
+    use tidefell_proto::sync::EntryVersion;
 
     fn version(entry: u8, path: &str, kind: EntryKind) -> EntryVersion {
         EntryVersion {
@@ -354,7 +355,10 @@ mod tests {
 
     fn laid(versions: &[EntryVersion], folding: Folding) -> Laid<'_> {
         Laid {
-            layout: Layout::folded(versions, folding),
+            layout: Layout::folded(
+                versions.iter().map(|v| (v.entry, v.path.as_str(), &v.kind)),
+                folding,
+            ),
             versions,
         }
     }

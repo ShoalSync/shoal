@@ -99,6 +99,7 @@ fn body(v: &EntryVersion) -> Vec<u8> {
 fn state(folder: &Folder) -> State {
     folder
         .entries()
+        .map(|v| v.to_version())
         .map(|current| {
             let mut conflicts: Vec<Vec<u8>> = folder
                 .conflicts(&current.entry)
@@ -106,7 +107,7 @@ fn state(folder: &Folder) -> State {
                 .map(|s| body(&s.version))
                 .collect();
             conflicts.sort();
-            (current.entry, (body(current), conflicts))
+            (current.entry, (body(&current), conflicts))
         })
         .collect()
 }
@@ -129,7 +130,7 @@ fn check_recycle_bin(folder: &Folder, made: &[Signed<EntryVersion>]) -> Result<(
                 );
                 prop_assert!(
                     matches!(
-                        folder.current(&item.version.entry).map(|v| &v.kind),
+                        folder.current(&item.version.entry).map(|v| v.kind),
                         Some(EntryKind::Tombstone)
                     ),
                     "recycled while live: {item:?}"
@@ -144,7 +145,10 @@ fn check_recycle_bin(folder: &Folder, made: &[Signed<EntryVersion>]) -> Result<(
                 kept.entry = item.version.entry;
                 prop_assert_eq!(&kept, &item.version);
                 prop_assert_eq!(lost.entry, of);
-                prop_assert!(folder.current(&of) != Some(lost), "the winner was recycled");
+                prop_assert!(
+                    folder.current(&of).map(|v| v.to_version()).as_ref() != Some(lost),
+                    "the winner was recycled"
+                );
                 prop_assert!(
                     folder.open_conflicts(&of).all(|s| s.version != *lost),
                     "an open conflict was recycled"

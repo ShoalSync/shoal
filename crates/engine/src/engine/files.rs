@@ -35,23 +35,23 @@ impl Engine {
                     size,
                     executable,
                 } => {
-                    let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
+                    let path = state.meta.disk_path(&v.entry).unwrap_or(v.path);
                     Some(FileInfo {
                         entry: v.entry,
                         path: path.to_owned(),
-                        size,
+                        size: *size,
                         modified_ms: v.modified_ms,
-                        executable,
+                        executable: *executable,
                         on_disk: here
                             .get(&folding.fold(path))
-                            .is_some_and(|l| l.entry == v.entry && l.content == content),
+                            .is_some_and(|l| l.entry == v.entry && l.content == *content),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
-                        author: v.author,
+                        author: v.author(),
                         author_name: names
-                            .entry(v.author)
-                            .or_insert_with(|| self.device_name(&state, &v.author))
+                            .entry(v.author())
+                            .or_insert_with(|| self.device_name(&state, &v.author()))
                             .clone(),
-                        confirmed_copies: state.copies.get(&content).map_or(0, |d| d.len()),
+                        confirmed_copies: state.copies.get(content).map_or(0, |d| d.len()),
                         only_here: copies::only_here(&state, self.inner.key.id(), v),
                         pinned: crate::pins::is_pinned(&state.pins, path),
                     })
@@ -80,7 +80,7 @@ impl Engine {
             .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
         Ok(state
             .copies
-            .get(&content)
+            .get(content)
             .map(|devices| {
                 devices
                     .iter()
@@ -104,7 +104,7 @@ impl Engine {
             EntryKind::File { content, .. } => state
                 .local
                 .get(&state.on_disk(path))
-                .is_some_and(|l| l.entry == v.entry && l.content == content),
+                .is_some_and(|l| l.entry == v.entry && l.content == *content),
             _ => false,
         });
         Ok(on_disk.then(|| state.config.path.join(state.on_disk(path))))

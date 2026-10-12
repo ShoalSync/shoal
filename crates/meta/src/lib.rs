@@ -5,6 +5,7 @@
 //! the recycle bin. Conflict resolution follows `specs/sync-v1.md` so every replica converges
 //! on the same state regardless of the order versions arrive in.
 
+mod compact;
 mod folder;
 mod journal;
 mod layout;
@@ -12,8 +13,9 @@ mod recycle;
 mod resolve;
 mod snapshot;
 
+pub use compact::Current;
 pub use folder::{
-    copy_id, verify_remote, Applied, Change, ChangeKind, Folder, StoredVersion, Verified,
+    copy_id, verify_remote, Applied, Change, ChangeKind, Folder, Indexed, StoredVersion, Verified,
 };
 pub use journal::{Header, Journal};
 pub use layout::{Folding, Layout};

@@ -120,7 +120,7 @@ impl TestBackend {
             .lock()
             .unwrap()
             .current(&EntryId([entry; 16]))
-            .cloned()
+            .map(|v| v.to_version())
     }
 
     fn config(&self) -> NodeConfig {
@@ -165,7 +165,7 @@ impl Backend for TestBackend {
             up_to,
             versions: versions
                 .into_iter()
-                .filter_map(|s| s.signed.as_deref().cloned())
+                .filter_map(|s| s.signed.cloned())
                 .collect(),
         })
     }

@@ -116,10 +116,12 @@ fn everything(folder: &Folder) -> String {
     versions.sort();
     let current: BTreeMap<EntryId, Vec<u8>> = folder
         .entries()
-        .map(|v| (v.entry, postcard::to_stdvec(v).unwrap()))
+        .map(|v| v.to_version())
+        .map(|v| (v.entry, postcard::to_stdvec(&v).unwrap()))
         .collect();
     let conflicts: BTreeMap<EntryId, Vec<u64>> = folder
         .entries()
+        .map(|v| v.to_version())
         .map(|v| {
             (
                 v.entry,

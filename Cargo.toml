@@ -63,6 +63,7 @@ regex = "1.12"
 aho-corasick = "1"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 tempfile = "3"
+mimalloc = { version = "0.1.52", default-features = false }
 thiserror = "2"
 unicode-normalization = "0.1"
 toml = "1"

@@ -466,11 +466,8 @@ impl Engine {
                 status.conflicts += 1;
             }
             if let EntryKind::File { content, .. } = version.kind {
-                let path = state
-                    .meta
-                    .disk_path(&version.entry)
-                    .unwrap_or(&version.path);
-                status.files.insert(path.to_owned(), content);
+                let path = state.meta.disk_path(&version.entry).unwrap_or(version.path);
+                status.files.insert(path.to_owned(), *content);
             }
         }
         // What materialising would write now (ADR 0030).
@@ -516,7 +513,7 @@ fn summary(
             summary.only_here += 1;
         }
         if let EntryKind::File { size, .. } = v.kind {
-            let path = state.meta.disk_path(&v.entry).unwrap_or(&v.path);
+            let path = state.meta.disk_path(&v.entry).unwrap_or(v.path);
             if crate::pins::is_pinned(&state.pins, path) {
                 summary.pinned_bytes += size;
             }

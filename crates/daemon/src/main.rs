@@ -1,5 +1,8 @@
 //! `tidefelld`: the headless Tidefell peer for Linux servers and NAS devices.
 
+#[global_allocator]
+static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+
 mod config;
 #[cfg(target_os = "linux")]
 mod mounts;

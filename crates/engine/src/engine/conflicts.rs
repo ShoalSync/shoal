@@ -118,7 +118,7 @@ impl Engine {
             .meta
             .find_path(path)
             .filter(|v| matches!(v.kind, EntryKind::File { .. }))
-            .cloned()
+            .map(|v| v.to_version())
             .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
         let open = state.meta.open_conflicts(&current.entry).cloned().collect();
         Ok((current, open))

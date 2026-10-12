@@ -7,6 +7,7 @@ use ed25519_dalek::SigningKey;
 use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion};
 use tidefell_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
 
+use crate::compact::{Current, Devices, Slim};
 use crate::layout::{Folding, Layout};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
@@ -39,14 +40,47 @@ impl StoredVersion {
 }
 
 /// The versions of one entry that no other version supersedes. They are mutually concurrent;
-/// `current` is the winner and the rest are conflict copies.
+/// `current` is the winner and the rest are conflict copies, which are few, so kept in full.
 #[derive(Debug, Clone)]
 pub(crate) struct Entry {
-    pub(crate) current: StoredVersion,
+    pub(crate) current: Slim,
     pub(crate) conflicts: Vec<StoredVersion>,
 }
 
 impl Entry {
+    /// Every version's sequence, [`copy_id`] and signed form, if still held.
+    pub(crate) fn stored(&self) -> impl Iterator<Item = Indexed<'_>> {
+        std::iter::once(Indexed {
+            sequence: self.current.sequence,
+            id: self.current.id,
+            signed: self.current.signed.as_deref(),
+        })
+        .chain(self.conflicts.iter().map(|c| Indexed {
+            sequence: c.sequence,
+            id: c.id,
+            signed: c.signed.as_deref(),
+        }))
+    }
+}
+
+/// A version an index sends, by its sequence, with its signed form if not yet saved (ADR 0035).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Indexed<'a> {
+    /// Local index sequence assigned when this replica stored the version.
+    pub sequence: u64,
+    /// [`copy_id`] of the version as signed.
+    pub id: EntryId,
+    /// The version as signed, until it is saved; the database keeps it after that.
+    pub signed: Option<&'a Signed<EntryVersion>>,
+}
+
+/// An entry's versions in full, while a version is stored.
+struct Full {
+    current: StoredVersion,
+    conflicts: Vec<StoredVersion>,
+}
+
+impl Full {
     pub(crate) fn all(&self) -> impl Iterator<Item = &StoredVersion> {
         std::iter::once(&self.current).chain(&self.conflicts)
     }
@@ -93,6 +127,8 @@ pub struct Folder {
     pub(crate) epoch: u64,
     pub(crate) sequence: u64,
     pub(crate) entries: HashMap<EntryId, Entry>,
+    /// The devices the entries' current versions name (ADR 0035).
+    pub(crate) devices: Devices,
     pub(crate) recycle: RecycleBin,
     /// Where live entries go on disk, computed on demand and cleared when entries change.
     pub(crate) layout: OnceLock<Layout>,
@@ -189,6 +225,7 @@ impl Folder {
             epoch,
             sequence: 0,
             entries: HashMap::new(),
+            devices: Devices::default(),
             layout: OnceLock::new(),
             unfolded: OnceLock::new(),
             folding: Folding::None,
@@ -219,8 +256,12 @@ impl Folder {
     }
 
     /// The current (winning) version of `entry`.
-    pub fn current(&self, entry: &EntryId) -> Option<&EntryVersion> {
-        self.entries.get(entry).map(|e| &e.current.version)
+    pub fn current(&self, entry: &EntryId) -> Option<Current<'_>> {
+        self.entries.get(entry).map(|e| self.view(&e.current))
+    }
+
+    fn view<'a>(&'a self, slim: &'a Slim) -> Current<'a> {
+        Current::new(slim, self.id, &self.devices)
     }
 
     /// Conflict copies of `entry`, if any.
@@ -235,21 +276,21 @@ impl Folder {
     /// decide about. A copy with the same content is not a conflict, and neither is a delete
     /// that an edit beat, which stays automatic (ADR 0029).
     pub fn open_conflicts(&self, entry: &EntryId) -> impl Iterator<Item = &StoredVersion> {
-        let current = self.current(entry).map(|v| &v.kind);
+        let current = self.entries.get(entry).map(|e| &e.current.kind);
         self.conflicts(entry)
             .iter()
             .filter(move |c| !settled(&c.version.kind, current))
     }
 
     /// Current versions of all entries, including tombstones, in no particular order.
-    pub fn entries(&self) -> impl Iterator<Item = &EntryVersion> {
-        self.entries.values().map(|e| &e.current.version)
+    pub fn entries(&self) -> impl Iterator<Item = Current<'_>> {
+        self.entries.values().map(|e| self.view(&e.current))
     }
 
     /// The live (non-deleted) entry on disk at `path`, if any. Entries that share a path are
     /// told apart by the [`Layout`], so this is the entry whose file is at `path`, which for a
     /// displaced entry is not its recorded path.
-    pub fn find_path(&self, path: &str) -> Option<&EntryVersion> {
+    pub fn find_path(&self, path: &str) -> Option<Current<'_>> {
         self.layout()
             .entry_at(path, |e| self.live_path(e))
             .and_then(|entry| self.current(&entry))
@@ -257,12 +298,8 @@ impl Folder {
 
     /// Where every live entry goes on disk (ADR 0024), as this device folds names (ADR 0033).
     pub fn layout(&self) -> &Layout {
-        self.layout.get_or_init(|| {
-            Layout::folded(
-                self.entries.values().map(|e| &e.current.version),
-                self.folding,
-            )
-        })
+        self.layout
+            .get_or_init(|| Layout::folded(self.placed(), self.folding))
     }
 
     /// Sets how this device's filesystem tells names apart (ADR 0033), which decides where
@@ -281,12 +318,10 @@ impl Folder {
         if self.folding == Folding::None {
             return false;
         }
-        let Some(path) = self.current(entry).map(|v| v.path.as_str()) else {
+        let Some(path) = self.current(entry).map(|v| v.path) else {
             return false;
         };
-        let unfolded = self
-            .unfolded
-            .get_or_init(|| Layout::new(self.entries.values().map(|e| &e.current.version)));
+        let unfolded = self.unfolded.get_or_init(|| Layout::new(self.placed()));
         let own = self.live_path(entry);
         unfolded.path_of(entry, own) == Some(path)
             && self.layout().path_of(entry, own) != Some(path)
@@ -299,9 +334,17 @@ impl Folder {
 
     /// The path of `entry`'s current version, if it is live.
     fn live_path(&self, entry: &EntryId) -> Option<&str> {
-        self.current(entry)
-            .filter(|v| !matches!(v.kind, EntryKind::Tombstone))
-            .map(|v| v.path.as_str())
+        self.entries
+            .get(entry)
+            .filter(|e| !matches!(e.current.kind, EntryKind::Tombstone))
+            .map(|e| &*e.current.path)
+    }
+
+    /// Each entry's current version, as a layout places it.
+    fn placed(&self) -> impl Iterator<Item = (EntryId, &str, &EntryKind)> {
+        self.entries
+            .values()
+            .map(|e| (e.current.entry, &*e.current.path, &e.current.kind))
     }
 
     /// The recycle bin.
@@ -379,8 +422,9 @@ impl Folder {
     pub fn current_vector(&self, entry: &EntryId) -> VersionVector {
         let mut vector = VersionVector::new();
         if let Some(existing) = self.entries.get(entry) {
-            let current = Some(&existing.current.version.kind);
-            for stored in existing.all() {
+            let current = Some(&existing.current.kind);
+            vector.merge(&existing.current.vector(&self.devices));
+            for stored in &existing.conflicts {
                 if settled(&stored.version.kind, current) {
                     vector.merge(&stored.version.version);
                 }
@@ -395,7 +439,8 @@ impl Folder {
     pub fn known_vector(&self, entry: &EntryId) -> VersionVector {
         let mut vector = VersionVector::new();
         if let Some(existing) = self.entries.get(entry) {
-            for stored in existing.all() {
+            vector.merge(&existing.current.vector(&self.devices));
+            for stored in &existing.conflicts {
                 vector.merge(&stored.version.version);
             }
         }
@@ -484,7 +529,7 @@ impl Folder {
         now_ms: i64,
     ) -> Result<Signed<EntryVersion>> {
         let deleted = matches!(
-            self.current(&entry).map(|v| &v.kind),
+            self.current(&entry).map(|v| v.kind),
             Some(EntryKind::Tombstone)
         );
         let item = match self.recycle.get(&entry) {
@@ -577,12 +622,12 @@ impl Folder {
     /// response. If `epoch` is not this index's epoch, starts from the beginning. Also returns
     /// the `up_to` value to send: the sequence of the last version returned if more follow,
     /// otherwise the index's current sequence.
-    pub fn index_since(&self, epoch: u64, since: u64, limit: usize) -> (Vec<&StoredVersion>, u64) {
+    pub fn index_since(&self, epoch: u64, since: u64, limit: usize) -> (Vec<Indexed<'_>>, u64) {
         let since = if epoch == self.epoch { since } else { 0 };
-        let mut out: Vec<&StoredVersion> = self
+        let mut out: Vec<Indexed<'_>> = self
             .entries
             .values()
-            .flat_map(Entry::all)
+            .flat_map(Entry::stored)
             .filter(|s| s.sequence > since)
             .collect();
         if out.len() > limit {
@@ -607,7 +652,10 @@ impl Folder {
         let entry_id = version.entry;
         self.layout.take();
         self.unfolded.take();
-        let existing = self.entries.remove(&entry_id);
+        let existing = self.entries.remove(&entry_id).map(|e| Full {
+            current: e.current.into_stored(self.id, &self.devices),
+            conflicts: e.conflicts,
+        });
         let is_new = existing.is_none();
         let before = existing.as_ref().map(|e| e.current.version.clone());
 
@@ -648,7 +696,11 @@ impl Folder {
                     || s.version.version.compare(&version.version) == Causality::After
             });
             if known {
-                self.entries.insert(entry_id, existing);
+                let entry = Entry {
+                    current: Slim::new(existing.current, &mut self.devices),
+                    conflicts: existing.conflicts,
+                };
+                self.entries.insert(entry_id, entry);
                 return Applied::Stale;
             }
             // An undecided version with other content that a live version replaces after
@@ -726,7 +778,7 @@ impl Folder {
         self.entries.insert(
             entry_id,
             Entry {
-                current,
+                current: Slim::new(current, &mut self.devices),
                 conflicts: survivors,
             },
         );

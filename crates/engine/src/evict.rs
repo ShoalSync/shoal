@@ -57,8 +57,8 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             .filter(|(path, _)| !open.contains(&***path) && !is_pinned(&state.pins, path))
             .map(|(path, local)| {
                 let authored_here = state.meta.current(&local.entry).is_none_or(|v| {
-                    v.author == inner.key.id()
-                        || !matches!(v.kind, EntryKind::File { content, .. } if content == local.content)
+                    v.author() == inner.key.id()
+                        || !matches!(v.kind, EntryKind::File { content, .. } if *content == local.content)
                 });
                 let used = state.used.get(&**path).copied().unwrap_or(0);
                 (
