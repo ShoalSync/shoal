@@ -227,10 +227,10 @@ impl Engine {
             )?;
             // The file on disk is the version kept: a later edit builds on the decision.
             if keep.kind == current.kind {
-                if let Some(mut local) = state.local.get(path).cloned() {
+                if let Some(mut local) = state.local.get(path).map(|l| l.to_file()) {
                     if local.entry == current.entry {
                         local.base = vector;
-                        state.local.insert(path.to_owned(), local);
+                        state.record_local(path.to_owned(), local);
                     }
                 }
             }

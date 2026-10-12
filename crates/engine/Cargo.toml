@@ -14,6 +14,7 @@ workspace = true
 # Platform front-ends depend on the engine, never the other way round.
 [dependencies]
 getrandom.workspace = true
+hashbrown.workspace = true
 ignore.workspace = true
 mimalloc.workspace = true
 notify.workspace = true

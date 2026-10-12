@@ -1,9 +1,9 @@
 //! Per-folder engine state and its persistence.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tidefell_identity::FolderMembers;
@@ -17,7 +17,8 @@ use crate::config::FolderConfig;
 use crate::db::{Changes, FolderDb, Rebuild};
 use crate::history::Previous;
 use crate::ignores::Ignores;
-use crate::tracked::{encode, Tracked, TrackedSet};
+pub(crate) use crate::local::LocalFiles;
+use crate::tracked::{Tracked, TrackedSet};
 use crate::{io_err, random_bytes, Error, Result};
 
 /// Where folder `id`'s database is: `<metadata_dir>/<id>.redb` (ADR 0034).
@@ -153,172 +154,6 @@ impl From<LocalFileV3> for LocalFile {
             executable: v3.executable,
             base: VersionVector::new(),
         }
-    }
-}
-
-/// Files on disk by path, also indexed by content so chunks can be read from them instead of
-/// being kept a second time in the block store (ADR 0027).
-#[derive(Debug, Clone, Default)]
-pub(crate) struct LocalFiles {
-    /// Each path is kept once, shared by the index below (ADR 0035).
-    files: BTreeMap<Arc<str>, LocalFile>,
-    by_content: HashMap<ContentHash, Paths>,
-    /// Paths recorded or forgotten since last saved (ADR 0034).
-    changed: BTreeSet<Arc<str>>,
-}
-
-/// The paths with one content: nearly always one.
-#[derive(Debug, Clone)]
-enum Paths {
-    One(Arc<str>),
-    Many(Vec<Arc<str>>),
-}
-
-impl Paths {
-    fn iter(&self) -> impl Iterator<Item = &Arc<str>> {
-        match self {
-            Self::One(path) => std::slice::from_ref(path).iter(),
-            Self::Many(paths) => paths.iter(),
-        }
-    }
-
-    fn insert(&mut self, path: Arc<str>) {
-        if self.iter().any(|p| *p == path) {
-            return;
-        }
-        match self {
-            Self::One(one) => *self = Self::Many(vec![one.clone(), path]),
-            Self::Many(paths) => paths.push(path),
-        }
-    }
-
-    /// Removes `path`; true if none are left.
-    fn remove(&mut self, path: &str) -> bool {
-        match self {
-            Self::One(one) => &**one == path,
-            Self::Many(paths) => {
-                paths.retain(|p| &**p != path);
-                let empty = paths.is_empty();
-                if let [one] = paths.as_slice() {
-                    let one = one.clone();
-                    *self = Self::One(one);
-                }
-                empty
-            }
-        }
-    }
-}
-
-impl LocalFiles {
-    /// Records the file at `path`, replacing what was recorded there.
-    pub(crate) fn insert(&mut self, path: String, file: LocalFile) -> Option<LocalFile> {
-        // The path already recorded is shared rather than kept again.
-        let path: Arc<str> = match self.files.get_key_value(path.as_str()) {
-            Some((kept, _)) => kept.clone(),
-            None => Arc::from(path),
-        };
-        self.changed.insert(path.clone());
-        match self.by_content.get_mut(&file.content) {
-            Some(paths) => paths.insert(path.clone()),
-            None => {
-                self.by_content
-                    .insert(file.content, Paths::One(path.clone()));
-            }
-        }
-        let old = self.files.insert(path.clone(), file);
-        if let Some(old) = &old {
-            self.unindex(&path, old.content);
-        }
-        old
-    }
-
-    /// Forgets the file at `path`.
-    pub(crate) fn remove(&mut self, path: &str) -> Option<LocalFile> {
-        let (kept, old) = self.files.remove_entry(path)?;
-        self.changed.insert(kept);
-        self.unindex(path, old.content);
-        Some(old)
-    }
-
-    /// The paths recorded or forgotten since last asked, encoded for the database.
-    pub(crate) fn take_changed(&mut self) -> Vec<crate::tracked::Changed> {
-        std::mem::take(&mut self.changed)
-            .into_iter()
-            .map(|path| {
-                let file = self.files.get(&path).map(encode);
-                (encode(&&*path), file)
-            })
-            .collect()
-    }
-
-    /// Every file, encoded for the database.
-    pub(crate) fn all(&self) -> Vec<crate::tracked::Changed> {
-        self.files
-            .iter()
-            .map(|(p, f)| (encode(&&**p), Some(encode(f))))
-            .collect()
-    }
-
-    /// Loads what [`LocalFiles::all`] and [`LocalFiles::take_changed`] wrote.
-    fn decode(records: Vec<(Vec<u8>, Vec<u8>)>) -> std::result::Result<Self, postcard::Error> {
-        let mut files = LocalFiles::default();
-        for (path, file) in records {
-            files.insert(postcard::from_bytes(&path)?, postcard::from_bytes(&file)?);
-        }
-        files.changed.clear();
-        Ok(files)
-    }
-
-    /// The file recorded at `path`.
-    pub(crate) fn get(&self, path: &str) -> Option<&LocalFile> {
-        self.files.get(path)
-    }
-
-    /// True if a file is recorded at `path`.
-    pub(crate) fn contains_key(&self, path: &str) -> bool {
-        self.files.contains_key(path)
-    }
-
-    /// Paths of the files on disk with `content`.
-    pub(crate) fn paths_with(&self, content: &ContentHash) -> impl Iterator<Item = &str> {
-        self.by_content
-            .get(content)
-            .into_iter()
-            .flat_map(Paths::iter)
-            .map(|p| &**p)
-    }
-
-    fn unindex(&mut self, path: &str, content: ContentHash) {
-        // Still recorded at this path with the same content: keep the index entry.
-        if self.files.get(path).is_some_and(|f| f.content == content) {
-            return;
-        }
-        if self
-            .by_content
-            .get_mut(&content)
-            .is_some_and(|paths| paths.remove(path))
-        {
-            self.by_content.remove(&content);
-        }
-    }
-}
-
-impl std::ops::Deref for LocalFiles {
-    type Target = BTreeMap<Arc<str>, LocalFile>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.files
-    }
-}
-
-impl FromIterator<(String, LocalFile)> for LocalFiles {
-    fn from_iter<I: IntoIterator<Item = (String, LocalFile)>>(iter: I) -> Self {
-        let mut out = Self::default();
-        for (path, file) in iter {
-            out.insert(path, file);
-        }
-        out.changed.clear();
-        out
     }
 }
 
@@ -597,6 +432,17 @@ impl From<PersistedV1> for Persisted {
 }
 
 /// Everything the engine tracks for one folder.
+/// How a folder is opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Open {
+    /// From its database, checked unless it is too large to check quickly (ADR 0035).
+    Normal,
+    /// From its database, checked whatever its size: it failed a check on its open handle.
+    Recheck,
+    /// Rebuilt, for this reason (ADR 0034).
+    Rebuild(String),
+}
+
 pub(crate) struct FolderState {
     pub(crate) config: FolderConfig,
     pub(crate) members: FolderMembers,
@@ -660,6 +506,8 @@ pub(crate) struct FolderState {
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
     removed: bool,
+    /// True while the database, too large to check when opened, waits for its check.
+    unchecked: bool,
 }
 
 impl FolderState {
@@ -679,7 +527,7 @@ impl FolderState {
         config: FolderConfig,
         device: DeviceId,
     ) -> Result<Self> {
-        Self::open_or_rebuild(data_dir, metadata_dir, config, device, None)
+        Self::open_or_rebuild(data_dir, metadata_dir, config, device, Open::Normal)
     }
 
     /// Opens the folder as [`open`](Self::open) does, rebuilding it because of `rebuild` if
@@ -689,7 +537,7 @@ impl FolderState {
         metadata_dir: &Path,
         config: FolderConfig,
         device: DeviceId,
-        rebuild: Option<String>,
+        open: Open,
     ) -> Result<Self> {
         let dir = data_dir.join("folders").join(config.id.to_string());
         let existed = dir.exists();
@@ -727,18 +575,19 @@ impl FolderState {
             committer: None,
             rebuild: None,
             removed: false,
+            unchecked: false,
         };
         let has_db = FolderDb::exists(&state.db_path);
         let has_files = state.dir.join("meta").exists() || state.dir.join("state").exists();
-        let loaded = match rebuild {
-            Some(reason) => Err(reason),
-            None if has_db => match state.load() {
+        let loaded = match open.clone() {
+            Open::Rebuild(reason) => Err(reason),
+            Open::Normal | Open::Recheck if has_db => match state.load(open == Open::Recheck) {
                 Ok(db) => Ok(db),
                 Err(Error::CorruptState(_)) => Err("its metadata database was damaged".into()),
                 Err(e) => return Err(e),
             },
-            None if !has_files && existed => Err("its metadata database was missing".into()),
-            None => {
+            _ if !has_files && existed => Err("its metadata database was missing".into()),
+            _ => {
                 // A new folder, or one saved as files by an earlier version: those are
                 // converted, then deleted (ADR 0034).
                 state.load_files(device)?;
@@ -839,6 +688,17 @@ impl FolderState {
 
     /// True while the folder is being rebuilt (ADR 0034): it matches files on disk to the
     /// entries peers send, records no deletes, and tells peers it is not a full replica.
+    /// True if the database was too large to check when it was opened, and is not checked yet
+    /// (ADR 0035).
+    pub(crate) fn unchecked(&self) -> bool {
+        self.unchecked
+    }
+
+    /// Notes that the database was checked.
+    pub(crate) fn mark_checked(&mut self) {
+        self.unchecked = false;
+    }
+
     pub(crate) fn rebuilding(&self) -> bool {
         self.rebuild
             .as_ref()
@@ -881,8 +741,9 @@ impl FolderState {
     }
 
     /// Loads the folder's database, and returns it to commit to.
-    fn load(&mut self) -> Result<FolderDb> {
-        let (db, loaded) = FolderDb::open(&self.db_path)?;
+    fn load(&mut self, check: bool) -> Result<FolderDb> {
+        let (db, loaded) = FolderDb::open(&self.db_path, check)?;
+        self.unchecked = !db.checked();
         let corrupt = |_| Error::CorruptState(self.db_path.clone());
         let mut maps = loaded.maps;
         let mut take = |name: &str| maps.remove(name).unwrap_or_default();
@@ -892,7 +753,11 @@ impl FolderState {
         // Manifests are read from the database as needed (ADR 0035).
         self.manifests = Default::default();
         self.manifests.set_reader(db.reader());
-        self.local = LocalFiles::decode(take("local")).map_err(corrupt)?;
+        let meta = &self.meta;
+        self.local = LocalFiles::decode(take("local"), |entry| {
+            meta.current(entry).map(|v| v.shared_path())
+        })
+        .map_err(corrupt)?;
         self.progress = Tracked::decode(take("progress")).map_err(corrupt)?;
         self.used = Tracked::decode(take("used")).map_err(corrupt)?;
         self.copies = Tracked::decode(take("copies")).map_err(corrupt)?;
@@ -1089,15 +954,15 @@ impl FolderState {
                 .is_some_and(|p| self.same_place(path, p));
             if current && here {
                 let vector = self.meta.current_vector(&local.entry);
-                if !local.base.dominates(&vector) {
-                    let mut local = local.clone();
+                if !local.base().dominates(&vector) {
+                    let mut local = local.to_file();
                     local.base.merge(&vector);
                     caught_up.push((path.clone(), local));
                 }
             }
         }
         for (path, local) in caught_up {
-            self.local.insert(path.to_string(), local);
+            self.record_local(path.to_string(), local);
         }
     }
 
@@ -1110,6 +975,13 @@ impl FolderState {
     }
 
     /// Writes metadata and engine state atomically.
+    /// Records the file at `path`, sharing its path with its entry's version when they are the
+    /// same (ADR 0035).
+    pub(crate) fn record_local(&mut self, path: String, file: LocalFile) -> Option<LocalFile> {
+        let shared = self.meta.current(&file.entry).map(|v| v.shared_path());
+        self.local.insert_shared(path, file, shared)
+    }
+
     /// Which change the folder's state is at: different after any change that a status could
     /// show.
     pub(crate) fn revision(&self) -> u64 {
@@ -1528,9 +1400,19 @@ mod tests {
             DeviceId([8; 32]),
         )
         .unwrap();
-        assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
+        assert_eq!(
+            state.local.get("a.txt").map(|l| l.to_file()),
+            Some(LocalFile::from(local))
+        );
         assert!(
-            state.local["a.txt"].base.iter().next().is_none(),
+            state
+                .local
+                .get("a.txt")
+                .unwrap()
+                .base()
+                .iter()
+                .next()
+                .is_none(),
             "unknown base"
         );
         assert_eq!(state.progress.get(&DeviceId([7; 32])), Some(&(1, 2)));
@@ -1616,7 +1498,7 @@ mod tests {
         drop(state);
         // As an earlier version left it.
         let path = db_path(&metadata, config.id);
-        let (mut db, loaded) = FolderDb::open(&path).unwrap();
+        let (mut db, loaded) = FolderDb::open(&path, true).unwrap();
         let mut pins = TrackedSet::default();
         pins.insert("Photos/2026".to_owned());
         db.commit(&Changes {
@@ -1637,7 +1519,7 @@ mod tests {
         assert_eq!(state.pins.iter().collect::<Vec<_>>(), ["Photos/2026"]);
         state.close().unwrap();
         drop(state);
-        let (_, loaded) = FolderDb::open(&path).unwrap();
+        let (_, loaded) = FolderDb::open(&path, true).unwrap();
         assert!(loaded
             .maps
             .get("pins")
@@ -1685,7 +1567,10 @@ mod tests {
             DeviceId([8; 32]),
         )
         .unwrap();
-        assert_eq!(state.local.get("a.txt"), Some(&LocalFile::from(local)));
+        assert_eq!(
+            state.local.get("a.txt").map(|l| l.to_file()),
+            Some(LocalFile::from(local))
+        );
         assert_eq!(
             state.copy_names.get(&DeviceId([9; 32])).map(String::as_str),
             Some("nas")
@@ -1693,7 +1578,7 @@ mod tests {
 
         // A base survives a save in the current format.
         let base: VersionVector = [(DeviceId([8; 32]), 3)].into_iter().collect();
-        let mut file = state.local["a.txt"].clone();
+        let mut file = state.local.get("a.txt").unwrap().to_file();
         file.base = base.clone();
         state.local.insert("a.txt".into(), file);
         state.save().unwrap();
@@ -1710,7 +1595,7 @@ mod tests {
             DeviceId([8; 32]),
         )
         .unwrap();
-        assert_eq!(reopened.local["a.txt"].base, base);
+        assert_eq!(reopened.local.get("a.txt").unwrap().base(), base);
     }
 
     #[test]
@@ -1811,8 +1696,11 @@ mod tests {
 
         let state =
             FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, key.id()).unwrap();
-        assert_eq!(state.local["b.txt"].base, state.meta.current_vector(&entry));
-        assert_eq!(state.local["c.txt"].base, stale);
+        assert_eq!(
+            state.local.get("b.txt").unwrap().base(),
+            state.meta.current_vector(&entry)
+        );
+        assert_eq!(state.local.get("c.txt").unwrap().base(), stale);
     }
 
     #[test]
@@ -1859,7 +1747,10 @@ mod tests {
             DeviceId([8; 32]),
         )
         .unwrap();
-        assert_eq!(state.local.get("a.txt"), Some(&local));
+        assert_eq!(
+            state.local.get("a.txt").map(|l| l.to_file()),
+            Some(local.clone())
+        );
         assert!(state.dropped.is_empty() && state.set_aside.is_empty());
 
         state.dropped.insert(EntryId([9; 16]));

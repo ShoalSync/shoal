@@ -1,6 +1,6 @@
 //! Confirmed copies (ADR 0022): which full replicas hold the files this device made.
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use tidefell_meta::Current;
@@ -17,9 +17,10 @@ use crate::{now_ms, Result};
 const MAX_CHECKS_PER_ROUND: usize = 256;
 
 /// Content of the current versions and conflict copies of `state` that this device made and
-/// that no full replica has confirmed yet, with their manifests.
-fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
-    let mut out = BTreeMap::new();
+/// that no full replica has confirmed yet, with their manifests: at most `limit`, the lowest
+/// first. Only those manifests are read: a large folder's would not fit in memory (ADR 0035).
+fn unconfirmed(state: &FolderState, me: DeviceId, limit: usize) -> Vec<Manifest> {
+    let mut lowest = BTreeSet::new();
     let mut consider = |author: DeviceId, kind: &EntryKind| {
         if author != me {
             return;
@@ -30,8 +31,12 @@ fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
         if state.copies.contains_key(&content) {
             return;
         }
-        if let Some(manifest) = state.manifests.get(&content) {
-            out.insert(content, (*manifest).clone());
+        if lowest.len() == limit && lowest.last().is_some_and(|last| content > *last) {
+            return;
+        }
+        lowest.insert(content);
+        if lowest.len() > limit {
+            lowest.pop_last();
         }
     };
     for version in state.meta.entries() {
@@ -40,7 +45,11 @@ fn unconfirmed(state: &FolderState, me: DeviceId) -> Vec<Manifest> {
             consider(conflict.version.author, &conflict.version.kind);
         }
     }
-    out.into_values().collect()
+    lowest
+        .into_iter()
+        .filter_map(|content| state.manifests.get(&content))
+        .map(|manifest| (*manifest).clone())
+        .collect()
 }
 
 /// True if this device made `version` and no full replica has confirmed its content.
@@ -68,11 +77,10 @@ pub(crate) async fn confirm(
     id: FolderId,
     handle: &FolderHandle,
 ) -> Result<()> {
-    let mut pending = unconfirmed(&handle.lock(), inner.key.id());
+    let pending = unconfirmed(&handle.lock(), inner.key.id(), MAX_CHECKS_PER_ROUND);
     if pending.is_empty() {
         return Ok(());
     }
-    pending.truncate(MAX_CHECKS_PER_ROUND);
     let mut confirmed: Vec<(ContentHash, DeviceId)> = Vec::new();
     let mut names: Vec<(DeviceId, String)> = Vec::new();
     for peer in node.peers() {

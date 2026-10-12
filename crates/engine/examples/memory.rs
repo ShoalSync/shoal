@@ -49,10 +49,22 @@ fn memory() -> (u64, u64) {
     (field("VmRSS:"), field("VmHWM:"))
 }
 
+/// Memory freed to the system lazily (`MADV_FREE`), in MiB: still counted as resident, but the
+/// system takes it back as soon as it needs it.
+fn lazy_free() -> u64 {
+    std::fs::read_to_string("/proc/self/smaps_rollup")
+        .unwrap_or_default()
+        .lines()
+        .find_map(|l| l.strip_prefix("LazyFree:"))
+        .and_then(|v| v.trim().trim_end_matches("kB").trim().parse::<u64>().ok())
+        .map_or(0, |kb| kb / 1024)
+}
+
 fn report(phase: &str, started: Instant) {
     let (rss, peak) = memory();
     println!(
-        "{phase:<8} rss {rss:>6} MiB  peak {peak:>6} MiB  {:>7.1} s",
+        "{phase:<8} rss {rss:>6} MiB  peak {peak:>6} MiB  lazily freed {:>5} MiB  {:>7.1} s",
+        lazy_free(),
         started.elapsed().as_secs_f64()
     );
 }
@@ -96,6 +108,8 @@ async fn measure(dir: &Path) {
 }
 
 fn main() {
+    // Measured as the engine runs (ADR 0035).
+    tidefell_engine::with_allocator_settings();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("run") => {

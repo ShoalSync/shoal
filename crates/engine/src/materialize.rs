@@ -213,16 +213,17 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
     if state.config.sync.direction == Direction::SendOnly {
         return plan;
     }
-    let on_disk: HashMap<EntryId, (&str, &LocalFile)> = state
-        .local
-        .iter()
-        .map(|(p, l)| (l.entry, (&**p, l)))
-        .collect();
     // A partial replica keeps the files it has materialised up to date and leaves the rest
     // as placeholders.
     let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
     for version in state.meta.entries() {
-        let here = on_disk.get(&version.entry);
+        // The file on disk recorded as this entry; of two, as while a rename is applied, the
+        // one with the later path.
+        let here = state
+            .local
+            .with_entry(&version.entry)
+            .max_by(|(a, _), (b, _)| a.cmp(b));
+        let here = here.as_ref();
         match version.kind {
             EntryKind::File {
                 content,
@@ -578,11 +579,11 @@ pub(crate) async fn fetch_one(
 /// last wrote: another device renamed it (ADR 0033).
 fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Result<()> {
     let mut state = handle.lock();
-    let Some(local) = state.local.get(from).cloned() else {
+    let Some(local) = state.local.get(from).map(|l| l.to_file()) else {
         return Ok(());
     };
     let (src, dst) = (root.join(from), root.join(to));
-    if !unchanged(&src, &local) {
+    if !unchanged(&src, local.size, local.mtime_ns) {
         return Ok(());
     }
     if let Some(parent) = dst.parent() {
@@ -590,7 +591,7 @@ fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Res
     }
     crate::rename_durably(&src, &dst).map_err(io_err(&src))?;
     state.local.remove(from);
-    state.local.insert(to.to_owned(), local);
+    state.record_local(to.to_owned(), local);
     if let Some(used) = state.used.remove(from) {
         state.used.insert(to.to_owned(), used);
     }
@@ -612,7 +613,7 @@ fn remove_if_unchanged(
     };
     state.used.remove(path);
     let abs = root.join(path);
-    if unchanged(&abs, &local) {
+    if unchanged(&abs, local.size, local.mtime_ns) {
         // Moved aside, not copied, so the recycle bin keeps the content (ADR 0027).
         crate::content::keep_deleted(&mut state, &abs, local.content, None)?;
         info!(folder = %id, path, "deleted");
@@ -751,7 +752,7 @@ async fn write_file(
     let mut state = handle.lock();
     // Never replace a file the user changed since the engine last saw it.
     let replaceable = match state.local.get(&write.path) {
-        Some(local) => unchanged(&target, local),
+        Some(local) => unchanged(&target, local.size, local.mtime_ns),
         None => !target.exists(),
     };
     if !replaceable {
@@ -765,7 +766,7 @@ async fn write_file(
     // (ADR 0029). Either way the new file takes its place with no moment where the path is
     // missing.
     let mut placed = false;
-    if let Some(existing) = state.local.get(&write.path).cloned() {
+    if let Some(existing) = state.local.get(&write.path).map(|l| l.to_file()) {
         if existing.content != write.content {
             // A version that lost a conflict is kept for the recycle bin, which serves its
             // content to other devices, rather than only as this device's history (ADR 0029).
@@ -800,7 +801,7 @@ async fn write_file(
         path: target.clone(),
         source: std::io::Error::other("file vanished after writing"),
     })?;
-    state.local.insert(
+    state.record_local(
         write.path.clone(),
         LocalFile {
             entry: write.entry,
@@ -815,7 +816,7 @@ async fn write_file(
         state.used.remove(old);
         if let Some(local) = state.local.remove(old) {
             let abs = root.join(old);
-            if unchanged(&abs, &local) {
+            if unchanged(&abs, local.size, local.mtime_ns) {
                 if local.content == write.content {
                     let _ = fs::remove_file(&abs);
                 } else {

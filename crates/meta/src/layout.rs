@@ -6,7 +6,11 @@
 //! out by their case-folded names instead (ADR 0033): only where that device writes changes.
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::hash_map::RandomState;
+use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasher;
+
+use hashbrown::HashTable;
 
 use tidefell_proto::sync::EntryKind;
 use tidefell_proto::EntryId;
@@ -39,160 +43,185 @@ pub struct Layout {
     /// Live entries written somewhere other than their own path: a name that gives way, or a
     /// folder spelled as another entry spells it.
     moved: HashMap<EntryId, String>,
-    /// Live entries by a hash of where they are, as this device compares names. Hashes can
-    /// collide, so a lookup checks each entry's path.
-    at: HashMap<u64, Slot>,
+    /// Live entries by where they are, as this device compares names: their positions among
+    /// the folder's entries (ADR 0035). At most one entry is at each place.
+    at: HashTable<u32>,
+    hasher: RandomState,
     folding: Folding,
 }
 
-/// The entries whose places hash alike: nearly always one.
-#[derive(Debug, Clone)]
-enum Slot {
-    One(EntryId),
-    Many(Vec<EntryId>),
-}
-
-impl Slot {
-    fn iter(&self) -> impl Iterator<Item = &EntryId> {
-        match self {
-            Self::One(entry) => std::slice::from_ref(entry).iter(),
-            Self::Many(entries) => entries.iter(),
-        }
-    }
-}
-
-fn hash(folded: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    folded.hash(&mut hasher);
-    hasher.finish()
+/// A live entry while a layout is made.
+struct Live<'a> {
+    slot: u32,
+    entry: EntryId,
+    /// Its own path.
+    own: &'a str,
+    /// Its path once folders are spelled alike.
+    path: Cow<'a, str>,
+    directory: bool,
 }
 
 impl Layout {
-    /// Lays out the current versions of live entries. Tombstones are ignored.
-    pub fn new<'a>(versions: impl IntoIterator<Item = (EntryId, &'a str, &'a EntryKind)>) -> Self {
+    /// Lays out the current versions of live entries, each with its position among the
+    /// folder's entries. Tombstones are ignored.
+    pub(crate) fn new<'a>(
+        versions: impl IntoIterator<Item = (u32, EntryId, &'a str, &'a EntryKind)>,
+    ) -> Self {
         Self::folded(versions, Folding::None)
     }
 
     /// Lays out the current versions of live entries for a device that folds names with
     /// `folding`: entries whose paths fold to one claim one place, and folders whose paths fold
     /// to one are one folder, spelled as the lowest entry ID beneath it spells it.
-    pub fn folded<'a>(
-        versions: impl IntoIterator<Item = (EntryId, &'a str, &'a EntryKind)>,
+    ///
+    /// A large folder is laid out without a copy of each path (ADR 0035): only names that move
+    /// or fold differently are made anew.
+    pub(crate) fn folded<'a>(
+        versions: impl IntoIterator<Item = (u32, EntryId, &'a str, &'a EntryKind)>,
         folding: Folding,
     ) -> Self {
-        let mut live: Vec<(EntryId, Cow<'a, str>, bool)> = versions
+        let mut live: Vec<Live<'a>> = versions
             .into_iter()
-            .filter(|(_, _, kind)| !matches!(kind, EntryKind::Tombstone))
-            .map(|(entry, path, kind)| {
-                (
-                    entry,
-                    Cow::Borrowed(path),
-                    matches!(kind, EntryKind::Directory),
-                )
-            })
-            .collect();
-        // Each entry's own path, before folders are respelled: where it is unless it moves.
-        let own: HashMap<EntryId, &'a str> = live
-            .iter()
-            .filter_map(|(entry, path, _)| match path {
-                Cow::Borrowed(path) => Some((*entry, *path)),
-                Cow::Owned(_) => None,
+            .filter(|(_, _, _, kind)| !matches!(kind, EntryKind::Tombstone))
+            .map(|(slot, entry, path, kind)| Live {
+                slot,
+                entry,
+                own: path,
+                path: Cow::Borrowed(path),
+                directory: matches!(kind, EntryKind::Directory),
             })
             .collect();
         if folding != Folding::None {
             respell_folders(&mut live, folding);
         }
-        let fold = |path: &str| folding.fold(path).into_owned();
+        let live = live;
 
         // Paths that are directories, folded: explicit ones and the ancestors of every entry.
-        let mut dirs: BTreeSet<String> = BTreeSet::new();
-        for (_, path, directory) in &live {
-            if *directory {
-                dirs.insert(fold(path));
+        // An ancestor already there has its own ancestors there too.
+        let mut dirs: HashSet<Cow<'_, str>> = HashSet::new();
+        for l in &live {
+            if l.directory {
+                dirs.insert(folding.fold(&l.path));
             }
-            let mut rest: &str = path;
+            let mut rest: &str = &l.path;
             while let Some((parent, _)) = rest.rsplit_once('/') {
-                dirs.insert(fold(parent));
+                if !dirs.insert(folding.fold(parent)) {
+                    break;
+                }
                 rest = parent;
             }
         }
 
-        // Files and symlinks, grouped by folded path, lowest entry ID first, each with the
-        // path it would keep.
-        let mut claims: BTreeMap<String, Vec<(EntryId, &str)>> = BTreeMap::new();
         let mut layout = Self {
+            moved: HashMap::new(),
+            at: HashTable::with_capacity(live.len()),
+            hasher: RandomState::new(),
             folding,
-            ..Self::default()
         };
+        // While the layout is made, `at` holds positions in `live`. The place of the entry at
+        // each, and its hash, for when the table grows.
+        let place = |moved: &HashMap<EntryId, String>, i: u32| -> String {
+            let l = &live[i as usize];
+            moved.get(&l.entry).map_or(l.own, String::as_str).to_owned()
+        };
+        let rehash = |hasher: &RandomState, moved: &HashMap<EntryId, String>, i: u32| {
+            hasher.hash_one(&*folding.fold(&place(moved, i)))
+        };
+
         // Folders claimed by several entries: the lowest ID is at the place.
-        let mut folders: HashMap<String, EntryId> = HashMap::new();
-        for (entry, path, directory) in &live {
-            if *directory {
-                layout.note_moved(*entry, path, own.get(entry).copied());
-                let lowest = folders.entry(fold(path)).or_insert(*entry);
-                *lowest = (*lowest).min(*entry);
-            } else {
-                claims.entry(fold(path)).or_default().push((*entry, path));
+        let mut folders: HashMap<Cow<'_, str>, usize> = HashMap::new();
+        for (i, l) in live.iter().enumerate().filter(|(_, l)| l.directory) {
+            if l.path != l.own {
+                layout.moved.insert(l.entry, l.path.clone().into_owned());
+            }
+            let lowest = folders.entry(folding.fold(&l.path)).or_insert(i);
+            if l.entry < live[*lowest].entry {
+                *lowest = i;
             }
         }
-
-        for (folded, entry) in folders {
-            layout.add(hash(&folded), entry);
+        for (folded, i) in folders {
+            let hash = layout.hasher.hash_one(&*folded);
+            let Self {
+                moved, at, hasher, ..
+            } = &mut layout;
+            at.insert_unique(hash, index(i), |&j| rehash(hasher, moved, j));
         }
 
-        let mut taken: BTreeSet<String> = dirs.clone();
-        let mut displaced: Vec<(EntryId, &str)> = Vec::new();
-        for (folded, mut ids) in claims {
-            ids.sort();
-            let keeps = if dirs.contains(&folded) { 0 } else { 1 };
-            for (i, (id, path)) in ids.into_iter().enumerate() {
-                if i < keeps {
-                    layout.place(id, path.to_owned(), own.get(&id).copied());
-                    taken.insert(folded.clone());
-                } else {
-                    displaced.push((id, path));
+        // Files and symlinks: the lowest entry ID claiming a place keeps it, unless a folder is
+        // there; the rest give way.
+        let mut displaced: Vec<usize> = Vec::new();
+        for (i, l) in live.iter().enumerate().filter(|(_, l)| !l.directory) {
+            let folded = folding.fold(&l.path);
+            if dirs.contains(&folded) {
+                displaced.push(i);
+                continue;
+            }
+            let hash = layout.hasher.hash_one(&*folded);
+            let claimed = layout.at.find_mut(hash, |&j| {
+                let other = &live[j as usize];
+                !other.directory && folding.fold(&other.path) == folded
+            });
+            let keeps = |moved: &mut HashMap<EntryId, String>| {
+                if l.path != l.own {
+                    moved.insert(l.entry, l.path.clone().into_owned());
                 }
+            };
+            match claimed {
+                None => {
+                    keeps(&mut layout.moved);
+                    let Self {
+                        moved, at, hasher, ..
+                    } = &mut layout;
+                    at.insert_unique(hash, index(i), |&j| rehash(hasher, moved, j));
+                }
+                Some(kept) if l.entry < live[*kept as usize].entry => {
+                    let gives_way = std::mem::replace(kept, index(i)) as usize;
+                    layout.moved.remove(&live[gives_way].entry);
+                    displaced.push(gives_way);
+                    keeps(&mut layout.moved);
+                }
+                Some(_) => displaced.push(i),
             }
         }
-        displaced.sort();
-        for (id, path) in displaced {
-            let mut name = conflict_name(path, id, 8);
-            if taken.contains(&fold(&name)) {
-                name = conflict_name(path, id, 32);
+
+        // Those that gave way take a name beside their place, in order of entry ID, which no
+        // folder, file kept at its place or earlier name has.
+        displaced
+            .sort_by(|&a, &b| (live[a].entry, &live[a].path).cmp(&(live[b].entry, &live[b].path)));
+        for i in displaced {
+            let l = &live[i];
+            let taken = |layout: &Self, name: &str| {
+                let folded = folding.fold(name);
+                dirs.contains(&folded)
+                    || layout
+                        .at
+                        .find(layout.hasher.hash_one(&*folded), |&j| {
+                            folding.fold(&place(&layout.moved, j)) == folded
+                        })
+                        .is_some()
+            };
+            let mut name = conflict_name(&l.path, l.entry, 8);
+            if taken(&layout, &name) {
+                name = conflict_name(&l.path, l.entry, 32);
             }
-            taken.insert(fold(&name));
-            layout.place(id, name, own.get(&id).copied());
+            let hash = layout.hasher.hash_one(&*folding.fold(&name));
+            if l.own == name {
+                layout.moved.remove(&l.entry);
+            } else {
+                layout.moved.insert(l.entry, name);
+            }
+            let Self {
+                moved, at, hasher, ..
+            } = &mut layout;
+            at.insert_unique(hash, index(i), |&j| rehash(hasher, moved, j));
+        }
+
+        // From now on `at` holds positions among the folder's entries.
+        for slot in layout.at.iter_mut() {
+            *slot = live[*slot as usize].slot;
         }
         layout.moved.shrink_to_fit();
-        layout.at.shrink_to_fit();
         layout
-    }
-
-    fn note_moved(&mut self, entry: EntryId, path: &str, own: Option<&str>) {
-        if own != Some(path) {
-            self.moved.insert(entry, path.to_owned());
-        }
-    }
-
-    fn add(&mut self, key: u64, entry: EntryId) {
-        match self.at.get_mut(&key) {
-            None => {
-                self.at.insert(key, Slot::One(entry));
-            }
-            Some(Slot::One(one)) => {
-                let one = *one;
-                self.at.insert(key, Slot::Many(vec![one, entry]));
-            }
-            Some(Slot::Many(entries)) => entries.push(entry),
-        }
-    }
-
-    fn place(&mut self, entry: EntryId, path: String, own: Option<&str>) {
-        self.add(hash(&self.folding.fold(&path)), entry);
-        if own != Some(path.as_str()) {
-            self.moved.insert(entry, path);
-        }
     }
 
     /// Where `entry` is on disk, given its own path if it is live (`own`).
@@ -201,75 +230,86 @@ impl Layout {
         self.moved.get(entry).map(String::as_str).or(own)
     }
 
-    /// The live entry on disk at `path`, as this device compares names, given each live
-    /// entry's own path (`own`). For a directory claimed by several entries, the one with the
-    /// lowest ID.
+    /// The live entry on disk at `path`, as this device compares names, given the entry at each
+    /// position among the folder's entries and its own path if it is live (`entry`). For a
+    /// directory claimed by several entries, the one with the lowest ID.
     pub fn entry_at<'a>(
         &'a self,
         path: &str,
-        own: impl Fn(&EntryId) -> Option<&'a str>,
+        entry: impl Fn(u32) -> Option<(EntryId, Option<&'a str>)>,
     ) -> Option<EntryId> {
         let folded = self.folding.fold(path);
-        self.at
-            .get(&hash(&folded))?
-            .iter()
-            .find(|entry| {
-                self.path_of(entry, own(entry))
-                    .is_some_and(|at| self.folding.fold(at) == folded)
-            })
-            .copied()
+        let slot = self.at.find(self.hasher.hash_one(&*folded), |&slot| {
+            entry(slot)
+                .and_then(|(id, own)| self.path_of(&id, own))
+                .is_some_and(|at| self.folding.fold(at) == folded)
+        })?;
+        entry(*slot).map(|(id, _)| id)
     }
 }
 
+fn index(i: usize) -> u32 {
+    u32::try_from(i).expect("fewer than 2^32 entries")
+}
+
 /// Spells every folder whose path folds to the same one the same way: as the entry with the
-/// lowest ID beneath it, or the folder entry itself, spells it.
-fn respell_folders(live: &mut [(EntryId, Cow<'_, str>, bool)], folding: Folding) {
+/// lowest ID beneath it, or the folder entry itself, spells it. Only paths whose spelling
+/// changes are made anew.
+fn respell_folders(live: &mut [Live<'_>], folding: Folding) {
     // For each folded folder path, the lowest entry beneath it and its spelling of the folder's
     // last name.
     let mut spelling: HashMap<String, (EntryId, String)> = HashMap::new();
-    for (entry, path, directory) in live.iter() {
-        let mut folders: Vec<&str> = Vec::new();
-        if *directory {
-            folders.push(path);
+    let mut consider = |entry: EntryId, folder: &str| {
+        let name = folder.rsplit_once('/').map_or(folder, |(_, name)| name);
+        let folded = folding.fold(folder);
+        match spelling.get_mut(folded.as_ref()) {
+            Some(lowest) => {
+                if entry < lowest.0 {
+                    *lowest = (entry, name.to_owned());
+                }
+            }
+            None => {
+                spelling.insert(folded.into_owned(), (entry, name.to_owned()));
+            }
         }
-        let mut rest: &str = path;
+    };
+    for l in live.iter() {
+        if l.directory {
+            consider(l.entry, &l.path);
+        }
+        let mut rest: &str = &l.path;
         while let Some((parent, _)) = rest.rsplit_once('/') {
-            folders.push(parent);
+            consider(l.entry, parent);
             rest = parent;
         }
-        for folder in folders {
-            let name = folder.rsplit_once('/').map_or(folder, |(_, name)| name);
-            let lowest = spelling
-                .entry(folding.fold(folder).into_owned())
-                .or_insert((*entry, name.to_owned()));
-            if *entry < lowest.0 {
-                *lowest = (*entry, name.to_owned());
-            }
-        }
     }
-    for (_, path, directory) in live.iter_mut() {
-        let names: Vec<&str> = path.split('/').collect();
-        let folders = if *directory {
-            names.len()
-        } else {
-            names.len().saturating_sub(1)
-        };
-        let mut respelled: Vec<String> = Vec::with_capacity(names.len());
-        for (i, name) in names.iter().enumerate() {
-            if i < folders {
-                let prefix = names[..=i].join("/");
-                let chosen = spelling
-                    .get(folding.fold(&prefix).as_ref())
-                    .map_or(*name, |(_, s)| s.as_str());
-                respelled.push(chosen.to_owned());
-            } else {
-                respelled.push((*name).to_owned());
-            }
+    for l in live.iter_mut() {
+        // Where each folder in the path ends, and its name as chosen.
+        let folders: Vec<(usize, &str)> = l
+            .path
+            .match_indices('/')
+            .map(|(end, _)| end)
+            .chain(l.directory.then_some(l.path.len()))
+            .filter_map(|end| {
+                let prefix = &l.path[..end];
+                let chosen = spelling.get(folding.fold(prefix).as_ref())?;
+                let name = prefix.rsplit_once('/').map_or(prefix, |(_, name)| name);
+                (chosen.1 != name).then_some((end, chosen.1.as_str()))
+            })
+            .collect();
+        if folders.is_empty() {
+            continue;
         }
-        let respelled = respelled.join("/");
-        if respelled != *path {
-            *path = Cow::Owned(respelled);
+        let mut respelled = String::with_capacity(l.path.len());
+        let mut from = 0;
+        for (end, chosen) in folders {
+            let start = l.path[..end].rfind('/').map_or(0, |slash| slash + 1);
+            respelled.push_str(&l.path[from..start]);
+            respelled.push_str(chosen);
+            from = end;
         }
+        respelled.push_str(&l.path[from..]);
+        l.path = Cow::Owned(respelled);
     }
 }
 
@@ -349,14 +389,20 @@ mod tests {
         }
 
         fn entry_at(&self, path: &str) -> Option<EntryId> {
-            self.layout.entry_at(path, |e| self.own(e))
+            self.layout.entry_at(path, |slot| {
+                let v = self.versions.get(slot as usize)?;
+                Some((v.entry, self.own(&v.entry)))
+            })
         }
     }
 
     fn laid(versions: &[EntryVersion], folding: Folding) -> Laid<'_> {
         Laid {
             layout: Layout::folded(
-                versions.iter().map(|v| (v.entry, v.path.as_str(), &v.kind)),
+                versions
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| (index(i), v.entry, v.path.as_str(), &v.kind)),
                 folding,
             ),
             versions,
@@ -516,5 +562,307 @@ mod tests {
             conflict_name("a/Makefile", id(1), 8),
             "a/Makefile (conflict 01010101)"
         );
+    }
+
+    fn arbitrary_versions() -> impl proptest::strategy::Strategy<Value = Vec<EntryVersion>> {
+        use proptest::prelude::*;
+        let name = prop::sample::select(vec![
+            "a",
+            "A",
+            "b",
+            "B.txt",
+            "b.txt",
+            "c (conflict 01010101)",
+            "d",
+        ]);
+        let path = prop::collection::vec(name, 1..4).prop_map(|names| names.join("/"));
+        let kind = prop_oneof![
+            4 => Just(EntryKind::File { content: ContentHash([1; 32]), size: 1, executable: false }),
+            1 => Just(EntryKind::Directory),
+            1 => Just(EntryKind::Tombstone),
+        ];
+        prop::collection::vec((0u8..12, path, kind), 0..24).prop_map(|items| {
+            let mut seen = std::collections::HashSet::new();
+            items
+                .into_iter()
+                .filter(|(id, _, _)| seen.insert(*id))
+                .map(|(id, path, kind)| version(id, &path, kind))
+                .collect()
+        })
+    }
+
+    proptest::proptest! {
+        /// The layout is the one the reference makes, entry by entry and place by place.
+        #[test]
+        fn the_same_layout_as_the_reference(versions in arbitrary_versions(), case: bool) {
+            let folding = if case { Folding::Case } else { Folding::None };
+            let new = laid(&versions, folding);
+            let old = reference::Layout::folded(
+                versions.iter().map(|v| (v.entry, v.path.as_str(), &v.kind)),
+                folding,
+            );
+            let own = |entry: &EntryId| new.own(entry);
+            for v in &versions {
+                let at = new.path_of(&v.entry);
+                proptest::prop_assert_eq!(at, old.path_of(&v.entry, own(&v.entry)));
+                if let Some(at) = at {
+                    proptest::prop_assert_eq!(new.entry_at(at), old.entry_at(at, own));
+                    let upper = at.to_uppercase();
+                    proptest::prop_assert_eq!(new.entry_at(&upper), old.entry_at(&upper, own));
+                }
+            }
+        }
+    }
+
+    /// The layout as it was made before ADR 0035's second part: the reference the layout
+    /// made now must match.
+    mod reference {
+        use std::borrow::Cow;
+        use std::collections::{BTreeMap, BTreeSet, HashMap};
+
+        use tidefell_proto::sync::EntryKind;
+        use tidefell_proto::EntryId;
+
+        use super::super::{conflict_name, Folding};
+
+        /// The on-disk path of every live entry. An entry written at its own path, as nearly every one
+        /// is, takes no copy of it here (ADR 0035): callers give the entry's path, from its version.
+        #[derive(Debug, Clone, Default)]
+        pub(super) struct Layout {
+            /// Live entries written somewhere other than their own path: a name that gives way, or a
+            /// folder spelled as another entry spells it.
+            moved: HashMap<EntryId, String>,
+            /// Live entries by a hash of where they are, as this device compares names. Hashes can
+            /// collide, so a lookup checks each entry's path.
+            at: HashMap<u64, Slot>,
+            folding: Folding,
+        }
+
+        /// The entries whose places hash alike: nearly always one.
+        #[derive(Debug, Clone)]
+        enum Slot {
+            One(EntryId),
+            Many(Vec<EntryId>),
+        }
+
+        impl Slot {
+            fn iter(&self) -> impl Iterator<Item = &EntryId> {
+                match self {
+                    Self::One(entry) => std::slice::from_ref(entry).iter(),
+                    Self::Many(entries) => entries.iter(),
+                }
+            }
+        }
+
+        fn hash(folded: &str) -> u64 {
+            use std::hash::{Hash, Hasher};
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            folded.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        impl Layout {
+            /// Lays out the current versions of live entries for a device that folds names with
+            /// `folding`: entries whose paths fold to one claim one place, and folders whose paths fold
+            /// to one are one folder, spelled as the lowest entry ID beneath it spells it.
+            pub(super) fn folded<'a>(
+                versions: impl IntoIterator<Item = (EntryId, &'a str, &'a EntryKind)>,
+                folding: Folding,
+            ) -> Self {
+                let mut live: Vec<(EntryId, Cow<'a, str>, bool)> = versions
+                    .into_iter()
+                    .filter(|(_, _, kind)| !matches!(kind, EntryKind::Tombstone))
+                    .map(|(entry, path, kind)| {
+                        (
+                            entry,
+                            Cow::Borrowed(path),
+                            matches!(kind, EntryKind::Directory),
+                        )
+                    })
+                    .collect();
+                // Each entry's own path, before folders are respelled: where it is unless it moves.
+                let own: HashMap<EntryId, &'a str> = live
+                    .iter()
+                    .filter_map(|(entry, path, _)| match path {
+                        Cow::Borrowed(path) => Some((*entry, *path)),
+                        Cow::Owned(_) => None,
+                    })
+                    .collect();
+                if folding != Folding::None {
+                    respell_folders(&mut live, folding);
+                }
+                let fold = |path: &str| folding.fold(path).into_owned();
+
+                // Paths that are directories, folded: explicit ones and the ancestors of every entry.
+                let mut dirs: BTreeSet<String> = BTreeSet::new();
+                for (_, path, directory) in &live {
+                    if *directory {
+                        dirs.insert(fold(path));
+                    }
+                    let mut rest: &str = path;
+                    while let Some((parent, _)) = rest.rsplit_once('/') {
+                        dirs.insert(fold(parent));
+                        rest = parent;
+                    }
+                }
+
+                // Files and symlinks, grouped by folded path, lowest entry ID first, each with the
+                // path it would keep.
+                let mut claims: BTreeMap<String, Vec<(EntryId, &str)>> = BTreeMap::new();
+                let mut layout = Self {
+                    folding,
+                    ..Self::default()
+                };
+                // Folders claimed by several entries: the lowest ID is at the place.
+                let mut folders: HashMap<String, EntryId> = HashMap::new();
+                for (entry, path, directory) in &live {
+                    if *directory {
+                        layout.note_moved(*entry, path, own.get(entry).copied());
+                        let lowest = folders.entry(fold(path)).or_insert(*entry);
+                        *lowest = (*lowest).min(*entry);
+                    } else {
+                        claims.entry(fold(path)).or_default().push((*entry, path));
+                    }
+                }
+
+                for (folded, entry) in folders {
+                    layout.add(hash(&folded), entry);
+                }
+
+                let mut taken: BTreeSet<String> = dirs.clone();
+                let mut displaced: Vec<(EntryId, &str)> = Vec::new();
+                for (folded, mut ids) in claims {
+                    ids.sort();
+                    let keeps = if dirs.contains(&folded) { 0 } else { 1 };
+                    for (i, (id, path)) in ids.into_iter().enumerate() {
+                        if i < keeps {
+                            layout.place(id, path.to_owned(), own.get(&id).copied());
+                            taken.insert(folded.clone());
+                        } else {
+                            displaced.push((id, path));
+                        }
+                    }
+                }
+                displaced.sort();
+                for (id, path) in displaced {
+                    let mut name = conflict_name(path, id, 8);
+                    if taken.contains(&fold(&name)) {
+                        name = conflict_name(path, id, 32);
+                    }
+                    taken.insert(fold(&name));
+                    layout.place(id, name, own.get(&id).copied());
+                }
+                layout.moved.shrink_to_fit();
+                layout.at.shrink_to_fit();
+                layout
+            }
+
+            fn note_moved(&mut self, entry: EntryId, path: &str, own: Option<&str>) {
+                if own != Some(path) {
+                    self.moved.insert(entry, path.to_owned());
+                }
+            }
+
+            fn add(&mut self, key: u64, entry: EntryId) {
+                match self.at.get_mut(&key) {
+                    None => {
+                        self.at.insert(key, Slot::One(entry));
+                    }
+                    Some(Slot::One(one)) => {
+                        let one = *one;
+                        self.at.insert(key, Slot::Many(vec![one, entry]));
+                    }
+                    Some(Slot::Many(entries)) => entries.push(entry),
+                }
+            }
+
+            fn place(&mut self, entry: EntryId, path: String, own: Option<&str>) {
+                self.add(hash(&self.folding.fold(&path)), entry);
+                if own != Some(path.as_str()) {
+                    self.moved.insert(entry, path);
+                }
+            }
+
+            /// Where `entry` is on disk, given its own path if it is live (`own`).
+            pub(super) fn path_of<'a>(
+                &'a self,
+                entry: &EntryId,
+                own: Option<&'a str>,
+            ) -> Option<&'a str> {
+                own?;
+                self.moved.get(entry).map(String::as_str).or(own)
+            }
+
+            /// The live entry on disk at `path`, as this device compares names, given each live
+            /// entry's own path (`own`). For a directory claimed by several entries, the one with the
+            /// lowest ID.
+            pub(super) fn entry_at<'a>(
+                &'a self,
+                path: &str,
+                own: impl Fn(&EntryId) -> Option<&'a str>,
+            ) -> Option<EntryId> {
+                let folded = self.folding.fold(path);
+                self.at
+                    .get(&hash(&folded))?
+                    .iter()
+                    .find(|entry| {
+                        self.path_of(entry, own(entry))
+                            .is_some_and(|at| self.folding.fold(at) == folded)
+                    })
+                    .copied()
+            }
+        }
+
+        /// Spells every folder whose path folds to the same one the same way: as the entry with the
+        /// lowest ID beneath it, or the folder entry itself, spells it.
+        fn respell_folders(live: &mut [(EntryId, Cow<'_, str>, bool)], folding: Folding) {
+            // For each folded folder path, the lowest entry beneath it and its spelling of the folder's
+            // last name.
+            let mut spelling: HashMap<String, (EntryId, String)> = HashMap::new();
+            for (entry, path, directory) in live.iter() {
+                let mut folders: Vec<&str> = Vec::new();
+                if *directory {
+                    folders.push(path);
+                }
+                let mut rest: &str = path;
+                while let Some((parent, _)) = rest.rsplit_once('/') {
+                    folders.push(parent);
+                    rest = parent;
+                }
+                for folder in folders {
+                    let name = folder.rsplit_once('/').map_or(folder, |(_, name)| name);
+                    let lowest = spelling
+                        .entry(folding.fold(folder).into_owned())
+                        .or_insert((*entry, name.to_owned()));
+                    if *entry < lowest.0 {
+                        *lowest = (*entry, name.to_owned());
+                    }
+                }
+            }
+            for (_, path, directory) in live.iter_mut() {
+                let names: Vec<&str> = path.split('/').collect();
+                let folders = if *directory {
+                    names.len()
+                } else {
+                    names.len().saturating_sub(1)
+                };
+                let mut respelled: Vec<String> = Vec::with_capacity(names.len());
+                for (i, name) in names.iter().enumerate() {
+                    if i < folders {
+                        let prefix = names[..=i].join("/");
+                        let chosen = spelling
+                            .get(folding.fold(&prefix).as_ref())
+                            .map_or(*name, |(_, s)| s.as_str());
+                        respelled.push(chosen.to_owned());
+                    } else {
+                        respelled.push((*name).to_owned());
+                    }
+                }
+                let respelled = respelled.join("/");
+                if respelled != *path {
+                    *path = Cow::Owned(respelled);
+                }
+            }
+        }
     }
 }

@@ -50,6 +50,8 @@ const SAFETY_SCAN: Duration = Duration::from_secs(3600);
 const RECHECK_INTERVAL: Duration = Duration::from_secs(60);
 /// How often to purge expired recycle-bin items.
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
+/// How long after starting a database too large to check when opened is checked (ADR 0035).
+const DEFERRED_CHECK: Duration = Duration::from_secs(60);
 /// How often to ask full replicas about files that have no confirmed copy yet (ADR 0022).
 const CONFIRM_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -316,7 +318,7 @@ fn open_folder(
     config: FolderConfig,
     device: DeviceId,
     configured: bool,
-    rebuild: Option<String>,
+    open: crate::state::Open,
 ) -> Result<FolderHandle> {
     // Only a folder being created or joined gets its root created (ADR 0037); an existing
     // folder whose root is missing is unavailable, not empty.
@@ -324,7 +326,7 @@ fn open_folder(
     if new {
         root::create(&config.path, config.id, device)?;
     }
-    let state = FolderState::open_or_rebuild(data_dir, metadata_dir, config, device, rebuild)?;
+    let state = FolderState::open_or_rebuild(data_dir, metadata_dir, config, device, open)?;
     if !new {
         if let Err(e) = root::adopt(&state, device) {
             warn!(folder = %state.config.id, error = %e, "marking the folder's root failed");
@@ -570,7 +572,7 @@ impl Engine {
                 folder.clone(),
                 device,
                 configured,
-                None,
+                crate::state::Open::Normal,
             ) {
                 Ok(handle) => {
                     folders.insert(id, Arc::new(handle));
@@ -735,13 +737,16 @@ impl Engine {
         {
             let inner = inner.clone();
             tasks.spawn(supervised(inner.clone(), "purge", async move {
+                // Databases too large to check when opened are checked soon after (ADR 0035).
+                tokio::time::sleep(DEFERRED_CHECK).await;
+                check_databases(&inner, true).await;
                 let mut hours = 0u32;
                 loop {
                     tokio::time::sleep(PURGE_INTERVAL).await;
                     purge(&inner, now_ms());
                     hours += 1;
                     if hours.is_multiple_of(24) {
-                        check_databases(&inner).await;
+                        check_databases(&inner, false).await;
                     }
                 }
             }));
@@ -912,25 +917,35 @@ impl Engine {
 }
 
 /// Checks each folder's database for damage, as every day (ADR 0034), rebuilding a folder whose
-/// database cannot be repaired. Returns what each check found.
-pub(crate) async fn check_databases(inner: &Arc<Inner>) -> Vec<(FolderId, Result<()>)> {
+/// database cannot be repaired: every folder's, or only those not checked since they were
+/// opened (`unchecked`). Returns what each check found.
+pub(crate) async fn check_databases(
+    inner: &Arc<Inner>,
+    unchecked: bool,
+) -> Vec<(FolderId, Result<()>)> {
     let mut found = Vec::new();
     for id in inner.folder_ids() {
-        let Some(waiter) = inner
-            .folder(&id)
-            .ok()
-            .and_then(|h| h.lock().committer().map(|c| c.waiter()))
-        else {
+        let Some(waiter) = inner.folder(&id).ok().and_then(|h| {
+            let state = h.lock();
+            (!unchecked || state.unchecked())
+                .then(|| state.committer().map(|c| c.waiter()))
+                .flatten()
+        }) else {
             continue;
         };
         let checked = tokio::task::spawn_blocking(move || waiter.check())
             .await
             .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
+        if checked.is_ok() {
+            if let Ok(handle) = inner.folder(&id) {
+                handle.lock().mark_checked();
+            }
+        }
         // Opened again, the database is checked afresh, and the folder rebuilt only if it
         // still fails: a check that failed on the open database alone costs nothing.
         if let Err(Error::CorruptState(_)) = &checked {
             warn!(folder = %id, "the folder's database failed its check; opening it again");
-            if let Err(e) = reopen_folder(inner, id, None).await {
+            if let Err(e) = reopen_folder(inner, id, crate::state::Open::Recheck).await {
                 error!(folder = %id, error = %e, "opening the folder again failed");
             }
         }
@@ -942,12 +957,12 @@ pub(crate) async fn check_databases(inner: &Arc<Inner>) -> Vec<(FolderId, Result
 /// Starts `id` over from what is on disk and what peers send (ADR 0034): its database is set
 /// aside and a new one made, with what was kept restored from sidecars.
 pub(crate) async fn rebuild_folder(inner: &Arc<Inner>, id: FolderId, reason: &str) -> Result<()> {
-    reopen_folder(inner, id, Some(reason)).await
+    reopen_folder(inner, id, crate::state::Open::Rebuild(reason.to_owned())).await
 }
 
 /// Closes `id` and opens it again, rebuilding it because of `rebuild`, or if its database is
 /// found damaged when it opens.
-async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) -> Result<()> {
+async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, open: crate::state::Open) -> Result<()> {
     let old = inner.folder(&id)?;
     if let Some(scanner) = old.scanner.lock().unwrap().take() {
         scanner.abort();
@@ -970,16 +985,8 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) 
         inner.key.id(),
     );
     let configured = old.configured;
-    let rebuild = rebuild.map(str::to_owned);
     let handle = tokio::task::spawn_blocking(move || {
-        open_folder(
-            &data_dir,
-            &metadata_dir,
-            config,
-            device,
-            configured,
-            rebuild,
-        )
+        open_folder(&data_dir, &metadata_dir, config, device, configured, open)
     })
     .await
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;

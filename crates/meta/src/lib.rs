@@ -6,6 +6,7 @@
 //! on the same state regardless of the order versions arrive in.
 
 mod compact;
+mod entries;
 mod folder;
 mod journal;
 mod layout;

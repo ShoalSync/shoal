@@ -78,7 +78,7 @@ impl Folder {
             if let Some(signed) = &entry.current.signed {
                 versions.push((true, entry.current.sequence, (**signed).clone()));
             }
-            for c in &entry.conflicts {
+            for c in entry.conflicts.iter() {
                 if let Some(signed) = &c.signed {
                     versions.push((false, c.sequence, (**signed).clone()));
                 }
@@ -126,12 +126,15 @@ impl Folder {
                 conflicts.entry(entry).or_default().push(stored);
             }
         }
-        let mut entries = HashMap::new();
+        let mut entries = crate::entries::Entries::default();
         let mut devices = crate::compact::Devices::default();
         for (id, current) in currents {
             let conflicts = conflicts.remove(&id).unwrap_or_default();
             let current = crate::compact::Slim::new(current, &mut devices);
-            entries.insert(id, Entry { current, conflicts });
+            entries.insert(Entry {
+                current,
+                conflicts: conflicts.into(),
+            });
         }
         if !conflicts.is_empty() {
             return Err(Error::UnsupportedFormat);

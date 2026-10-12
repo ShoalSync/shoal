@@ -46,6 +46,7 @@ mod engine;
 mod evict;
 mod history;
 mod ignores;
+mod local;
 mod manifests;
 mod materialize;
 pub mod pairing;
@@ -74,6 +75,49 @@ mod watch;
 /// the system and keeps less aside per thread than glibc's, which matters for a long-running
 /// engine holding a large folder. Programs declare it with `#[global_allocator]`.
 pub use mimalloc::MiMalloc as Allocator;
+
+/// Settings [`Allocator`] reads from the environment when a program starts (ADR 0035). Freed
+/// memory goes back to the system at once: by default only a second later, and only when the
+/// allocator next runs, which an idle engine may not do for hours. Memory is committed as it is
+/// used rather than a whole arena at a time. Together they take a third off a large folder's
+/// resident memory. A program that cannot start with them, such as an app loading the engine
+/// as a library, sets them before it loads it.
+pub const ALLOCATOR_SETTINGS: [(&str, &str); 2] = [
+    ("MIMALLOC_PURGE_DELAY", "0"),
+    ("MIMALLOC_ARENA_EAGER_COMMIT", "0"),
+];
+
+/// Starts this program again with [`ALLOCATOR_SETTINGS`] if any is missing from its
+/// environment, keeping its process ID and arguments. Returns if they are all set, or if it
+/// cannot start again, which costs only memory.
+pub fn with_allocator_settings() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        if ALLOCATOR_SETTINGS
+            .iter()
+            .all(|(name, _)| std::env::var_os(name).is_some())
+        {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let mut args = std::env::args_os();
+        let mut command = std::process::Command::new(exe);
+        if let Some(name) = args.next() {
+            command.arg0(name);
+        }
+        for (name, value) in ALLOCATOR_SETTINGS {
+            if std::env::var_os(name).is_none() {
+                command.env(name, value);
+            }
+        }
+        // Returns only if the program could not be started again.
+        let _ = command.args(args).exec();
+    }
+}
 
 pub use config::{
     ConfirmDeletes, Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr,

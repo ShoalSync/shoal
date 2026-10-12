@@ -13,6 +13,7 @@ workspace = true
 [dependencies]
 blake3.workspace = true
 ed25519-dalek.workspace = true
+hashbrown.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true

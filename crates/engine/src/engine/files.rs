@@ -19,13 +19,6 @@ impl Engine {
         // Few devices make many files: look each name up once.
         let mut names: std::collections::HashMap<tidefell_proto::DeviceId, String> =
             std::collections::HashMap::new();
-        // Files on disk by name as this device tells names apart (ADR 0033).
-        let folding = state.folding();
-        let here: std::collections::HashMap<String, &crate::state::LocalFile> = state
-            .local
-            .iter()
-            .map(|(disk, local)| (folding.fold(disk), local))
-            .collect();
         let mut files: Vec<FileInfo> = state
             .meta
             .entries()
@@ -42,9 +35,11 @@ impl Engine {
                         size: *size,
                         modified_ms: v.modified_ms,
                         executable: *executable,
-                        on_disk: here
-                            .get(&folding.fold(path))
-                            .is_some_and(|l| l.entry == v.entry && l.content == *content),
+                        // On disk at its place, as this device tells names apart (ADR 0033).
+                        on_disk: state
+                            .local
+                            .with_entry(&v.entry)
+                            .any(|(p, l)| state.same_place(p, path) && l.content == *content),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author(),
                         author_name: names
@@ -255,8 +250,8 @@ impl Engine {
                 .lock()
                 .local
                 .get(&disk)
-                .filter(|l| crate::scan::unchanged(&target, l))
-                .cloned();
+                .filter(|l| crate::scan::unchanged(&target, l.size, l.mtime_ns))
+                .map(|l| l.to_file());
             let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
             let tmp = tmp_dir.join(format!(
                 "write-{:016x}",
@@ -410,7 +405,7 @@ impl Engine {
                     }
                     crate::rename_durably(&src, &dst).map_err(crate::io_err(&src))?;
                     local.base = vector;
-                    state.local.insert(new.clone(), local);
+                    state.record_local(new.clone(), local);
                     if let Some(used) = state.used.remove(&old) {
                         state.used.insert(new.clone(), used);
                     }
@@ -429,7 +424,7 @@ impl Engine {
 fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
     if let Some(local) = state.local.remove(path) {
         let abs = root.join(path);
-        if crate::scan::unchanged(&abs, &local) {
+        if crate::scan::unchanged(&abs, local.size, local.mtime_ns) {
             crate::content::keep_deleted(state, &abs, local.content, None)?;
         } else {
             match std::fs::remove_file(&abs) {

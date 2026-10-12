@@ -60,13 +60,13 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
 /// `entry`.
 pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> VersionVector {
     match state.local.get(rel) {
-        Some(local) if local.entry == entry && !local.base.is_empty() => local.base.clone(),
+        Some(local) if local.entry == entry && !local.base_is_empty() => local.base(),
         _ => state.meta.current_vector(&entry),
     }
 }
 
-pub(crate) fn unchanged(path: &Path, local: &LocalFile) -> bool {
-    stat(path).is_some_and(|s| s.size == local.size && s.mtime_ns == local.mtime_ns)
+pub(crate) fn unchanged(path: &Path, size: u64, mtime_ns: i128) -> bool {
+    stat(path).is_some_and(|s| s.size == size && s.mtime_ns == mtime_ns)
 }
 
 /// The part of a folder a scan looks at: folder-relative directories (`""` is the root), each
@@ -526,7 +526,7 @@ pub(crate) fn scan(
         state.used.insert(c.rel.clone(), now);
         // A file put back by hand is on this device again.
         state.dropped.remove(&entry);
-        state.local.insert(
+        state.record_local(
             c.rel,
             LocalFile {
                 entry,
@@ -576,6 +576,8 @@ pub(crate) fn scan(
             }
         }
     }
+    // Records are in no particular order; deletes are made in the order of their paths.
+    deleted.sort_unstable();
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
     // One scan that would delete much of the folder everywhere records none of it until the
     // user confirms (ADR 0037): a drive unmounted under the folder, or a mistake, looks the same.

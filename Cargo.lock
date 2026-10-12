@@ -4036,6 +4036,7 @@ dependencies = [
  "aho-corasick",
  "blake3",
  "getrandom 0.4.3",
+ "hashbrown",
  "ignore",
  "mimalloc",
  "notify",
@@ -4117,6 +4118,7 @@ version = "0.16.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
+ "hashbrown",
  "postcard",
  "proptest",
  "serde",

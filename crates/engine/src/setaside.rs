@@ -39,7 +39,7 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
     let local = state
         .local
         .get(path)
-        .cloned()
+        .map(|l| l.to_file())
         .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
     if !state
         .meta
@@ -49,7 +49,7 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
         return Err(Error::NoSuchFile(path.to_owned()));
     }
     let abs = root.join(path);
-    if !unchanged(&abs, &local) {
+    if !unchanged(&abs, local.size, local.mtime_ns) {
         return Err(Error::LocalChanges(path.to_owned()));
     }
     let dir = recycle_dir(&root);
@@ -119,7 +119,7 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
     local.executable = disk.executable;
     state.set_aside.remove(entry);
     state.dropped.remove(entry);
-    state.local.insert(path.clone(), local);
+    state.record_local(path.clone(), local);
     state.used.insert(path.clone(), crate::now_ms());
     Ok(path)
 }

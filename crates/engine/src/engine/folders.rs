@@ -223,7 +223,7 @@ impl Engine {
             config,
             self.id(),
             false,
-            None,
+            crate::state::Open::Normal,
         )?);
         self.inner
             .folders

@@ -66,6 +66,29 @@ ADR 0018, have 1 to 4 GB of memory.
     map of entries (about 300, mostly empty slots), the local records' B-tree (about 270),
     the index of local records by content (about 90), the layout (about 55), and paths and
     vectors held twice. The redb page cache and the network's buffers are fixed costs.
+  - Entries are kept densely: side by side in one vector, found through a table of positions,
+    with their rare conflict copies boxed. Local records likewise, indexed by path, content and
+    entry, each holding its base vector as two numbers and its path shared with its entry's
+    version. The layout is made without a copy of each path, and finds clashes as it fills its
+    table of places; a property test checks it against the layout as it was made before.
+  - mimalloc is started with `MIMALLOC_PURGE_DELAY=0` and `MIMALLOC_ARENA_EAGER_COMMIT=0`
+    (`tidefell_engine::ALLOCATOR_SETTINGS`): by default it returns freed memory only when it
+    next runs, which an idle engine may not do for hours. These are read when a program starts,
+    so `tidefelld` starts itself again with them if they are missing; the Android app sets them
+    before it loads the engine.
+  - Temporary costs that grew with the folder: the files made here but not yet confirmed on a
+    full replica are found without reading every manifest (a first scan of 1,000,000 files
+    peaked at 2.2 GB for it), and the sync plan and file list find files by entry without a map
+    of every file.
+  - A database over 1 GiB is checked a minute after it opens rather than as it opens: checking
+    10 TiB of chunk index took 94 s, so the folder took over 100 s to start. A failed check
+    opens it again, checking it whatever its size, as the daily check does (ADR 0034).
+  - Measured: 1,000 files 17 MB (the fixed cost); a phone folder of 50,000 photos 40 MB, within
+    its target; 100,000 files 55 MB, about 385 bytes a file; 1,000,000 files of 10 TiB 444 MB
+    idle and 517 MB at most, opening in 9.5 s. The heap at 1,000,000 is about 350 bytes a file:
+    the entry (152), the local record (104), its path (40, once) and the tables that find them
+    (52). That is over the target of 300 MB: getting under it means not keeping in memory what
+    a local record repeats of its entry's version, or each version's copy ID.
 
 ## Consequences
 

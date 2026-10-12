@@ -527,6 +527,7 @@ async fn run(path: &Path) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
+    tidefell_engine::with_allocator_settings();
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init {

@@ -91,7 +91,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             continue;
         }
         let mut state = handle.lock();
-        let Some(local) = state.local.get(&candidate.path).cloned() else {
+        let Some(local) = state.local.get(&candidate.path).map(|l| l.to_file()) else {
             continue;
         };
         if local.content != candidate.content
@@ -101,7 +101,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             continue;
         }
         let abs = root.join(&candidate.path);
-        if !unchanged(&abs, &local) {
+        if !unchanged(&abs, local.size, local.mtime_ns) {
             // Edited since the last scan; the next scan records it.
             continue;
         }

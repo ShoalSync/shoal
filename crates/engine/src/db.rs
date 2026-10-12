@@ -110,6 +110,11 @@ pub(crate) struct Loaded {
     pub(crate) maps: BTreeMap<&'static str, Records>,
 }
 
+/// Databases up to this size are checked when opened (ADR 0034), which takes a few seconds at
+/// most. A larger one, which can take minutes, is checked soon after instead, so a large folder
+/// is not kept waiting to start (ADR 0035).
+const CHECKED_AT_OPEN: u64 = 1 << 30;
+
 /// One folder's database.
 pub(crate) struct FolderDb {
     /// Shared with [`Reader`]s; only the integrity check and compaction need it alone.
@@ -121,6 +126,8 @@ pub(crate) struct FolderDb {
     dropped: u64,
     /// The next key of the dropped table.
     next_drop: u64,
+    /// Whether it was checked when opened.
+    checked: bool,
 }
 
 impl std::fmt::Debug for FolderDb {
@@ -313,21 +320,25 @@ impl FolderDb {
             live: 0,
             dropped: 0,
             next_drop: 0,
+            checked: true,
         })
     }
 
     /// Opens the database at `path` and reads everything in it.
-    pub(crate) fn open(path: &Path) -> Result<(Self, Loaded)> {
+    /// Opens the database and reads all of it, checking it first if it is small or `check` is
+    /// set: see [`FolderDb::checked`].
+    pub(crate) fn open(path: &Path, check: bool) -> Result<(Self, Loaded)> {
         // redb panics on some damage, such as a file cut short.
-        crate::diagnostics::catching(|| Self::open_checked(path))
+        crate::diagnostics::catching(|| Self::open_checked(path, check, CHECKED_AT_OPEN))
             .unwrap_or_else(|_| Err(Error::CorruptState(path.to_path_buf())))
     }
 
-    fn open_checked(path: &Path) -> Result<(Self, Loaded)> {
+    fn open_checked(path: &Path, check: bool, limit: u64) -> Result<(Self, Loaded)> {
         let path = path.to_path_buf();
         let mut db = builder().open(&path).map_err(|e| err(&path)(e.into()))?;
+        let checked = check || std::fs::metadata(&path).map_or(true, |m| m.len() <= limit);
         // The database's own check, beyond what opening it does (ADR 0034).
-        if !db.check_integrity().map_err(|e| err(&path)(e.into()))? {
+        if checked && !db.check_integrity().map_err(|e| err(&path)(e.into()))? {
             tracing::warn!(path = %path.display(), "the folder's database was damaged and repaired");
         }
         let mut folder = Self {
@@ -336,6 +347,7 @@ impl FolderDb {
             live: 0,
             dropped: 0,
             next_drop: 0,
+            checked,
         };
         folder.build_chunk_index()?;
         let (loaded, dropped, next_drop) = folder.read()?;
@@ -343,6 +355,12 @@ impl FolderDb {
         folder.dropped = dropped;
         folder.next_drop = next_drop;
         Ok((folder, loaded))
+    }
+
+    /// Whether the database was checked when opened: if not, it was too large to check quickly,
+    /// and is checked soon after.
+    pub(crate) fn checked(&self) -> bool {
+        self.checked
     }
 
     /// Everything in the database, as [`FolderDb::open`] reads it, for checking saves in
@@ -681,6 +699,34 @@ mod tests {
     }
 
     #[test]
+    fn a_large_database_is_checked_after_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.redb");
+        let mut db = FolderDb::create(&path).unwrap();
+        db.commit(&Changes {
+            header: header(0),
+            journal: Journal::default(),
+            maps: Vec::new(),
+            durable: true,
+            rebuild: None,
+            activity: Vec::new(),
+            at_ms: 0,
+            chunks: Vec::new(),
+            generation: 0,
+        })
+        .unwrap();
+        drop(db);
+        // Over the size checked when opened: opened unchecked, unless a check is asked for.
+        let (db, _) = FolderDb::open_checked(&path, false, 0).unwrap();
+        assert!(!db.checked());
+        drop(db);
+        let (db, _) = FolderDb::open_checked(&path, true, 0).unwrap();
+        assert!(db.checked());
+        drop(db);
+        assert!(FolderDb::open(&path, false).unwrap().0.checked());
+    }
+
+    #[test]
     fn a_sound_database_passes_its_check() {
         let dir = tempfile::tempdir().unwrap();
         let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
@@ -754,7 +800,7 @@ mod tests {
         ];
         for bytes in damaged {
             std::fs::write(&path, &bytes).unwrap();
-            match FolderDb::open(&path) {
+            match FolderDb::open(&path, true) {
                 Err(Error::CorruptState(_)) => {}
                 other => panic!("{} bytes: {:?}", bytes.len(), other.map(|_| ())),
             }
@@ -812,7 +858,7 @@ mod tests {
         })
         .unwrap();
         drop(db);
-        let (db, loaded) = FolderDb::open(&dir.path().join("f.redb")).unwrap();
+        let (db, loaded) = FolderDb::open(&dir.path().join("f.redb"), true).unwrap();
         assert_eq!(loaded.header, header(3));
         let sequences: Vec<u64> = loaded.versions.iter().map(|(s, _)| *s).collect();
         assert_eq!(sequences, [2, 3]);
@@ -874,7 +920,7 @@ mod tests {
         // As many dropped as live: removed, and the file compacted.
         assert_eq!((db.live, db.dropped), (CLEAN_AT_LEAST, 0));
         drop(db);
-        let (_, loaded) = FolderDb::open(&dir.path().join("f.redb")).unwrap();
+        let (_, loaded) = FolderDb::open(&dir.path().join("f.redb"), true).unwrap();
         assert_eq!(loaded.versions.len() as u64, CLEAN_AT_LEAST);
         assert_eq!(loaded.versions[0].0, CLEAN_AT_LEAST + 1);
     }

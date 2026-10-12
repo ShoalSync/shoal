@@ -40,8 +40,13 @@ pub fn generate(
 ) -> Result<()> {
     crate::root::create(&folder.path, folder.id, key.id())?;
     let metadata_dir = data_dir.join("metadata");
-    let mut state =
-        FolderState::open_or_rebuild(data_dir, &metadata_dir, folder.clone(), key.id(), None)?;
+    let mut state = FolderState::open_or_rebuild(
+        data_dir,
+        &metadata_dir,
+        folder.clone(),
+        key.id(),
+        crate::state::Open::Normal,
+    )?;
     let size = (spec.total_bytes / spec.files.max(1) as u64).max(1);
     for n in 0..spec.files {
         let path = format!("d{:03}/f{n:07}.bin", n % 1000);
@@ -80,7 +85,7 @@ pub fn generate(
             (disk.mtime_ns / 1_000_000) as i64,
         )?;
         state.add_manifest(Manifest { content, chunks });
-        state.local.insert(
+        state.record_local(
             path,
             LocalFile {
                 entry,

@@ -3,6 +3,7 @@
 //! numbered once per folder, and a vector of one device's changes is two numbers.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tidefell_proto::sync::{EntryKind, EntryVersion};
 use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, VersionVector};
@@ -41,7 +42,8 @@ enum Vector {
 #[derive(Debug, Clone)]
 pub(crate) struct Slim {
     pub(crate) entry: EntryId,
-    pub(crate) path: Box<str>,
+    /// Shared with the record of the file on disk, which nearly always has the same path.
+    pub(crate) path: Arc<str>,
     pub(crate) kind: EntryKind,
     pub(crate) modified_ms: i64,
     author: u32,
@@ -85,7 +87,7 @@ impl Slim {
         };
         Self {
             entry,
-            path: path.into_boxed_str(),
+            path: path.into(),
             kind,
             modified_ms,
             author: devices.number(author),
@@ -113,7 +115,7 @@ impl Slim {
         EntryVersion {
             folder,
             entry: self.entry,
-            path: self.path.clone().into_string(),
+            path: self.path.to_string(),
             kind: self.kind.clone(),
             modified_ms: self.modified_ms,
             author: self.author(devices),
@@ -160,6 +162,11 @@ impl<'a> Current<'a> {
             folder,
             devices,
         }
+    }
+
+    /// Its path, to keep without a copy of its own (ADR 0035).
+    pub fn shared_path(&self) -> Arc<str> {
+        self.slim.path.clone()
     }
 
     /// The device that made this version.

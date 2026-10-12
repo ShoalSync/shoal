@@ -12,7 +12,7 @@ use tidefell_proto::sync::EntryVersion;
 use tidefell_proto::{DeviceId, EntryId, FolderId, PublicKey, Signed, SignedKind};
 
 use crate::compact::Slim;
-use crate::folder::{Entry, StoredVersion};
+use crate::folder::{Conflicts, Entry, StoredVersion};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
 use crate::{Error, Folder, Result};
@@ -216,39 +216,35 @@ impl Folder {
                 signed: None,
                 sequence,
             };
-            match folder.entries.entry(stored.version.entry) {
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    slot.insert(Entry {
-                        current: Slim::new(stored, &mut folder.devices),
-                        conflicts: Vec::new(),
-                    });
+            let id = stored.version.entry;
+            match folder.entries.get_mut(&id) {
+                Some(entry) => {
+                    several.push(id);
+                    entry.conflicts.push(stored);
                 }
-                std::collections::hash_map::Entry::Occupied(mut slot) => {
-                    several.push(*slot.key());
-                    slot.get_mut().conflicts.push(stored);
-                }
+                None => folder.entries.insert(Entry {
+                    current: Slim::new(stored, &mut folder.devices),
+                    conflicts: Conflicts::default(),
+                }),
             }
         }
         // An entry with several versions: the winner is current, the rest in sequence order.
         several.sort_unstable();
         several.dedup();
         for id in several {
-            let Some(entry) = folder.entries.remove(&id) else {
+            let Some(entry) = folder.entries.get(&id).cloned() else {
                 continue;
             };
-            let mut versions = entry.conflicts;
+            let mut versions = entry.conflicts.into_vec();
             versions.push(entry.current.into_stored(folder.id, &folder.devices));
             let win = winner(versions.iter().map(|v| &v.version));
             let current = versions.swap_remove(win);
             versions.sort_by_key(|v| v.sequence);
             let current = Slim::new(current, &mut folder.devices);
-            folder.entries.insert(
-                id,
-                Entry {
-                    current,
-                    conflicts: versions,
-                },
-            );
+            folder.entries.insert(Entry {
+                current,
+                conflicts: versions.into(),
+            });
         }
         let mut recycle = RecycleBin::new(header.retention);
         for item in recycled {
