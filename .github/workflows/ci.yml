@@ -34,7 +34,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
       - name: Test
@@ -56,7 +56,7 @@ jobs:
           persist-credentials: false
           # The API check compares with the last release tag.
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
       # The action runs in a container; installing the binary avoids needing Docker on the runner.
@@ -102,7 +102,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
@@ -124,7 +124,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
