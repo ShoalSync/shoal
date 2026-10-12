@@ -59,6 +59,18 @@ struct HeaderRecord {
 /// A table's records, encoded keys and values.
 pub(crate) type Records = Vec<(Vec<u8>, Vec<u8>)>;
 
+/// A folder's rebuild (ADR 0034): when it began and why, and when it finished, if it has. Kept
+/// in the database, so a rebuild cut short carries on when the engine starts again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Rebuild {
+    pub(crate) started_ms: i64,
+    pub(crate) reason: String,
+    /// The recycle bin, history and files set aside were restored from their sidecars, which
+    /// waits for the folder's root to be there.
+    pub(crate) restored: bool,
+    pub(crate) finished_ms: Option<i64>,
+}
+
 /// What to write in one transaction.
 pub(crate) struct Changes {
     pub(crate) header: Header,
@@ -68,6 +80,8 @@ pub(crate) struct Changes {
     /// Wait for the disk before returning: for changes peers may be told about, or that the
     /// engine cannot make again, such as signed versions and index progress.
     pub(crate) durable: bool,
+    /// The folder's last rebuild, if it had one.
+    pub(crate) rebuild: Option<Rebuild>,
     /// What the changes did, for the activity log (ADR 0030), written once they are committed.
     pub(crate) activity: Vec<tidefell_meta::Change>,
     /// When they were applied.
@@ -77,6 +91,8 @@ pub(crate) struct Changes {
 /// What a database holds.
 pub(crate) struct Loaded {
     pub(crate) header: Header,
+    /// The folder's last rebuild, if it had one.
+    pub(crate) rebuild: Option<Rebuild>,
     /// The versions still kept, in sequence order.
     pub(crate) versions: Vec<(u64, Signed<EntryVersion>)>,
     pub(crate) recycled: Vec<Recycled>,
@@ -104,10 +120,28 @@ impl std::fmt::Debug for FolderDb {
     }
 }
 
+/// A database error as the engine's: [`Error::CorruptState`] if the file is damaged, and the
+/// folder is to be rebuilt; otherwise an I/O error, such as another process holding the file or
+/// a permission it lacks, which a rebuild would not mend (ADR 0034).
 fn err(path: &Path) -> impl Fn(redb::Error) -> Error + '_ {
-    move |e| Error::Io {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(e.to_string()),
+    move |e| match e {
+        redb::Error::Corrupted(_)
+        | redb::Error::TableDoesNotExist(_)
+        | redb::Error::TableTypeMismatch { .. }
+        | redb::Error::UpgradeRequired(_) => Error::CorruptState(path.to_path_buf()),
+        // What redb reports for a file that is not a database, such as one cut short.
+        redb::Error::Io(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof
+            ) =>
+        {
+            Error::CorruptState(path.to_path_buf())
+        }
+        e => Error::Io {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(e.to_string()),
+        },
     }
 }
 
@@ -161,8 +195,18 @@ impl FolderDb {
 
     /// Opens the database at `path` and reads everything in it.
     pub(crate) fn open(path: &Path) -> Result<(Self, Loaded)> {
+        // redb panics on some damage, such as a file cut short.
+        crate::diagnostics::catching(|| Self::open_checked(path))
+            .unwrap_or_else(|_| Err(Error::CorruptState(path.to_path_buf())))
+    }
+
+    fn open_checked(path: &Path) -> Result<(Self, Loaded)> {
         let path = path.to_path_buf();
-        let db = Database::open(&path).map_err(|e| err(&path)(e.into()))?;
+        let mut db = Database::open(&path).map_err(|e| err(&path)(e.into()))?;
+        // The database's own check, beyond what opening it does (ADR 0034).
+        if !db.check_integrity().map_err(|e| err(&path)(e.into()))? {
+            tracing::warn!(path = %path.display(), "the folder's database was damaged and repaired");
+        }
         let mut folder = Self {
             db,
             path,
@@ -184,6 +228,24 @@ impl FolderDb {
         self.read().map(|(loaded, _, _)| loaded)
     }
 
+    /// Checks the database file for damage (ADR 0034). Fails with [`Error::CorruptState`] if it
+    /// is damaged beyond repair; redb repairs what it can.
+    pub(crate) fn check(&mut self) -> Result<()> {
+        let path = self.path.clone();
+        // The check reads the file as on disk: changes committed without waiting for it, as
+        // last-use times are, are written first, or redb sees its own state as damaged.
+        let mut tx = self.db.begin_write().map_err(|e| err(&path)(e.into()))?;
+        tx.set_durability(Durability::Immediate)
+            .map_err(|e| err(&path)(e.into()))?;
+        tx.commit().map_err(|e| err(&path)(e.into()))?;
+        let checked = crate::diagnostics::catching(|| self.db.check_integrity())
+            .map_err(|_| Error::CorruptState(path.clone()))?;
+        if !checked.map_err(|e| err(&path)(e.into()))? {
+            tracing::warn!(path = %path.display(), "the folder's database was damaged and repaired");
+        }
+        Ok(())
+    }
+
     /// Everything in the database, with how many versions are dropped and the next key of the
     /// dropped table.
     fn read(&self) -> Result<(Loaded, u64, u64)> {
@@ -201,6 +263,13 @@ impl FolderDb {
         if header.format != FORMAT {
             return Err(Error::CorruptState(path.clone()));
         }
+        let rebuild: Option<Rebuild> = {
+            let table = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
+            match table.get("rebuild").map_err(|x| e(x.into()))? {
+                Some(bytes) => postcard::from_bytes(bytes.value()).map_err(corrupt(path))?,
+                None => None,
+            }
+        };
         let mut gone = std::collections::BTreeSet::new();
         let mut last_drop = None;
         for row in tx
@@ -255,6 +324,7 @@ impl FolderDb {
             maps.insert(name, records);
         }
         let loaded = Loaded {
+            rebuild,
             header: Header {
                 id: header.folder,
                 device: header.device,
@@ -303,6 +373,9 @@ impl FolderDb {
             };
             table
                 .insert("header", encode(&record).as_slice())
+                .map_err(|x| e(x.into()))?;
+            table
+                .insert("rebuild", encode(&changes.rebuild).as_slice())
                 .map_err(|x| e(x.into()))?;
         }
         if !journal.stored.is_empty() {
@@ -414,6 +487,79 @@ mod tests {
     }
 
     #[test]
+    fn a_sound_database_passes_its_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
+        db.commit(&Changes {
+            header: header(0),
+            journal: Journal::default(),
+            maps: Vec::new(),
+            durable: true,
+            rebuild: None,
+            activity: Vec::new(),
+            at_ms: 0,
+        })
+        .unwrap();
+        db.check().unwrap();
+        // Changes not yet on disk, as last-use times are committed.
+        for sequence in 1..4 {
+            db.commit(&Changes {
+                header: header(sequence),
+                journal: Journal::default(),
+                maps: Vec::new(),
+                durable: false,
+                rebuild: None,
+                activity: Vec::new(),
+                at_ms: 0,
+            })
+            .unwrap();
+        }
+        db.check().unwrap();
+        db.commit(&Changes {
+            header: header(9),
+            journal: Journal::default(),
+            maps: Vec::new(),
+            durable: false,
+            rebuild: None,
+            activity: Vec::new(),
+            at_ms: 0,
+        })
+        .unwrap();
+        assert_eq!(db.read().unwrap().0.header.sequence, 9);
+    }
+
+    #[test]
+    fn a_damaged_file_is_corrupt_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f.redb");
+        let mut db = FolderDb::create(&path).unwrap();
+        db.commit(&Changes {
+            header: header(0),
+            journal: Journal::default(),
+            maps: Vec::new(),
+            durable: true,
+            rebuild: None,
+            activity: Vec::new(),
+            at_ms: 0,
+        })
+        .unwrap();
+        drop(db);
+        let whole = std::fs::read(&path).unwrap();
+        let damaged = [
+            vec![0xab; whole.len()],
+            whole[..whole.len() / 2].to_vec(),
+            Vec::new(),
+        ];
+        for bytes in damaged {
+            std::fs::write(&path, &bytes).unwrap();
+            match FolderDb::open(&path) {
+                Err(Error::CorruptState(_)) => {}
+                other => panic!("{} bytes: {:?}", bytes.len(), other.map(|_| ())),
+            }
+        }
+    }
+
+    #[test]
     fn what_was_committed_is_read_back() {
         let dir = tempfile::tempdir().unwrap();
         let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
@@ -437,6 +583,7 @@ mod tests {
             },
             maps: vec![("pins", vec![(b"a".to_vec(), Some(Vec::new()))])],
             durable: true,
+            rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
         })
@@ -453,6 +600,7 @@ mod tests {
                 vec![(b"a".to_vec(), None), (b"b".to_vec(), Some(Vec::new()))],
             )],
             durable: false,
+            rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
         })
@@ -495,6 +643,7 @@ mod tests {
             },
             maps: Vec::new(),
             durable: true,
+            rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
         })
@@ -507,6 +656,7 @@ mod tests {
             },
             maps: Vec::new(),
             durable: true,
+            rebuild: None,
             activity: Vec::new(),
             at_ms: 0,
         })

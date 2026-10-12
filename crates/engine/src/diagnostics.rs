@@ -262,6 +262,20 @@ pub struct Crash {
 
 static PANIC_HOOK: OnceLock<()> = OnceLock::new();
 
+thread_local! {
+    /// Set while running code whose panics are caught and handled, which are not crashes.
+    static EXPECTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f`, catching a panic as an error rather than reporting it as a crash: for libraries
+/// that panic on bad input, such as redb on a damaged file (ADR 0034).
+pub(crate) fn catching<T>(f: impl FnOnce() -> T) -> std::thread::Result<T> {
+    let before = EXPECTED.with(|e| e.replace(true));
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    EXPECTED.with(|e| e.set(before));
+    result
+}
+
 /// Writes a crash file to `<data_dir>/crashes/` for every panic, then runs the previous hook.
 /// Only the first call has an effect.
 pub fn install_panic_hook(data_dir: &Path) {
@@ -269,6 +283,9 @@ pub fn install_panic_hook(data_dir: &Path) {
     PANIC_HOOK.get_or_init(|| {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
+            if EXPECTED.with(std::cell::Cell::get) {
+                return;
+            }
             let message = info
                 .payload()
                 .downcast_ref::<&str>()

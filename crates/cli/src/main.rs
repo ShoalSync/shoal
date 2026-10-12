@@ -246,6 +246,13 @@ enum FolderCommand {
         /// Folder ID.
         id: String,
     },
+    /// Start a folder's metadata over, from the files on disk and what other devices send.
+    /// Files, the recycle bin and history are kept. For metadata that is wrong; a damaged
+    /// database is rebuilt without asking.
+    Rebuild {
+        /// Folder ID.
+        id: String,
+    },
     /// Let another user's devices sync a folder.
     Share {
         /// Folder ID.
@@ -731,6 +738,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                 print(json, &(), |_| {
                     format!("stopped syncing {id}; files were kept")
                 });
+            }
+            FolderCommand::Rebuild { id } => {
+                let folder = client.rebuild_folder(&id).await.map_err(e)?;
+                print(json, &folder, format::rebuilding);
             }
             FolderCommand::Share { id, user } => {
                 let folder = client.add_member(&id, &user).await.map_err(e)?;

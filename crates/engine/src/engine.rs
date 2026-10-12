@@ -70,6 +70,9 @@ pub(crate) struct FolderHandle {
     open: Mutex<HashMap<String, usize>>,
     /// Scans, exchanges and problems, for status displays (ADR 0030).
     pub(crate) activity: Mutex<crate::activity::Activity>,
+    /// Asks the scanner for a full scan now, as when a folder being rebuilt gets entries to
+    /// match its files to (ADR 0034).
+    pub(crate) rescan: Notify,
 }
 
 impl FolderHandle {
@@ -136,6 +139,10 @@ pub(crate) struct Inner {
     /// ask once.
     pub(crate) replica_query: tokio::sync::Mutex<()>,
     folders: RwLock<BTreeMap<FolderId, Arc<FolderHandle>>>,
+    /// Folders that could not be opened when the engine started, with their configuration,
+    /// whether it is from the configuration file, and why: the others start regardless, and a
+    /// folder added at runtime stays in the runtime settings (ADR 0034).
+    pub(crate) unopened: Mutex<BTreeMap<FolderId, (FolderConfig, bool, String)>>,
     configured_peers: Vec<PeerAddr>,
     runtime_peers: RwLock<Vec<PeerAddr>>,
     pub(crate) changes: watch::Sender<u64>,
@@ -233,7 +240,7 @@ impl Inner {
         let _ = self.events.send(event);
     }
 
-    fn peers(&self) -> Vec<PeerAddr> {
+    pub(crate) fn peers(&self) -> Vec<PeerAddr> {
         let mut peers = self.configured_peers.clone();
         for peer in self.runtime_peers.read().unwrap().iter() {
             if !peers.iter().any(|p| p.device == peer.device) {
@@ -246,12 +253,19 @@ impl Inner {
     /// Writes runtime folders and peers. Callers hold `runtime_lock`.
     fn save_runtime(&self) -> Result<()> {
         let folders = self.folders.read().unwrap();
+        let unopened = self.unopened.lock().unwrap();
         let (paused, paused_folders) = self.paused.read().unwrap().clone();
         let runtime = Runtime {
             folders: folders
                 .values()
                 .filter(|h| !h.configured)
                 .map(|h| (&h.lock().config).into())
+                .chain(
+                    unopened
+                        .values()
+                        .filter(|(_, configured, _)| !configured)
+                        .map(|(config, _, _)| config.into()),
+                )
                 .collect(),
             peers: self
                 .runtime_peers
@@ -289,6 +303,7 @@ fn open_folder(
     config: FolderConfig,
     device: DeviceId,
     configured: bool,
+    rebuild: Option<String>,
 ) -> Result<FolderHandle> {
     // Only a folder being created or joined gets its root created (ADR 0037); an existing
     // folder whose root is missing is unavailable, not empty.
@@ -296,7 +311,7 @@ fn open_folder(
     if new {
         root::create(&config.path, config.id, device)?;
     }
-    let state = FolderState::open(data_dir, metadata_dir, config, device)?;
+    let state = FolderState::open_or_rebuild(data_dir, metadata_dir, config, device, rebuild)?;
     if !new {
         if let Err(e) = root::adopt(&state, device) {
             warn!(folder = %state.config.id, error = %e, "marking the folder's root failed");
@@ -331,6 +346,7 @@ fn open_folder(
         unavailable: Mutex::new(unavailable),
         open: Mutex::new(HashMap::new()),
         activity: Mutex::default(),
+        rescan: Notify::new(),
     })
 }
 
@@ -413,13 +429,15 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                     }
                     Err(e) => warn!(folder = %id, error = %e, "scan failed"),
                 }
+                let Ok(handle) = inner.folder(&id) else {
+                    return;
+                };
+                let rescan = handle.rescan.notified();
                 wanted = match &mut watch {
                     Some(w) => {
-                        let ignores = match inner.folder(&id) {
-                            Ok(handle) => handle.lock().ignores.clone(),
-                            Err(_) => return,
-                        };
+                        let ignores = handle.lock().ignores.clone();
                         tokio::select! {
+                            () = rescan => Wanted::Full,
                             next = w.next(&ignores) => match next {
                                 Some(wanted) => wanted,
                                 None => {
@@ -440,7 +458,10 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                         } else {
                             interval
                         };
-                        tokio::time::sleep(wait).await;
+                        tokio::select! {
+                            () = rescan => {}
+                            () = tokio::time::sleep(wait) => {}
+                        }
                         Wanted::Full
                     }
                 };
@@ -511,33 +532,40 @@ impl Engine {
         let runtime = Runtime::load(&config.data_dir)?;
         let metadata_dir = metadata_dir(&config, &runtime)?;
 
+        // The configuration file wins over a folder added at runtime with the same ID. One
+        // folder that cannot be opened does not stop the others (ADR 0034).
         let mut folders = BTreeMap::new();
-        for folder in &config.folders {
-            let handle = open_folder(
+        let mut unopened = BTreeMap::new();
+        let runtime_folders = runtime
+            .folders
+            .into_iter()
+            .map(|f| (FolderConfig::from(f), false));
+        for (folder, configured) in config
+            .folders
+            .iter()
+            .map(|f| (f.clone(), true))
+            .chain(runtime_folders)
+        {
+            let id = folder.id;
+            if folders.contains_key(&id) || unopened.contains_key(&id) {
+                continue;
+            }
+            match open_folder(
                 &config.data_dir,
                 &metadata_dir,
                 folder.clone(),
                 device,
-                true,
-            )?;
-            folders.insert(folder.id, Arc::new(handle));
-        }
-        for stored in runtime.folders {
-            let folder: FolderConfig = stored.into();
-            if folders.contains_key(&folder.id) {
-                continue; // The configuration file wins.
+                configured,
+                None,
+            ) {
+                Ok(handle) => {
+                    folders.insert(id, Arc::new(handle));
+                }
+                Err(e) => {
+                    error!(folder = %id, error = %e, "cannot open the folder; not syncing it");
+                    unopened.insert(id, (folder, configured, e.to_string()));
+                }
             }
-            let id = folder.id;
-            folders.insert(
-                id,
-                Arc::new(open_folder(
-                    &config.data_dir,
-                    &metadata_dir,
-                    folder,
-                    device,
-                    false,
-                )?),
-            );
         }
 
         let inner = Arc::new(Inner {
@@ -553,6 +581,7 @@ impl Engine {
             replica_query: tokio::sync::Mutex::default(),
             counters: crate::engine::metrics::Counters::default(),
             folders: RwLock::new(folders),
+            unopened: Mutex::new(unopened),
             configured_peers: config.peers.clone(),
             runtime_peers: RwLock::new(runtime.peers.into_iter().map(Into::into).collect()),
             changes: watch::channel(0).0,
@@ -673,9 +702,14 @@ impl Engine {
         {
             let inner = inner.clone();
             tasks.spawn(supervised(inner.clone(), "purge", async move {
+                let mut hours = 0u32;
                 loop {
                     tokio::time::sleep(PURGE_INTERVAL).await;
                     purge(&inner, now_ms());
+                    hours += 1;
+                    if hours.is_multiple_of(24) {
+                        check_databases(&inner).await;
+                    }
                 }
             }));
         }
@@ -820,6 +854,87 @@ impl Engine {
             node.shutdown().await;
         }
     }
+}
+
+/// Checks each folder's database for damage, as every day (ADR 0034), rebuilding a folder whose
+/// database cannot be repaired. Returns what each check found.
+pub(crate) async fn check_databases(inner: &Arc<Inner>) -> Vec<(FolderId, Result<()>)> {
+    let mut found = Vec::new();
+    for id in inner.folder_ids() {
+        let Some(waiter) = inner
+            .folder(&id)
+            .ok()
+            .and_then(|h| h.lock().committer().map(|c| c.waiter()))
+        else {
+            continue;
+        };
+        let checked = tokio::task::spawn_blocking(move || waiter.check())
+            .await
+            .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
+        // Opened again, the database is checked afresh, and the folder rebuilt only if it
+        // still fails: a check that failed on the open database alone costs nothing.
+        if let Err(Error::CorruptState(_)) = &checked {
+            warn!(folder = %id, "the folder's database failed its check; opening it again");
+            if let Err(e) = reopen_folder(inner, id, None).await {
+                error!(folder = %id, error = %e, "opening the folder again failed");
+            }
+        }
+        found.push((id, checked));
+    }
+    found
+}
+
+/// Starts `id` over from what is on disk and what peers send (ADR 0034): its database is set
+/// aside and a new one made, with what was kept restored from sidecars.
+pub(crate) async fn rebuild_folder(inner: &Arc<Inner>, id: FolderId, reason: &str) -> Result<()> {
+    reopen_folder(inner, id, Some(reason)).await
+}
+
+/// Closes `id` and opens it again, rebuilding it because of `rebuild`, or if its database is
+/// found damaged when it opens.
+async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) -> Result<()> {
+    let old = inner.folder(&id)?;
+    if let Some(scanner) = old.scanner.lock().unwrap().take() {
+        scanner.abort();
+    }
+    // No scan or write is half done while the folder is swapped.
+    let _guard = old.fs_lock.lock().await;
+    let config = {
+        let mut state = old.lock();
+        if let Err(e) = state.close() {
+            warn!(folder = %id, error = %e, "saving the folder before rebuilding it failed");
+        }
+        // Tasks still holding the old folder save nothing more.
+        state.mark_removed();
+        state.config.clone()
+    };
+    let (data_dir, metadata_dir, device) = (
+        inner.data_dir.clone(),
+        inner.metadata_dir.clone(),
+        inner.key.id(),
+    );
+    let configured = old.configured;
+    let rebuild = rebuild.map(str::to_owned);
+    let handle = tokio::task::spawn_blocking(move || {
+        open_folder(
+            &data_dir,
+            &metadata_dir,
+            config,
+            device,
+            configured,
+            rebuild,
+        )
+    })
+    .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;
+    let handle = Arc::new(handle);
+    inner.folders.write().unwrap().insert(id, handle.clone());
+    inner.watch_commits(&handle);
+    spawn_scanner(inner, id, &handle);
+    inner.emit(Event::FolderChanged(id));
+    // Sessions exchange the folder's index again, from the start.
+    inner.changed();
+    Ok(())
 }
 
 /// Records that folder `id` is scanned on its interval instead of watched, and why.

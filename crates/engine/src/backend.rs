@@ -111,6 +111,10 @@ impl Backend for EngineBackend {
                 if let Err(e) = state.save() {
                     warn!(folder = %folder, error = %e, "saving after remote changes failed");
                 }
+                // Files already on disk are matched to the new entries (ADR 0034).
+                if state.rebuilding() {
+                    handle.rescan.notify_one();
+                }
             }
         }
         if changed {
@@ -145,6 +149,11 @@ impl Backend for EngineBackend {
                 .insert(peer, crate::now_ms());
             let mut state = handle.lock();
             state.progress.insert(peer, (epoch, up_to));
+            // A folder being rebuilt has everything this peer knows: the next scan matches
+            // the last of it and ends the rebuild (ADR 0034).
+            if state.rebuilding() {
+                handle.rescan.notify_one();
+            }
             if let Err(e) = state.save() {
                 warn!(folder = %folder, error = %e, "saving peer progress failed");
             }
@@ -180,7 +189,9 @@ impl Backend for EngineBackend {
         let handle = self.0.folder(folder).ok()?;
         // A replica that drops files or ignores other devices' changes does not hold
         // everything, so it never confirms copies as a full replica (ADR 0022, 0025).
-        let full = handle.lock().config.holds_everything();
+        // Nor does one being rebuilt (ADR 0034).
+        let state = handle.lock();
+        let full = state.config.holds_everything() && !state.rebuilding();
         Some(full)
     }
 

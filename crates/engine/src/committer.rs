@@ -157,6 +157,12 @@ impl Waiter {
     pub(crate) fn flush(&self) -> Result<()> {
         flush(&self.0)
     }
+
+    /// Checks the database file for damage, repairing what it can (ADR 0034). Commits wait
+    /// meanwhile.
+    pub(crate) fn check(&self) -> Result<()> {
+        self.0.db.lock().unwrap().check()
+    }
 }
 
 fn flush(shared: &Shared) -> Result<()> {

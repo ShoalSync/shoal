@@ -229,6 +229,24 @@ replica losing its disk later.
 On Linux, a partial replica can also be [mounted](mounting.md), so its files open on demand
 from any program.
 
+## Rebuilding a folder
+
+Each folder's metadata is a database in the metadata directory. If it is damaged or lost, the
+folder is rebuilt: the files on disk are matched to what other devices send, and the recycle
+bin and previous versions come back from the small `.json` files kept beside them in
+`.tidefell/`. The folder shows as *rebuilding* until a device sharing it has sent its index;
+until then files only on this device are not synced, and nothing is deleted. Other folders sync
+throughout.
+
+The databases are checked when the daemon starts, every day, and by `tidefell doctor`. To
+rebuild a folder whose metadata seems wrong:
+
+```sh
+tidefell folder rebuild <folder id>
+```
+
+The old database is kept beside the new one as `<folder id>.corrupt-<time>`.
+
 ## Leaving a folder
 
 ```sh

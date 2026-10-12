@@ -300,6 +300,20 @@ impl Folder {
         purged
     }
 
+    /// Puts `item` back in the recycle bin, as a rebuilt folder does with what its kept files'
+    /// sidecars recorded (ADR 0034). An entry that is live again is taken out when its version
+    /// arrives, as for any recycled entry.
+    pub fn restore_recycled(&mut self, item: Recycled) {
+        if self
+            .current(&item.version.entry)
+            .is_some_and(|v| !matches!(v.kind, EntryKind::Tombstone))
+        {
+            return;
+        }
+        self.pending.recycled(item.version.entry);
+        self.recycle.insert(item);
+    }
+
     /// Removes `entry` from this replica's recycle bin, so it can no longer be restored here,
     /// and returns it so the caller can release its content. Other replicas keep their copy.
     pub fn discard(&mut self, entry: &EntryId) -> Option<Recycled> {

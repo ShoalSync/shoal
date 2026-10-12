@@ -274,6 +274,16 @@ impl Client {
             .await
     }
 
+    /// Starts a folder's metadata over from the files on disk and what peers send (ADR 0034).
+    pub async fn rebuild_folder(&self, id: &str) -> Result<Folder, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{id}/rebuild"),
+            None::<&()>,
+        )
+        .await
+    }
+
     /// Lets a user's devices sync a folder.
     pub async fn add_member(&self, folder: &str, user: &str) -> Result<Folder, Error> {
         let body = NewMember {

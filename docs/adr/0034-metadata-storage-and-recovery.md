@@ -163,6 +163,38 @@ progress, confirmed copies, kept files and history).
     Records holding version vectors, which JSON cannot key by device, are kept exactly as
     their postcard encoding in hex beside a readable path. A sidecar that cannot be written
     costs only what a rebuild could restore, so it never fails the operation.
+  - Detection: a database that redb reports corrupted, that is not a database at all, that
+    redb panics on (as it does on a file cut short), or whose records do not decode is
+    damaged. Other errors, such as permissions, are not: the folder is left unopened and
+    reported by `tidefell doctor`, and the engine starts with the others. A database missing
+    while the folder's state directory exists is lost, and the folder is rebuilt rather than
+    started afresh.
+  - The rebuild is recorded in the new database (when, why, whether the sidecars were read,
+    when it finished), so one cut short carries on after a restart. Sidecars are read at the
+    first scan, when the folder's root is known to be there, not at open: a drive mounted late
+    does not cost the recycle bin.
+  - While rebuilding, a scan only matches files to entries peers sent for their paths, with
+    the same size, content and executable bit; other files are not read, recorded or reported
+    as problems, and nothing is deleted. Writing a file over one already at its path waits for
+    that match instead of fetching. The folder tells peers it is not a full replica.
+  - The rebuild ends at the first scan that begins after the sidecars are read and one peer's
+    whole index has arrived, so every file it finds has been matched before anything treats
+    the folder as rebuilt; or at the first scan if the device knows no peers at all
+    (configured or added at runtime). The scan that follows is a normal one: files no peer
+    had become new entries. Status, `tidefell folder list` and the web say when and why the
+    folder was last rebuilt. A device that
+    finds its peers only by local discovery counts as having none, so its rebuilt files
+    become entries of their own beside their peers' (ADR 0024 keeps both); paired and
+    configured peers are known, so this needs a device that was never told of any.
+  - Integrity is checked on open, daily and by `tidefell doctor`, which reports the folder for
+    `tidefell folder rebuild` instead of rebuilding it itself. A check of a database in use
+    first commits durably: redb checks the file as on disk, and takes changes committed without
+    waiting for the disk, as last-use times are, for damage. A daily check that fails closes the
+    folder and opens it again, which checks a fresh handle; only a failure there rebuilds it.
+  - A kept file's sidecar names its recycle-bin items when the folder is next saved, not at the
+    next tidy: a delete made here keeps the file before the item exists.
+  - Pins are still kept in the database and are lost by a rebuild; moving them, with the other
+    per-device settings, to the runtime settings is the last part of this step.
 
 ## Consequences
 

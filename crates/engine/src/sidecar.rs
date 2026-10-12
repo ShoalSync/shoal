@@ -46,10 +46,6 @@ pub(crate) struct Item {
 
 impl Item {
     /// The recycle-bin item, if the record decodes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read when a folder is rebuilt, which comes next")
-    )]
     pub(crate) fn recycled(&self) -> Option<Recycled> {
         postcard::from_bytes(&from_hex(&self.record)?).ok()
     }
@@ -75,10 +71,6 @@ pub(crate) struct Aside {
 
 impl Aside {
     /// The set-aside record, if it decodes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "read when a folder is rebuilt, which comes next")
-    )]
     pub(crate) fn set_aside(&self) -> Option<SetAside> {
         postcard::from_bytes(&from_hex(&self.record)?).ok()
     }
@@ -88,10 +80,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read when a folder is rebuilt, which comes next")
-)]
 fn from_hex(text: &str) -> Option<Vec<u8>> {
     (0..text.len())
         .step_by(2)
@@ -201,6 +189,68 @@ pub(crate) fn refresh(state: &FolderState) {
             write(&file, &aside(*entry, item));
         }
     }
+}
+
+/// The files in `dir` with a readable sidecar, and what each is.
+fn described<T: DeserializeOwned>(dir: &Path) -> Vec<(String, T)> {
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut found: Vec<(String, T)> = read_dir
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|name| !name.ends_with(".json") && !name.ends_with(".tmp"))
+        .filter_map(|name| Some((name.clone(), read(&dir.join(&name))?)))
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
+/// Gives a folder being rebuilt back its recycle bin, history and files set aside on this
+/// device, from the sidecars beside their files. A file without a readable sidecar is left for
+/// cleanup; what it was cannot be known.
+pub(crate) fn restore(state: &mut FolderState) {
+    debug_assert!(state.rebuilding());
+    let root = state.config.path.clone();
+    let (mut items, mut previous, mut aside) = (0, 0, 0);
+    for (name, kept) in described::<Kept>(&crate::content::kept_dir(&root)) {
+        let recycled: Vec<Recycled> = kept.recycled.iter().filter_map(Item::recycled).collect();
+        if recycled.is_empty() {
+            continue;
+        }
+        state.kept.insert(kept.content, name);
+        for item in recycled {
+            state.meta.restore_recycled(item);
+            items += 1;
+        }
+    }
+    for (name, history) in described::<History>(&crate::history::history_dir(&root)) {
+        if history.previous.file != name {
+            continue;
+        }
+        let mut versions = state
+            .history
+            .get(&history.entry)
+            .cloned()
+            .unwrap_or_default();
+        versions.push(history.previous);
+        versions.sort_by_key(|p| p.id);
+        state.history.insert(history.entry, versions);
+        previous += 1;
+    }
+    for (name, record) in described::<Aside>(&crate::setaside::recycle_dir(&root)) {
+        if let Some(item) = record.set_aside().filter(|item| item.file == name) {
+            state.set_aside.insert(record.entry, item);
+            aside += 1;
+        }
+    }
+    tracing::info!(
+        folder = %state.config.id,
+        recycled = items,
+        history = previous,
+        set_aside = aside,
+        "restored from sidecars"
+    );
 }
 
 #[cfg(test)]

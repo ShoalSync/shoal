@@ -271,6 +271,17 @@ pub(crate) fn folder_state(f: &FolderInfo) -> String {
         FolderState::Scanning => "looking for changes".to_owned(),
         FolderState::Syncing => "syncing".to_owned(),
         FolderState::Paused => "paused".to_owned(),
+        FolderState::Rebuilding => {
+            let waiting = f
+                .rebuild
+                .as_ref()
+                .map(|r| r.waiting_for.len())
+                .unwrap_or_default();
+            match waiting {
+                0 => "rebuilding: waiting for a device sharing the folder".to_owned(),
+                n => format!("rebuilding: waiting for {n} device(s) to send their files"),
+            }
+        }
         FolderState::Error => format!("not syncing: {}", f.error.as_deref().unwrap_or("an error")),
     };
     if f.pending_files > 0 && f.state != FolderState::Error {
@@ -342,6 +353,14 @@ pub(crate) async fn folder(
             let mut line = folder_state(&folder);
             if let Some(at) = folder.last_scan_ms {
                 line = format!("{line}. Last looked for changes {}.", time(at));
+            }
+            // When and why its metadata was last started over (ADR 0034).
+            if let Some(r) = &folder.rebuild {
+                let when = match r.finished_ms {
+                    Some(at) => format!("Rebuilt {}", time(at)),
+                    None => format!("Rebuilding since {}", time(r.started_ms)),
+                };
+                line = format!("{line} {when}, as {}.", r.reason);
             }
             line
         },

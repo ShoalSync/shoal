@@ -147,12 +147,51 @@ fn watch_limit() -> Option<u64> {
 }
 
 impl Engine {
+    /// Checks `folder`'s database for damage, and says if the folder is being rebuilt
+    /// (ADR 0034).
+    fn metadata_check(&self, folder: &crate::FolderInfo) -> Check {
+        let path = folder.path.display();
+        let waiter = self
+            .inner
+            .folder(&folder.id)
+            .ok()
+            .and_then(|h| h.lock().committer().map(|c| c.waiter()));
+        if let Some(Err(e)) = waiter.map(|w| w.check()) {
+            return check(
+                "metadata",
+                CheckLevel::Failure,
+                format!("{path}: the metadata database is damaged: {e}"),
+                Some(
+                    "Run `tidefell folder rebuild` for the folder; it is also rebuilt at the \
+                     daily check. Files on disk and the recycle bin are kept.",
+                ),
+            );
+        }
+        match &folder.rebuild {
+            Some(r) if r.finished_ms.is_none() => check(
+                "metadata",
+                CheckLevel::Warning,
+                format!("{path} is being rebuilt, as {}", r.reason),
+                Some(
+                    "It finishes when a device sharing the folder has sent its index; until \
+                     then new files there are not synced.",
+                ),
+            ),
+            _ => check(
+                "metadata",
+                CheckLevel::Pass,
+                format!("{path}: the metadata database is sound"),
+                None,
+            ),
+        }
+    }
+
     /// Checks this device's clock against its peers', its free space, its folders, file
     /// watching, its connectivity and its state (ADR 0030). The Android app adds its own.
     pub fn doctor(&self) -> Vec<Check> {
         let mut checks = Vec::new();
 
-        // The engine started, so every folder's state loaded.
+        // The engine started; folders that could not be opened are not synced (ADR 0034).
         let folders = self.folders();
         checks.push(check(
             "state",
@@ -160,6 +199,17 @@ impl Engine {
             format!("engine state of {} folder(s) loaded", folders.len()),
             None,
         ));
+        for (id, error) in self.unopened_folders() {
+            checks.push(check(
+                "state",
+                CheckLevel::Failure,
+                format!("folder {id} could not be opened: {error}"),
+                Some(
+                    "Fix what the error names and restart Tidefell. The folder is not synced \
+                     meanwhile.",
+                ),
+            ));
+        }
 
         for peer in self.peer_states().into_iter().filter(|p| p.connected) {
             let name = peer.name.clone().unwrap_or_else(|| peer.device.to_string());
@@ -210,6 +260,7 @@ impl Engine {
                     Some("Give the user that runs Tidefell read and write access to the folder."),
                 ),
             });
+            checks.push(self.metadata_check(folder));
             // What the drive does with names (ADR 0033), probed when the folder opened.
             if let Ok(filesystem) = self.filesystem(folder.id) {
                 checks.push(check(

@@ -293,6 +293,14 @@ pub(crate) struct Scanned {
     pub(crate) problems_changed: bool,
 }
 
+/// True if a file at `rel` could be the file of an entry a peer sent: one whose size matches.
+fn matchable(state: &FolderState, rel: &str, disk: &DiskStat) -> bool {
+    state.meta.find_path(&recorded(rel)).is_some_and(|v| {
+        matches!(v.kind, EntryKind::File { size, executable, .. }
+            if size == disk.size && executable == disk.executable)
+    })
+}
+
 /// Scans `id` for changes since the last scan and records them: everything, or only `scope`.
 /// `saved` is a file written through the engine, recorded even if it is ignored.
 pub(crate) fn scan(
@@ -301,9 +309,16 @@ pub(crate) fn scan(
     scope: Option<&Scope>,
     saved: Option<&str>,
 ) -> Result<Scanned> {
-    let (root, known) = {
-        let state = handle.lock();
-        (state.config.path.clone(), state.local.clone())
+    let (root, known, rebuilding, exchanged) = {
+        let mut state = handle.lock();
+        // The caller checked the root is there, so what was kept can be found (ADR 0034).
+        state.restore_if_rebuilding();
+        (
+            state.config.path.clone(),
+            state.local.clone(),
+            state.rebuilding(),
+            state.exchanged(),
+        )
     };
 
     let ignores = Ignores::load(&root);
@@ -352,6 +367,12 @@ pub(crate) fn scan(
         if known.get(&rel).is_some_and(|l| {
             l.size == disk.size && l.mtime_ns == disk.mtime_ns && l.executable == disk.executable
         }) {
+            continue;
+        }
+        // While the folder is rebuilt, a file is only matched to an entry a peer sent for its
+        // path, and one there is no such entry for yet is left alone: not read, not recorded,
+        // and not a problem (ADR 0034).
+        if rebuilding && !known.contains_key(&rel) && !matchable(&handle.lock(), &rel, &disk) {
             continue;
         }
         let path = root.join(&rel);
@@ -406,6 +427,15 @@ pub(crate) fn scan(
         let path = recorded(&c.rel).into_owned();
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {
             Some(entry) => entry,
+            None if rebuilding => match state.meta.find_path(&path) {
+                Some(v)
+                    if matches!(v.kind, EntryKind::File { content: c2, executable, .. }
+                    if c2 == content && executable == c.stat.executable) =>
+                {
+                    v.entry
+                }
+                _ => continue,
+            },
             // A file this device never had on disk here (a placeholder, a file dropped from
             // this device, or any file of a send-only folder) is the same entry only if it has
             // the same content. Otherwise it is a new file that happens to share the path, and
@@ -487,9 +517,12 @@ pub(crate) fn scan(
     // files in the scope that are verifiably gone are.
     // Only a path known to be gone is deleted. One that cannot be looked at, such as in a
     // directory this device may list but not enter, is a problem, not a delete (ADR 0030).
+    // Nothing is deleted while the folder is rebuilt: what is recorded as on disk is only what
+    // was matched, and the scan after the rebuild sees everything (ADR 0034).
     let mut deleted = Vec::new();
     for rel in known.keys() {
-        if seen.contains(rel)
+        if rebuilding
+            || seen.contains(rel)
             || !scope.is_none_or(|s| s.contains(rel))
             || state.ignores.is_ignored(rel, false)
             || unreadable
@@ -545,6 +578,11 @@ pub(crate) fn scan(
         }
     }
 
+    if rebuilding && state.finish_rebuild(inner.peers().is_empty(), exchanged, now_ms()) {
+        // The next scan records what was not matched as new files (ADR 0034).
+        handle.rescan.notify_one();
+        inner.emit(crate::views::Event::FolderChanged(state.config.id));
+    }
     state.save()?;
     drop(state);
     // Problems the scan covered are replaced by what it found: a path read, gone or now

@@ -10,7 +10,7 @@ use tracing::info;
 use super::recycle::recycle_summary;
 use super::{open_folder, spawn_scanner, Engine};
 use crate::config::{FolderConfig, NewFolder};
-use crate::views::{Event, FolderInfo, FolderPeer, FolderState, PathProblem};
+use crate::views::{Event, FolderInfo, FolderPeer, FolderState, PathProblem, RebuildInfo};
 use crate::{copies, Error, Result};
 
 /// A summary of one folder, for status displays and tests.
@@ -67,8 +67,11 @@ impl Engine {
                     .map(|(device, _, since)| (*device, *since))
                     .collect();
                 let paused = self.inner.is_paused(&id);
+                let rebuilding = state.rebuilding();
                 let state_now = if error.is_some() {
                     FolderState::Error
+                } else if rebuilding {
+                    FolderState::Rebuilding
                 } else if paused {
                     FolderState::Paused
                 } else if activity.scanning {
@@ -143,6 +146,15 @@ impl Engine {
                     last_scan_duration_ms: activity.last_scan.as_ref().map(|(_, took, _)| *took),
                     peers,
                     problems: activity.problems.len(),
+                    rebuild: state.last_rebuild().map(|r| RebuildInfo {
+                        started_ms: r.started_ms,
+                        reason: r.reason.clone(),
+                        finished_ms: r.finished_ms,
+                        waiting_for: match rebuilding {
+                            true => sharing.iter().map(|(d, _)| *d).collect(),
+                            false => Vec::new(),
+                        },
+                    }),
                 }
             })
             .collect()
@@ -210,7 +222,9 @@ impl Engine {
     pub fn add_folder(&self, config: FolderConfig) -> Result<()> {
         let _guard = self.inner.runtime_lock.lock().unwrap();
         let id = config.id;
-        if self.inner.folders.read().unwrap().contains_key(&id) {
+        if self.inner.folders.read().unwrap().contains_key(&id)
+            || self.inner.unopened.lock().unwrap().contains_key(&id)
+        {
             return Err(Error::FolderExists(id));
         }
         if config.members.is_empty() {
@@ -225,6 +239,7 @@ impl Engine {
             config,
             self.id(),
             false,
+            None,
         )?);
         self.inner
             .folders
@@ -293,6 +308,24 @@ impl Engine {
         // Sessions stop offering the folder.
         self.inner.changed();
         Ok(())
+    }
+
+    /// Starts `id` over (ADR 0034): its metadata is set aside, files on disk are matched to what
+    /// peers send, and the recycle bin and history are restored from what was kept. For a folder
+    /// whose metadata is wrong in a way the engine cannot see.
+    pub async fn rebuild_folder(&self, id: FolderId) -> Result<()> {
+        super::rebuild_folder(&self.inner, id, "it was asked for").await?;
+        info!(folder = %id, "folder rebuilding");
+        Ok(())
+    }
+
+    /// Folders that could not be opened when the engine started, and why (ADR 0034).
+    pub fn unopened_folders(&self) -> Vec<(FolderId, String)> {
+        let unopened = self.inner.unopened.lock().unwrap();
+        unopened
+            .iter()
+            .map(|(id, (_, _, e))| (*id, e.clone()))
+            .collect()
     }
 
     /// Changes how long this replica keeps deleted files. Items past a shortened retention

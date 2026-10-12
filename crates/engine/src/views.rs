@@ -61,10 +61,26 @@ pub struct FolderInfo {
     pub peers: Vec<FolderPeer>,
     /// Paths that failed to scan, fetch, write or delete; see [`crate::Engine::path_problems`].
     pub problems: usize,
+    /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
+    pub rebuild: Option<RebuildInfo>,
 }
 
-/// What a folder is doing (ADR 0030). The first that applies: error, paused, scanning,
-/// syncing, idle.
+/// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
+/// what peers send.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RebuildInfo {
+    /// When it began, in milliseconds since the Unix epoch.
+    pub started_ms: i64,
+    /// Why: the database was damaged or missing, or it was asked for.
+    pub reason: String,
+    /// When it finished, if it has: a peer's whole index arrived, or there was no peer.
+    pub finished_ms: Option<i64>,
+    /// While it has not: the connected peers sharing the folder, whose index it waits for.
+    pub waiting_for: Vec<DeviceId>,
+}
+
+/// What a folder is doing (ADR 0030). The first that applies: error, rebuilding, paused,
+/// scanning, syncing, idle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FolderState {
     /// Nothing to do.
@@ -75,6 +91,8 @@ pub enum FolderState {
     Syncing,
     /// Paused (ADR 0029).
     Paused,
+    /// Its metadata is being started over, and it waits for a peer's index (ADR 0034).
+    Rebuilding,
     /// The folder cannot be used, or its last scan failed.
     Error,
 }

@@ -184,8 +184,26 @@ pub enum FolderState {
     Syncing,
     /// Paused.
     Paused,
+    /// Its metadata is being started over, and it waits for a peer's index; see `rebuild`.
+    Rebuilding,
     /// The folder cannot be used, or its last scan failed; see `error`.
     Error,
+}
+
+/// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
+/// what peers send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Rebuild {
+    /// When it began, in milliseconds since the Unix epoch.
+    pub started_ms: i64,
+    /// Why, in words.
+    pub reason: String,
+    /// When it finished, if it has: a peer's whole index arrived, or there was no peer.
+    #[serde(default)]
+    pub finished_ms: Option<i64>,
+    /// While it has not: the connected devices sharing the folder whose index it waits for.
+    #[serde(default)]
+    pub waiting_for: Vec<String>,
 }
 
 /// A folder's exchanges with one peer.
@@ -361,6 +379,9 @@ pub struct Folder {
     /// Paths that failed to scan, fetch, write or delete; `GET /v1/folders/{id}/problems`.
     #[serde(default)]
     pub problems: u64,
+    /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
+    #[serde(default)]
+    pub rebuild: Option<Rebuild>,
 }
 
 /// A summary of one device's recycle bin for a folder.

@@ -79,8 +79,8 @@ pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer,
-    FolderState, Operation, PathProblem, PeerInfo, PeerState, ProblemKind, RecycleSummary,
-    RecycledInfo, VersionInfo, VersionKind,
+    FolderState, Operation, PathProblem, PeerInfo, PeerState, ProblemKind, RebuildInfo,
+    RecycleSummary, RecycledInfo, VersionInfo, VersionKind,
 };
 
 /// Engine errors.

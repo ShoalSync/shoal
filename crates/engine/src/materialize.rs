@@ -253,6 +253,14 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                 if current || ignored || !wanted {
                     continue;
                 }
+                // A folder being rebuilt matches the file already at a path to its entry by
+                // scanning it, rather than fetching content it may well have (ADR 0034).
+                if here.is_none()
+                    && state.rebuilding()
+                    && fs::symlink_metadata(state.config.path.join(path)).is_ok()
+                {
+                    continue;
+                }
                 if let Some(reason) = state.filesystem.refuses(path).filter(|_| !in_place) {
                     plan.refused.push((path.to_owned(), reason));
                     continue;

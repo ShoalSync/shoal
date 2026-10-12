@@ -97,7 +97,12 @@ listen = "127.0.0.1:{metrics_port}"
         let path = self.dir.join("tidefelld.toml");
         fs::write(&path, config).unwrap();
         tidefelld(&["config", "check", path.to_str().unwrap()]);
-        let log = fs::File::create(self.dir.join("daemon.log")).unwrap();
+        // Appended to, so a restarted daemon's log follows the earlier one's.
+        let log = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join("daemon.log"))
+            .unwrap();
         Daemon(
             Command::new(BIN)
                 .args(["run", "--config", path.to_str().unwrap()])
@@ -556,4 +561,77 @@ fn killed_during_a_first_sync_loses_nothing() {
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(files_under(&b.folder()), expected);
     assert_eq!(files_under(&a.folder()), expected);
+}
+
+/// ADR 0034: a daemon whose folder database is damaged starts, rebuilds the folder from the
+/// files on disk and its peer's index, and carries on rebuilding if killed meanwhile: every file
+/// once, on both sides.
+#[test]
+fn a_damaged_database_is_rebuilt_even_when_killed_meanwhile() {
+    const FILES: usize = 600;
+    let root = tempfile::tempdir().unwrap();
+    let user_key = root.path().join("user.key");
+    let a = init(root.path(), "a", &user_key);
+    let b = init(root.path(), "b", &user_key);
+    let user = field(
+        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        "user",
+    );
+    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let mut expected = std::collections::BTreeMap::new();
+    for n in 0..FILES {
+        let rel = format!("d{}/file-{n:04}.txt", n % 20);
+        let data = format!("content of file {n}, {}", "x".repeat(n % 97)).into_bytes();
+        let path = a.folder().join(&rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, &data).unwrap();
+        expected.insert(rel, data);
+    }
+    let da = a.start(&folder_id, &user, &b);
+    let db = b.start(&folder_id, &user, &a);
+    wait_for("the first sync", &[&a, &b], || {
+        files_under(&b.folder()) == expected
+    });
+    // Let the last commits land, then stop both and damage b's database.
+    std::thread::sleep(Duration::from_secs(2));
+    drop(db);
+    drop(da);
+    let database = b
+        .dir
+        .join("data/metadata")
+        .join(format!("{folder_id}.redb"));
+    let length = fs::metadata(&database).unwrap().len() as usize;
+    fs::write(&database, vec![0xab; length]).unwrap();
+
+    // With a stopped, b's rebuild waits for it; b is killed meanwhile.
+    let log = || fs::read_to_string(b.dir.join("daemon.log")).unwrap_or_default();
+    let db = b.start(&folder_id, &user, &a);
+    wait_for("the rebuild to start", &[&a, &b], || {
+        log().contains("rebuilding the folder")
+    });
+    std::thread::sleep(Duration::from_secs(2));
+    drop(db);
+    assert!(
+        !log().contains("folder rebuilt"),
+        "nothing to rebuild from yet"
+    );
+
+    // The rebuild carries on after the restart, and ends with a's index.
+    let _da = a.start(&folder_id, &user, &b);
+    let _db = b.start(&folder_id, &user, &a);
+    wait_for("the rebuild to finish", &[&a, &b], || {
+        log().contains("folder rebuilt")
+    });
+    std::thread::sleep(Duration::from_secs(3));
+    // Every file once, none fetched again: each was matched to its entry where it was.
+    assert_eq!(files_under(&b.folder()), expected);
+    assert_eq!(files_under(&a.folder()), expected);
+    let log = log();
+    let since = &log[log.find("rebuilding the folder").unwrap()..];
+    assert!(
+        !since.contains("updated"),
+        "files were written again:\n{since}"
+    );
+    let a_log = fs::read_to_string(a.dir.join("daemon.log")).unwrap_or_default();
+    assert!(!a_log.contains("conflict"), "{a_log}");
 }

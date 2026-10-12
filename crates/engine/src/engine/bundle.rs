@@ -49,6 +49,7 @@ fn state(state: FolderState) -> &'static str {
         FolderState::Scanning => "scanning",
         FolderState::Syncing => "syncing",
         FolderState::Paused => "paused",
+        FolderState::Rebuilding => "rebuilding",
         FolderState::Error => "error",
     }
 }

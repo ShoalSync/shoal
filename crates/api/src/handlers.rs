@@ -20,7 +20,7 @@ use tidefell_sdk::types::{
     CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
     Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits,
     LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest,
-    Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind,
+    Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, Rebuild,
     RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
     Status, SyncOptions, Transfer, Version, VersionKind, VersionRequest,
 };
@@ -46,6 +46,7 @@ type AppState = State<Arc<Engine>>;
         folder,
         add_folder,
         remove_folder,
+        rebuild_folder,
         set_retention,
         set_sync,
         add_member,
@@ -134,6 +135,7 @@ type AppState = State<Arc<Engine>>;
         Transfer,
         FolderState,
         FolderPeer,
+        Rebuild,
         PathProblem,
         Operation,
         ProblemKind,
@@ -322,6 +324,21 @@ pub(crate) async fn remove_folder(
 ) -> ApiResult<StatusCode> {
     engine.remove_folder(parse("folder", &id)?)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Starts the folder's metadata over (ADR 0034): files on disk are matched to what peers send,
+/// and the recycle bin and history are restored from what was kept. The folder is rebuilding
+/// until a peer's whole index has arrived.
+#[utoipa::path(post, path = "/v1/folders/{id}/rebuild", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = Folder), (status = 404, body = ApiError)))]
+pub(crate) async fn rebuild_folder(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.rebuild_folder(id).await?;
+    Ok(Json(folder_info(&engine, id)?))
 }
 
 /// Changes how long this device keeps the folder's deleted files. Items past a shortened

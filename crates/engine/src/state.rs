@@ -14,7 +14,7 @@ use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, Version
 
 use crate::committer::Committer;
 use crate::config::FolderConfig;
-use crate::db::{Changes, FolderDb};
+use crate::db::{Changes, FolderDb, Rebuild};
 use crate::history::Previous;
 use crate::ignores::Ignores;
 use crate::tracked::{encode, Tracked, TrackedSet};
@@ -573,6 +573,8 @@ pub(crate) struct FolderState {
     /// The recycle bin as the kept files' sidecars last recorded it, to rewrite them only when
     /// it changes (ADR 0034).
     pub(crate) sidecars_for: u64,
+    /// The folder's last rebuild, if it had one (ADR 0034).
+    rebuild: Option<Rebuild>,
     /// Commits the folder's changes to its database, in order, off the folder lock
     /// (ADR 0034). `None` once the folder is closed.
     committer: Option<Committer>,
@@ -585,19 +587,33 @@ impl FolderState {
     /// True if `folder` has saved state under `data_dir`, so it is not being created or joined.
     pub(crate) fn exists(data_dir: &Path, metadata_dir: &Path, folder: FolderId) -> bool {
         let dir = data_dir.join("folders").join(folder.to_string());
-        FolderDb::exists(&db_path(metadata_dir, folder))
-            || dir.join("meta").exists()
-            || dir.join("state").exists()
+        FolderDb::exists(&db_path(metadata_dir, folder)) || dir.exists()
     }
 
-    /// Loads the folder's state from `data_dir`, or creates it.
+    /// Loads the folder's state from `data_dir`, or creates it. A folder whose database is
+    /// damaged, or missing though the folder existed, or that `rebuild` names a reason for, is
+    /// rebuilt (ADR 0034).
+    #[cfg(any(test, fuzzing))]
     pub(crate) fn open(
         data_dir: &Path,
         metadata_dir: &Path,
         config: FolderConfig,
         device: DeviceId,
     ) -> Result<Self> {
+        Self::open_or_rebuild(data_dir, metadata_dir, config, device, None)
+    }
+
+    /// Opens the folder as [`open`](Self::open) does, rebuilding it because of `rebuild` if
+    /// that is given.
+    pub(crate) fn open_or_rebuild(
+        data_dir: &Path,
+        metadata_dir: &Path,
+        config: FolderConfig,
+        device: DeviceId,
+        rebuild: Option<String>,
+    ) -> Result<Self> {
         let dir = data_dir.join("folders").join(config.id.to_string());
+        let existed = dir.exists();
         fs::create_dir_all(&dir).map_err(io_err(&dir))?;
         let path = db_path(metadata_dir, config.id);
         let members = FolderMembers::new(config.id, config.members.iter().copied());
@@ -626,23 +642,36 @@ impl FolderState {
             db_path: path,
             sidecars_for: 0,
             committer: None,
+            rebuild: None,
             removed: false,
         };
-        let db = if FolderDb::exists(&state.db_path) {
-            state.load()?
-        } else {
+        let has_db = FolderDb::exists(&state.db_path);
+        let has_files = state.dir.join("meta").exists() || state.dir.join("state").exists();
+        let loaded = match rebuild {
+            Some(reason) => Err(reason),
+            None if has_db => match state.load() {
+                Ok(db) => Ok(db),
+                Err(Error::CorruptState(_)) => Err("its metadata database was damaged".into()),
+                Err(e) => return Err(e),
+            },
+            None if !has_files && existed => Err("its metadata database was missing".into()),
+            None => {
+                // A new folder, or one saved as files by an earlier version: those are
+                // converted, then deleted (ADR 0034).
+                state.load_files(device)?;
+                Ok(state.create_db()?)
+            }
+        };
+        let db = match loaded {
+            Ok(db) => db,
+            Err(reason) => {
+                tracing::warn!(folder = %state.config.id, %reason, "rebuilding the folder");
+                state.rebuild_from_scratch(device, reason)?
+            }
+        };
+        if has_files {
             // A new folder, or one saved as files by an earlier version: those are converted,
             // then deleted (ADR 0034).
-            state.load_files(device)?;
-            let mut db = FolderDb::create(&state.db_path)?;
-            db.commit(&Changes {
-                header: state.meta.header(),
-                journal: state.meta.full_journal(),
-                maps: state.all_maps(),
-                durable: true,
-                activity: Vec::new(),
-                at_ms: 0,
-            })?;
             for name in ["meta", "state"] {
                 let path = state.dir.join(name);
                 match fs::remove_file(&path) {
@@ -651,8 +680,7 @@ impl FolderState {
                     Err(e) => return Err(io_err(&path)(e)),
                 }
             }
-            db
-        };
+        }
         state.meta.set_retention(retention);
         let lines = crate::activity_log::compact(&state.dir, crate::now_ms()).unwrap_or_else(|e| {
             tracing::warn!(error = %e, "compacting the activity log failed");
@@ -669,13 +697,109 @@ impl FolderState {
         Ok(state)
     }
 
+    /// Creates the folder's database and writes all of the folder to it.
+    fn create_db(&mut self) -> Result<FolderDb> {
+        let mut db = FolderDb::create(&self.db_path)?;
+        db.commit(&Changes {
+            header: self.meta.header(),
+            journal: self.meta.full_journal(),
+            maps: self.all_maps(),
+            durable: true,
+            rebuild: self.rebuild.clone(),
+            activity: Vec::new(),
+            at_ms: 0,
+        })?;
+        Ok(db)
+    }
+
+    /// Starts the folder over, because of `reason` (ADR 0034): a damaged database is moved
+    /// aside as `<id>.corrupt-<time>`, and a new one gets a new index epoch, so every peer sends
+    /// its whole index again, and the recycle bin, history and files set aside on this device
+    /// back from their sidecars once its root is there. Files on disk are matched to entries by
+    /// content as versions arrive; until a peer's whole index is here, the folder is rebuilding.
+    fn rebuild_from_scratch(&mut self, device: DeviceId, reason: String) -> Result<FolderDb> {
+        let now = crate::now_ms();
+        if self.db_path.exists() {
+            let aside = self
+                .db_path
+                .with_file_name(format!("{}.corrupt-{now}", self.config.id));
+            crate::rename_durably(&self.db_path, &aside).map_err(io_err(&self.db_path))?;
+        }
+        let epoch = u64::from_le_bytes(random_bytes()?).max(1);
+        self.meta = Folder::new(self.config.id, device, epoch, self.config.retention);
+        self.manifests = Tracked::default();
+        self.index = ChunkIndex::new();
+        self.local = LocalFiles::default();
+        self.progress = Tracked::default();
+        self.used = Tracked::default();
+        self.copies = Tracked::default();
+        self.copy_names = Tracked::default();
+        self.dropped = TrackedSet::default();
+        self.set_aside = Tracked::default();
+        self.kept = Tracked::default();
+        self.history = Tracked::default();
+        self.pins = TrackedSet::default();
+        self.rebuild = Some(Rebuild {
+            started_ms: now,
+            reason,
+            restored: false,
+            finished_ms: None,
+        });
+        self.create_db()
+    }
+
+    /// True while the folder is being rebuilt (ADR 0034): it matches files on disk to the
+    /// entries peers send, records no deletes, and tells peers it is not a full replica.
+    pub(crate) fn rebuilding(&self) -> bool {
+        self.rebuild
+            .as_ref()
+            .is_some_and(|r| r.finished_ms.is_none())
+    }
+
+    /// The folder's last rebuild, if it had one.
+    pub(crate) fn last_rebuild(&self) -> Option<&Rebuild> {
+        self.rebuild.as_ref()
+    }
+
+    /// Gives a folder being rebuilt its recycle bin, history and files set aside back from
+    /// their sidecars, once. Callers have checked that the folder's root is there.
+    pub(crate) fn restore_if_rebuilding(&mut self) {
+        if self.rebuilding() && self.rebuild.as_ref().is_some_and(|r| !r.restored) {
+            crate::sidecar::restore(self);
+            if let Some(rebuild) = self.rebuild.as_mut() {
+                rebuild.restored = true;
+            }
+        }
+    }
+
+    /// True once a peer's whole index has arrived since the folder was rebuilt.
+    pub(crate) fn exchanged(&self) -> bool {
+        !self.progress.is_empty()
+    }
+
+    /// Ends the rebuild once what was kept is restored and a peer's whole index was here when
+    /// the scan calling this began, so every file it found was matched (`exchanged`), or there
+    /// is no peer to wait for (`alone`). Returns true if it ended.
+    pub(crate) fn finish_rebuild(&mut self, alone: bool, exchanged: bool, now_ms: i64) -> bool {
+        match self.rebuild.as_mut() {
+            Some(r) if r.finished_ms.is_none() && r.restored && (alone || exchanged) => {
+                r.finished_ms = Some(now_ms);
+                tracing::info!(folder = %self.config.id, "folder rebuilt");
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Loads the folder's database, and returns it to commit to.
     fn load(&mut self) -> Result<FolderDb> {
         let (db, loaded) = FolderDb::open(&self.db_path)?;
         let corrupt = |_| Error::CorruptState(self.db_path.clone());
         let mut maps = loaded.maps;
         let mut take = |name: &str| maps.remove(name).unwrap_or_default();
-        self.meta = Folder::from_records(loaded.header, loaded.versions, loaded.recycled)?;
+        self.rebuild = loaded.rebuild;
+        self.meta = Folder::from_records(loaded.header, loaded.versions, loaded.recycled)
+            .map_err(|_| Error::CorruptState(self.db_path.clone()))?;
         let manifests: Tracked<ContentHash, Manifest> =
             Tracked::decode(take("manifests")).map_err(corrupt)?;
         for manifest in manifests.values() {
@@ -899,6 +1023,9 @@ impl FolderState {
         if self.removed || self.committer.is_none() {
             return Ok(());
         }
+        // A file kept for the recycle bin before its item existed, as a delete made here keeps
+        // it, gets a sidecar naming the item now, not at the next tidy (ADR 0034).
+        self.refresh_sidecars();
         // Only what changed, committed in order off the folder lock (ADR 0034). Last-use times
         // alone are not worth waiting for the disk.
         let journal = self.meta.take_journal();
@@ -912,6 +1039,7 @@ impl FolderState {
             journal,
             maps,
             durable,
+            rebuild: self.rebuild.clone(),
             // What the saved changes did, for the activity log (ADR 0030), which the committer
             // writes too.
             activity: self.meta.take_changes(),

@@ -18,7 +18,8 @@ use crate::{io_err, random_bytes, Error, Result};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
-fn recycle_dir(root: &Path) -> PathBuf {
+/// Where files removed from this device only are kept.
+pub(crate) fn recycle_dir(root: &Path) -> PathBuf {
     root.join(RESERVED_DIR).join("recycle")
 }
 

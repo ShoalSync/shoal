@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 use tidefell_sdk::types::{
     Activity, ChangeKind, Check, CheckLevel, Crash, CrashReport, Direction, Event, File, Folder,
     FolderState, KnownPeer, Limits, LocalDeletes, LogSettings, Mode, Operation, PathKind,
-    PathProblem, Peer, PeerState, Problem, ProblemKind, Recycled, Status, SyncOptions, Version,
-    VersionKind,
+    PathProblem, Peer, PeerState, Problem, ProblemKind, Rebuild, Recycled, Status, SyncOptions,
+    Version, VersionKind,
 };
 
 pub(crate) fn size(bytes: u64) -> String {
@@ -22,6 +22,13 @@ pub(crate) fn size(bytes: u64) -> String {
     } else {
         format!("{value:.1} {}", UNITS[unit])
     }
+}
+
+/// Now, in milliseconds since the Unix epoch.
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 fn time(ms: i64) -> String {
@@ -177,11 +184,24 @@ fn folder_state(f: &Folder) -> String {
         FolderState::Scanning => "scanning",
         FolderState::Syncing => "syncing",
         FolderState::Paused => "paused",
+        FolderState::Rebuilding => "rebuilding",
         FolderState::Error => "error",
     };
     let mut line = state.to_string();
     if let Some(error) = &f.error {
         let _ = write!(line, " ({error})");
+    }
+    if let Some(r) = &f.rebuild {
+        match r.finished_ms {
+            None => {
+                let _ = write!(line, " ({}; {})", r.reason, waiting_for(r));
+            }
+            // A rebuild is news for a week (ADR 0034); `tidefell folder list` always says.
+            Some(at) if now_ms() - at < 7 * 24 * 3600 * 1000 => {
+                let _ = write!(line, "; {}", rebuild(r));
+            }
+            Some(_) => {}
+        }
     }
     if f.pending_files > 0 {
         let _ = write!(
@@ -399,8 +419,52 @@ pub(crate) fn folders(folders: &[Folder]) -> String {
             let _ = writeln!(out, "    {}", sync(f));
         }
         let _ = writeln!(out, "    {}", recycle_bin(f));
+        if let Some(r) = &f.rebuild {
+            let _ = writeln!(out, "    {}", rebuild(r));
+        }
     }
     out.trim_end().to_string()
+}
+
+/// Whose index a folder being rebuilt waits for.
+fn waiting_for(r: &Rebuild) -> String {
+    if r.waiting_for.is_empty() {
+        "waiting for a device sharing the folder to connect".into()
+    } else {
+        let devices: Vec<&str> = r
+            .waiting_for
+            .iter()
+            .map(|d| d.get(..8).unwrap_or(d))
+            .collect();
+        format!("waiting for {}", devices.join(", "))
+    }
+}
+
+/// A folder's last rebuild (ADR 0034).
+fn rebuild(r: &Rebuild) -> String {
+    match r.finished_ms {
+        Some(at) => format!(
+            "rebuilt {}, started {} as {}",
+            time(at),
+            time(r.started_ms),
+            r.reason
+        ),
+        None => format!(
+            "rebuilding since {}, as {}; {}",
+            time(r.started_ms),
+            r.reason,
+            waiting_for(r)
+        ),
+    }
+}
+
+/// The answer to `tidefell folder rebuild`.
+pub(crate) fn rebuilding(f: &Folder) -> String {
+    let what = f.rebuild.as_ref().map(rebuild).unwrap_or_default();
+    format!(
+        "rebuilding {}: files on disk are matched to what other devices send\n{what}",
+        f.id
+    )
 }
 
 pub(crate) fn created(f: &Folder) -> String {
@@ -688,6 +752,7 @@ mod tests {
             last_scan_duration_ms: None,
             peers: Vec::new(),
             problems: 0,
+            rebuild: None,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;
@@ -697,6 +762,21 @@ mod tests {
         );
         folder.mode = Mode::Partial;
         assert!(only_here(&folder).unwrap().ends_with("until one does)"));
+    }
+
+    #[test]
+    fn rebuild_lines() {
+        let mut r = Rebuild {
+            started_ms: 0,
+            reason: "its metadata database was damaged".into(),
+            finished_ms: None,
+            waiting_for: vec!["ab".repeat(32)],
+        };
+        assert!(rebuild(&r).ends_with("as its metadata database was damaged; waiting for abababab"));
+        r.waiting_for.clear();
+        assert!(waiting_for(&r).contains("to connect"));
+        r.finished_ms = Some(0);
+        assert!(rebuild(&r).starts_with("rebuilt "));
     }
 
     #[test]

@@ -616,6 +616,22 @@ pub struct Folder {
     pub peers: Vec<FolderPeer>,
     /// Paths that failed to scan, fetch, write or delete; see [`Node::path_problems`].
     pub problems: u64,
+    /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
+    pub rebuild: Option<Rebuild>,
+}
+
+/// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
+/// what peers send.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Rebuild {
+    /// When it began, in milliseconds since the Unix epoch.
+    pub started_ms: i64,
+    /// Why, in words.
+    pub reason: String,
+    /// When it finished, if it has.
+    pub finished_ms: Option<i64>,
+    /// While it has not: the connected devices sharing the folder whose index it waits for.
+    pub waiting_for: Vec<String>,
 }
 
 /// What a folder is doing (ADR 0030).
@@ -629,6 +645,8 @@ pub enum FolderState {
     Syncing,
     /// Paused.
     Paused,
+    /// Its metadata is being started over, and it waits for a peer's index (ADR 0034).
+    Rebuilding,
     /// The folder cannot be used, or its last scan failed.
     Error,
 }
@@ -1000,6 +1018,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
             tidefell_engine::FolderState::Scanning => FolderState::Scanning,
             tidefell_engine::FolderState::Syncing => FolderState::Syncing,
             tidefell_engine::FolderState::Paused => FolderState::Paused,
+            tidefell_engine::FolderState::Rebuilding => FolderState::Rebuilding,
             tidefell_engine::FolderState::Error => FolderState::Error,
         },
         error: f.error,
@@ -1016,6 +1035,12 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
             })
             .collect(),
         problems: f.problems as u64,
+        rebuild: f.rebuild.map(|r| Rebuild {
+            started_ms: r.started_ms,
+            reason: r.reason,
+            finished_ms: r.finished_ms,
+            waiting_for: r.waiting_for.iter().map(ToString::to_string).collect(),
+        }),
     }
 }
 
@@ -1176,6 +1201,15 @@ impl Node {
     /// Stops syncing a folder. Files on disk are kept.
     pub fn remove_folder(&self, id: String) -> Result<()> {
         Ok(self.engine()?.remove_folder(parse("folder ID", &id)?)?)
+    }
+
+    /// Starts a folder's metadata over (ADR 0034): files on disk are matched to what peers
+    /// send, and the recycle bin and history are restored from what was kept.
+    pub async fn rebuild_folder(&self, id: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &id)?;
+        on_runtime(async move { engine.rebuild_folder(folder).await }).await??;
+        Ok(())
     }
 
     /// Live files in a folder, sorted by path.

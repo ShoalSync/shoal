@@ -47,6 +47,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
             engine::FolderState::Scanning => api::FolderState::Scanning,
             engine::FolderState::Syncing => api::FolderState::Syncing,
             engine::FolderState::Paused => api::FolderState::Paused,
+            engine::FolderState::Rebuilding => api::FolderState::Rebuilding,
             engine::FolderState::Error => api::FolderState::Error,
         },
         error: f.error,
@@ -64,6 +65,12 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
             })
             .collect(),
         problems: f.problems as u64,
+        rebuild: f.rebuild.map(|r| api::Rebuild {
+            started_ms: r.started_ms,
+            reason: r.reason,
+            finished_ms: r.finished_ms,
+            waiting_for: r.waiting_for.iter().map(ToString::to_string).collect(),
+        }),
     }
 }
 
