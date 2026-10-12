@@ -284,6 +284,12 @@ pub(crate) fn folder_state(f: &FolderInfo) -> String {
         }
         FolderState::Error => format!("not syncing: {}", f.error.as_deref().unwrap_or("an error")),
     };
+    if f.held_deletes > 0 {
+        line = format!(
+            "{line}: {} deleted files wait for a decision",
+            f.held_deletes
+        );
+    }
     if f.pending_files > 0 && f.state != FolderState::Error {
         line = format!(
             "{line}: {} file(s), {} to fetch",
@@ -346,6 +352,7 @@ pub(crate) async fn folder(
         share_links: state.config.share_links,
         paused: folder.paused,
         device_paused: state.engine.paused(),
+        held_deletes: folder.held_deletes,
         partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
         conflicts: folder.conflicts,
@@ -762,6 +769,46 @@ pub(crate) async fn unpin(
     Form(form): Form<PinForm>,
 ) -> Response {
     set_pin(&state, &headers, &id, &form, false).await
+}
+
+// ---- Held deletes (ADR 0037) ----
+
+#[derive(Deserialize)]
+pub(crate) struct DeletesForm {
+    csrf: String,
+    /// `confirm` or `restore`.
+    action: String,
+}
+
+/// Confirms the deletes a scan held, or brings the files back. Administrators only, since the
+/// deletes reach every device.
+pub(crate) async fn decide_deletes(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<DeletesForm>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session).or_else(|| check_csrf(&session, &form.csrf)) {
+        return response;
+    }
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    let result = match form.action.as_str() {
+        "confirm" => state.engine.confirm_deletes(folder.id).await,
+        "restore" => state.engine.restore_deleted(folder.id).await,
+        _ => return error(StatusCode::BAD_REQUEST, "Unknown action", &form.action),
+    };
+    if let Err(e) = result {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Could not decide on the deletes",
+            &e.to_string(),
+        );
+    }
+    tracing::info!(user = %session.username, folder = %folder.id, action = %form.action, "held deletes decided from the web");
+    Redirect::to(&format!("/folders/{}", folder.id)).into_response()
 }
 
 // ---- Pausing (ADR 0029) ----

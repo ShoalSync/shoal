@@ -52,6 +52,7 @@ async fn a_new_device_pairs_then_syncs() {
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
+                confirm_deletes: Default::default(),
             }],
         },
         laptop_key.clone(),
@@ -141,6 +142,7 @@ async fn a_new_device_pairs_then_syncs() {
             retention: Retention::Days(offer.retention_days),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         })
         .unwrap();
 

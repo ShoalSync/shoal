@@ -61,6 +61,9 @@ pub struct FolderInfo {
     pub peers: Vec<FolderPeer>,
     /// Paths that failed to scan, fetch, write or delete; see [`crate::Engine::path_problems`].
     pub problems: usize,
+    /// Files the last scan found deleted, so many that the deletes wait for
+    /// [`crate::Engine::confirm_deletes`] or [`crate::Engine::restore_deleted`] (ADR 0037).
+    pub held_deletes: usize,
     /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
     pub rebuild: Option<RebuildInfo>,
 }

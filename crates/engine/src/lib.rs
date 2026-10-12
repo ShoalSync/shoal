@@ -67,8 +67,8 @@ mod views;
 mod watch;
 
 pub use config::{
-    Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr, ReplicaMode,
-    SyncOptions,
+    ConfirmDeletes, Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr,
+    ReplicaMode, SyncOptions,
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use probe::{Filesystem, NameLength};

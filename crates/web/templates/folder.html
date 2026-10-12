@@ -35,6 +35,16 @@
 {% endif %}
 {% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
 {% if conflicts > 0 %}<p class="notice">{{ conflicts }} file(s) were changed on more than one device and wait for you to decide which version to keep. They are marked below.</p>{% endif %}
+{% if held_deletes > 0 %}
+<p class="notice">{{ held_deletes }} files were found deleted at once, so the deletes have not been sent to your other devices. If you deleted them, confirm; if not, for example because a drive was not mounted, bring them back.</p>
+{% if admin %}
+<form method="post" action="/folders/{{ id }}/deletes" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <button type="submit" name="action" value="confirm">Delete them everywhere</button>
+  <button type="submit" name="action" value="restore">Bring them back</button>
+</form>
+{% endif %}
+{% endif %}
 {% if paused || device_paused %}<p class="notice">Syncing {% if device_paused %}on this server{% else %}of this folder{% endif %} is paused. Changes here are recorded and sent when it resumes.</p>{% endif %}
 {% if admin %}
 <form method="post" action="/folders/{{ id }}/{% if paused %}resume{% else %}pause{% endif %}" class="inline">

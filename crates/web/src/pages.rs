@@ -58,6 +58,8 @@ pub(crate) struct Folder {
     /// Syncing of this folder is paused; `device_paused` if the whole server is.
     pub(crate) paused: bool,
     pub(crate) device_paused: bool,
+    /// Files a scan found deleted at once and held for a decision (ADR 0037).
+    pub(crate) held_deletes: usize,
     /// A partial replica here, which can pin files (ADR 0029); their total size.
     pub(crate) partial: bool,
     pub(crate) pinned_size: String,

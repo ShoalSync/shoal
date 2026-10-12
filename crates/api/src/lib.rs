@@ -69,6 +69,10 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             get(handlers::folder).delete(handlers::remove_folder),
         )
         .route("/v1/folders/{id}/rebuild", post(handlers::rebuild_folder))
+        .route(
+            "/v1/folders/{id}/deletes",
+            get(handlers::held_deletes).post(handlers::decide_deletes),
+        )
         .route("/v1/folders/{id}/retention", put(handlers::set_retention))
         .route("/v1/folders/{id}/sync", put(handlers::set_sync))
         .route("/v1/folders/{id}/members", post(handlers::add_member))

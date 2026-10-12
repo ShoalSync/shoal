@@ -59,6 +59,7 @@ impl Replica {
                 // Scans are triggered explicitly so only the measured files move.
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
+                confirm_deletes: Default::default(),
             }],
         };
         let certificate = user.certify(self.key.id(), "test", 0);

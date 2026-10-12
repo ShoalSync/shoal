@@ -219,6 +219,7 @@ async fn web_peer_end_to_end() {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         })
         .unwrap();
     std::fs::write(root.join("report.pdf"), b"%PDF quarterly numbers").unwrap();
@@ -436,6 +437,7 @@ async fn serve_folder(
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         })
         .unwrap();
     for (path, contents) in files {
@@ -949,6 +951,7 @@ async fn laptop(tmp: &std::path::Path) -> Engine {
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
+                confirm_deletes: Default::default(),
             }],
         },
         key.clone(),

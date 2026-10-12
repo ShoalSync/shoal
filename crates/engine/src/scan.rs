@@ -293,6 +293,17 @@ pub(crate) struct Scanned {
     pub(crate) problems_changed: bool,
 }
 
+/// True if `entry`'s current version is a file at `rel`: deleting the file there deletes it.
+fn live_here(state: &FolderState, rel: &str, entry: EntryId) -> bool {
+    state.meta.current(&entry).is_some_and(|v| {
+        !matches!(v.kind, EntryKind::Tombstone)
+            && state
+                .meta
+                .disk_path(&entry)
+                .is_some_and(|p| state.same_place(rel, p))
+    })
+}
+
 /// True if a file at `rel` could be the file of an entry a peer sent: one whose size matches.
 fn matchable(state: &FolderState, rel: &str, disk: &DiskStat) -> bool {
     state.meta.find_path(&recorded(rel)).is_some_and(|v| {
@@ -543,18 +554,48 @@ pub(crate) fn scan(
         }
     }
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
+    // One scan that would delete much of the folder everywhere records none of it until the
+    // user confirms (ADR 0037): a drive unmounted under the folder, or a mistake, looks the same.
+    // The files stay recorded as on disk, so nothing is fetched back meanwhile.
+    let everywhere: Vec<String> = deleted
+        .iter()
+        .filter(|rel| {
+            !deletes_here_only
+                && state
+                    .local
+                    .get(*rel)
+                    .is_some_and(|l| live_here(&state, rel, l.entry))
+        })
+        .cloned()
+        .collect();
+    let confirmed = std::mem::take(&mut state.confirm_deletes);
+    if !confirmed
+        && state
+            .config
+            .confirm_deletes
+            .holds(everywhere.len(), known.len())
+    {
+        if state.held_deletes != everywhere {
+            warn!(
+                folder = %state.config.id,
+                deletes = everywhere.len(),
+                files = known.len(),
+                "holding a scan's deletes until they are confirmed"
+            );
+            state.held_deletes = everywhere;
+            inner.emit(crate::views::Event::FolderChanged(state.config.id));
+        }
+        deleted.clear();
+    } else if (scope.is_none() || confirmed) && !state.held_deletes.is_empty() {
+        state.held_deletes.clear();
+        inner.emit(crate::views::Event::FolderChanged(state.config.id));
+    }
     for rel in deleted {
         let Some(local) = state.local.remove(&rel) else {
             continue;
         };
         state.used.remove(&rel);
-        let live_here = state.meta.current(&local.entry).is_some_and(|v| {
-            !matches!(v.kind, EntryKind::Tombstone)
-                && state
-                    .meta
-                    .disk_path(&local.entry)
-                    .is_some_and(|p| state.same_place(&rel, p))
-        });
+        let live_here = live_here(&state, &rel, local.entry);
         if live_here && deletes_here_only {
             // ADR 0025: dropped from this device only; it stays on every other device.
             debug!(path = %rel, "dropped from this device");

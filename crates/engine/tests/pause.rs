@@ -50,6 +50,7 @@ impl Replica {
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
+                confirm_deletes: Default::default(),
             }],
         };
         let certificate = user.certify(self.key.id(), "test", 0);
@@ -201,6 +202,7 @@ async fn a_folder_joined_again_starts_unpaused() {
         retention: Retention::Days(30),
         scan_interval: Duration::from_secs(3600),
         sync: Default::default(),
+        confirm_deletes: Default::default(),
     };
     engine.add_folder(config.clone()).unwrap();
     engine.pause(Some(other)).unwrap();

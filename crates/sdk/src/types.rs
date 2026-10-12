@@ -382,6 +382,10 @@ pub struct Folder {
     /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
     #[serde(default)]
     pub rebuild: Option<Rebuild>,
+    /// Files the last scan found deleted, so many that the deletes wait for a decision:
+    /// `GET` and `POST /v1/folders/{id}/deletes` (ADR 0037).
+    #[serde(default)]
+    pub held_deletes: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.
@@ -393,6 +397,23 @@ pub struct RecycleBinSummary {
     pub bytes: u64,
     /// When the next item will be purged; `null` if none will be.
     pub next_expiry_ms: Option<i64>,
+}
+
+/// What to do with the deletes a scan held because there were so many (ADR 0037).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HeldDeletes {
+    /// Delete the files on every device, each keeping them in its recycle bin.
+    Confirm,
+    /// Fetch the files back from other devices; nothing is deleted.
+    Restore,
+}
+
+/// A decision on a folder's held deletes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct HeldDeletesDecision {
+    /// Confirm or restore.
+    pub action: HeldDeletes,
 }
 
 /// A new recycle-bin retention for a folder. Applies to this device only.

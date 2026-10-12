@@ -21,7 +21,9 @@ use serde::{Deserialize, Serialize};
 use tidefell_meta::Retention;
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
-use crate::config::{Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions};
+use crate::config::{
+    ConfirmDeletes, Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions,
+};
 use crate::{io_err, Error, Result};
 
 const HEADER: &[u8] = b"tidefell-engine-runtime 5\n";
@@ -224,6 +226,8 @@ impl From<StoredFolder> for FolderConfig {
                     LocalDeletes::Everywhere
                 },
             },
+            // Only the configuration file sets another (ADR 0037).
+            confirm_deletes: ConfirmDeletes::default(),
         }
     }
 }

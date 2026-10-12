@@ -50,6 +50,7 @@ impl Replica {
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
+                confirm_deletes: Default::default(),
             }],
         };
         let certificate = user.certify(self.key.id(), "laptop", 0);
@@ -502,6 +503,7 @@ async fn metrics_count_a_sync() {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         })
         .unwrap();
     let with = samples(&engine_b.metrics());

@@ -34,6 +34,7 @@ pub fn open_folder(meta: &[u8], state: &[u8]) {
         retention: Retention::Days(30),
         scan_interval: Duration::from_secs(3600),
         sync: Default::default(),
+        confirm_deletes: Default::default(),
     };
     let _ = FolderState::open(&data, &data.join("metadata"), config, DeviceId([1; 32]));
     let _ = fs::remove_dir_all(&data);

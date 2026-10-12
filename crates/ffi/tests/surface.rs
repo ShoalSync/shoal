@@ -72,6 +72,7 @@ async fn pair_join_open_and_save() {
                     retention: Retention::Days(30),
                     scan_interval: Duration::from_secs(1),
                     sync: Default::default(),
+                    confirm_deletes: Default::default(),
                 }],
             },
             laptop_key.clone(),

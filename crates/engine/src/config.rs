@@ -87,6 +87,41 @@ pub struct FolderConfig {
     pub scan_interval: Duration,
     /// How the folder syncs on this device.
     pub sync: SyncOptions,
+    /// When a scan's deletes wait for confirmation instead of reaching every device (ADR 0037).
+    pub confirm_deletes: ConfirmDeletes,
+}
+
+/// When one scan's deletes are held for confirmation (ADR 0037): a drive unmounted under a
+/// folder, or a mistake, looks like most of the folder deleted, and those deletes would reach
+/// every device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfirmDeletes {
+    /// When one scan would delete at least 100 files everywhere, and more than this percentage
+    /// of the folder's files on this device.
+    Over(u8),
+    /// Never: every delete is recorded as it is found.
+    Never,
+}
+
+impl Default for ConfirmDeletes {
+    fn default() -> Self {
+        Self::Over(50)
+    }
+}
+
+impl ConfirmDeletes {
+    /// Fewer deletes than this are never held.
+    pub const AT_LEAST: usize = 100;
+
+    /// True if `deletes` out of `files` are held for confirmation.
+    pub fn holds(self, deletes: usize, files: usize) -> bool {
+        match self {
+            Self::Never => false,
+            Self::Over(percent) => {
+                deletes >= Self::AT_LEAST && deletes * 100 > files * usize::from(percent)
+            }
+        }
+    }
 }
 
 impl FolderConfig {

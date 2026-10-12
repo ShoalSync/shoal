@@ -62,6 +62,7 @@ impl Device {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         }
     }
 

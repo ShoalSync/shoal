@@ -262,6 +262,11 @@ pub struct Folder {
     /// What deleting a file here, outside Tidefell, does.
     #[serde(default)]
     pub local_deletes: LocalDeletes,
+    /// When one scan finds at least 100 files deleted, and more than this percentage of the
+    /// folder's files, the deletes wait for `tidefell folder deletes` to confirm them or bring
+    /// the files back (ADR 0037). 50 if left out; 0 records every delete as it is found.
+    #[serde(default)]
+    pub confirm_deletes_over: Option<u8>,
     /// Where to mount the folder with FUSE (Linux only). Files appear there, placeholders are
     /// fetched when opened, and `path` becomes backing storage not to be edited directly.
     #[serde(default)]
@@ -363,6 +368,17 @@ impl Config {
                         LocalDeletes::Everywhere => tidefell_engine::LocalDeletes::Everywhere,
                         LocalDeletes::ThisDevice => tidefell_engine::LocalDeletes::ThisDevice,
                     },
+                },
+                confirm_deletes: match f.confirm_deletes_over {
+                    None => tidefell_engine::ConfirmDeletes::default(),
+                    Some(0) => tidefell_engine::ConfirmDeletes::Never,
+                    Some(percent @ 1..=100) => tidefell_engine::ConfirmDeletes::Over(percent),
+                    Some(_) => {
+                        return Err(format!(
+                            "folder {}: confirm_deletes_over is a percentage, 0 to 100",
+                            f.id
+                        ));
+                    }
                 },
             });
         }

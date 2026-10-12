@@ -203,6 +203,13 @@ fn folder_state(f: &Folder) -> String {
             Some(_) => {}
         }
     }
+    if f.held_deletes > 0 {
+        let _ = write!(
+            line,
+            "; {} deleted files held: `tidefell folder deletes {}`",
+            f.held_deletes, f.id
+        );
+    }
     if f.pending_files > 0 {
         let _ = write!(
             line,
@@ -456,6 +463,29 @@ fn rebuild(r: &Rebuild) -> String {
             waiting_for(r)
         ),
     }
+}
+
+/// The deletes a scan held (ADR 0037), and what can be done about them.
+pub(crate) fn held_deletes(id: &str, paths: &[String]) -> String {
+    if paths.is_empty() {
+        return "no deletes are held".into();
+    }
+    let mut out = format!(
+        "{} files were found deleted at once, so their deletes are held:\n",
+        paths.len()
+    );
+    for path in paths.iter().take(20) {
+        let _ = writeln!(out, "  {path}");
+    }
+    if paths.len() > 20 {
+        let _ = writeln!(out, "  and {} more", paths.len() - 20);
+    }
+    let _ = write!(
+        out,
+        "`tidefell folder deletes {id} confirm` deletes them on every device;\n\
+         `tidefell folder deletes {id} restore` brings them back from your other devices"
+    );
+    out
 }
 
 /// The answer to `tidefell folder rebuild`.
@@ -753,6 +783,7 @@ mod tests {
             peers: Vec::new(),
             problems: 0,
             rebuild: None,
+            held_deletes: 0,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;
@@ -762,6 +793,18 @@ mod tests {
         );
         folder.mode = Mode::Partial;
         assert!(only_here(&folder).unwrap().ends_with("until one does)"));
+    }
+
+    #[test]
+    fn held_deletes_list_a_few_and_say_what_to_do() {
+        assert_eq!(held_deletes("f", &[]), "no deletes are held");
+        let paths: Vec<String> = (0..25).map(|n| format!("file-{n}")).collect();
+        let text = held_deletes("f", &paths);
+        assert!(text.starts_with("25 files were found deleted at once"));
+        assert!(text.contains("  file-19\n") && !text.contains("file-20\n"));
+        assert!(text.contains("and 5 more"));
+        assert!(text.contains("tidefell folder deletes f confirm"));
+        assert!(text.contains("tidefell folder deletes f restore"));
     }
 
     #[test]

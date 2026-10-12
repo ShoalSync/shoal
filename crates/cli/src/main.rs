@@ -10,7 +10,9 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use tidefell_sdk::types::{Direction, KnownPeer, LocalDeletes, NewFolder, SyncOptions};
+use tidefell_sdk::types::{
+    Direction, HeldDeletes, KnownPeer, LocalDeletes, NewFolder, SyncOptions,
+};
 use tidefell_sdk::Client;
 
 #[derive(Parser)]
@@ -253,6 +255,15 @@ enum FolderCommand {
         /// Folder ID.
         id: String,
     },
+    /// List the deletes a scan held because there were so many, or decide on them: `confirm`
+    /// deletes the files on every device, `restore` brings them back from other devices.
+    Deletes {
+        /// Folder ID.
+        id: String,
+        /// What to do with them; without it, they are listed.
+        #[arg(value_enum)]
+        action: Option<DeletesArg>,
+    },
     /// Let another user's devices sync a folder.
     Share {
         /// Folder ID.
@@ -332,6 +343,15 @@ struct FolderOptions {
     /// What deleting a file here, outside Tidefell, does.
     #[arg(long, value_enum, default_value_t = LocalDeletesArg::Everywhere)]
     local_deletes: LocalDeletesArg,
+}
+
+/// What `tidefell folder deletes` does with held deletes.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum DeletesArg {
+    /// Delete the files on every device, each keeping them in its recycle bin.
+    Confirm,
+    /// Bring the files back from other devices; nothing is deleted.
+    Restore,
 }
 
 /// `--direction` on the command line.
@@ -737,6 +757,28 @@ async fn run(cli: Cli) -> Result<(), String> {
                 client.remove_folder(&id).await.map_err(e)?;
                 print(json, &(), |_| {
                     format!("stopped syncing {id}; files were kept")
+                });
+            }
+            FolderCommand::Deletes { id, action: None } => {
+                let paths = client.held_deletes(&id).await.map_err(e)?;
+                print(json, &paths, |paths| format::held_deletes(&id, paths));
+            }
+            FolderCommand::Deletes {
+                id,
+                action: Some(action),
+            } => {
+                let action = match action {
+                    DeletesArg::Confirm => HeldDeletes::Confirm,
+                    DeletesArg::Restore => HeldDeletes::Restore,
+                };
+                client.decide_deletes(&id, action).await.map_err(e)?;
+                print(json, &(), |_| match action {
+                    HeldDeletes::Confirm => {
+                        "deleted on every device; each keeps them in its recycle bin".into()
+                    }
+                    HeldDeletes::Restore => {
+                        "the files are fetched back; nothing was deleted".into()
+                    }
                 });
             }
             FolderCommand::Rebuild { id } => {

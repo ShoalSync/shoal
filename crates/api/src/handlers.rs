@@ -18,11 +18,12 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
     CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
-    Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, KnownPeer, Limits,
-    LogLevel, LogSettings, Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest,
-    Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, Rebuild,
-    RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
-    Status, SyncOptions, Transfer, Version, VersionKind, VersionRequest,
+    Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, HeldDeletes,
+    HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
+    OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState,
+    PinRequest, Problem, ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest,
+    RenameRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version,
+    VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -47,6 +48,8 @@ type AppState = State<Arc<Engine>>;
         add_folder,
         remove_folder,
         rebuild_folder,
+        held_deletes,
+        decide_deletes,
         set_retention,
         set_sync,
         add_member,
@@ -100,6 +103,8 @@ type AppState = State<Arc<Engine>>;
         NewFolder,
         RecycleBinSummary,
         RetentionUpdate,
+        HeldDeletes,
+        HeldDeletesDecision,
         NewMember,
         File,
         FetchRequest,
@@ -338,6 +343,36 @@ pub(crate) async fn rebuild_folder(
 ) -> ApiResult<Json<Folder>> {
     let id = parse("folder", &id)?;
     engine.rebuild_folder(id).await?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
+/// The files the last scan found deleted and held, because there were so many (ADR 0037).
+#[utoipa::path(get, path = "/v1/folders/{id}/deletes", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = [String]), (status = 404, body = ApiError)))]
+pub(crate) async fn held_deletes(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<String>>> {
+    Ok(Json(engine.held_deletes(parse("folder", &id)?)?))
+}
+
+/// Confirms the held deletes, which then reach every device, or brings the files back from
+/// other devices (ADR 0037).
+#[utoipa::path(post, path = "/v1/folders/{id}/deletes", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = HeldDeletesDecision,
+    responses((status = 200, body = Folder), (status = 404, body = ApiError)))]
+pub(crate) async fn decide_deletes(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(decision): Json<HeldDeletesDecision>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    match decision.action {
+        HeldDeletes::Confirm => engine.confirm_deletes(id).await?,
+        HeldDeletes::Restore => engine.restore_deleted(id).await?,
+    }
     Ok(Json(folder_info(&engine, id)?))
 }
 

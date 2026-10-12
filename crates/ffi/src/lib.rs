@@ -618,6 +618,12 @@ pub struct Folder {
     pub problems: u64,
     /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
     pub rebuild: Option<Rebuild>,
+    /// Why the folder's root cannot be used, if it cannot, as when the SD card holding it is not
+    /// mounted: nothing is scanned, written or deleted there until it is back (ADR 0037).
+    pub unavailable: Option<String>,
+    /// Files the last scan found deleted, so many that the deletes wait for
+    /// [`Node::confirm_deletes`] or [`Node::restore_deleted`] (ADR 0037).
+    pub held_deletes: u64,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
@@ -1041,6 +1047,8 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
             finished_ms: r.finished_ms,
             waiting_for: r.waiting_for.iter().map(ToString::to_string).collect(),
         }),
+        unavailable: f.unavailable,
+        held_deletes: f.held_deletes as u64,
     }
 }
 
@@ -1209,6 +1217,27 @@ impl Node {
         let engine = self.engine()?;
         let folder = parse("folder ID", &id)?;
         on_runtime(async move { engine.rebuild_folder(folder).await }).await??;
+        Ok(())
+    }
+
+    /// The files a scan found deleted and held, because there were so many (ADR 0037).
+    pub fn held_deletes(&self, folder: String) -> Result<Vec<String>> {
+        Ok(self.engine()?.held_deletes(parse("folder ID", &folder)?)?)
+    }
+
+    /// Deletes the held files on every device, each keeping them in its recycle bin.
+    pub async fn confirm_deletes(&self, folder: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.confirm_deletes(folder).await }).await??;
+        Ok(())
+    }
+
+    /// Brings the held files back from other devices; nothing is deleted.
+    pub async fn restore_deleted(&self, folder: String) -> Result<()> {
+        let engine = self.engine()?;
+        let folder = parse("folder ID", &folder)?;
+        on_runtime(async move { engine.restore_deleted(folder).await }).await??;
         Ok(())
     }
 

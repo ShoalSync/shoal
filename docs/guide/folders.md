@@ -38,6 +38,22 @@ every file had been deleted, and the deletes would reach your other devices.
 Folders created before this check was added are given the file the first time Tidefell starts, if
 their directory holds any file Tidefell already knew about.
 
+### Many files deleted at once
+
+If one scan finds at least 100 files deleted, more than half of the folder, Tidefell sends none
+of those deletes and waits: a drive that went away, or a mistake, looks the same as deleting them.
+`tidefell status`, the web folder page and the app say how many are waiting. Then either:
+
+```sh
+tidefell folder deletes <folder id>           # which files
+tidefell folder deletes <folder id> confirm   # delete them on every device (each keeps them in its recycle bin)
+tidefell folder deletes <folder id> restore   # bring them back from your other devices
+```
+
+Putting the files back yourself also ends the wait. `confirm_deletes_over` in the
+[configuration](configuration.md) sets another percentage for a folder, or 0 to send every delete
+as it is found.
+
 ## Sharing with other people
 
 Add another user as a member, using the user ID they get from `tidefelld id`:

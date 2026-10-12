@@ -329,6 +329,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let key = DeviceKey::from_seed([5; 32]);
         let mut state =

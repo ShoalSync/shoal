@@ -36,6 +36,7 @@ async fn start(dir: &Path, key: &DeviceKey, user: &UserKey, peers: Vec<PeerAddr>
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         }],
     };
     let certificate = user.certify(key.id(), "test", 0);

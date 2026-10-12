@@ -146,6 +146,7 @@ impl Engine {
                     last_scan_duration_ms: activity.last_scan.as_ref().map(|(_, took, _)| *took),
                     peers,
                     problems: activity.problems.len(),
+                    held_deletes: state.held_deletes.len(),
                     rebuild: state.last_rebuild().map(|r| RebuildInfo {
                         started_ms: r.started_ms,
                         reason: r.reason.clone(),
@@ -276,6 +277,7 @@ impl Engine {
             retention: new.retention,
             scan_interval: new.scan_interval,
             sync: new.sync,
+            confirm_deletes: Default::default(),
         })?;
         self.folders()
             .into_iter()
@@ -326,6 +328,39 @@ impl Engine {
             .iter()
             .map(|(id, (_, _, e))| (*id, e.clone()))
             .collect()
+    }
+
+    /// The files a scan found deleted and held, because there were so many (ADR 0037).
+    pub fn held_deletes(&self, id: FolderId) -> Result<Vec<String>> {
+        Ok(self.inner.folder(&id)?.lock().held_deletes.clone())
+    }
+
+    /// Records the deletes a scan held (ADR 0037): the files are deleted on every device, each
+    /// keeping them in its recycle bin. A scan runs now and records them.
+    pub async fn confirm_deletes(&self, id: FolderId) -> Result<()> {
+        self.inner.folder(&id)?.lock().confirm_deletes = true;
+        info!(folder = %id, "deletes confirmed");
+        self.scan(id).await
+    }
+
+    /// Brings back the files a scan found deleted and held (ADR 0037): they are fetched again
+    /// from other devices, and nothing is deleted anywhere.
+    pub async fn restore_deleted(&self, id: FolderId) -> Result<()> {
+        let handle = self.inner.folder(&id)?;
+        {
+            let _guard = handle.disk().await?;
+            let mut state = handle.lock();
+            for path in std::mem::take(&mut state.held_deletes) {
+                // Not on disk, as far as the engine knows: materialising fetches it again.
+                state.local.remove(&path);
+                state.used.remove(&path);
+            }
+            state.save()?;
+        }
+        info!(folder = %id, "deleted files restored");
+        self.inner.emit(Event::FolderChanged(id));
+        self.inner.changed();
+        Ok(())
     }
 
     /// Changes how long this replica keeps deleted files. Items past a shortened retention

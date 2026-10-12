@@ -55,6 +55,18 @@
 - A volume that becomes read-only or disappears makes the folder `unavailable`, as above,
   rather than a stream of per-file errors.
 
+## Implementation notes
+
+- Mass deletes (Phase 5k step 2): a scan counts the deletes it would send to every device (a
+  folder with `local_deletes = this-device` sends none) against the files recorded on disk
+  there. Held, the files stay recorded as on disk, so nothing is fetched back meanwhile, and the
+  scan records no delete at all. The decision is `tidefell folder deletes <id> confirm|restore`,
+  `POST /v1/folders/{id}/deletes`, the web folder page or the app: confirm runs a scan that
+  records them; restore forgets the files were on disk, so they are fetched from other devices.
+  Putting the files back clears the hold at the next full scan. The threshold is
+  `confirm_deletes_over`, a percentage, in the configuration file; a folder added at runtime
+  uses 50.
+
 ## Consequences
 
 - Unplugging a drive, or starting before it mounts, no longer deletes a folder everywhere.

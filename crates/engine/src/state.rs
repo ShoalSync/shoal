@@ -566,6 +566,11 @@ pub(crate) struct FolderState {
     /// Pins read from the database, which held them before the runtime settings did, to delete
     /// from it at the next save.
     old_pins: TrackedSet<String>,
+    /// Deletes the last scan found and held for confirmation, because there were so many
+    /// (ADR 0037): the paths, still recorded as on disk.
+    pub(crate) held_deletes: Vec<String>,
+    /// Set to let the next scan record the deletes it would hold.
+    pub(crate) confirm_deletes: bool,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
     /// What the folder's filesystem does with names, probed when it opens (ADR 0033). Not
@@ -641,6 +646,8 @@ impl FolderState {
             history: Tracked::default(),
             pins: BTreeSet::new(),
             old_pins: TrackedSet::default(),
+            held_deletes: Vec::new(),
+            confirm_deletes: false,
             ignores,
             filesystem: crate::probe::Filesystem::default(),
             dir,
@@ -1296,6 +1303,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let mine = DeviceKey::from_seed([5; 32]);
         let other = DeviceKey::from_seed([6; 32]);
@@ -1387,6 +1395,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1442,6 +1451,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let device = DeviceId([8; 32]);
         let mut state = FolderState::open(tmp.path(), &metadata, config.clone(), device).unwrap();
@@ -1486,6 +1496,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1556,6 +1567,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let key = DeviceKey::from_seed([5; 32]);
         let file = |n: u8| EntryKind::File {
@@ -1655,6 +1667,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1729,6 +1742,7 @@ mod tests {
             retention: Retention::Days(30),
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
+            confirm_deletes: Default::default(),
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();

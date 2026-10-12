@@ -11,10 +11,11 @@ use serde::Serialize;
 
 use crate::types::{
     Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, CrashReport,
-    DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, KnownPeer, Limits, LogLevel,
-    LogSettings, NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
-    PinRequest, Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest,
-    RetentionUpdate, Status, SyncOptions, Version, VersionRequest,
+    DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, HeldDeletes,
+    HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember,
+    OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem, Recycled,
+    RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions,
+    Version, VersionRequest,
 };
 
 /// Client errors.
@@ -280,6 +281,21 @@ impl Client {
             Method::POST,
             &format!("/v1/folders/{id}/rebuild"),
             None::<&()>,
+        )
+        .await
+    }
+
+    /// The files a scan found deleted and held, because there were so many (ADR 0037).
+    pub async fn held_deletes(&self, id: &str) -> Result<Vec<String>, Error> {
+        self.get(&format!("/v1/folders/{id}/deletes")).await
+    }
+
+    /// Confirms a folder's held deletes, or brings the files back (ADR 0037).
+    pub async fn decide_deletes(&self, id: &str, action: HeldDeletes) -> Result<Folder, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{id}/deletes"),
+            Some(&HeldDeletesDecision { action }),
         )
         .await
     }
