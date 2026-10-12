@@ -100,6 +100,10 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         )
         .route("/v1/folders/{id}/resolve", post(handlers::resolve))
         .route("/v1/folders/{id}/problems", get(handlers::folder_problems))
+        .route(
+            "/v1/folders/{id}/problems/retry",
+            post(handlers::retry_problems),
+        )
         .route("/v1/doctor", get(handlers::doctor))
         .route("/v1/folders/{id}/activity", get(handlers::activity))
         .route("/v1/diagnostics", post(handlers::diagnostics))

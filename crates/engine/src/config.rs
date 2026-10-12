@@ -191,4 +191,7 @@ pub struct EngineConfig {
     pub peers: Vec<PeerAddr>,
     /// Folders to sync.
     pub folders: Vec<FolderConfig>,
+    /// Bytes to keep free on every volume the engine writes to; below it, nothing more is
+    /// downloaded there (ADR 0037). `None` keeps 2% of each volume free, up to 1 GiB.
+    pub min_free_space: Option<u64>,
 }

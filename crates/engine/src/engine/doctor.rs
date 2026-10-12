@@ -5,13 +5,11 @@ use std::path::Path;
 use tidefell_net::PathKind;
 
 use super::Engine;
+use crate::space::{self, size};
 use crate::views::{Check, CheckLevel};
 
 /// A peer's clock this far off is worth a warning: conflicts are decided by modification time.
 const CLOCK_WARN_MS: u64 = 2 * 60 * 1000;
-/// Less free space than this fails a check; less than the second, or than 5%, warns.
-const SPACE_FAIL: u64 = 100 << 20;
-const SPACE_WARN: u64 = 1 << 30;
 
 /// How far `name`'s clock is from this device's, `offset` milliseconds ahead. The offset comes
 /// from the peer, so any value, however absurd, gives a check.
@@ -47,49 +45,32 @@ fn check(name: &str, level: CheckLevel, detail: impl Into<String>, advice: Optio
     }
 }
 
-fn size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1024.0 && unit + 1 < UNITS.len() {
-        value /= 1024.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
-}
-
-/// Free and total bytes on the volume holding `path`, where the platform can tell.
-fn free_space(path: &Path) -> Option<(u64, u64)> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    {
-        let stat = rustix::fs::statvfs(path).ok()?;
-        let block = stat.f_frsize.max(1);
-        Some((stat.f_bavail * block, stat.f_blocks * block))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    {
-        let _ = path;
-        None
-    }
-}
-
-fn space_check(name: &str, path: &Path) -> Option<Check> {
-    let (free, total) = free_space(path)?;
+/// Free space on the volume holding `path`, against its floor (ADR 0037): below it nothing more
+/// is downloaded there, and below twice it that is near.
+fn space_check(name: &str, path: &Path, configured: Option<u64>) -> Option<Check> {
+    let (free, total) = space::free(path)?;
+    let floor = space::floor(total, configured);
     let detail = format!(
-        "{} free of {} at {}",
+        "{} free of {} at {}; {} is kept free",
         size(free),
         size(total),
-        path.display()
+        path.display(),
+        size(floor)
     );
-    let advice = Some("Free some space: files that cannot be written are not synced.");
-    Some(if free < SPACE_FAIL {
-        check(name, CheckLevel::Failure, detail, advice)
-    } else if free < SPACE_WARN || free.saturating_mul(20) < total {
-        check(name, CheckLevel::Warning, detail, advice)
+    Some(if free < floor {
+        check(
+            name,
+            CheckLevel::Failure,
+            format!("{detail}, so downloads there are paused"),
+            Some("Free some space, such as by emptying recycle bins; downloads resume by themselves."),
+        )
+    } else if free < floor.saturating_mul(2) {
+        check(
+            name,
+            CheckLevel::Warning,
+            detail,
+            Some("Free some space: downloads there pause when it reaches what is kept free."),
+        )
     } else {
         check(name, CheckLevel::Pass, detail, None)
     })
@@ -224,7 +205,7 @@ impl Engine {
             let volume = volume_of(path);
             if volume.is_none() || !volumes.contains(&volume) {
                 volumes.push(volume);
-                checks.extend(space_check("space", path));
+                checks.extend(space_check("space", path, self.inner.floors.configured()));
             }
         };
         space(self.data_dir(), &mut checks);

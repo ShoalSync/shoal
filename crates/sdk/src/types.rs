@@ -386,6 +386,10 @@ pub struct Folder {
     /// `GET` and `POST /v1/folders/{id}/deletes` (ADR 0037).
     #[serde(default)]
     pub held_deletes: u64,
+    /// Why nothing more is downloaded to this folder, if a drive is below its free-space floor
+    /// (ADR 0037).
+    #[serde(default)]
+    pub low_space: Option<String>,
 }
 
 /// A summary of one device's recycle bin for a folder.

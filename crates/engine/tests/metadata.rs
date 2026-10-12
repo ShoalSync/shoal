@@ -34,6 +34,7 @@ fn config(dir: &Path, metadata_dir: Option<PathBuf>, user: &UserKey) -> EngineCo
             sync: Default::default(),
             confirm_deletes: Default::default(),
         }],
+        min_free_space: None,
     }
 }
 

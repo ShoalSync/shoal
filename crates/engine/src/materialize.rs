@@ -132,6 +132,8 @@ pub(crate) struct PendingWrite {
     base: VersionVector,
     /// Why its content could not be fetched from the peers asked, if it could not (ADR 0030).
     unavailable: std::sync::Mutex<Option<String>>,
+    /// Why it waits for space, if it does (ADR 0037).
+    no_space: std::sync::Mutex<Option<String>>,
 }
 
 /// True for an error that is about the whole folder rather than one path.
@@ -279,6 +281,7 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                     base: state.meta.current_vector(&version.entry),
 
                     unavailable: std::sync::Mutex::default(),
+                    no_space: std::sync::Mutex::default(),
                 });
             }
             EntryKind::Tombstone => {
@@ -318,24 +321,44 @@ pub(crate) async fn materialize(
         (state.config.path.clone(), plan(&state), fold)
     };
     let Plan {
-        writes,
-        deletes,
+        mut writes,
+        mut deletes,
         refused,
         respell,
     } = plan;
 
-    // One path that fails is recorded and the rest carry on (ADR 0030).
+    // One path that fails is recorded and the rest carry on (ADR 0030). One that failed in a
+    // way that lasts keeps its problem without being tried again (ADR 0037).
     let mut failures = Vec::new();
+    {
+        let activity = handle.activity.lock().unwrap();
+        let mut carry = |stuck: Option<Failure>| match stuck {
+            Some(failure) => {
+                failures.push(failure);
+                false
+            }
+            None => true,
+        };
+        writes.retain(|w| carry(activity.stuck(&w.path, Operation::Write, Some(w.content))));
+        deletes.retain(|path| carry(activity.stuck(path, Operation::Delete, None)));
+    }
     if !deletes.is_empty() {
         let _guard = handle.disk().await?;
         for path in deletes {
-            if let Err(e) = remove_if_unchanged(inner, handle, id, &root, &path) {
-                if folder_wide(&e) {
-                    return Err(e);
+            let failed = match remove_if_unchanged(inner, handle, id, &root, &path) {
+                Ok(_) => None,
+                Err(e) if folder_wide(&e) => return Err(e),
+                Err(e) => {
+                    warn!(folder = %id, %path, error = %e, "delete failed");
+                    Some(Failure::error(&path, Operation::Delete, &e))
                 }
-                warn!(folder = %id, %path, error = %e, "delete failed");
-                failures.push(Failure::error(&path, Operation::Delete, &e));
-            }
+            };
+            handle
+                .activity
+                .lock()
+                .unwrap()
+                .tried(&path, Operation::Delete, None, failed.as_ref());
+            failures.extend(failed);
         }
     }
     // A name this folder's drive cannot store is a problem, not a write that fails on every
@@ -435,6 +458,12 @@ pub(crate) async fn materialize(
         }
         match result {
             Ok(true) => {
+                handle.activity.lock().unwrap().tried(
+                    &write.path,
+                    Operation::Write,
+                    Some(write.content),
+                    None,
+                );
                 info!(folder = %id, path = %write.path, "updated");
                 inner.emit(Event::FileUpdated {
                     folder: id,
@@ -442,6 +471,14 @@ pub(crate) async fn materialize(
                 });
             }
             Ok(false) => {
+                if let Some(reason) = write.no_space.lock().unwrap().take() {
+                    failures.push(Failure::new(
+                        &write.path,
+                        Operation::Write,
+                        ProblemKind::DiskFull,
+                        reason,
+                    ));
+                }
                 if let Some(reason) = write.unavailable.lock().unwrap().take() {
                     failures.push(Failure::new(
                         &write.path,
@@ -456,7 +493,14 @@ pub(crate) async fn materialize(
             Err(e) if folder_wide(&e) => return Err(e),
             Err(e) => {
                 warn!(folder = %id, path = %write.path, error = %e, "update failed");
-                failures.push(Failure::error(&write.path, Operation::Write, &e));
+                let failure = Failure::error(&write.path, Operation::Write, &e);
+                handle.activity.lock().unwrap().tried(
+                    &write.path,
+                    Operation::Write,
+                    Some(write.content),
+                    Some(&failure),
+                );
+                failures.push(failure);
             }
         }
     }
@@ -515,6 +559,7 @@ pub(crate) async fn fetch_one(
                 base: state.meta.current_vector(&version.entry),
 
                 unavailable: std::sync::Mutex::default(),
+                no_space: std::sync::Mutex::default(),
             },
         )
     };
@@ -650,6 +695,17 @@ async fn write_file(
     root: &Path,
     write: &PendingWrite,
 ) -> Result<bool> {
+    // Only what fits above the free-space floors of the folder's volume and of the block
+    // store's, where its chunks arrive first (ADR 0037).
+    let room = inner
+        .floors
+        .room(root, write.size)
+        .and_then(|()| inner.floors.room(&inner.data_dir, write.size));
+    if let Err(short) = room {
+        debug!(path = %write.path, %short, "not written for want of space");
+        *write.no_space.lock().unwrap() = Some(short.to_string());
+        return Ok(false);
+    }
     let Some(manifest) = fetch_content(inner, node, handle, id, write).await? else {
         return Ok(false);
     };
@@ -802,6 +858,7 @@ pub(crate) async fn write_copy(
         base: VersionVector::new(),
 
         unavailable: std::sync::Mutex::default(),
+        no_space: std::sync::Mutex::default(),
     };
     let Some(manifest) = fetch_content(inner, node, handle, id, &write).await? else {
         return Ok(false);
@@ -1074,6 +1131,7 @@ mod tests {
             old_path: old_path.map(str::to_owned),
             base: VersionVector::new(),
             unavailable: std::sync::Mutex::default(),
+            no_space: std::sync::Mutex::default(),
         })
     }
 

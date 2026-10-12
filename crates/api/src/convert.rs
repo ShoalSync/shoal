@@ -66,6 +66,7 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
             .collect(),
         problems: f.problems as u64,
         held_deletes: f.held_deletes as u64,
+        low_space: f.low_space,
         rebuild: f.rebuild.map(|r| api::Rebuild {
             started_ms: r.started_ms,
             reason: r.reason,

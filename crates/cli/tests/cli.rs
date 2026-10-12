@@ -45,6 +45,7 @@ impl Device {
                     bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
                     peers: Vec::new(),
                     folders: Vec::new(),
+                    min_free_space: None,
                 },
                 key.clone(),
                 user.certify(key.id(), name, 0),

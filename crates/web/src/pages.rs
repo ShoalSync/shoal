@@ -60,6 +60,8 @@ pub(crate) struct Folder {
     pub(crate) device_paused: bool,
     /// Files a scan found deleted at once and held for a decision (ADR 0037).
     pub(crate) held_deletes: usize,
+    /// Why nothing more is downloaded here, if a drive is low on space (ADR 0037).
+    pub(crate) low_space: Option<String>,
     /// A partial replica here, which can pin files (ADR 0029); their total size.
     pub(crate) partial: bool,
     pub(crate) pinned_size: String,

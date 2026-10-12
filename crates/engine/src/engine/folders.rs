@@ -60,7 +60,10 @@ impl Engine {
                     .last_scan
                     .as_ref()
                     .and_then(|(_, _, error)| error.clone());
-                let error = unavailable.or(scan_error);
+                let save_error = state
+                    .save_failed()
+                    .map(|e| format!("saving the folder's metadata failed: {e}"));
+                let error = unavailable.or(save_error).or(scan_error);
                 let sharing: Vec<(DeviceId, i64)> = sessions
                     .iter()
                     .filter(|(_, folders, _)| folders.contains(&id))
@@ -147,6 +150,7 @@ impl Engine {
                     peers,
                     problems: activity.problems.len(),
                     held_deletes: state.held_deletes.len(),
+                    low_space: low_space(&self.inner, &state),
                     rebuild: state.last_rebuild().map(|r| RebuildInfo {
                         started_ms: r.started_ms,
                         reason: r.reason.clone(),
@@ -493,4 +497,21 @@ impl Engine {
         status.pending = crate::materialize::plan(&state).writes.len();
         Ok(status)
     }
+}
+
+/// Why `state`'s folder takes no downloads for want of space, if it does (ADR 0037).
+fn low_space(inner: &crate::engine::Inner, state: &crate::state::FolderState) -> Option<String> {
+    let root = &state.config.path;
+    let (short, place) = match inner.floors.low(root) {
+        Some(short) => (short, "the folder's drive"),
+        None => (
+            inner.floors.low(&inner.data_dir)?,
+            "the drive holding Tidefell's data",
+        ),
+    };
+    let kept = recycle_summary(state).bytes;
+    Some(format!(
+        "{place} is low on space ({short}); this folder's recycle bin and earlier versions hold {} here",
+        crate::space::size(kept)
+    ))
 }

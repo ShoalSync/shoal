@@ -498,6 +498,16 @@ impl Client {
         self.get(&format!("/v1/folders/{folder}/problems")).await
     }
 
+    /// Tries again a folder's writes and deletes that failed in a way that lasts (ADR 0037).
+    pub async fn retry_problems(&self, folder: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/problems/retry"),
+            None::<&()>,
+        )
+        .await
+    }
+
     /// Decides a conflict on a file: `keep` is the version to keep, `current` or
     /// `conflict:<id>`, or `both`.
     pub async fn resolve(&self, folder: &str, path: &str, keep: &str) -> Result<(), Error> {

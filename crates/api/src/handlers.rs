@@ -50,6 +50,7 @@ type AppState = State<Arc<Engine>>;
         rebuild_folder,
         held_deletes,
         decide_deletes,
+        retry_problems,
         set_retention,
         set_sync,
         add_member,
@@ -879,6 +880,19 @@ pub(crate) async fn folder_problems(
             .map(convert::path_problem)
             .collect(),
     ))
+}
+
+/// Tries again the folder's writes and deletes that failed in a way that lasts, such as
+/// permission refused, without waiting for the files to change (ADR 0037).
+#[utoipa::path(post, path = "/v1/folders/{id}/problems/retry", tag = "files",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 204), (status = 404, body = ApiError)))]
+pub(crate) async fn retry_problems(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+    engine.retry(parse("folder", &id)?)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// What this device applied to the folder, newest first: files added, changed, deleted,

@@ -35,6 +35,7 @@
 {% endif %}
 {% if let Some(notice) = notice %}<p class="notice">{{ notice }}</p>{% endif %}
 {% if conflicts > 0 %}<p class="notice">{{ conflicts }} file(s) were changed on more than one device and wait for you to decide which version to keep. They are marked below.</p>{% endif %}
+{% if let Some(low) = low_space %}<p class="notice">Downloads here are paused: {{ low }}. Emptying the <a href="/folders/{{ id }}/recycle">recycle bin</a> frees space.</p>{% endif %}
 {% if held_deletes > 0 %}
 <p class="notice">{{ held_deletes }} files were found deleted at once, so the deletes have not been sent to your other devices. If you deleted them, confirm; if not, for example because a drive was not mounted, bring them back.</p>
 {% if admin %}

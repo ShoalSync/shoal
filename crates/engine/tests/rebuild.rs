@@ -75,6 +75,7 @@ impl Replica {
                 .into_iter()
                 .collect(),
             folders: vec![folder(DAMAGED), folder(OTHER)],
+            min_free_space: None,
         };
         let certificate = user.certify(self.key.id(), "test", 0);
         Engine::start(config, self.key.clone(), certificate)

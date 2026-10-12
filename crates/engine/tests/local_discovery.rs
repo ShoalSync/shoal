@@ -38,6 +38,7 @@ async fn start(dir: &Path, key: &DeviceKey, user: &UserKey, peers: Vec<PeerAddr>
             sync: Default::default(),
             confirm_deletes: Default::default(),
         }],
+        min_free_space: None,
     };
     let certificate = user.certify(key.id(), "test", 0);
     Engine::start(config, key.clone(), certificate)

@@ -1088,6 +1088,13 @@ impl FolderState {
         self.committer.as_ref()
     }
 
+    /// Why the folder's metadata cannot be saved, while it cannot (ADR 0037). Remote changes
+    /// are not applied and peers' progress is not recorded meanwhile, so nothing this device
+    /// cannot keep is acknowledged, and peers send it all again once saving works.
+    pub(crate) fn save_failed(&self) -> Option<String> {
+        self.committer.as_ref().and_then(Committer::failed)
+    }
+
     /// Rewrites the sidecars of kept files if the recycle bin changed since they were last
     /// written, and writes any that are missing.
     pub(crate) fn refresh_sidecars(&mut self) {
@@ -1122,7 +1129,10 @@ impl FolderState {
         let Some(committer) = &self.committer else {
             return;
         };
-        committer.flush().expect("the changes commit");
+        // A commit that fails is retried and reported (ADR 0037); there is nothing to compare yet.
+        if committer.flush().is_err() {
+            return;
+        }
         let mut loaded = committer.read_all().expect("the database reads back");
         let sorted = |mut records: Vec<(Vec<u8>, Vec<u8>)>| {
             records.sort();
@@ -1437,6 +1447,57 @@ mod tests {
                 && FolderDb::exists(&db_path(&tmp.path().join("metadata"), config.id))
         );
     }
+    /// A folder whose metadata cannot be saved says why, and catches up once it can (ADR 0037).
+    #[test]
+    fn a_failing_save_is_reported_until_it_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+            confirm_deletes: Default::default(),
+        };
+        let metadata = tmp.path().join("metadata");
+        let mut state =
+            FolderState::open(tmp.path(), &metadata, config.clone(), DeviceId([8; 32])).unwrap();
+        assert_eq!(state.save_failed(), None);
+        state.committer().unwrap().fail_commits(true);
+        state.progress.insert(DeviceId([9; 32]), (1, 2));
+        state.save().unwrap();
+        let waited = std::time::Instant::now();
+        while state.save_failed().is_none() {
+            assert!(
+                waited.elapsed() < Duration::from_secs(10),
+                "the failure is reported"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(state
+            .save_failed()
+            .unwrap()
+            .contains("a failure for a test"));
+        assert!(state.committer().unwrap().flush().is_err());
+
+        // Working again: the change is saved, and the failure is gone.
+        state.committer().unwrap().fail_commits(false);
+        let waited = std::time::Instant::now();
+        while state.save_failed().is_some() {
+            assert!(
+                waited.elapsed() < Duration::from_secs(10),
+                "the retry succeeds"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        state.close().unwrap();
+        drop(state);
+        let reopened = FolderState::open(tmp.path(), &metadata, config, DeviceId([8; 32])).unwrap();
+        assert_eq!(reopened.progress.get(&DeviceId([9; 32])), Some(&(1, 2)));
+    }
+
     /// Pins moved to the runtime settings (ADR 0034): a database that still holds them gives
     /// them to the folder once, and loses them at the next save.
     #[test]

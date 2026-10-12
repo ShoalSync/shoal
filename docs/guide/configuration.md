@@ -15,6 +15,7 @@ This example shows every section:
 | Key | Meaning |
 | --- | --- |
 | `data_dir` | Keys, certificates, the block store, settings, logs and the control socket. |
+| `min_free_space` | Bytes to keep free on every drive Tidefell writes to: each folder's, and the data and metadata directories'. Below it, nothing more is downloaded to that drive; changes made there are still sent, and files are still served. Downloads resume by themselves once 10% more than this is free. 2% of each drive, up to 1 GiB, if left out. |
 | `metadata_dir` | Each folder's metadata database, and nothing else: `<data_dir>/metadata` by default. Point it at fast storage, such as an SSD, when `data_dir` and the folders are on slow disks. To move it on a device in use, stop `tidefelld`, move the directory, then set this; `tidefelld` refuses to start if the databases are still in the old place. `tidefell status` shows where it is. |
 | `watch` | Watch folders for changes and scan only where something changed, with a full scan every hour. On by default. A folder that cannot be watched, such as one on or containing a network filesystem mount (NFS, SMB, FUSE), or past the system's watch limit, is scanned every `scan_interval_secs` instead, and `tidefell status` says why. |
 | `network.relay` | `{ mode = "default" }` (public iroh relays), `{ mode = "custom", urls = [...] }` or `{ mode = "disabled" }`. |

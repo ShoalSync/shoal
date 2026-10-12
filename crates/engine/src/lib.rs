@@ -56,6 +56,7 @@ mod runtime;
 mod scan;
 mod setaside;
 mod sidecar;
+mod space;
 mod state;
 mod tracked;
 

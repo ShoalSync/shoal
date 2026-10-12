@@ -61,6 +61,7 @@ async fn bundles_hold_no_names_ids_or_addresses() {
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
             }],
+            min_free_space: None,
         },
         key.clone(),
         user.certify(key.id(), "CanaryDevice", 0),

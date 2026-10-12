@@ -128,6 +128,8 @@ pub(crate) struct Inner {
     pub(crate) data_dir: PathBuf,
     /// Where the folders' databases are (ADR 0034).
     pub(crate) metadata_dir: PathBuf,
+    /// Which volumes are below their free-space floor (ADR 0037).
+    pub(crate) floors: crate::space::Floors,
     pub(crate) store: Mutex<BlockStore>,
     /// Contents being downloaded, whose chunks the block store keeps until they are written.
     pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
@@ -592,6 +594,7 @@ impl Engine {
             user,
             data_dir: config.data_dir.clone(),
             metadata_dir: metadata_dir.clone(),
+            floors: crate::space::Floors::new(config.min_free_space),
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
             batches: Arc::default(),
@@ -848,6 +851,28 @@ impl Engine {
         run_scan(&self.inner, folder, None, None).await.map(drop)
     }
 
+    /// Tries again every write and delete in `folder` that failed in a way that lasts, such as
+    /// permission refused, rather than waiting for the file to change (ADR 0037).
+    pub fn retry(&self, folder: FolderId) -> Result<()> {
+        self.inner
+            .folder(&folder)?
+            .activity
+            .lock()
+            .unwrap()
+            .stuck
+            .clear();
+        self.inner.materialize.notify_one();
+        Ok(())
+    }
+
+    /// Keeps `bytes` free on every drive the engine writes to from now on, or 2% of each up to
+    /// 1 GiB if `None` (ADR 0037). Downloads to a drive below it wait.
+    pub fn set_min_free_space(&self, bytes: Option<u64>) {
+        self.inner.floors.set(bytes);
+        // Writes that waited are tried again.
+        self.inner.changed();
+    }
+
     /// Materialises remote changes to `folder` now.
     pub async fn materialize(&self, folder: FolderId) -> Result<()> {
         run_materialize(&self.inner, &self.node, folder).await
@@ -982,6 +1007,7 @@ async fn run_scan(
     let (inner2, handle2) = (inner.clone(), handle.clone());
     handle.activity.lock().unwrap().scanning = true;
     let started = std::time::Instant::now();
+    let covered = scope.clone();
     let result = tokio::task::spawn_blocking(move || {
         scan::scan(&inner2, &handle2, scope.as_ref(), saved.as_deref())
     })
@@ -996,6 +1022,15 @@ async fn run_scan(
         };
         let took = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         activity.last_scan = Some((now_ms(), took, error));
+        // A path a scan looked at is tried again, in case what stopped it was fixed there,
+        // such as its permissions (ADR 0037).
+        let stuck = activity.stuck.len();
+        activity
+            .stuck
+            .retain(|(path, _), _| !covered.as_ref().is_none_or(|s| s.contains(path)));
+        if activity.stuck.len() != stuck {
+            inner.materialize.notify_one();
+        }
     }
     let scanned = match result {
         Ok(scanned) => scanned?,

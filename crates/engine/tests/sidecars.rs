@@ -49,6 +49,7 @@ impl Replica {
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
             }],
+            min_free_space: None,
         };
         let certificate = user.certify(self.key.id(), "test", 0);
         Engine::start(config, self.key.clone(), certificate)

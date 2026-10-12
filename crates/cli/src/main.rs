@@ -179,6 +179,10 @@ enum Command {
     Problems {
         /// Folder ID; all folders if left out.
         folder: Option<String>,
+        /// Try again now what failed in a way that lasts, such as permission refused, instead
+        /// of waiting for the files to change.
+        #[arg(long)]
+        retry: bool,
     },
     /// List files with conflicting versions waiting for a decision, in one folder or all.
     Conflicts {
@@ -617,7 +621,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             let checks = client.doctor().await.map_err(e)?;
             print(json, &checks, |c| format::checks(c));
         }
-        Command::Problems { folder } => {
+        Command::Problems { folder, retry } => {
             let folders = match folder {
                 Some(folder) => vec![folder],
                 None => client
@@ -630,6 +634,9 @@ async fn run(cli: Cli) -> Result<(), String> {
             };
             let mut all = Vec::new();
             for folder in folders {
+                if retry {
+                    client.retry_problems(&folder).await.map_err(e)?;
+                }
                 let problems = client.folder_problems(&folder).await.map_err(e)?;
                 all.push((folder, problems));
             }

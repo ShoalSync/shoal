@@ -353,6 +353,7 @@ pub(crate) async fn folder(
         paused: folder.paused,
         device_paused: state.engine.paused(),
         held_deletes: folder.held_deletes,
+        low_space: folder.low_space.clone(),
         partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
         conflicts: folder.conflicts,

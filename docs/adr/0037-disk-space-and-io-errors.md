@@ -67,6 +67,29 @@
   `confirm_deletes_over`, a percentage, in the configuration file; a folder added at runtime
   uses 50.
 
+- Failed metadata writes (step 3): while a folder's commits fail, it applies no versions from
+  peers and records no peer's progress, so peers send them again once saving works; changes
+  made here are queued in order meanwhile. The folder is in the `error` state with the reason,
+  and commits are retried after 2 seconds, doubling to a minute.
+
+- Free-space floors (step 3): before writing a file, the engine checks that its size fits
+  above the floor of the folder's drive and of `data_dir`'s, where its chunks arrive; one that
+  does not waits as a `disk full` problem. A drive found below its floor takes nothing more
+  until 10% above it. The folder's status (`low_space`) names the drive and how much the
+  recycle bin and history hold, and the doctor fails a drive below its floor and warns below
+  twice it, instead of the earlier fixed thresholds. `min_free_space` is in the configuration
+  file and `Engine::set_min_free_space`.
+
+- Classified errors (step 3): permission denied, a read-only filesystem, the drive's own I/O
+  error (EIO) and a refused name last; any other error, such as an interrupted call or one
+  from the engine, is retried every pass. A write or delete that fails in a lasting way is not
+  tried again, its problem carried without counting
+  attempts, until the content to write changes, a scan covers the path (a full scan, or the
+  watcher's, which also sees permission changes) or `retry` is asked for (API, CLI, FFI). Disk
+  full, unavailable content and files changing while read are retried every pass. Not done
+  yet: a drive that turns read-only still gives a problem per file rather than making the
+  folder unavailable.
+
 ## Consequences
 
 - Unplugging a drive, or starting before it mounts, no longer deletes a folder everywhere.

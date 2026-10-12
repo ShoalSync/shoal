@@ -74,6 +74,7 @@ async fn pair_join_open_and_save() {
                     sync: Default::default(),
                     confirm_deletes: Default::default(),
                 }],
+                min_free_space: None,
             },
             laptop_key.clone(),
             alice.certify(laptop_key.id(), "laptop", 0),

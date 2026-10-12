@@ -624,6 +624,8 @@ pub struct Folder {
     /// Files the last scan found deleted, so many that the deletes wait for
     /// [`Node::confirm_deletes`] or [`Node::restore_deleted`] (ADR 0037).
     pub held_deletes: u64,
+    /// Why nothing more is downloaded to this folder, if the phone is low on space (ADR 0037).
+    pub low_space: Option<String>,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
@@ -1049,6 +1051,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         }),
         unavailable: f.unavailable,
         held_deletes: f.held_deletes as u64,
+        low_space: f.low_space,
     }
 }
 
@@ -1085,6 +1088,7 @@ impl Node {
             bind: network.bind()?,
             peers: Vec::new(),
             folders: Vec::new(),
+            min_free_space: None,
         };
         let engine = Arc::new(on_runtime(Engine::start(config, key, certificate)).await??);
         let node = Arc::new(Self {
@@ -1218,6 +1222,12 @@ impl Node {
         let folder = parse("folder ID", &id)?;
         on_runtime(async move { engine.rebuild_folder(folder).await }).await??;
         Ok(())
+    }
+
+    /// Tries again a folder's writes and deletes that failed in a way that lasts, such as
+    /// permission refused, without waiting for the files to change (ADR 0037).
+    pub fn retry_problems(&self, folder: String) -> Result<()> {
+        Ok(self.engine()?.retry(parse("folder ID", &folder)?)?)
     }
 
     /// The files a scan found deleted and held, because there were so many (ADR 0037).

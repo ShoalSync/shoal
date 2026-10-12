@@ -26,6 +26,11 @@ pub struct Config {
     /// the directory, and set this; `tidefelld` will not start without the databases.
     #[serde(default)]
     pub metadata_dir: Option<PathBuf>,
+    /// Bytes to keep free on every drive Tidefell writes to: the folders', `data_dir`'s and
+    /// `metadata_dir`'s. Below it, nothing more is downloaded there until space is back
+    /// (ADR 0037). 2% of each drive, up to 1 GiB, if left out.
+    #[serde(default)]
+    pub min_free_space: Option<u64>,
     /// Network settings.
     #[serde(default)]
     pub network: Network,
@@ -398,6 +403,7 @@ impl Config {
             bind: self.network.bind,
             peers,
             folders,
+            min_free_space: self.min_free_space,
         })
     }
 

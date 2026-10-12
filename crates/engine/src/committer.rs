@@ -44,6 +44,9 @@ struct Shared {
     dir: std::path::PathBuf,
     /// Lines in the activity log's file, so it is rewritten once it grows (ADR 0030).
     activity_lines: std::sync::atomic::AtomicUsize,
+    /// Makes commits fail, for tests of what a failing disk does.
+    #[cfg(test)]
+    fail: std::sync::atomic::AtomicBool,
 }
 
 /// One folder's committer.
@@ -60,8 +63,9 @@ impl std::fmt::Debug for Committer {
     }
 }
 
-/// How long to wait before retrying a commit that failed.
+/// How long to wait before retrying a commit that failed, doubling to [`RETRY_MAX`] (ADR 0037).
 const RETRY: Duration = Duration::from_secs(2);
+const RETRY_MAX: Duration = Duration::from_secs(60);
 
 impl Committer {
     /// Starts committing to `db`, whose versions are committed up to `committed`, and writing
@@ -81,6 +85,8 @@ impl Committer {
             on_commit: Mutex::new(None),
             dir,
             activity_lines: std::sync::atomic::AtomicUsize::new(activity_lines),
+            #[cfg(test)]
+            fail: std::sync::atomic::AtomicBool::new(false),
         });
         let thread = std::thread::Builder::new()
             .name("tidefell-commit".into())
@@ -107,6 +113,19 @@ impl Committer {
     /// The last sequence whose versions are committed.
     pub(crate) fn committed(&self) -> u64 {
         self.shared.committed.load(Ordering::Acquire)
+    }
+
+    /// Why committing fails, while it does (ADR 0037): the folder applies no remote changes
+    /// meanwhile, and peers send them again once it works.
+    pub(crate) fn failed(&self) -> Option<String> {
+        self.shared.queue.lock().unwrap().failed.clone()
+    }
+
+    /// Makes commits fail, or work again, for tests.
+    #[cfg(test)]
+    pub(crate) fn fail_commits(&self, fail: bool) {
+        self.shared.fail.store(fail, Ordering::Relaxed);
+        self.shared.work.notify_all();
     }
 
     /// Waits until everything queued is committed. Fails if the last commit failed.
@@ -198,23 +217,40 @@ fn run(shared: &Shared) {
         let at_ms = changes.at_ms;
         let activity = std::mem::take(&mut changes.activity);
         let mut changes = Some(changes);
+        let mut wait = RETRY;
         while let Some(attempt) = changes.take() {
+            #[cfg(test)]
+            let result = if shared.fail.load(Ordering::Relaxed) {
+                Err(Error::Io {
+                    path: std::path::PathBuf::new(),
+                    source: std::io::Error::other("a failure for a test"),
+                })
+            } else {
+                shared.db.lock().unwrap().commit(&attempt)
+            };
+            #[cfg(not(test))]
             let result = shared.db.lock().unwrap().commit(&attempt);
             match result {
                 Ok(()) => {
                     shared.queue.lock().unwrap().failed = None;
                 }
                 Err(e) => {
-                    warn!(error = %e, "committing a folder's changes failed; retrying");
+                    warn!(error = %e, retry_in = ?wait, "committing a folder's changes failed");
                     let mut queue = shared.queue.lock().unwrap();
                     queue.failed = Some(e.to_string());
                     shared.idle.notify_all();
+                    // Waits, but not past being closed.
+                    let (waited, _) = shared
+                        .work
+                        .wait_timeout_while(queue, wait, |q| !q.closing)
+                        .unwrap();
+                    queue = waited;
                     if queue.closing {
                         queue.busy = false;
                         return;
                     }
                     drop(queue);
-                    std::thread::sleep(RETRY);
+                    wait = (wait * 2).min(RETRY_MAX);
                     changes = Some(attempt);
                 }
             }

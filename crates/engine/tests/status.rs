@@ -52,6 +52,7 @@ impl Replica {
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
             }],
+            min_free_space: None,
         };
         let certificate = user.certify(self.key.id(), "laptop", 0);
         Engine::start(config, self.key.clone(), certificate)
@@ -290,8 +291,15 @@ async fn a_read_only_folder_lists_every_file_it_cannot_write() {
     })
     .await;
 
-    // Writable again: the files arrive and the problems clear.
+    // A lasting failure is not tried on every pass (ADR 0037): passes come every five
+    // seconds, and the attempts stay at one.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let problems = engine_b.path_problems(FOLDER).unwrap();
+    assert!(problems.iter().all(|p| p.attempts == 1), "{problems:?}");
+
+    // Writable again, and asked to try again: the files arrive and the problems clear.
     chmod(&b.root, 0o755);
+    engine_b.retry(FOLDER).unwrap();
     eventually("the files arrive", || {
         fs::read(b.root.join("three.txt")).is_ok()
             && engine_b.path_problems(FOLDER).unwrap().is_empty()

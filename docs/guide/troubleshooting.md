@@ -22,8 +22,20 @@ tidefell problems <folder id>  # one folder
 
 Each lists the path, what failed (permission denied, disk full, content unavailable, name not
 allowed on this system, changed while writing), the error, since when and how many attempts.
+Problems that clear by themselves (a disk full, content no connected device has, a file that was
+changing) are tried again on every pass. Those that do not (permission denied, a read-only drive,
+a name the drive refuses, an I/O error the drive reports) are tried again only when the file changes, a scan looks at it again, or
+you ask: `tidefell problems <folder id> --retry`.
 One file that fails does not hold up the others. A file in a directory that cannot be read is
 not taken for deleted.
+
+When a drive gets close to full, Tidefell keeps some of it free (`min_free_space` in the
+[configuration](configuration.md); 2% of the drive, up to 1 GiB, by default). Files that would
+cross that wait, each listed as a disk-full problem, and the folder's status says which drive is
+low and how much its recycle bin and earlier versions hold there. Emptying the recycle bin is the
+quickest way to make room; downloads resume by themselves. A folder whose metadata cannot be
+saved stops taking changes from other devices and is in the error state until it can, and then
+catches up.
 
 ## What changed, and who changed it
 
@@ -47,7 +59,7 @@ checks, and says what to do about anything that is not right:
 
 - that the device's clock agrees with its connected devices': conflicting edits are decided by
   modification time, so a clock more than two minutes off is a warning;
-- free space where the data directory and each folder live;
+- free space where the data directory and each folder live, against what is kept free there;
 - that each folder can be read and written, and is watched for changes;
 - what each folder's drive does with names: whether case matters, which characters it refuses
   and how long a name may be (see [names other drives cannot keep](folders.md#names-other-drives-cannot-keep));

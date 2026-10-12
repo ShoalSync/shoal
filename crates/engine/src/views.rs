@@ -64,6 +64,10 @@ pub struct FolderInfo {
     /// Files the last scan found deleted, so many that the deletes wait for
     /// [`crate::Engine::confirm_deletes`] or [`crate::Engine::restore_deleted`] (ADR 0037).
     pub held_deletes: usize,
+    /// Why nothing more is downloaded to this folder, if its drive or the engine's data drive
+    /// is below its free-space floor (ADR 0037), with how much its recycle bin and earlier
+    /// versions hold there.
+    pub low_space: Option<String>,
     /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
     pub rebuild: Option<RebuildInfo>,
 }

@@ -203,6 +203,9 @@ fn folder_state(f: &Folder) -> String {
             Some(_) => {}
         }
     }
+    if let Some(low) = &f.low_space {
+        let _ = write!(line, "; {low}");
+    }
     if f.held_deletes > 0 {
         let _ = write!(
             line,
@@ -784,6 +787,7 @@ mod tests {
             problems: 0,
             rebuild: None,
             held_deletes: 0,
+            low_space: None,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

@@ -71,6 +71,10 @@ impl Backend for EngineBackend {
         let Ok(handle) = self.0.folder(folder) else {
             return;
         };
+        if let Some(reason) = handle.lock().save_failed() {
+            debug!(%folder, %peer, %reason, "not applying versions until saving works");
+            return;
+        }
         let mut changed = false;
         let mut conflicts = Vec::new();
         // Checking signatures is most of the work, and needs no lock (ADR 0034).
@@ -148,6 +152,10 @@ impl Backend for EngineBackend {
                 .exchanged
                 .insert(peer, crate::now_ms());
             let mut state = handle.lock();
+            // Versions not applied for want of saving them are not acknowledged (ADR 0037).
+            if state.save_failed().is_some() {
+                return;
+            }
             state.progress.insert(peer, (epoch, up_to));
             // A folder being rebuilt has everything this peer knows: the next scan matches
             // the last of it and ends the rebuild (ADR 0034).
