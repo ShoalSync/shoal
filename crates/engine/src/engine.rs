@@ -143,6 +143,8 @@ pub(crate) struct Inner {
     /// whether it is from the configuration file, and why: the others start regardless, and a
     /// folder added at runtime stays in the runtime settings (ADR 0034).
     pub(crate) unopened: Mutex<BTreeMap<FolderId, (FolderConfig, bool, String)>>,
+    /// The pins of folders in the runtime settings that are not open, kept as they were.
+    other_pins: Mutex<BTreeMap<FolderId, Vec<String>>>,
     configured_peers: Vec<PeerAddr>,
     runtime_peers: RwLock<Vec<PeerAddr>>,
     pub(crate) changes: watch::Sender<u64>,
@@ -250,10 +252,15 @@ impl Inner {
         peers
     }
 
-    /// Writes runtime folders and peers. Callers hold `runtime_lock`.
-    fn save_runtime(&self) -> Result<()> {
+    /// Writes runtime folders, peers, pause and pins. Callers hold `runtime_lock`, and no
+    /// folder's lock.
+    pub(crate) fn save_runtime(&self) -> Result<()> {
         let folders = self.folders.read().unwrap();
         let unopened = self.unopened.lock().unwrap();
+        let mut pins: BTreeMap<FolderId, Vec<String>> = self.other_pins.lock().unwrap().clone();
+        for (id, handle) in folders.iter() {
+            pins.insert(*id, handle.lock().pins.iter().cloned().collect());
+        }
         let (paused, paused_folders) = self.paused.read().unwrap().clone();
         let runtime = Runtime {
             folders: folders
@@ -276,6 +283,7 @@ impl Inner {
                 .collect(),
             paused,
             paused_folders: paused_folders.into_iter().collect(),
+            pins: pins.into_iter().collect(),
         };
         runtime.save(&self.data_dir)
     }
@@ -567,6 +575,16 @@ impl Engine {
                 }
             }
         }
+        // Pins are in the runtime settings (ADR 0034). A folder without an entry there still
+        // has them in its metadata, from before: they move to the runtime settings now.
+        let mut other_pins: BTreeMap<FolderId, Vec<String>> = runtime.pins.into_iter().collect();
+        let mut moving_pins = false;
+        for (id, handle) in &folders {
+            match other_pins.remove(id) {
+                Some(pins) => handle.lock().pins = pins.into_iter().collect(),
+                None => moving_pins = true,
+            }
+        }
 
         let inner = Arc::new(Inner {
             key: key.clone(),
@@ -582,6 +600,7 @@ impl Engine {
             counters: crate::engine::metrics::Counters::default(),
             folders: RwLock::new(folders),
             unopened: Mutex::new(unopened),
+            other_pins: Mutex::new(other_pins),
             configured_peers: config.peers.clone(),
             runtime_peers: RwLock::new(runtime.peers.into_iter().map(Into::into).collect()),
             changes: watch::channel(0).0,
@@ -611,6 +630,9 @@ impl Engine {
         );
         info!(device = %device, "engine started");
 
+        if moving_pins {
+            inner.save_runtime()?;
+        }
         for (id, handle) in inner.folders.read().unwrap().iter() {
             inner.watch_commits(handle);
             spawn_scanner(&inner, *id, handle);
@@ -899,14 +921,15 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) 
     }
     // No scan or write is half done while the folder is swapped.
     let _guard = old.fs_lock.lock().await;
-    let config = {
+    let (config, pins) = {
         let mut state = old.lock();
         if let Err(e) = state.close() {
             warn!(folder = %id, error = %e, "saving the folder before rebuilding it failed");
         }
         // Tasks still holding the old folder save nothing more.
         state.mark_removed();
-        state.config.clone()
+        // Pins are this device's choice, not metadata: a rebuilt folder keeps them.
+        (state.config.clone(), state.pins.clone())
     };
     let (data_dir, metadata_dir, device) = (
         inner.data_dir.clone(),
@@ -927,6 +950,7 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, rebuild: Option<&str>) 
     })
     .await
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;
+    handle.lock().pins = pins;
     let handle = Arc::new(handle);
     inner.folders.write().unwrap().insert(id, handle.clone());
     inner.watch_commits(&handle);

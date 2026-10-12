@@ -322,8 +322,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   (`metadata_dir`) is implemented. Step 6: sidecars, integrity checks and per-folder rebuilds are
   in place (`tidefell folder rebuild`, the `rebuilding` state); a daemon with one damaged
   folder database starts, rebuilds that folder with its recycle bin and history, and keeps
-  syncing the others, also when killed during the rebuild. Moving pins to the runtime settings
-  follows.
+  syncing the others, also when killed during the rebuild. Pins are in the runtime settings, so
+  a rebuild keeps them. Phase 5j is complete.
 
 ### Phase 2 work breakdown
 

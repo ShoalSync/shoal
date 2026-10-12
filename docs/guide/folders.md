@@ -236,7 +236,8 @@ folder is rebuilt: the files on disk are matched to what other devices send, and
 bin and previous versions come back from the small `.json` files kept beside them in
 `.tidefell/`. The folder shows as *rebuilding* until a device sharing it has sent its index;
 until then files only on this device are not synced, and nothing is deleted. Other folders sync
-throughout.
+throughout. Pins, sync options and retention are kept with the device's settings, not the
+folder's metadata, so a rebuild keeps them.
 
 The databases are checked when the daemon starts, every day, and by `tidefell doctor`. To
 rebuild a folder whose metadata seems wrong:

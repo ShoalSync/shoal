@@ -3,11 +3,13 @@
 //! Folders and peers from the configuration file are not stored here; they are re-applied at
 //! every start and cannot be removed at runtime.
 //!
-//! Pause (ADR 0029) is stored here for every folder, configured ones included.
+//! Pause (ADR 0029) and pins (ADR 0034) are stored here for every folder, configured ones
+//! included: they are this device's choices, kept apart from folder metadata so a rebuilt
+//! folder keeps them.
 //!
-//! Format (version 4): the bytes `tidefell-engine-runtime 4\n` followed by the postcard
-//! encoding of [`Runtime`]. Version 3 had no pause, version 2 no folder sync options, and
-//! version 1 no peer relays either; all are still read.
+//! Format (version 5): the bytes `tidefell-engine-runtime 5\n` followed by the postcard
+//! encoding of [`Runtime`]. Version 4 had no pins, version 3 no pause, version 2 no folder sync
+//! options, and version 1 no peer relays either; all are still read.
 
 use std::fs;
 use std::io::Write;
@@ -22,7 +24,8 @@ use tidefell_proto::{DeviceId, FolderId, UserId};
 use crate::config::{Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions};
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 4\n";
+const HEADER: &[u8] = b"tidefell-engine-runtime 5\n";
+const HEADER_V4: &[u8] = b"tidefell-engine-runtime 4\n";
 const HEADER_V3: &[u8] = b"tidefell-engine-runtime 3\n";
 const HEADER_V2: &[u8] = b"tidefell-engine-runtime 2\n";
 const HEADER_V1: &[u8] = b"tidefell-engine-runtime 1\n";
@@ -35,6 +38,32 @@ pub(crate) struct Runtime {
     pub(crate) paused: bool,
     /// Folders whose syncing is paused, configured ones included.
     pub(crate) paused_folders: Vec<FolderId>,
+    /// The paths pinned on this device in each folder (ADR 0029). A folder with an entry, even
+    /// an empty one, takes its pins from here; one without had them in its metadata, from
+    /// before format 5.
+    pub(crate) pins: Vec<(FolderId, Vec<String>)>,
+}
+
+/// [`Runtime`] in format 4, before pins.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct RuntimeV4 {
+    folders: Vec<StoredFolder>,
+    peers: Vec<StoredPeer>,
+    paused: bool,
+    paused_folders: Vec<FolderId>,
+}
+
+impl From<RuntimeV4> for Runtime {
+    fn from(v4: RuntimeV4) -> Self {
+        Self {
+            folders: v4.folders,
+            peers: v4.peers,
+            paused: v4.paused,
+            paused_folders: v4.paused_folders,
+            pins: Vec::new(),
+        }
+    }
 }
 
 /// [`Runtime`] in format 3, before pause.
@@ -237,6 +266,8 @@ impl Runtime {
         match fs::read(&path) {
             Ok(bytes) => if let Some(body) = bytes.strip_prefix(HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(HEADER_V4) {
+                postcard::from_bytes::<RuntimeV4>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V3) {
                 postcard::from_bytes::<RuntimeV3>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V2) {
@@ -336,6 +367,32 @@ mod tests {
         runtime.save(tmp.path()).unwrap();
         let reloaded: FolderConfig = Runtime::load(tmp.path()).unwrap().folders[0].clone().into();
         assert_eq!(reloaded.sync, folder.sync);
+    }
+
+    #[test]
+    fn reads_version_4_without_pins_and_keeps_pins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let v4 = RuntimeV4 {
+            folders: Vec::new(),
+            peers: Vec::new(),
+            paused: true,
+            paused_folders: vec![FolderId([1; 32])],
+        };
+        let mut bytes = HEADER_V4.to_vec();
+        bytes.extend(postcard::to_stdvec(&v4).unwrap());
+        fs::write(path(tmp.path()), bytes).unwrap();
+
+        let mut runtime = Runtime::load(tmp.path()).unwrap();
+        assert!(runtime.paused);
+        assert!(
+            runtime.pins.is_empty(),
+            "pins are still in the folders' metadata"
+        );
+        runtime.pins = vec![(FolderId([1; 32]), vec!["Photos/2026".into()])];
+        runtime.save(tmp.path()).unwrap();
+        let reloaded = Runtime::load(tmp.path()).unwrap();
+        assert_eq!(reloaded.pins, runtime.pins);
+        assert_eq!(reloaded.paused_folders, vec![FolderId([1; 32])]);
     }
 
     #[test]

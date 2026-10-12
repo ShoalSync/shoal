@@ -168,8 +168,8 @@ impl Engine {
                 ));
             }
             state.pins.insert(path.to_owned());
-            state.save()?;
         }
+        self.save_pins()?;
         self.inner.emit(Event::FolderChanged(folder));
         // Fetch what is pinned now rather than at the next pass.
         self.inner.changed();
@@ -189,12 +189,18 @@ impl Engine {
             if !state.pins.remove(path) {
                 return Err(Error::Invalid(format!("{path:?} is not pinned")));
             }
-            state.save()?;
             drop(state);
+            self.save_pins()?;
             evict::evict(&self.inner, folder, &handle)?;
         }
         self.inner.emit(Event::FolderChanged(folder));
         Ok(())
+    }
+
+    /// Writes the pins to the runtime settings (ADR 0034).
+    fn save_pins(&self) -> Result<()> {
+        let _guard = self.inner.runtime_lock.lock().unwrap();
+        self.inner.save_runtime()
     }
 
     /// The paths pinned on this device, in order.

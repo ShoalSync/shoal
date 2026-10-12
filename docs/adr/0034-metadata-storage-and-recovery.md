@@ -193,8 +193,10 @@ progress, confirmed copies, kept files and history).
     folder and opens it again, which checks a fresh handle; only a failure there rebuilds it.
   - A kept file's sidecar names its recycle-bin items when the folder is next saved, not at the
     next tidy: a delete made here keeps the file before the item exists.
-  - Pins are still kept in the database and are lost by a rebuild; moving them, with the other
-    per-device settings, to the runtime settings is the last part of this step.
+  - Pins moved to the runtime settings in `data_dir`, format 5, for every folder, configured
+    ones included; sync options and retention were there already, or in the configuration file.
+    A folder with no entry there takes the pins its database holds from an earlier version, and
+    they are deleted from the database at its next save. A rebuild keeps them.
 
 ## Consequences
 

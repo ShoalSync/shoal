@@ -560,8 +560,12 @@ pub(crate) struct FolderState {
     /// first after each purge.
     pub(crate) history: Tracked<EntryId, Vec<Previous>>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
-    /// and everything below them.
-    pub(crate) pins: TrackedSet<String>,
+    /// and everything below them. Kept in the runtime settings, not the folder's database, so a
+    /// rebuild keeps them (ADR 0034); a folder's metadata holds them only from before that.
+    pub(crate) pins: BTreeSet<String>,
+    /// Pins read from the database, which held them before the runtime settings did, to delete
+    /// from it at the next save.
+    old_pins: TrackedSet<String>,
     /// This device's ignore patterns (ADR 0029), read again at every scan.
     pub(crate) ignores: Ignores,
     /// What the folder's filesystem does with names, probed when it opens (ADR 0033). Not
@@ -635,7 +639,8 @@ impl FolderState {
             set_aside: Tracked::default(),
             kept: Tracked::default(),
             history: Tracked::default(),
-            pins: TrackedSet::default(),
+            pins: BTreeSet::new(),
+            old_pins: TrackedSet::default(),
             ignores,
             filesystem: crate::probe::Filesystem::default(),
             dir,
@@ -738,7 +743,6 @@ impl FolderState {
         self.set_aside = Tracked::default();
         self.kept = Tracked::default();
         self.history = Tracked::default();
-        self.pins = TrackedSet::default();
         self.rebuild = Some(Rebuild {
             started_ms: now,
             reason,
@@ -815,7 +819,12 @@ impl FolderState {
         self.set_aside = Tracked::decode(take("set_aside")).map_err(corrupt)?;
         self.kept = Tracked::decode(take("kept")).map_err(corrupt)?;
         self.history = Tracked::decode(take("history")).map_err(corrupt)?;
-        self.pins = TrackedSet::decode(take("pins")).map_err(corrupt)?;
+        let mut old_pins: TrackedSet<String> = TrackedSet::decode(take("pins")).map_err(corrupt)?;
+        self.pins = old_pins.iter().cloned().collect();
+        for path in &self.pins {
+            old_pins.remove(path);
+        }
+        self.old_pins = old_pins;
         Ok(db)
     }
 
@@ -910,7 +919,7 @@ impl FolderState {
             ("set_aside", self.set_aside.all()),
             ("kept", self.kept.all()),
             ("history", self.history.all()),
-            ("pins", self.pins.all()),
+            ("pins", self.old_pins.all()),
         ]
     }
 
@@ -927,7 +936,7 @@ impl FolderState {
             ("set_aside", self.set_aside.take_changed()),
             ("kept", self.kept.take_changed()),
             ("history", self.history.take_changed()),
-            ("pins", self.pins.take_changed()),
+            ("pins", self.old_pins.take_changed()),
         ]
     }
 
@@ -1023,13 +1032,19 @@ impl FolderState {
         if self.removed || self.committer.is_none() {
             return Ok(());
         }
-        // A file kept for the recycle bin before its item existed, as a delete made here keeps
-        // it, gets a sidecar naming the item now, not at the next tidy (ADR 0034).
-        self.refresh_sidecars();
         // Only what changed, committed in order off the folder lock (ADR 0034). Last-use times
         // alone are not worth waiting for the disk.
         let journal = self.meta.take_journal();
         let maps = self.changed_maps();
+        // A file kept for the recycle bin before its item existed, as a delete made here keeps
+        // it, gets a sidecar naming the item now, not at the next tidy (ADR 0034). Only a save
+        // that changed what sidecars say looks.
+        let kept_changed = maps.iter().any(|(name, records)| {
+            matches!(*name, "kept" | "history" | "set_aside") && !records.is_empty()
+        });
+        if kept_changed || !journal.recycle.is_empty() {
+            self.refresh_sidecars();
+        }
         let durable = !journal.is_empty()
             || maps
                 .iter()
@@ -1413,6 +1428,53 @@ mod tests {
                 && FolderDb::exists(&db_path(&tmp.path().join("metadata"), config.id))
         );
     }
+    /// Pins moved to the runtime settings (ADR 0034): a database that still holds them gives
+    /// them to the folder once, and loses them at the next save.
+    #[test]
+    fn pins_move_out_of_the_database() {
+        let tmp = tempfile::tempdir().unwrap();
+        let metadata = tmp.path().join("metadata");
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Partial { budget_bytes: 1 },
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+        };
+        let device = DeviceId([8; 32]);
+        let mut state = FolderState::open(tmp.path(), &metadata, config.clone(), device).unwrap();
+        state.close().unwrap();
+        drop(state);
+        // As an earlier version left it.
+        let path = db_path(&metadata, config.id);
+        let (mut db, loaded) = FolderDb::open(&path).unwrap();
+        let mut pins = TrackedSet::default();
+        pins.insert("Photos/2026".to_owned());
+        db.commit(&Changes {
+            header: loaded.header,
+            journal: Default::default(),
+            maps: vec![("pins", pins.all())],
+            durable: true,
+            rebuild: None,
+            activity: Vec::new(),
+            at_ms: 0,
+        })
+        .unwrap();
+        drop(db);
+
+        let mut state = FolderState::open(tmp.path(), &metadata, config.clone(), device).unwrap();
+        assert_eq!(state.pins.iter().collect::<Vec<_>>(), ["Photos/2026"]);
+        state.close().unwrap();
+        drop(state);
+        let (_, loaded) = FolderDb::open(&path).unwrap();
+        assert!(loaded
+            .maps
+            .get("pins")
+            .is_none_or(|records| records.is_empty()));
+    }
+
     #[test]
     fn loads_version_3_state_without_bases() {
         let tmp = tempfile::tempdir().unwrap();

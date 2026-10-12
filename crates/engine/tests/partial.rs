@@ -473,4 +473,20 @@ async fn a_pinned_directory_stays_over_the_budget() {
         engine_full.pin(FOLDER, "keep").await,
         Err(Error::Invalid(_))
     ));
+
+    // Pins are this device's choice, kept apart from the folder's metadata: a rebuild keeps
+    // them, and so does losing the database (ADR 0034).
+    engine.pin(FOLDER, "keep").await.unwrap();
+    engine.rebuild_folder(FOLDER).await.unwrap();
+    assert_eq!(engine.pins(FOLDER).unwrap(), ["keep"]);
+    engine.shutdown().await;
+    for entry in fs::read_dir(partial.dir.join("data/metadata"))
+        .unwrap()
+        .flatten()
+    {
+        fs::remove_file(entry.path()).unwrap();
+    }
+    let engine = partial.start().await;
+    assert_eq!(engine.pins(FOLDER).unwrap(), ["keep"]);
+    engine.shutdown().await;
 }
