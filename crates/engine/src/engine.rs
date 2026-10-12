@@ -171,9 +171,16 @@ pub(crate) struct Inner {
     report_url: Mutex<Option<String>>,
     /// Counted as they happen, for metrics (ADR 0030).
     pub(crate) counters: crate::engine::metrics::Counters,
+    /// [`Inner::retry_interval`], in milliseconds.
+    retry_ms: std::sync::atomic::AtomicU64,
 }
 
 impl Inner {
+    /// How often pending downloads are retried and peers dialled again.
+    pub(crate) fn retry_interval(&self) -> Duration {
+        Duration::from_millis(self.retry_ms.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
     /// Records that the task `task` panicked. Locks it held may be poisoned and state in memory
     /// may be inconsistent, so the engine stops working and its owner is told (ADR 0030).
     /// Returns what went wrong.
@@ -366,6 +373,14 @@ fn open_folder(
     })
 }
 
+/// The network an engine runs on.
+enum Network {
+    Iroh,
+    /// Simulated, for the harness of ADR 0036.
+    #[cfg(feature = "simulation")]
+    Memory(tidefell_net::Network),
+}
+
 /// Runs `task`, marking the engine failed if it panics instead of the loop silently ending.
 fn supervised(
     inner: Arc<Inner>,
@@ -538,6 +553,28 @@ impl Engine {
         key: DeviceKey,
         certificate: Signed<DeviceCertificate>,
     ) -> Result<Self> {
+        Self::start_on(config, key, certificate, Network::Iroh).await
+    }
+
+    /// Starts an engine as [`Engine::start`] does, on the simulated `network` instead of iroh
+    /// (ADR 0036): it reaches only engines on that network, by device. `config`'s relay, bind
+    /// and discovery settings do not apply.
+    #[cfg(feature = "simulation")]
+    pub async fn start_simulated(
+        config: EngineConfig,
+        key: DeviceKey,
+        certificate: Signed<DeviceCertificate>,
+        network: &tidefell_net::Network,
+    ) -> Result<Self> {
+        Self::start_on(config, key, certificate, Network::Memory(network.clone())).await
+    }
+
+    async fn start_on(
+        config: EngineConfig,
+        key: DeviceKey,
+        certificate: Signed<DeviceCertificate>,
+        network: Network,
+    ) -> Result<Self> {
         let device = key.id();
         let user = certificate
             .verify_certificate()
@@ -625,22 +662,30 @@ impl Engine {
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
             diagnostics_config: Mutex::new(None),
             report_url: Mutex::new(None),
+            retry_ms: std::sync::atomic::AtomicU64::new(RETRY_INTERVAL.as_millis() as u64),
         });
 
-        let node = Arc::new(
-            Node::spawn(
-                NodeConfig {
-                    secret_key: key.seed(),
-                    relay: config.relay.clone(),
-                    address_lookup: config.address_lookup,
-                    local_discovery: config.local_discovery,
-                    limits: config.limits,
-                    bind: config.bind,
-                },
-                Arc::new(EngineBackend(inner.clone())),
-            )
-            .await?,
-        );
+        let backend = Arc::new(EngineBackend(inner.clone()));
+        let node = Arc::new(match network {
+            Network::Iroh => {
+                Node::spawn(
+                    NodeConfig {
+                        secret_key: key.seed(),
+                        relay: config.relay.clone(),
+                        address_lookup: config.address_lookup,
+                        local_discovery: config.local_discovery,
+                        limits: config.limits,
+                        bind: config.bind,
+                    },
+                    backend,
+                )
+                .await?
+            }
+            #[cfg(feature = "simulation")]
+            Network::Memory(network) => {
+                Node::spawn_simulated(&network, device, config.limits, backend)
+            }
+        });
         info!(device = %device, "engine started");
 
         if moving_pins {
@@ -690,7 +735,7 @@ impl Engine {
                     }
                     tokio::select! {
                         () = inner.materialize.notified() => {}
-                        () = tokio::time::sleep(RETRY_INTERVAL) => {}
+                        () = tokio::time::sleep(inner.retry_interval()) => {}
                     }
                 }
             }));
@@ -710,7 +755,7 @@ impl Engine {
                             debug!(peer = %peer.device, error = %e, "dial failed");
                         }
                     }
-                    tokio::time::sleep(RETRY_INTERVAL).await;
+                    tokio::time::sleep(inner.retry_interval()).await;
                 }
             }));
         }
@@ -835,6 +880,18 @@ impl Engine {
             .set_filesystem(filesystem);
         self.inner.changes.send_modify(|n| *n += 1);
         Ok(())
+    }
+
+    /// Changes how often this engine retries pending downloads and dials peers it is not
+    /// connected to: every five seconds unless set. Tests and simulations shorten it, so a
+    /// healed network reconnects at once (ADR 0036).
+    pub fn set_retry_interval(&self, interval: Duration) {
+        let ms = u64::try_from(interval.as_millis())
+            .unwrap_or(u64::MAX)
+            .max(1);
+        self.inner
+            .retry_ms
+            .store(ms, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Adds a fixed delay before every request this engine sends to a peer, as a slow link's

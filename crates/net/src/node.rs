@@ -4,9 +4,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use iroh::endpoint::{presets, Connection};
+use iroh::endpoint::presets;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
-use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, RelayUrl, SecretKey};
+use iroh::{Endpoint, EndpointAddr, RelayMap, RelayMode, RelayUrl, SecretKey};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::{
@@ -21,6 +21,7 @@ use crate::limits::{Limits, RateLimiter};
 use crate::locks::{Locked, ReadWrite};
 use crate::now_ms;
 use crate::sync::{self, Peer};
+use crate::transport::Conn;
 use crate::{Error, Result};
 
 /// The mDNS service Tidefell devices announce, apart from other iroh applications.
@@ -145,7 +146,7 @@ pub struct PeerStatus {
 /// A connected sync peer.
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
-    conn: Connection,
+    conn: Conn,
     peer: Peer,
     limiter: Arc<RateLimiter>,
 }
@@ -191,7 +192,18 @@ impl std::fmt::Debug for SyncProtocol {
 }
 
 impl ProtocolHandler for SyncProtocol {
-    async fn accept(&self, conn: Connection) -> std::result::Result<(), AcceptError> {
+    async fn accept(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> std::result::Result<(), AcceptError> {
+        self.serve(Conn::Iroh(conn)).await;
+        Ok(())
+    }
+}
+
+impl SyncProtocol {
+    /// Runs the sync session a peer opened on `conn` until it ends.
+    async fn serve(&self, conn: Conn) {
         run_session(
             conn,
             self.backend.clone(),
@@ -202,12 +214,11 @@ impl ProtocolHandler for SyncProtocol {
             None,
         )
         .await;
-        Ok(())
     }
 }
 
 async fn run_session(
-    conn: Connection,
+    conn: Conn,
     backend: Arc<dyn Backend>,
     peers: Peers,
     records: Records,
@@ -270,6 +281,27 @@ async fn run_session(
     }
 }
 
+/// The handlers of `sync/1` and `blobs/1`.
+fn protocols(
+    backend: &Arc<dyn Backend>,
+    peers: &Peers,
+    records: &Records,
+    limiter: &Arc<RateLimiter>,
+) -> (SyncProtocol, BlobsProtocol) {
+    (
+        SyncProtocol {
+            backend: backend.clone(),
+            peers: peers.clone(),
+            records: records.clone(),
+            limiter: limiter.clone(),
+        },
+        BlobsProtocol {
+            backend: backend.clone(),
+            limiter: limiter.clone(),
+        },
+    )
+}
+
 /// Binds an iroh endpoint with this device's key, serving `alpns`.
 pub(crate) async fn bind_endpoint(config: &NodeConfig, alpns: Vec<Vec<u8>>) -> Result<Endpoint> {
     let relay_mode = match &config.relay {
@@ -311,14 +343,28 @@ pub(crate) async fn bind_endpoint(config: &NodeConfig, alpns: Vec<Vec<u8>>) -> R
     Ok(endpoint)
 }
 
+/// How a node reaches peers.
+enum Transport {
+    Iroh {
+        endpoint: Endpoint,
+        router: Router,
+    },
+    /// The simulated network of ADR 0036.
+    #[cfg(feature = "simulation")]
+    Memory {
+        network: crate::memory::Network,
+        device: DeviceId,
+        accepting: tokio::task::JoinHandle<()>,
+    },
+}
+
 /// A running Tidefell peer endpoint.
 pub struct Node {
-    endpoint: Endpoint,
-    router: Router,
+    transport: Transport,
     backend: Arc<dyn Backend>,
     peers: Peers,
     records: Records,
-    blob_conns: Mutex<HashMap<EndpointId, Connection>>,
+    blob_conns: Mutex<HashMap<DeviceId, Conn>>,
     limiter: Arc<RateLimiter>,
 }
 
@@ -339,33 +385,75 @@ impl Node {
         let peers: Peers = Arc::default();
         let records: Records = Arc::default();
         let limiter = Arc::new(RateLimiter::new(config.limits));
+        let (sync, blobs) = protocols(&backend, &peers, &records, &limiter);
         let router = Router::builder(endpoint.clone())
-            .accept(
-                ALPN_SYNC_V1,
-                SyncProtocol {
-                    backend: backend.clone(),
-                    peers: peers.clone(),
-                    records: records.clone(),
-                    limiter: limiter.clone(),
-                },
-            )
-            .accept(
-                ALPN_BLOBS_V1,
-                BlobsProtocol {
-                    backend: backend.clone(),
-                    limiter: limiter.clone(),
-                },
-            )
+            .accept(ALPN_SYNC_V1, sync)
+            .accept(ALPN_BLOBS_V1, blobs)
             .spawn();
         Ok(Self {
-            endpoint,
-            router,
+            transport: Transport::Iroh { endpoint, router },
             backend,
             peers,
             records,
             blob_conns: Mutex::default(),
             limiter,
         })
+    }
+
+    /// Joins the simulated `network` as `device` and starts serving `sync/1` and `blobs/1`
+    /// on it (ADR 0036). It reaches only nodes on the same network.
+    #[cfg(feature = "simulation")]
+    pub fn spawn_simulated(
+        network: &crate::memory::Network,
+        device: DeviceId,
+        limits: Limits,
+        backend: Arc<dyn Backend>,
+    ) -> Self {
+        let peers: Peers = Arc::default();
+        let records: Records = Arc::default();
+        let limiter = Arc::new(RateLimiter::new(limits));
+        let (sync, blobs) = protocols(&backend, &peers, &records, &limiter);
+        let mut incoming = network.register(device);
+        let accepting = tokio::spawn(async move {
+            while let Some(accepted) = incoming.recv().await {
+                if accepted.alpn == ALPN_SYNC_V1 {
+                    let sync = sync.clone();
+                    tokio::spawn(async move { sync.serve(accepted.conn).await });
+                } else if accepted.alpn == ALPN_BLOBS_V1 {
+                    let blobs = blobs.clone();
+                    tokio::spawn(async move { blobs.serve(accepted.conn).await });
+                } else {
+                    accepted.conn.close(0, b"unknown protocol");
+                }
+            }
+        });
+        Self {
+            transport: Transport::Memory {
+                network: network.clone(),
+                device,
+                accepting,
+            },
+            backend,
+            peers,
+            records,
+            blob_conns: Mutex::default(),
+            limiter,
+        }
+    }
+
+    /// Opens a connection to `addr` for protocol `alpn`.
+    async fn dial(&self, addr: EndpointAddr, alpn: &[u8]) -> Result<Conn> {
+        match &self.transport {
+            Transport::Iroh { endpoint, .. } => endpoint
+                .connect(addr, alpn)
+                .await
+                .map(Conn::Iroh)
+                .map_err(|e| Error::Connect(e.to_string())),
+            #[cfg(feature = "simulation")]
+            Transport::Memory {
+                network, device, ..
+            } => network.dial(*device, DeviceId(*addr.id.as_bytes()), alpn),
+        }
     }
 
     /// The upload and download limits in force.
@@ -387,22 +475,36 @@ impl Node {
 
     /// This device's ID (the endpoint's public key).
     pub fn id(&self) -> DeviceId {
-        DeviceId(*self.endpoint.id().as_bytes())
+        match &self.transport {
+            Transport::Iroh { endpoint, .. } => DeviceId(*endpoint.id().as_bytes()),
+            #[cfg(feature = "simulation")]
+            Transport::Memory { device, .. } => *device,
+        }
     }
 
     /// The addresses peers can use to reach this node.
+    #[cfg_attr(
+        feature = "simulation",
+        expect(clippy::expect_used, reason = "a device ID is an Ed25519 public key")
+    )]
     pub fn addr(&self) -> EndpointAddr {
-        self.endpoint.addr()
+        match &self.transport {
+            Transport::Iroh { endpoint, .. } => endpoint.addr(),
+            #[cfg(feature = "simulation")]
+            Transport::Memory { device, .. } => EndpointAddr::new(
+                iroh::EndpointId::from_bytes(device.as_bytes())
+                    .expect("a device ID is a public key"),
+            ),
+        }
     }
 
     /// Dials a peer and starts a sync session. Returns once the handshake has completed.
     pub async fn connect(&self, addr: impl Into<EndpointAddr>) -> Result<PeerHandle> {
         let addr = addr.into();
         let device = DeviceId(*addr.id.as_bytes());
-        let conn = match self.endpoint.connect(addr, ALPN_SYNC_V1).await {
+        let conn = match self.dial(addr, ALPN_SYNC_V1).await {
             Ok(conn) => conn,
             Err(e) => {
-                let e = Error::Connect(e.to_string());
                 self.records.locked().entry(device).or_default().last_error = Some(e.to_string());
                 return Err(e);
             }
@@ -432,15 +534,14 @@ impl Node {
         let session = self.peer(device);
         let (path, rtt) = session
             .as_ref()
-            .and_then(|s| {
-                let paths = s.conn.paths();
-                let selected = paths.iter().find(|p| p.is_selected())?;
-                let kind = if selected.is_relay() {
+            .and_then(|s| s.conn.path())
+            .map(|p| {
+                let kind = if p.relay {
                     PathKind::Relay
                 } else {
                     PathKind::Direct
                 };
-                Some((Some(kind), Some(selected.rtt())))
+                (Some(kind), Some(p.rtt))
             })
             .unwrap_or((None, None));
         PeerStatus {
@@ -467,8 +568,17 @@ impl Node {
     /// The relays this node uses and what it knows of its network (ADR 0030).
     pub fn connectivity(&self) -> Connectivity {
         use iroh::Watcher;
-        let relays = self
-            .endpoint
+        let endpoint = match &self.transport {
+            Transport::Iroh { endpoint, .. } => endpoint,
+            #[cfg(feature = "simulation")]
+            Transport::Memory { .. } => {
+                return Connectivity {
+                    relays: Vec::new(),
+                    report: None,
+                }
+            }
+        };
+        let relays = endpoint
             .home_relay_status()
             .get()
             .into_iter()
@@ -478,7 +588,7 @@ impl Node {
                 error: r.last_error().map(ToString::to_string),
             })
             .collect();
-        let report = self.endpoint.net_report().get().map(|r| NetworkReport {
+        let report = endpoint.net_report().get().map(|r| NetworkReport {
             udp_v4: r.udp_v4,
             udp_v6: r.udp_v6,
             mapping_varies: r.mapping_varies_by_dest(),
@@ -503,10 +613,15 @@ impl Node {
     /// iroh's own metrics in the OpenMetrics text format, named `iroh_endpoint_...`, without
     /// the closing `# EOF` (ADR 0030).
     pub fn encode_iroh_metrics(&self, out: &mut String) -> std::fmt::Result {
+        let endpoint = match &self.transport {
+            Transport::Iroh { endpoint, .. } => endpoint,
+            #[cfg(feature = "simulation")]
+            Transport::Memory { .. } => return Ok(()),
+        };
         let mut registry = iroh_metrics::Registry::default();
         registry
             .sub_registry_with_prefix("iroh")
-            .register_all_prefixed(self.endpoint.metrics());
+            .register_all_prefixed(endpoint.metrics());
         registry.encode_openmetrics_to_writer(out)
     }
 
@@ -520,18 +635,14 @@ impl Node {
         self.peers.locked().get(device).cloned()
     }
 
-    async fn blob_conn(&self, addr: EndpointAddr) -> Result<Connection> {
-        let id = addr.id;
+    async fn blob_conn(&self, addr: EndpointAddr) -> Result<Conn> {
+        let id = DeviceId(*addr.id.as_bytes());
         if let Some(conn) = self.blob_conns.locked().get(&id) {
-            if conn.close_reason().is_none() {
+            if !conn.is_closed() {
                 return Ok(conn.clone());
             }
         }
-        let conn = self
-            .endpoint
-            .connect(addr, ALPN_BLOBS_V1)
-            .await
-            .map_err(|e| Error::Connect(e.to_string()))?;
+        let conn = self.dial(addr, ALPN_BLOBS_V1).await?;
         self.blob_conns.locked().insert(id, conn.clone());
         Ok(conn)
     }
@@ -590,12 +701,32 @@ impl Node {
         &self,
         code: &tidefell_proto::pair::PairingCode,
     ) -> Result<crate::pair::ApproverSession> {
-        crate::pair::ApproverSession::start(&self.endpoint, self.backend.certificate(), code).await
+        match &self.transport {
+            Transport::Iroh { endpoint, .. } => {
+                crate::pair::ApproverSession::start(endpoint, self.backend.certificate(), code)
+                    .await
+            }
+            #[cfg(feature = "simulation")]
+            Transport::Memory { .. } => Err(Error::Connect("pairing needs a real network".into())),
+        }
     }
 
     /// Stops serving and closes the endpoint.
     pub async fn shutdown(self) {
-        let _ = self.router.shutdown().await;
-        self.endpoint.close().await;
+        match self.transport {
+            Transport::Iroh { endpoint, router } => {
+                let _ = router.shutdown().await;
+                endpoint.close().await;
+            }
+            #[cfg(feature = "simulation")]
+            Transport::Memory {
+                network,
+                device,
+                accepting,
+            } => {
+                accepting.abort();
+                network.deregister(device);
+            }
+        }
     }
 }

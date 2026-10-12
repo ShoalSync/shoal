@@ -12,6 +12,10 @@ workspace = true
 
 # Dependency boundary: must not depend on `tidefell-fs-fuse` or `tidefell-web`.
 # Platform front-ends depend on the engine, never the other way round.
+[features]
+# Engines on an in-memory network, for the simulation harness (ADR 0036).
+simulation = ["tidefell-net/simulation"]
+
 [dependencies]
 getrandom.workspace = true
 hashbrown.workspace = true

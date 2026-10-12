@@ -21,15 +21,20 @@ mod blobs;
 mod frame_io;
 mod limits;
 mod locks;
+#[cfg(feature = "simulation")]
+mod memory;
 mod node;
 mod pair;
 mod sync;
 mod traffic;
+mod transport;
 
 pub use backend::{Backend, IndexPage};
 pub use blobs::ChunkResult;
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
 pub use limits::{Limits, MIN_BYTES_PER_SEC};
+#[cfg(feature = "simulation")]
+pub use memory::Network;
 pub use node::{
     Connectivity, NetworkReport, Node, NodeConfig, PathKind, PeerHandle, PeerStatus, RelayConfig,
     RelayState,

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use crate::transport::{Conn, RecvHalf, SendHalf};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage, MAX_CHUNKS_PER_REQUEST};
 use tidefell_proto::identity::DeviceCertificate;
@@ -41,7 +41,18 @@ impl std::fmt::Debug for BlobsProtocol {
 }
 
 impl ProtocolHandler for BlobsProtocol {
-    async fn accept(&self, conn: Connection) -> std::result::Result<(), AcceptError> {
+    async fn accept(
+        &self,
+        conn: iroh::endpoint::Connection,
+    ) -> std::result::Result<(), AcceptError> {
+        self.serve(Conn::Iroh(conn)).await;
+        Ok(())
+    }
+}
+
+impl BlobsProtocol {
+    /// Serves the requests a peer sends on `conn` until it closes.
+    pub(crate) async fn serve(&self, conn: Conn) {
         while let Ok((send, recv)) = conn.accept_bi().await {
             let backend = self.backend.clone();
             let limiter = self.limiter.clone();
@@ -52,16 +63,15 @@ impl ProtocolHandler for BlobsProtocol {
                 }
             });
         }
-        Ok(())
     }
 }
 
 async fn serve_stream(
-    conn: &Connection,
+    conn: &Conn,
     backend: &dyn Backend,
     limiter: &RateLimiter,
-    mut send: SendStream,
-    mut recv: RecvStream,
+    mut send: SendHalf,
+    mut recv: RecvHalf,
 ) -> Result<()> {
     // Before the peer is verified, read little and not for long (ADR 0024).
     let hello = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED);
@@ -147,18 +157,18 @@ async fn serve_stream(
     Ok(())
 }
 
-async fn reject(send: &mut SendStream, code: BlobsErrorCode) -> Result<()> {
+async fn reject(send: &mut SendHalf, code: BlobsErrorCode) -> Result<()> {
     frame_io::write(send, &BlobsMessage::Error { code }).await?;
     let _ = send.finish();
     Ok(())
 }
 
 async fn open(
-    conn: &Connection,
+    conn: &Conn,
     limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     request: BlobsMessage,
-) -> Result<RecvStream> {
+) -> Result<RecvHalf> {
     limiter
         .request(match &request {
             BlobsMessage::Request { chunks, .. } => Request::Chunks(chunks.len()),
@@ -174,10 +184,10 @@ async fn open(
 }
 
 async fn open_stream(
-    conn: &Connection,
+    conn: &Conn,
     certificate: Signed<DeviceCertificate>,
     request: BlobsMessage,
-) -> Result<RecvStream> {
+) -> Result<RecvHalf> {
     let (mut send, recv) = conn
         .open_bi()
         .await
@@ -190,7 +200,7 @@ async fn open_stream(
 
 /// Requests chunks. Every returned chunk has been checked against its hash.
 pub(crate) async fn fetch_chunks(
-    conn: &Connection,
+    conn: &Conn,
     limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,
@@ -243,7 +253,7 @@ pub(crate) async fn fetch_chunks(
 
 /// Asks which chunks of `content` the peer holds. Returns `(chunk_count, bitmap)`.
 pub(crate) async fn availability(
-    conn: &Connection,
+    conn: &Conn,
     limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,
@@ -277,7 +287,7 @@ pub(crate) async fn availability(
 
 /// Asks whether the peer is a full replica of `folder` (ADR 0022).
 pub(crate) async fn replica(
-    conn: &Connection,
+    conn: &Conn,
     limiter: &RateLimiter,
     certificate: Signed<DeviceCertificate>,
     folder: FolderId,

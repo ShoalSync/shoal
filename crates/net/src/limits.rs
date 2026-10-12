@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::locks::Locked;
-use iroh::endpoint::Connection;
+use crate::transport::Conn;
 use iroh::TransportAddr;
 use tokio::time::Instant;
 
@@ -158,13 +158,13 @@ impl RateLimiter {
         self.download.reset();
     }
 
-    fn applies(&self, conn: &Connection) -> bool {
+    fn applies(&self, conn: &Conn) -> bool {
         self.limits().limit_local || !is_local(conn)
     }
 
     /// Before reading a chunk to send on `conn`: `Err(retry_after)` if the upload backlog is
     /// already too long, so a busy answer costs no disk read.
-    pub(crate) fn upload_busy(&self, conn: &Connection) -> Result<(), Duration> {
+    pub(crate) fn upload_busy(&self, conn: &Conn) -> Result<(), Duration> {
         if self.limits().upload.is_some() && self.applies(conn) {
             let backlog = self.upload.backlog();
             if backlog > MAX_BACKLOG {
@@ -176,7 +176,7 @@ impl RateLimiter {
 
     /// Before sending a chunk of `bytes` on `conn`: `Ok(wait)` to send it after `wait`, or
     /// `Err(retry_after)` if the upload backlog is too long to send it in time.
-    pub(crate) fn upload(&self, conn: &Connection, bytes: usize) -> Result<Duration, Duration> {
+    pub(crate) fn upload(&self, conn: &Conn, bytes: usize) -> Result<Duration, Duration> {
         let wait = match self.limits().upload.filter(|_| self.applies(conn)) {
             Some(rate) => self.upload.try_reserve(bytes, rate, MAX_BACKLOG),
             None => Ok(Duration::ZERO),
@@ -188,7 +188,7 @@ impl RateLimiter {
     }
 
     /// After receiving a chunk of `bytes` on `conn`: how long to wait before reading more.
-    pub(crate) fn download(&self, conn: &Connection, bytes: usize) -> Duration {
+    pub(crate) fn download(&self, conn: &Conn, bytes: usize) -> Duration {
         self.traffic.received(bytes, is_local(conn));
         match self.limits().download.filter(|_| self.applies(conn)) {
             Some(rate) => self.download.reserve(bytes, rate),
@@ -198,11 +198,13 @@ impl RateLimiter {
 }
 
 /// Whether `conn` currently goes directly to an address on the local network.
-fn is_local(conn: &Connection) -> bool {
-    conn.paths()
-        .iter()
-        .find(|p| p.is_selected())
-        .is_some_and(|p| matches!(p.remote_addr(), TransportAddr::Ip(a) if is_lan(a.ip())))
+fn is_local(conn: &Conn) -> bool {
+    conn.path().is_some_and(|p| p.local)
+}
+
+/// Whether `addr` is an address on the local network.
+pub(crate) fn is_local_addr(addr: &TransportAddr) -> bool {
+    matches!(addr, TransportAddr::Ip(a) if is_lan(a.ip()))
 }
 
 /// Private, link-local and loopback addresses. Carrier-grade NAT addresses (100.64.0.0/10), as

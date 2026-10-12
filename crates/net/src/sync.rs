@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use crate::transport::{Conn, RecvHalf, SendHalf};
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::sync::{ErrorCode, SyncMessage};
 use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest, Signed};
@@ -28,12 +28,12 @@ const MAX_RECEIVED: usize = 1 << 18;
 /// Checks a peer's certificate against the authenticated connection.
 pub(crate) fn verify_peer(
     certificate: &Signed<DeviceCertificate>,
-    conn: &Connection,
+    conn: &Conn,
 ) -> Result<DeviceCertificate> {
     let certificate = certificate
         .verify_certificate()
         .map_err(|_| Error::Auth("invalid device certificate"))?;
-    if *certificate.device.as_bytes() != *conn.remote_id().as_bytes() {
+    if certificate.device != conn.remote() {
         return Err(Error::Auth("certificate is for another device"));
     }
     Ok(certificate)
@@ -72,12 +72,12 @@ struct Handshake {
     theirs: BTreeSet<FolderId>,
     /// The folders our `Hello` named: what the peer believes we offer.
     offered: BTreeSet<FolderId>,
-    send: SendStream,
-    recv: RecvStream,
+    send: SendHalf,
+    recv: RecvHalf,
 }
 
 /// Performs the `Hello` exchange on the main stream.
-async fn handshake(conn: &Connection, backend: &dyn Backend, initiator: bool) -> Result<Handshake> {
+async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Result<Handshake> {
     let (mut send, mut recv) = if initiator {
         conn.open_bi().await
     } else {
@@ -231,7 +231,7 @@ fn version_hash(version: &Signed<tidefell_proto::sync::EntryVersion>) -> [u8; 32
 /// Runs a session until the peer disconnects. `on_ready` is called once the handshake
 /// succeeds.
 pub(crate) async fn run(
-    conn: Connection,
+    conn: Conn,
     backend: Arc<dyn Backend>,
     initiator: bool,
     on_ready: impl FnOnce(Peer),
@@ -310,11 +310,11 @@ pub(crate) async fn run(
         }
     };
     writer.abort();
-    conn.close(0u32.into(), b"done");
+    conn.close(0, b"done");
     result
 }
 
-async fn read_loop(mut recv: RecvStream, tx: mpsc::Sender<Result<SyncMessage>>) {
+async fn read_loop(mut recv: RecvHalf, tx: mpsc::Sender<Result<SyncMessage>>) {
     loop {
         let message = match frame_io::read(&mut recv).await {
             Ok(Some(message)) => Ok(message),
@@ -330,7 +330,7 @@ async fn read_loop(mut recv: RecvStream, tx: mpsc::Sender<Result<SyncMessage>>) 
 
 /// Owns the main stream's sending side and does the session's writing.
 async fn write_loop(
-    mut send: SendStream,
+    mut send: SendHalf,
     backend: Arc<dyn Backend>,
     peer: Peer,
     mut queue: mpsc::UnboundedReceiver<Outgoing>,
@@ -424,7 +424,7 @@ fn drain_pushes(
 /// us. Returns the `(epoch, up_to)` sent, or `None` if the folder is unknown. A push with
 /// nothing new sends nothing.
 async fn send_index(
-    send: &mut SendStream,
+    send: &mut SendHalf,
     backend: &dyn Backend,
     received: &Received,
     folder: FolderId,
@@ -493,7 +493,7 @@ fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
 
 fn handle(
     message: SyncMessage,
-    conn: &Connection,
+    conn: &Conn,
     session: &mut Session,
     backend: &dyn Backend,
 ) -> Result<()> {
@@ -585,7 +585,7 @@ fn variant_name(message: &SyncMessage) -> &'static str {
 }
 
 /// Answers manifest requests, one per extra stream.
-async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Shared) {
+async fn serve_manifests(conn: Conn, backend: Arc<dyn Backend>, shared: Shared) {
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
         let backend = backend.clone();
         let shared = shared.clone();
@@ -619,7 +619,7 @@ async fn serve_manifests(conn: Connection, backend: Arc<dyn Backend>, shared: Sh
 
 /// Requests a manifest from a connected peer on a new stream.
 pub(crate) async fn request_manifest(
-    conn: &Connection,
+    conn: &Conn,
     limiter: &RateLimiter,
     folder: FolderId,
     content: ContentHash,
@@ -633,7 +633,7 @@ pub(crate) async fn request_manifest(
 }
 
 async fn manifest_exchange(
-    conn: &Connection,
+    conn: &Conn,
     folder: FolderId,
     content: ContentHash,
 ) -> Result<Manifest> {
@@ -657,8 +657,8 @@ async fn manifest_exchange(
 }
 
 /// The device ID of a peer's endpoint.
-pub(crate) fn device_of(conn: &Connection) -> DeviceId {
-    DeviceId(*conn.remote_id().as_bytes())
+pub(crate) fn device_of(conn: &Conn) -> DeviceId {
+    conn.remote()
 }
 
 #[cfg(test)]

@@ -10,6 +10,10 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# An in-memory network in place of iroh, for simulation tests (ADR 0036).
+simulation = []
+
 [dependencies]
 blake3.workspace = true
 iroh = { workspace = true, features = ["unstable-net-report"] }
