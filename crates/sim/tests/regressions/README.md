@@ -17,3 +17,9 @@ of steps a failing seed was shortened to.
   time, to the millisecond, was taken for the one it replaced, so the change was never synced;
   and the old path of a file the engine moved aside was tidied after another entry's file had
   taken it.
+- `conflict-copy-through-a-rebuild.json`: a version that lost a conflict, kept only on the
+  device that made it, was not kept through that device's rebuild, so no device had it.
+- `moved-onto-a-fresh-place.json`: a file the user moved to a path just as the engine wrote a
+  new file there was written over.
+- `deleted-while-set-aside.json`: a file the user deleted just as the engine set it aside for
+  another entry's file lost its record, so the delete was never recorded.

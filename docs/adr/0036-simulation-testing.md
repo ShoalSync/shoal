@@ -77,6 +77,17 @@ written down.
     kept while the engine runs.
   - The old path of a file the engine moved aside was tidied after another entry's file had
     taken it, losing that file's record.
+  - A version that lost a conflict, kept only on the device that made it, was not kept through
+    that device's rebuild (ADR 0034): its sidecar named no recycle-bin item, so the rebuild
+    did not take it back, and kept files were let go before the peers' versions arrived. Every
+    kept file is now taken back, and none is let go while the folder rebuilds.
+  - A file the user moved to a path just as the engine wrote a new file there was written over:
+    a new file now takes its place with a hard link, which fails if something is there, where
+    the drive has hard links.
+  - A file the user deleted just as the engine set it aside for another entry's file lost its
+    record, so the delete was never recorded: the record is kept if setting it aside fails.
+- The harness's own deletes and overwrites move what they remove out of the folder in one step
+  first, so what it counts as removed by the user is exactly what was.
 
 ## Consequences
 

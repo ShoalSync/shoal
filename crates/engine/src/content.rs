@@ -220,7 +220,10 @@ fn kept_entry(name: &str) -> Option<EntryId> {
 /// Deletes kept files that are no longer needed: their content is back in a file in the folder,
 /// or nothing references it any more.
 fn tidy_kept(state: &mut FolderState) {
-    tidy_unneeded(state);
+    // While the folder is rebuilt, what is kept is needed by versions that may not have arrived.
+    if !state.rebuilding() {
+        tidy_unneeded(state);
+    }
     // After the above, which reads what the sidecars say of items gone from the bin since.
     state.refresh_sidecars();
 }

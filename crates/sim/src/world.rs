@@ -242,10 +242,15 @@ impl World {
                 let n = usize::from(device) % count;
                 let rel = path(p);
                 let content = content(step, size.bytes());
+                // Written new, so a file the engine put there in the meantime is never written
+                // over unnoticed.
                 if self.devices[n].replace(&rel) {
-                    fs::write(self.devices[n].root.join(&rel), content)
-                        .map_err(|e| e.to_string())?;
-                    if scan {
+                    let written = fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(self.devices[n].root.join(&rel))
+                        .and_then(|mut f| std::io::Write::write_all(&mut f, &content));
+                    if written.is_ok() && scan {
                         self.scan(n).await?;
                     }
                 }
@@ -261,27 +266,24 @@ impl World {
                     return Ok(());
                 }
                 let root = &self.devices[n].root;
-                // The file may have gone since it was listed, as the engine works meanwhile.
-                let _ = fs::rename(root.join(&from), root.join(&to));
+                // Linked, then unlinked, so a file the engine put at `to` in the meantime is not
+                // replaced unnoticed; the file may also have gone since it was listed.
+                if fs::hard_link(root.join(&from), root.join(&to)).is_ok() {
+                    let _ = fs::remove_file(root.join(&from));
+                }
             }
             Op::Delete { device, file } => {
                 let n = usize::from(device) % count;
                 let files = files(&self.devices[n].root);
                 if let Some(rel) = pick(&files, file) {
-                    let device = &mut self.devices[n];
-                    device.forget(&rel);
-                    let _ = fs::remove_file(device.root.join(&rel));
+                    self.devices[n].take(&rel);
                 }
             }
             Op::DeleteDir { device, dir } => {
                 let n = usize::from(device) % count;
                 let dirs = dirs(&self.devices[n].root);
                 if let Some(rel) = pick(&dirs, dir) {
-                    let device = &mut self.devices[n];
-                    for file in files(&device.root.join(&rel)) {
-                        device.forget(&format!("{rel}/{file}"));
-                    }
-                    let _ = fs::remove_dir_all(device.root.join(&rel));
+                    self.devices[n].take(&rel);
                 }
             }
             Op::Scan { device } => self.scan(usize::from(device) % count).await?,
@@ -544,14 +546,31 @@ impl Device {
                 return false;
             }
         }
-        self.forget(rel);
+        if abs.is_file() {
+            self.take(rel);
+        }
         true
     }
 
-    /// Notes that the user removes what is at `rel`.
-    fn forget(&mut self, rel: &str) {
-        if let Ok(bytes) = fs::read(self.root.join(rel)) {
-            self.removed.insert(hash(&bytes));
+    /// Removes what is at `rel`, a file or a folder, noting its content as removed by the user.
+    /// It is moved out of the folder in one step first, so what is noted is exactly what was
+    /// removed, whatever the engine does meanwhile.
+    fn take(&mut self, rel: &str) {
+        let Some(device_dir) = self.root.parent() else {
+            return;
+        };
+        let away = device_dir.join(format!("taken-{}", self.removed.len()));
+        if fs::rename(self.root.join(rel), &away).is_err() {
+            return;
+        }
+        if away.is_dir() {
+            self.removed.extend(all_content(&away));
+            let _ = fs::remove_dir_all(&away);
+        } else {
+            if let Ok(bytes) = fs::read(&away) {
+                self.removed.insert(hash(&bytes));
+            }
+            let _ = fs::remove_file(&away);
         }
     }
 }

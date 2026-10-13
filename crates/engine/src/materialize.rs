@@ -813,13 +813,20 @@ async fn write_file(
                     .any(|c| matches!(c.version.kind, EntryKind::File { content, .. } if content == existing.content));
             if needed {
                 state.local.remove(&write.path);
-                crate::content::keep_deleted(
+                let kept = crate::content::keep_deleted(
                     &mut state,
                     &target,
                     existing.content,
                     existing.entry,
                     Some(&tmp),
-                )?;
+                );
+                if let Err(e) = kept {
+                    // The file changed or went since it was checked, as the user is free to do:
+                    // still recorded, so the next scan finds what they did.
+                    state.record_local(write.path.clone(), existing);
+                    let _ = fs::remove_file(&tmp);
+                    return Err(e);
+                }
             } else {
                 crate::history::keep(&mut state, &write.path, &existing, Some(&tmp))?;
             }
@@ -830,7 +837,14 @@ async fn write_file(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io_err(parent))?;
         }
-        crate::rename_durably(&tmp, &target).map_err(io_err(&target))?;
+        if state.local.contains_key(&write.path) {
+            crate::rename_durably(&tmp, &target).map_err(io_err(&target))?;
+        } else if !crate::rename_new_durably(&tmp, &target).map_err(io_err(&target))? {
+            // A file the user put there since it was checked: theirs, recorded at the next scan.
+            let _ = fs::remove_file(&tmp);
+            debug!(path = %write.path, "a file appeared; not overwriting");
+            return Ok(false);
+        }
     }
     state.used.insert(write.path.clone(), inner.now_ms());
     state.dropped.remove(&write.entry);

@@ -1235,10 +1235,12 @@ impl FolderState {
             .flat_map(|d| d.keys().copied())
             .collect();
         self.copy_names.retain(|d, _| still_named.contains(d));
+        // While the folder is rebuilt, what is kept is needed by versions that may not have
+        // arrived.
         let unkept: Vec<ContentHash> = self
             .kept
             .keys()
-            .filter(|c| !referenced.contains(c))
+            .filter(|c| !self.rebuilding() && !referenced.contains(c))
             .copied()
             .collect();
         for content in unkept {

@@ -238,6 +238,34 @@ pub(crate) fn rename_durably(
     Ok(())
 }
 
+/// Moves `from` to `to` as [`rename_durably`] does, but only if nothing is at `to`: the check
+/// and the move are one step where the filesystem has hard links, so a file the user puts
+/// there meanwhile is never replaced. Returns false, leaving `from`, if something is there.
+pub(crate) fn rename_new_durably(
+    from: impl AsRef<std::path::Path>,
+    to: impl AsRef<std::path::Path>,
+) -> std::io::Result<bool> {
+    let (from, to) = (from.as_ref(), to.as_ref());
+    match std::fs::hard_link(from, to) {
+        Ok(()) => {
+            std::fs::remove_file(from)?;
+            sync_dir_of(to);
+            if from.parent() != to.parent() {
+                sync_dir_of(from);
+            }
+            Ok(true)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        // No hard links, as on FAT: check, then move, which leaves a moment between the two.
+        Err(_) => {
+            if std::fs::symlink_metadata(to).is_ok() {
+                return Ok(false);
+            }
+            rename_durably(from, to).map(|()| true)
+        }
+    }
+}
+
 /// Syncs the directory holding `path`, if the filesystem allows it.
 pub(crate) fn sync_dir_of(path: &std::path::Path) {
     #[cfg(unix)]

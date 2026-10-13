@@ -215,9 +215,8 @@ pub(crate) fn restore(state: &mut FolderState) {
     let (mut items, mut previous, mut aside) = (0, 0, 0);
     for (name, kept) in described::<Kept>(&crate::content::kept_dir(&root)) {
         let recycled: Vec<Recycled> = kept.recycled.iter().filter_map(Item::recycled).collect();
-        if recycled.is_empty() {
-            continue;
-        }
+        // Kept too with no item in the bin, as for a version that lost a conflict: the peers'
+        // versions say whether it is still needed once they arrive.
         state.kept.insert(kept.content, name);
         for item in recycled {
             state.meta.restore_recycled(item);
