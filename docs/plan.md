@@ -332,6 +332,25 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   runtime settings move to format 5 the same way. The protocol is unchanged. The FFI gains
   `FolderState.REBUILDING`, `Folder.rebuild` and `Node.rebuildFolder`, which the Android pin
   takes up.
+- Phase 5k: step 2 (folder roots) is done: each folder's root has a `.tidefell/folder` marker,
+  a folder whose root is missing or unmarked is unavailable and nothing is scanned, written or
+  deleted there, roots are created only when a folder is created or joined, and a scan that
+  would delete most of a folder holds its deletes for confirmation. Step 3 (disk space and
+  errors) is done: free-space floors per volume, writes that wait above them, metadata writes
+  that stop remote changes while they fail, and file errors classed as lasting or not. Step 4
+  (memory) is done: 1,000,000 files and 10 TiB take 444 MB and a phone folder of 50,000 photos
+  40 MB, within targets of 500 MB and 60 MB that the nightly job holds them to (the first was
+  raised from 300 MB, ADR 0035). Step 5 (simulation) is done: the `sim` crate runs engines on an
+  in-memory network through steps seeds choose; it found thirteen engine bugs, all fixed; 200
+  seeds run on each pull request and 10,000 nightly, and 10,000 seeds pass. Phase 5k is
+  complete.
+- `v0.17.0` releases Phase 5k: folder markers and the `unavailable` state, held mass deletes
+  (`tidefell folder deletes`), free-space floors (`min_free_space`) and lasting errors with
+  retry, memory at scale (manifests and the chunk index on disk, compact versions and records,
+  mimalloc), and the fixes simulation testing found. The database and the protocol are
+  unchanged. The FFI gains `Folder.unavailable`, `Folder.heldDeletes`, `Folder.lowSpace`,
+  `Node.heldDeletes`, `Node.confirmDeletes`, `Node.restoreDeleted` and `Node.retryProblems`;
+  the Android pin takes them up, and sets mimalloc's settings before it loads the engine.
 
 ### Phase 2 work breakdown
 
