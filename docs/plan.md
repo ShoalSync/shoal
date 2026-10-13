@@ -351,6 +351,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   unchanged. The FFI gains `Folder.unavailable`, `Folder.heldDeletes`, `Folder.lowSpace`,
   `Node.heldDeletes`, `Node.confirmDeletes`, `Node.restoreDeleted` and `Node.retryProblems`;
   the Android pin takes them up, and sets mimalloc's settings before it loads the engine.
+- `v0.17.1` makes the FFI library loadable on Android: 0.17.0's needed static thread-local
+  storage for mimalloc, which Android refuses in a library it loads at run time. CI now checks
+  every Android library for it. Nothing else changes; the Android pin takes 0.17.1.
 
 ### Phase 2 work breakdown
 
