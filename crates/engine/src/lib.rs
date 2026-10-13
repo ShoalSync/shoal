@@ -74,7 +74,8 @@ mod watch;
 
 /// The allocator every program running the engine uses (ADR 0035): it returns freed memory to
 /// the system and keeps less aside per thread than glibc's, which matters for a long-running
-/// engine holding a large folder. Programs declare it with `#[global_allocator]`.
+/// engine holding a large folder. Programs declare it with `#[global_allocator]`; a library
+/// loaded at run time, as the Android app loads the FFI, needs the `dynamic-library` feature.
 pub use mimalloc::MiMalloc as Allocator;
 
 /// Settings [`Allocator`] reads from the environment when a program starts (ADR 0035). Freed

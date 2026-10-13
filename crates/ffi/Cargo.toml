@@ -17,7 +17,7 @@ crate-type = ["cdylib", "lib"]
 [dependencies]
 serde_json.workspace = true
 thiserror.workspace = true
-tidefell-engine.workspace = true
+tidefell-engine = { workspace = true, features = ["dynamic-library"] }
 tokio.workspace = true
 tracing.workspace = true
 uniffi = { workspace = true, features = ["tokio"] }

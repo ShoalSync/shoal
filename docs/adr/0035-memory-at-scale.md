@@ -77,6 +77,10 @@ ADR 0018, have 1 to 4 GB of memory.
     next runs, which an idle engine may not do for hours. These are read when a program starts,
     so `tidefelld` starts itself again with them if they are missing; the Android app sets them
     before it loads the engine.
+  - A library loaded at run time cannot use mimalloc's default thread-local storage, which is
+    the static kind: Android refused to load 0.17.0's FFI library for it. The FFI builds the
+    engine with its `dynamic-library` feature, and CI fails an Android library that needs
+    static TLS (`bindings/android/check-loadable.sh`).
   - Temporary costs that grew with the folder: the files made here but not yet confirmed on a
     full replica are found without reading every manifest (a first scan of 1,000,000 files
     peaked at 2.2 GB for it), and the sync plan and file list find files by entry without a map

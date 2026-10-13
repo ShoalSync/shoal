@@ -15,6 +15,9 @@ workspace = true
 [features]
 # Engines on an in-memory network, for the simulation harness (ADR 0036).
 simulation = ["tidefell-net/simulation"]
+# The allocator for a library loaded at run time, such as the Android app's: its thread-local
+# storage must not be the static kind, which Android refuses to load from such a library.
+dynamic-library = ["mimalloc/local_dynamic_tls"]
 
 [dependencies]
 getrandom.workspace = true

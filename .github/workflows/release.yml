@@ -189,6 +189,8 @@ jobs:
       - name: Build
         working-directory: bindings/android
         run: ./gradlew --no-daemon :ffi:assembleRelease
+      - name: Loadable by Android
+        run: bindings/android/check-loadable.sh bindings/android/ffi/build/outputs/aar/ffi-release.aar
       - name: Package
         run: |
           name="tidefell-ffi-${{ needs.version.outputs.version }}.aar"
