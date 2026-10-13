@@ -11,7 +11,7 @@ use tidefell_proto::{ContentHash, EntryId};
 
 use crate::scan::{stat, RESERVED_DIR};
 use crate::state::{FolderState, LocalFile};
-use crate::{io_err, now_ms, random_bytes, Error, Result};
+use crate::{io_err, random_bytes, Error, Result};
 
 /// A day, in milliseconds.
 const DAY_MS: i64 = 86_400_000;
@@ -159,7 +159,7 @@ pub(crate) fn keep(
         size: disk.size,
         executable: disk.executable,
         modified_ms: (disk.mtime_ns / 1_000_000) as i64,
-        kept_ms: now_ms(),
+        kept_ms: state.now_ms(),
         path: path.to_owned(),
         file,
     };
@@ -169,6 +169,41 @@ pub(crate) fn keep(
         .entry(recorded.entry)
         .or_default()
         .insert(0, previous);
+    Ok(())
+}
+
+/// Moves `file`, a kept file of a deleted version of `entry` that is live again, into history
+/// as one of its previous versions, at `path` (ADR 0029).
+pub(crate) fn adopt(
+    state: &mut FolderState,
+    entry: EntryId,
+    path: &str,
+    file: &Path,
+    content: ContentHash,
+) -> Result<()> {
+    let disk = stat(file).ok_or_else(|| Error::Io {
+        path: file.to_path_buf(),
+        source: io::Error::other("kept version vanished"),
+    })?;
+    let dir = history_dir(&state.config.path);
+    fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+    let id = u64::from_le_bytes(random_bytes()?);
+    let name = format!("{entry}-{id:016x}");
+    let aside = dir.join(&name);
+    crate::rename_durably(file, &aside).map_err(io_err(&aside))?;
+    let now = state.now_ms();
+    let previous = Previous {
+        id,
+        content,
+        size: disk.size,
+        executable: disk.executable,
+        modified_ms: (disk.mtime_ns / 1_000_000) as i64,
+        kept_ms: now,
+        path: path.to_owned(),
+        file: name,
+    };
+    crate::sidecar::write(&aside, &crate::sidecar::history(entry, &previous));
+    state.history.entry(entry).or_default().insert(0, previous);
     Ok(())
 }
 

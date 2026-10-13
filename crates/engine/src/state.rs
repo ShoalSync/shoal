@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tidefell_identity::FolderMembers;
@@ -506,6 +507,8 @@ pub(crate) struct FolderState {
     /// Set when the folder is removed; later saves are skipped so tasks still finishing their
     /// work cannot recreate its state directory.
     removed: bool,
+    /// This device's time, the engine's (ADR 0036).
+    pub(crate) clock: Arc<crate::clock::Clock>,
     /// True while the database, too large to check when opened, waits for its check.
     unchecked: bool,
 }
@@ -575,6 +578,7 @@ impl FolderState {
             committer: None,
             rebuild: None,
             removed: false,
+            clock: Arc::default(),
             unchecked: false,
         };
         let has_db = FolderDb::exists(&state.db_path);
@@ -658,7 +662,7 @@ impl FolderState {
     /// back from their sidecars once its root is there. Files on disk are matched to entries by
     /// content as versions arrive; until a peer's whole index is here, the folder is rebuilding.
     fn rebuild_from_scratch(&mut self, device: DeviceId, reason: String) -> Result<FolderDb> {
-        let now = crate::now_ms();
+        let now = self.now_ms();
         if self.db_path.exists() {
             let aside = self
                 .db_path
@@ -688,6 +692,11 @@ impl FolderState {
 
     /// True while the folder is being rebuilt (ADR 0034): it matches files on disk to the
     /// entries peers send, records no deletes, and tells peers it is not a full replica.
+    /// Milliseconds since the Unix epoch, as this device tells it.
+    pub(crate) fn now_ms(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
     /// True if the database was too large to check when it was opened, and is not checked yet
     /// (ADR 0035).
     pub(crate) fn unchecked(&self) -> bool {
@@ -1030,7 +1039,7 @@ impl FolderState {
             // What the saved changes did, for the activity log (ADR 0030), which the committer
             // writes too.
             activity: self.meta.take_changes(),
-            at_ms: crate::now_ms(),
+            at_ms: self.now_ms(),
             chunks,
             generation: self.saves,
         };
@@ -1233,11 +1242,7 @@ impl FolderState {
             .copied()
             .collect();
         for content in unkept {
-            if let Some(name) = self.kept.remove(&content) {
-                let file = crate::content::kept_dir(&self.config.path).join(name);
-                let _ = fs::remove_file(&file);
-                crate::sidecar::remove(&file);
-            }
+            crate::content::release_kept(self, content);
         }
         let mut orphaned = Vec::new();
         for content in unused {

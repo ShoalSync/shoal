@@ -1,0 +1,39 @@
+name: Simulation
+
+# 10,000 simulation seeds each night on main (ADR 0036), a new range each night, so the seeds
+# pull requests run are not the only ones tried. A failing seed is printed with the fewest steps
+# found that still fail, to keep in crates/sim/tests/regressions/.
+on:
+  schedule:
+    - cron: "37 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  simulation:
+    name: 10,000 seeds
+    runs-on: self-hosted
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+      - name: Build
+        run: cargo test --locked --release --package tidefell-sim --test seeds --no-run
+      - name: Run
+        env:
+          TIDEFELL_SIM_SEEDS: "10000"
+          TIDEFELL_SIM_JOBS: "8"
+        run: |
+          export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
+          mkdir -p "$TIDEFELL_SIM_DIR"
+          # Days since the epoch pick the range, so each night tries seeds not tried before.
+          export TIDEFELL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 ))
+          echo "seeds $TIDEFELL_SIM_FIRST to $((TIDEFELL_SIM_FIRST + TIDEFELL_SIM_SEEDS - 1))" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          cargo test --locked --release --package tidefell-sim --test seeds seeds_pass -- --nocapture

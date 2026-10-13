@@ -135,7 +135,7 @@ impl Engine {
         if let Some(waiter) = waiter {
             let _ = waiter.flush();
         }
-        let lines = crate::activity_log::read(&dir, crate::now_ms());
+        let lines = crate::activity_log::read(&dir, self.inner.now_ms());
         let state = handle.lock();
         let me = self.id();
         let mut names = std::collections::HashMap::new();

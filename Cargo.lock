@@ -4173,6 +4173,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidefell-sim"
+version = "0.16.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tidefell-engine",
+ "tidefell-identity",
+ "tidefell-net",
+ "tidefell-proto",
+ "tokio",
+]
+
+[[package]]
 name = "tidefell-store"
 version = "0.16.0"
 dependencies = [

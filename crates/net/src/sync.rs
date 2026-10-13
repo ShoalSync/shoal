@@ -17,7 +17,7 @@ use tracing::{debug, warn};
 use crate::backend::Backend;
 use crate::limits::RateLimiter;
 use crate::locks::{Locked, ReadWrite};
-use crate::{frame_io, now_ms, Error, Result};
+use crate::{frame_io, Error, Result};
 
 /// Most versions sent in one `IndexBatch` (ADR 0024).
 const BATCH: usize = 512;
@@ -94,7 +94,7 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
-                clock_ms: Some(now_ms()),
+                clock_ms: Some(backend.now_ms()),
             },
         )
         .await?;
@@ -123,7 +123,7 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
-                clock_ms: Some(now_ms()),
+                clock_ms: Some(backend.now_ms()),
             },
         )
         .await?;
@@ -133,7 +133,8 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
     // two minutes that matter.
     // The peer's clock is its to set: saturate rather than overflow on nonsense, and keep the
     // offset's magnitude representable.
-    let clock_offset_ms = clock.map(|theirs| theirs.saturating_sub(now_ms()).max(-i64::MAX));
+    let clock_offset_ms =
+        clock.map(|theirs| theirs.saturating_sub(backend.now_ms()).max(-i64::MAX));
 
     // Share what both sides named, and only folders the peer may sync now. Folders added or
     // removed since our `Hello` are announced by `reoffer` once the session runs.
@@ -483,7 +484,7 @@ fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
     session.send(Outgoing::Message(SyncMessage::Hello {
         certificate: backend.certificate(),
         folders: offer.iter().copied().collect(),
-        clock_ms: Some(now_ms()),
+        clock_ms: Some(backend.now_ms()),
     }))?;
     session.offered = offer;
     let added = session.reshare();

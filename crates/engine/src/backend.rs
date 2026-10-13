@@ -19,6 +19,10 @@ impl Backend for EngineBackend {
         self.0.certificate.clone()
     }
 
+    fn now_ms(&self) -> i64 {
+        self.0.now_ms()
+    }
+
     /// Paused folders are not offered, so peers exchange nothing for them (ADR 0029).
     fn folders(&self) -> Vec<FolderId> {
         self.0
@@ -104,7 +108,7 @@ impl Backend for EngineBackend {
             .collect();
         {
             let mut state = handle.lock();
-            let now = crate::now_ms();
+            let now = self.0.now_ms();
             for version in verified {
                 let entry = Some(version.version().entry);
                 let open = |state: &crate::state::FolderState| {
@@ -162,7 +166,7 @@ impl Backend for EngineBackend {
                 .lock()
                 .unwrap()
                 .exchanged
-                .insert(peer, crate::now_ms());
+                .insert(peer, self.0.now_ms());
             let mut state = handle.lock();
             // Versions not applied for want of saving them are not acknowledged (ADR 0037).
             if state.save_failed().is_some() {

@@ -511,7 +511,7 @@ pub(crate) async fn materialize(
         &[Operation::Fetch, Operation::Write, Operation::Delete],
         |_| true,
         failures,
-        crate::now_ms(),
+        inner.now_ms(),
     );
     if changed {
         inner.emit(Event::FolderChanged(id));
@@ -583,7 +583,7 @@ fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Res
         return Ok(());
     };
     let (src, dst) = (root.join(from), root.join(to));
-    if !unchanged(&src, local.size, local.mtime_ns) {
+    if !unchanged(&src, local.size, local.mtime_ns, 0) {
         return Ok(());
     }
     if let Some(parent) = dst.parent() {
@@ -608,14 +608,35 @@ fn remove_if_unchanged(
     path: &str,
 ) -> Result<()> {
     let mut state = handle.lock();
+    // The plan was made before the lock was taken: a local edit recorded since, which a
+    // delete made apart from it does not supersede, keeps the file.
+    let still_deleted = state.local.get(path).is_some_and(|local| {
+        state
+            .meta
+            .current(&local.entry)
+            .is_none_or(|v| matches!(v.kind, EntryKind::Tombstone))
+    });
+    if !still_deleted {
+        return Ok(());
+    }
+    let inode = state.local.get(path).map_or(0, |l| l.inode);
     let Some(local) = state.local.remove(path) else {
         return Ok(());
     };
     state.used.remove(path);
     let abs = root.join(path);
-    if unchanged(&abs, local.size, local.mtime_ns) {
-        // Moved aside, not copied, so the recycle bin keeps the content (ADR 0027).
-        crate::content::keep_deleted(&mut state, &abs, local.content, None)?;
+    if unchanged(&abs, local.size, local.mtime_ns, inode) {
+        let binned = state.meta.recycle_bin().get(&local.entry).is_some_and(|item| {
+            matches!(item.version.kind, EntryKind::File { content, .. } if content == local.content)
+        });
+        if binned {
+            // Moved aside, not copied, so the recycle bin keeps the content (ADR 0027).
+            crate::content::keep_deleted(&mut state, &abs, local.content, local.entry, None)?;
+        } else {
+            // An older version than the one deleted, which never reached this device: it is a
+            // previous version of the entry (ADR 0029), as it would be had the newer one come.
+            crate::history::keep(&mut state, path, &local, None)?;
+        }
         info!(folder = %id, path, "deleted");
         inner.emit(Event::FileRemoved {
             folder: id,
@@ -744,15 +765,25 @@ async fn write_file(
         }
         Err(e) => {
             let _ = fs::remove_file(&tmp);
+            // A file the records say holds a chunk no longer does: it changed since the last
+            // scan. Scanning again corrects the records, so the next attempt fetches the chunk
+            // from a peer instead of failing the same way.
+            handle.rescan.notify_one();
             return Err(e);
         }
     }
 
     let target = root.join(&write.path);
+    // What is recorded is the file as written, before it takes its place: one changed there
+    // after, even at once, differs from the record, so the next scan reads it.
+    let written = stat(&tmp).ok_or_else(|| Error::Io {
+        path: tmp.clone(),
+        source: std::io::Error::other("file vanished after writing"),
+    })?;
     let mut state = handle.lock();
     // Never replace a file the user changed since the engine last saw it.
     let replaceable = match state.local.get(&write.path) {
-        Some(local) => unchanged(&target, local.size, local.mtime_ns),
+        Some(local) => unchanged(&target, local.size, local.mtime_ns, local.inode),
         None => !target.exists(),
     };
     if !replaceable {
@@ -782,7 +813,13 @@ async fn write_file(
                     .any(|c| matches!(c.version.kind, EntryKind::File { content, .. } if content == existing.content));
             if needed {
                 state.local.remove(&write.path);
-                crate::content::keep_deleted(&mut state, &target, existing.content, Some(&tmp))?;
+                crate::content::keep_deleted(
+                    &mut state,
+                    &target,
+                    existing.content,
+                    existing.entry,
+                    Some(&tmp),
+                )?;
             } else {
                 crate::history::keep(&mut state, &write.path, &existing, Some(&tmp))?;
             }
@@ -795,12 +832,9 @@ async fn write_file(
         }
         crate::rename_durably(&tmp, &target).map_err(io_err(&target))?;
     }
-    state.used.insert(write.path.clone(), crate::now_ms());
+    state.used.insert(write.path.clone(), inner.now_ms());
     state.dropped.remove(&write.entry);
-    let disk = stat(&target).ok_or_else(|| Error::Io {
-        path: target.clone(),
-        source: std::io::Error::other("file vanished after writing"),
-    })?;
+    let disk = written;
     state.record_local(
         write.path.clone(),
         LocalFile {
@@ -812,11 +846,18 @@ async fn write_file(
             base: write.base.clone(),
         },
     );
-    if let Some(old) = &write.old_path {
+    state.local.set_inode(&write.path, disk.inode);
+    // The file this entry was at before, unless another entry's file has taken that path since
+    // the write was planned.
+    let old_path = write
+        .old_path
+        .as_ref()
+        .filter(|old| state.local.get(old).is_none_or(|l| l.entry == write.entry));
+    if let Some(old) = old_path {
         state.used.remove(old);
         if let Some(local) = state.local.remove(old) {
             let abs = root.join(old);
-            if unchanged(&abs, local.size, local.mtime_ns) {
+            if unchanged(&abs, local.size, local.mtime_ns, 0) {
                 if local.content == write.content {
                     let _ = fs::remove_file(&abs);
                 } else {
@@ -996,7 +1037,9 @@ async fn download(
                 .lock()
                 .unwrap()
                 .put_verified(hash, &data)
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())?;
+            inner.unreadable.lock().unwrap().remove(&hash);
+            Ok(())
         },
     );
     // Pausing the folder stops the download: dropping it cancels the requests in flight.

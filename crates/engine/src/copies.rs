@@ -11,7 +11,7 @@ use tracing::{debug, info};
 
 use crate::engine::{FolderHandle, Inner};
 use crate::state::FolderState;
-use crate::{now_ms, Result};
+use crate::Result;
 
 /// Most files checked with one peer per round, so a large backlog cannot monopolise a peer.
 const MAX_CHECKS_PER_ROUND: usize = 256;
@@ -115,7 +115,7 @@ pub(crate) async fn confirm(
     if confirmed.is_empty() {
         return Ok(());
     }
-    let now = now_ms();
+    let now = inner.now_ms();
     let mut state = handle.lock();
     for (content, device) in &confirmed {
         state

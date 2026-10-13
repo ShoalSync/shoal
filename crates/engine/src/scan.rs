@@ -16,7 +16,7 @@ use crate::engine::{FolderHandle, Inner};
 use crate::ignores::{Ignores, IGNORE_FILE};
 use crate::state::{recorded, FolderState, LocalFile};
 use crate::views::{Operation, ProblemKind};
-use crate::{now_ms, random_bytes, Result};
+use crate::{random_bytes, Result};
 
 /// Directory at a folder's root reserved for the engine's own files.
 pub(crate) const RESERVED_DIR: &str = ".tidefell";
@@ -27,6 +27,9 @@ pub(crate) struct DiskStat {
     pub(crate) size: u64,
     pub(crate) mtime_ns: i128,
     pub(crate) executable: bool,
+    /// The file's inode, or 0 where there is none: a file moved over another of the same size
+    /// and modification time is still told apart from it (ADR 0036).
+    pub(crate) inode: u64,
 }
 
 pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
@@ -47,10 +50,15 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
     };
     #[cfg(not(unix))]
     let executable = false;
+    #[cfg(unix)]
+    let inode = std::os::unix::fs::MetadataExt::ino(&meta);
+    #[cfg(not(unix))]
+    let inode = 0;
     Some(DiskStat {
         size: meta.len(),
         mtime_ns,
         executable,
+        inode,
     })
 }
 
@@ -65,8 +73,11 @@ pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> Version
     }
 }
 
-pub(crate) fn unchanged(path: &Path, size: u64, mtime_ns: i128) -> bool {
-    stat(path).is_some_and(|s| s.size == size && s.mtime_ns == mtime_ns)
+/// True if the file at `path` has `size`, `mtime_ns` and, unless 0 (not known), `inode`.
+pub(crate) fn unchanged(path: &Path, size: u64, mtime_ns: i128, inode: u64) -> bool {
+    stat(path).is_some_and(|s| {
+        s.size == size && s.mtime_ns == mtime_ns && (inode == 0 || s.inode == inode)
+    })
 }
 
 /// The part of a folder a scan looks at: folder-relative directories (`""` is the root), each
@@ -318,6 +329,18 @@ fn live_here(state: &FolderState, rel: &str, entry: EntryId) -> bool {
     })
 }
 
+/// True if the file at `rel`, recorded as `entry`, being gone deletes `entry`: it is live, and
+/// no other file on disk is recorded as it. The file need not be where `entry` goes now: a peer
+/// may have moved it, or given its place to another entry, before this device moved the file,
+/// and the user's delete still deletes it.
+fn deletes(state: &FolderState, rel: &str, entry: EntryId) -> bool {
+    let live = state
+        .meta
+        .current(&entry)
+        .is_some_and(|v| !matches!(v.kind, EntryKind::Tombstone));
+    live && state.local.with_entry(&entry).all(|(p, _)| p == rel)
+}
+
 /// True if a file at `rel` could be the file of an entry a peer sent: one whose size matches.
 fn matchable(state: &FolderState, rel: &str, disk: &DiskStat) -> bool {
     state.meta.find_path(&recorded(rel)).is_some_and(|v| {
@@ -391,12 +414,18 @@ pub(crate) fn scan(
     for (rel, disk) in &found {
         let (rel, disk) = (rel.clone(), *disk);
         let known = {
-            let state = handle.lock();
-            state.local.get(&rel).map(|l| {
+            let mut state = handle.lock();
+            let known = state.local.get(&rel).map(|l| {
                 l.size == disk.size
                     && l.mtime_ns == disk.mtime_ns
                     && l.executable == disk.executable
-            })
+                    && (l.inode == 0 || l.inode == disk.inode)
+            });
+            // Inodes are not saved: a record read back learns its file's here.
+            if known == Some(true) {
+                state.local.set_inode(&rel, disk.inode);
+            }
+            known
         };
         if known == Some(true) {
             continue;
@@ -453,7 +482,7 @@ pub(crate) fn scan(
     state.touch();
     let mut index_changed = false;
     let mut conflicts = Vec::new();
-    let now = now_ms();
+    let now = inner.now_ms();
     for c in changed {
         let content = c.manifest.content;
         // Recorded in NFC, whatever form the name has on disk (ADR 0033).
@@ -526,6 +555,7 @@ pub(crate) fn scan(
         state.used.insert(c.rel.clone(), now);
         // A file put back by hand is on this device again.
         state.dropped.remove(&entry);
+        let rel = c.rel.clone();
         state.record_local(
             c.rel,
             LocalFile {
@@ -537,6 +567,7 @@ pub(crate) fn scan(
                 base,
             },
         );
+        state.local.set_inode(&rel, c.stat.inode);
     }
 
     // The drive may have gone while the folder was walked, and an unmounted root looks like
@@ -589,7 +620,7 @@ pub(crate) fn scan(
                 && state
                     .local
                     .get(rel)
-                    .is_some_and(|l| live_here(&state, rel, l.entry))
+                    .is_some_and(|l| deletes(&state, rel, l.entry))
         })
         .cloned()
         .collect();
@@ -616,35 +647,45 @@ pub(crate) fn scan(
         inner.emit(crate::views::Event::FolderChanged(state.config.id));
     }
     for rel in deleted {
+        let deletes = state
+            .local
+            .get(&rel)
+            .is_some_and(|l| deletes(&state, &rel, l.entry));
         let Some(local) = state.local.remove(&rel) else {
             continue;
         };
         state.used.remove(&rel);
-        let live_here = live_here(&state, &rel, local.entry);
-        if live_here && deletes_here_only {
+        if deletes && deletes_here_only {
             // ADR 0025: dropped from this device only; it stays on every other device.
             debug!(path = %rel, "dropped from this device");
             state.dropped.insert(local.entry);
-        } else if live_here {
+        } else if deletes {
             let base = if !local.base.is_empty() {
                 local.base.clone()
             } else {
                 state.meta.current_vector(&local.entry)
             };
-            let path = recorded_path(&state, local.entry, &recorded(&rel));
+            // A file not where its entry now goes is deleted at the entry's own path.
+            let path = match live_here(&state, &rel, local.entry) {
+                true => recorded_path(&state, local.entry, &recorded(&rel)),
+                false => state
+                    .meta
+                    .current(&local.entry)
+                    .map_or_else(|| recorded(&rel).into_owned(), |v| v.path.to_owned()),
+            };
             state.meta.local_change_from(
                 inner.key.signing_key(),
                 local.entry,
                 &base,
                 &path,
                 EntryKind::Tombstone,
-                now_ms(),
+                inner.now_ms(),
             )?;
             index_changed = true;
         }
     }
 
-    if rebuilding && state.finish_rebuild(inner.peers().is_empty(), exchanged, now_ms()) {
+    if rebuilding && state.finish_rebuild(inner.peers().is_empty(), exchanged, inner.now_ms()) {
         // The next scan records what was not matched as new files (ADR 0034).
         handle.rescan.notify_one();
         inner.emit(crate::views::Event::FolderChanged(state.config.id));
@@ -669,7 +710,7 @@ pub(crate) fn scan(
             }
         },
         failures,
-        now_ms(),
+        inner.now_ms(),
     );
     Ok(Scanned {
         changed: index_changed,

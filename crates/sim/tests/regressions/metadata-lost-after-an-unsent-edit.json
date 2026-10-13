@@ -1,0 +1,1 @@
+[{"Write":{"device":2,"path":0,"size":"Tiny","scan":true}},{"Partition":{"sides":4}},{"Write":{"device":2,"path":0,"size":"Small","scan":true}},{"LoseMetadata":{"device":2}},"Heal"]

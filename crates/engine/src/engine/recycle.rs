@@ -10,7 +10,7 @@ use tracing::{info, warn};
 use super::{Engine, FolderHandle, Inner};
 use crate::state::FolderState;
 use crate::views::{Event, RecycleSummary, RecycledInfo};
-use crate::{now_ms, setaside, Error, Result};
+use crate::{setaside, Error, Result};
 
 impl Engine {
     /// Purges recycle-bin items that expired at or before `now_ms`, and their unused chunks.
@@ -106,7 +106,7 @@ impl Engine {
             } else {
                 state
                     .meta
-                    .restore(self.inner.key.signing_key(), entry, now_ms())?;
+                    .restore(self.inner.key.signing_key(), entry, self.inner.now_ms())?;
             }
             state.save()?;
         }
@@ -225,7 +225,7 @@ impl Engine {
         {
             let _guard = handle.disk().await?;
             let mut state = handle.lock();
-            setaside::remove_here(&mut state, path, now_ms())?;
+            setaside::remove_here(&mut state, path, self.inner.now_ms())?;
             state.save()?;
         }
         info!(folder = %folder, path, "removed from this device");

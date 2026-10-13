@@ -225,6 +225,7 @@ impl Engine {
             false,
             crate::state::Open::Normal,
         )?);
+        handle.lock().clock = self.inner.clock.clone();
         self.inner
             .folders
             .write()

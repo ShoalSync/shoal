@@ -19,7 +19,6 @@ use crate::backend::Backend;
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
 use crate::limits::{Limits, RateLimiter};
 use crate::locks::{Locked, ReadWrite};
-use crate::now_ms;
 use crate::sync::{self, Peer};
 use crate::transport::Conn;
 use crate::{Error, Result};
@@ -233,6 +232,7 @@ async fn run_session(
         let peers = peers.clone();
         let records = records.clone();
         let ready = ready.clone();
+        let backend = backend.clone();
         move |peer: Peer| {
             let handle = PeerHandle {
                 conn,
@@ -242,7 +242,7 @@ async fn run_session(
             peers.locked().insert(device, handle.clone());
             let mut records = records.locked();
             let record = records.entry(device).or_default();
-            record.connected_since_ms = Some(now_ms());
+            record.connected_since_ms = Some(backend.now_ms());
             record.last_error = None;
             record.name = Some(handle.certificate().name.clone());
             record.clock_offset_ms = handle.peer.clock_offset_ms;
@@ -251,7 +251,7 @@ async fn run_session(
             }
         }
     };
-    let result = sync::run(conn.clone(), backend, initiator, on_ready).await;
+    let result = sync::run(conn.clone(), backend.clone(), initiator, on_ready).await;
     let ended = {
         let mut peers = peers.locked();
         let current = peers
@@ -267,7 +267,7 @@ async fn run_session(
         let mut records = records.locked();
         let record = records.entry(device).or_default();
         record.connected_since_ms = None;
-        record.disconnected_ms = Some(now_ms());
+        record.disconnected_ms = Some(backend.now_ms());
         if let Err(e) = &result {
             record.last_error = Some(e.to_string());
         }
@@ -551,7 +551,7 @@ impl Node {
             rtt,
             connected_since_ms: record.connected_since_ms.filter(|_| session.is_some()),
             last_seen_ms: if session.is_some() {
-                Some(now_ms())
+                Some(self.backend.now_ms())
             } else {
                 record.disconnected_ms
             },
@@ -713,7 +713,14 @@ impl Node {
 
     /// Stops serving and closes the endpoint.
     pub async fn shutdown(self) {
-        match self.transport {
+        self.close().await;
+    }
+
+    /// Stops serving and closes the endpoint, closing every connection, though other tasks
+    /// still hold the node: a node left serving after its engine stopped would answer peers
+    /// for it, from state no longer kept.
+    pub async fn close(&self) {
+        match &self.transport {
             Transport::Iroh { endpoint, router } => {
                 let _ = router.shutdown().await;
                 endpoint.close().await;
@@ -725,7 +732,7 @@ impl Node {
                 accepting,
             } => {
                 accepting.abort();
-                network.deregister(device);
+                network.deregister(*device);
             }
         }
     }

@@ -49,7 +49,7 @@ pub(crate) fn remove_here(state: &mut FolderState, path: &str, now_ms: i64) -> R
         return Err(Error::NoSuchFile(path.to_owned()));
     }
     let abs = root.join(path);
-    if !unchanged(&abs, local.size, local.mtime_ns) {
+    if !unchanged(&abs, local.size, local.mtime_ns, 0) {
         return Err(Error::LocalChanges(path.to_owned()));
     }
     let dir = recycle_dir(&root);
@@ -105,12 +105,14 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
         fs::create_dir_all(parent).map_err(io_err(parent))?;
     }
     let source = file_path(&root, &item);
+    // The file as restored, before it takes its place: one changed there after, even at once,
+    // differs from the record, so the next scan reads it.
+    let disk = stat(&source).ok_or_else(|| Error::Io {
+        path: source.clone(),
+        source: std::io::Error::other("file vanished before restoring"),
+    })?;
     crate::rename_durably(&source, &target).map_err(io_err(&source))?;
     crate::sidecar::remove(&source);
-    let disk = stat(&target).ok_or_else(|| Error::Io {
-        path: target.clone(),
-        source: std::io::Error::other("file vanished after restoring"),
-    })?;
     // The content is what it was when removed; a later version of the entry makes the next
     // scan record it as a local change built on the old one, so nothing is lost (ADR 0024).
     let mut local = item.local;
@@ -120,7 +122,8 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
     state.set_aside.remove(entry);
     state.dropped.remove(entry);
     state.record_local(path.clone(), local);
-    state.used.insert(path.clone(), crate::now_ms());
+    state.local.set_inode(&path, disk.inode);
+    state.used.insert(path.clone(), state.now_ms());
     Ok(path)
 }
 

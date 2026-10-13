@@ -23,6 +23,12 @@ pub trait Backend: Send + Sync + 'static {
     /// This device's certificate, presented to peers.
     fn certificate(&self) -> Signed<DeviceCertificate>;
 
+    /// This device's time, in milliseconds since the Unix epoch, as it tells peers in the
+    /// handshake (ADR 0030): the system's unless a simulation skews it (ADR 0036).
+    fn now_ms(&self) -> i64 {
+        crate::now_ms()
+    }
+
     /// Folders this device syncs, offered when dialing a peer.
     fn folders(&self) -> Vec<FolderId>;
 

@@ -101,7 +101,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             continue;
         }
         let abs = root.join(&candidate.path);
-        if !unchanged(&abs, local.size, local.mtime_ns) {
+        if !unchanged(&abs, local.size, local.mtime_ns, 0) {
             // Edited since the last scan; the next scan records it.
             continue;
         }

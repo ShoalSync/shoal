@@ -1,0 +1,22 @@
+[package]
+name = "tidefell-sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: simulation testing, several engines on an in-memory network driven by a seed (ADR 0036)"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+blake3.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tidefell-engine = { workspace = true, features = ["simulation"] }
+tidefell-identity.workspace = true
+tidefell-net = { workspace = true, features = ["simulation"] }
+tidefell-proto.workspace = true
+tokio.workspace = true

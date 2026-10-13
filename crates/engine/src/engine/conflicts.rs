@@ -9,7 +9,7 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, VersionVector};
 use super::Engine;
 use crate::state::FolderState;
 use crate::views::Event;
-use crate::{now_ms, Error, Result};
+use crate::{Error, Result};
 
 /// What to keep when resolving a conflict.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,9 +254,12 @@ impl Engine {
         let name = self.device_name(state, &item.version.author);
         let path = copy_path(state, &item.version.path, &name, item.version.modified_ms)
             .ok_or_else(|| Error::Invalid(format!("no free name beside {}", item.version.path)))?;
-        state
-            .meta
-            .restore_copy(self.inner.key.signing_key(), entry, &path, now_ms())?;
+        state.meta.restore_copy(
+            self.inner.key.signing_key(),
+            entry,
+            &path,
+            self.inner.now_ms(),
+        )?;
         Ok(())
     }
 }

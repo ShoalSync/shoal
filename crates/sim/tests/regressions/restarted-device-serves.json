@@ -1,0 +1,1 @@
+[{"Write":{"device":0,"path":10,"size":"Large","scan":true}},{"Rename":{"device":2,"file":198,"to":208}},{"Wait":{"ms":282}},{"Write":{"device":2,"path":143,"size":"Small","scan":true}},{"Delete":{"device":0,"file":150}},{"Restart":{"device":0}},{"Write":{"device":1,"path":229,"size":"Small","scan":true}},{"Write":{"device":0,"path":247,"size":"Tiny","scan":true}}]

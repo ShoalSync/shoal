@@ -1,0 +1,1 @@
+[{"Write":{"device":2,"path":127,"size":"Tiny","scan":false}},{"Wait":{"ms":170}},{"Write":{"device":1,"path":207,"size":"Tiny","scan":true}},{"Delete":{"device":1,"file":231}}]

@@ -82,6 +82,8 @@ struct Compact {
     mtime_ns: i64,
     base: Base,
     executable: bool,
+    /// Known only while the engine runs: not saved (see [`crate::scan::DiskStat::inode`]).
+    inode: u64,
 }
 
 /// A file as recorded, read in place: its base vector is made on request.
@@ -92,6 +94,8 @@ pub(crate) struct Local<'a> {
     pub(crate) size: u64,
     pub(crate) mtime_ns: i128,
     pub(crate) executable: bool,
+    /// 0 if not known.
+    pub(crate) inode: u64,
     base: &'a Base,
     devices: &'a Devices,
 }
@@ -152,6 +156,7 @@ impl LocalFiles {
             size: file.size,
             mtime_ns: i128::from(file.mtime_ns),
             executable: file.executable,
+            inode: file.inode,
             base: &file.base,
             devices: &self.devices,
         }
@@ -170,6 +175,7 @@ impl LocalFiles {
             mtime_ns,
             base: Base::new(file.base, &mut self.devices),
             executable: file.executable,
+            inode: 0,
         }
     }
 
@@ -346,6 +352,15 @@ impl LocalFiles {
         by_path.reserve(more, |&s| path_hash(hasher, slots, s));
         by_content.reserve(more, |&s| content_hash(hasher, slots, s));
         by_entry.reserve(more, |&s| entry_hash(hasher, slots, s));
+    }
+
+    /// Notes the inode of the file recorded at `path`, if it is recorded.
+    pub(crate) fn set_inode(&mut self, path: &str, inode: u64) {
+        if let Some(slot) = self.find(path) {
+            if let Some(Some((_, file))) = self.slots.get_mut(slot as usize) {
+                file.inode = inode;
+            }
+        }
     }
 
     /// The file recorded at `path`.

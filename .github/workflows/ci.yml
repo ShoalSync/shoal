@@ -45,6 +45,30 @@ jobs:
           cargo test --locked --package tidefell-fs-fuse --test kernel
           cargo test --locked --package tidefell-daemon --test mount
 
+  # Several engines on a simulated network, through steps 200 seeds choose (ADR 0036). The
+  # Nix workflow runs a few; this runs the pull request's share, and the nightly Simulation
+  # workflow 10,000 more.
+  simulation:
+    name: Simulation
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/cargo-target
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+      - name: 200 seeds
+        env:
+          TIDEFELL_SIM_SEEDS: "200"
+          TIDEFELL_SIM_JOBS: "6"
+        run: |
+          export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
+          mkdir -p "$TIDEFELL_SIM_DIR"
+          cargo test --locked --package tidefell-sim --test seeds -- --nocapture
+
   # Dependency and public API checks. Kept in one job, under its original name, because one
   # runner serves every repository.
   deny:

@@ -42,6 +42,7 @@ BLAKE3 hashes.
 | `fs-fuse` | Linux placeholder filesystem | AGPL-3.0-only |
 | `sdk` | Public Rust client API for third parties | MIT OR Apache-2.0 |
 | `ffi` | uniffi bindings to Kotlin (Android), later Swift | AGPL-3.0-only |
+| `sim` | Simulation testing: several engines on an in-memory network, driven by seeds | AGPL-3.0-only |
 
 Each crate lives in `crates/<name>` and is published as `tidefell-<name>`.
 

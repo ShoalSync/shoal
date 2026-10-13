@@ -9,7 +9,7 @@ use super::{run_scan, Engine};
 use crate::scan::Scope;
 use crate::state::{recorded, FolderState};
 use crate::views::{CopyInfo, Event, FileInfo};
-use crate::{copies, evict, materialize, now_ms, Error, Result};
+use crate::{copies, evict, materialize, Error, Result};
 
 impl Engine {
     /// Live files in `folder`, sorted by path.
@@ -135,7 +135,7 @@ impl Engine {
         *handle.open.lock().unwrap().entry(disk.clone()).or_insert(0) += 1;
         let abs = {
             let mut state = handle.lock();
-            state.used.insert(disk.clone(), now_ms());
+            state.used.insert(disk.clone(), self.inner.now_ms());
             state.config.path.join(&disk)
         };
         // Opening may have pushed a partial replica over its budget.
@@ -250,7 +250,7 @@ impl Engine {
                 .lock()
                 .local
                 .get(&disk)
-                .filter(|l| crate::scan::unchanged(&target, l.size, l.mtime_ns))
+                .filter(|l| crate::scan::unchanged(&target, l.size, l.mtime_ns, l.inode))
                 .map(|l| l.to_file());
             let tmp_dir = root.join(crate::scan::RESERVED_DIR).join("tmp");
             let tmp = tmp_dir.join(format!(
@@ -310,7 +310,7 @@ impl Engine {
                 &base,
                 path,
                 EntryKind::Tombstone,
-                now_ms(),
+                self.inner.now_ms(),
             )?;
             state.save()?;
         }
@@ -369,7 +369,7 @@ impl Engine {
             }
             let root = state.config.path.clone();
             let key = self.inner.key.signing_key();
-            let now = now_ms();
+            let now = self.inner.now_ms();
             for (entry, old, new, kind, modified_ms) in moves {
                 // Replace whatever is at the destination.
                 let replaced = state
@@ -424,8 +424,8 @@ impl Engine {
 fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
     if let Some(local) = state.local.remove(path) {
         let abs = root.join(path);
-        if crate::scan::unchanged(&abs, local.size, local.mtime_ns) {
-            crate::content::keep_deleted(state, &abs, local.content, None)?;
+        if crate::scan::unchanged(&abs, local.size, local.mtime_ns, 0) {
+            crate::content::keep_deleted(state, &abs, local.content, local.entry, None)?;
         } else {
             match std::fs::remove_file(&abs) {
                 Ok(()) => {}

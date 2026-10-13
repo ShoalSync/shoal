@@ -111,20 +111,28 @@ pub(crate) fn read_chunk(
     }
     // Read files without holding the folder's lock.
     let sources = sources(&handle.lock(), hash);
-    sources
+    let found = sources
         .iter()
-        .find_map(|source| read_verified(source, hash))
+        .find_map(|source| read_verified(source, hash));
+    if found.is_none() && !sources.is_empty() {
+        // The records say a file holds it and none does, as they can until the next scan: it
+        // is not counted as here until it is fetched.
+        inner.unreadable.lock().unwrap().insert(*hash);
+    }
+    found
 }
 
 /// True if chunk `hash` is in the block store or, by the folder's records, in a file on disk.
-/// Files are not read, so a file changed since the last scan still counts until a read fails.
+/// Files are not read, so a file changed since the last scan still counts until a read fails;
+/// then it does not until it is fetched.
 pub(crate) fn has_chunk(inner: &Inner, state: &FolderState, hash: &ChunkHash) -> bool {
     inner.store.lock().unwrap().contains(hash)
-        || state
-            .manifests
-            .contents_with(hash)
-            .iter()
-            .any(|c| state.local.paths_with(c).next().is_some() || state.kept.contains_key(c))
+        || !inner.unreadable.lock().unwrap().contains(hash)
+            && state
+                .manifests
+                .contents_with(hash)
+                .iter()
+                .any(|c| state.local.paths_with(c).next().is_some() || state.kept.contains_key(c))
 }
 
 /// Takes the file at `abs`, unchanged since it was recorded with `content`, off the folder
@@ -136,6 +144,7 @@ pub(crate) fn keep_deleted(
     state: &mut FolderState,
     abs: &Path,
     content: ContentHash,
+    entry: EntryId,
     new: Option<&Path>,
 ) -> Result<()> {
     let elsewhere =
@@ -153,7 +162,12 @@ pub(crate) fn keep_deleted(
     if !nomedia.exists() {
         fs::write(&nomedia, b"").map_err(io_err(&nomedia))?;
     }
-    let name = format!("{content}-{:016x}", u64::from_le_bytes(random_bytes()?));
+    // The entry it was a version of is in the name, for if the entry is live again by the time
+    // the bin no longer needs it (see [`release_kept`]).
+    let name = format!(
+        "{content}-{entry}-{:016x}",
+        u64::from_le_bytes(random_bytes()?)
+    );
     match new {
         Some(new) => crate::history::swap_in(&state.config.path, new, abs, &dir.join(&name))
             .map_err(io_err(abs))?,
@@ -164,10 +178,54 @@ pub(crate) fn keep_deleted(
     Ok(())
 }
 
+/// Stops keeping `content`'s kept file. A deleted version the recycle bin no longer holds,
+/// because an edit made apart from the delete brought its entry back, perhaps to be deleted
+/// again, becomes a previous version of that entry, as it would have had the edit come first
+/// (ADR 0029), unless its content is in the folder anyway; anything else is deleted.
+pub(crate) fn release_kept(state: &mut FolderState, content: ContentHash) {
+    let Some(name) = state.kept.remove(&content) else {
+        return;
+    };
+    let file = kept_dir(&state.config.path).join(&name);
+    let revived = state
+        .local
+        .paths_with(&content)
+        .next()
+        .is_none()
+        .then(|| kept_entry(&name))
+        .flatten()
+        .and_then(|entry| {
+            let current = state.meta.current(&entry)?;
+            Some((entry, current.path.to_owned()))
+        });
+    crate::sidecar::remove(&file);
+    let adopted = revived.is_some_and(|(entry, path)| {
+        crate::history::adopt(state, entry, &path, &file, content)
+            .map_err(|e| tracing::warn!(error = %e, "keeping a deleted version failed"))
+            .is_ok()
+    });
+    if !adopted {
+        let _ = fs::remove_file(&file);
+    }
+}
+
+/// The entry a kept file's name says it was a version of. Files kept by earlier versions do not
+/// say.
+fn kept_entry(name: &str) -> Option<EntryId> {
+    let mut parts = name.split('-');
+    let (_content, entry, _random) = (parts.next()?, parts.next()?, parts.next()?);
+    entry.parse().ok()
+}
+
 /// Deletes kept files that are no longer needed: their content is back in a file in the folder,
 /// or nothing references it any more.
 fn tidy_kept(state: &mut FolderState) {
+    tidy_unneeded(state);
+    // After the above, which reads what the sidecars say of items gone from the bin since.
     state.refresh_sidecars();
+}
+
+fn tidy_unneeded(state: &mut FolderState) {
     if state.kept.is_empty() {
         return;
     }
@@ -195,12 +253,8 @@ fn tidy_kept(state: &mut FolderState) {
     if unneeded.is_empty() {
         return;
     }
-    let dir = kept_dir(&state.config.path);
     for content in unneeded {
-        if let Some(name) = state.kept.remove(&content) {
-            let _ = fs::remove_file(dir.join(&name));
-            crate::sidecar::remove(&dir.join(name));
-        }
+        release_kept(state, content);
     }
     if let Err(e) = state.save() {
         tracing::warn!(error = %e, "saving after tidying kept files failed");

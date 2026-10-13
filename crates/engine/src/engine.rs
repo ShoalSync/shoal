@@ -38,7 +38,7 @@ use crate::scan::Scope;
 use crate::state::FolderState;
 use crate::views::Event;
 use crate::watch::{FolderWatch, Wanted};
-use crate::{copies, evict, materialize, now_ms, root, scan, Error, Result};
+use crate::{copies, evict, materialize, root, scan, Error, Result};
 use peers::endpoint_addr;
 use recycle::purge;
 
@@ -173,9 +173,19 @@ pub(crate) struct Inner {
     pub(crate) counters: crate::engine::metrics::Counters,
     /// [`Inner::retry_interval`], in milliseconds.
     retry_ms: std::sync::atomic::AtomicU64,
+    /// This device's time, shared with its folders.
+    pub(crate) clock: Arc<crate::clock::Clock>,
+    /// Chunks the records say a file holds that could not be read from it: fetched, not
+    /// counted as here, until then.
+    pub(crate) unreadable: Mutex<HashSet<tidefell_proto::ChunkHash>>,
 }
 
 impl Inner {
+    /// Milliseconds since the Unix epoch, as this device tells it.
+    pub(crate) fn now_ms(&self) -> i64 {
+        self.clock.now_ms()
+    }
+
     /// How often pending downloads are retried and peers dialled again.
     pub(crate) fn retry_interval(&self) -> Duration {
         Duration::from_millis(self.retry_ms.load(std::sync::atomic::Ordering::Relaxed))
@@ -663,7 +673,12 @@ impl Engine {
             diagnostics_config: Mutex::new(None),
             report_url: Mutex::new(None),
             retry_ms: std::sync::atomic::AtomicU64::new(RETRY_INTERVAL.as_millis() as u64),
+            clock: Arc::default(),
+            unreadable: Mutex::default(),
         });
+        for handle in inner.folders.read().unwrap().values() {
+            handle.lock().clock = inner.clock.clone();
+        }
 
         let backend = Arc::new(EngineBackend(inner.clone()));
         let node = Arc::new(match network {
@@ -788,7 +803,7 @@ impl Engine {
                 let mut hours = 0u32;
                 loop {
                     tokio::time::sleep(PURGE_INTERVAL).await;
-                    purge(&inner, now_ms());
+                    purge(&inner, inner.now_ms());
                     hours += 1;
                     if hours.is_multiple_of(24) {
                         check_databases(&inner, false).await;
@@ -882,6 +897,13 @@ impl Engine {
         Ok(())
     }
 
+    /// Sets this engine's clock `offset` ahead of the system's, or behind if negative, as a
+    /// device whose clock is wrong would have it. For simulations, where several engines share
+    /// a process and so a system clock (ADR 0036).
+    pub fn set_clock_offset(&self, offset_ms: i64) {
+        self.inner.clock.set_offset(offset_ms);
+    }
+
     /// Changes how often this engine retries pending downloads and dials peers it is not
     /// connected to: every five seconds unless set. Tests and simulations shorten it, so a
     /// healed network reconnects at once (ADR 0036).
@@ -967,9 +989,8 @@ impl Engine {
                 warn!(folder = %id, error = %e, "saving state on shutdown failed");
             }
         }
-        if let Ok(node) = Arc::try_unwrap(self.node) {
-            node.shutdown().await;
-        }
+        // Tasks of their own, such as a batch of requests, may still hold the node.
+        self.node.close().await;
     }
 }
 
@@ -1050,6 +1071,7 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, open: crate::state::Ope
     {
         let mut state = handle.lock();
         state.pins = pins;
+        state.clock = inner.clock.clone();
         state.touch();
     }
     let handle = Arc::new(handle);
@@ -1097,7 +1119,7 @@ async fn run_scan(
             Err(_) => Some("the scan crashed".to_owned()),
         };
         let took = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        activity.last_scan = Some((now_ms(), took, error));
+        activity.last_scan = Some((inner.now_ms(), took, error));
         // A path a scan looked at is tried again, in case what stopped it was fixed there,
         // such as its permissions (ADR 0037).
         let stuck = activity.stuck.len();
