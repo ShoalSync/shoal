@@ -970,9 +970,14 @@ impl Engine {
         run_materialize(&self.inner, &self.node, folder).await
     }
 
-    /// Stops all tasks, saves state and closes the endpoint.
+    /// Stops all tasks, closes the endpoint and saves state.
     pub async fn shutdown(mut self) {
         self.tasks.shutdown().await;
+        // Stop serving before the state is saved for the last time. A version stored after it
+        // would be lost, and peers that saw it acknowledge index sequences this device then
+        // uses again for its next changes, which they would never ask for.
+        // Tasks of their own, such as a batch of requests, may still hold the node.
+        self.node.close().await;
         let folders: Vec<(FolderId, Arc<FolderHandle>)> = self
             .inner
             .folders
@@ -989,8 +994,6 @@ impl Engine {
                 warn!(folder = %id, error = %e, "saving state on shutdown failed");
             }
         }
-        // Tasks of their own, such as a batch of requests, may still hold the node.
-        self.node.close().await;
     }
 }
 

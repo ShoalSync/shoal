@@ -692,6 +692,9 @@ pub(crate) fn scan(
     }
     state.save()?;
     drop(state);
+    if scope.is_none() {
+        crate::content::forget_unreadable(inner, handle);
+    }
     // Problems the scan covered are replaced by what it found: a path read, gone or now
     // ignored has none.
     // A directory's problem is covered only if the scan tried to read that directory.

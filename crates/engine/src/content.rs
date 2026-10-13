@@ -110,21 +110,33 @@ pub(crate) fn read_chunk(
         return Some(data);
     }
     // Read files without holding the folder's lock.
-    let sources = sources(&handle.lock(), hash);
-    let found = sources
-        .iter()
-        .find_map(|source| read_verified(source, hash));
-    if found.is_none() && !sources.is_empty() {
-        // The records say a file holds it and none does, as they can until the next scan: it
-        // is not counted as here until it is fetched.
-        inner.unreadable.lock().unwrap().insert(*hash);
+    let first = sources(&handle.lock(), hash);
+    if let Some(found) = first.iter().find_map(|source| read_verified(source, hash)) {
+        return Some(found);
     }
-    found
+    // A file read is moved while it is read, as when a deleted file is kept for the recycle
+    // bin: the records say where it went.
+    let again = sources(&handle.lock(), hash);
+    let moved: Vec<&Source> = again
+        .iter()
+        .filter(|s| !first.iter().any(|f| f.path == s.path))
+        .collect();
+    if let Some(found) = moved.iter().find_map(|source| read_verified(source, hash)) {
+        return Some(found);
+    }
+    if !again.is_empty() {
+        // The records say a file holds it and none does, as they can until the next scan: it
+        // is not counted as here until it is fetched or a scan has set the records right.
+        if inner.unreadable.lock().unwrap().insert(*hash) {
+            handle.rescan.notify_one();
+        }
+    }
+    None
 }
 
 /// True if chunk `hash` is in the block store or, by the folder's records, in a file on disk.
 /// Files are not read, so a file changed since the last scan still counts until a read fails;
-/// then it does not until it is fetched.
+/// then it does not until it is fetched or the next full scan (see [`forget_unreadable`]).
 pub(crate) fn has_chunk(inner: &Inner, state: &FolderState, hash: &ChunkHash) -> bool {
     inner.store.lock().unwrap().contains(hash)
         || !inner.unreadable.lock().unwrap().contains(hash)
@@ -133,6 +145,23 @@ pub(crate) fn has_chunk(inner: &Inner, state: &FolderState, hash: &ChunkHash) ->
                 .contents_with(hash)
                 .iter()
                 .any(|c| state.local.paths_with(c).next().is_some() || state.kept.contains_key(c))
+}
+
+/// Counts the folder's chunks that a read found missing as here again if they read now, once
+/// a full scan has set its records right: a chunk only one device holds is never unavailable for
+/// good because one read failed, such as one that raced the file's move into the recycle bin.
+pub(crate) fn forget_unreadable(inner: &Inner, handle: &FolderHandle) {
+    let marked: Vec<ChunkHash> = inner.unreadable.lock().unwrap().iter().copied().collect();
+    for hash in marked {
+        // Read files without holding the folder's lock.
+        let sources = sources(&handle.lock(), &hash);
+        if sources
+            .iter()
+            .any(|source| read_verified(source, &hash).is_some())
+        {
+            inner.unreadable.lock().unwrap().remove(&hash);
+        }
+    }
 }
 
 /// Takes the file at `abs`, unchanged since it was recorded with `content`, off the folder

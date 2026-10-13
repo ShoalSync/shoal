@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidefell_engine::{
-    Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig, ReplicaMode, Retention,
+    Direction, Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig,
+    ReplicaMode, Retention, SyncOptions,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_net::Network;
@@ -31,6 +32,17 @@ impl Replica {
     }
 
     async fn start(&self, user: &UserKey, network: &Network, peers: &[DeviceId]) -> Engine {
+        self.start_with(user, network, peers, SyncOptions::default())
+            .await
+    }
+
+    async fn start_with(
+        &self,
+        user: &UserKey,
+        network: &Network,
+        peers: &[DeviceId],
+        sync: SyncOptions,
+    ) -> Engine {
         let config = EngineConfig {
             data_dir: self.data.clone(),
             metadata_dir: None,
@@ -55,7 +67,7 @@ impl Replica {
                 members: vec![user.id()],
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
-                sync: Default::default(),
+                sync,
                 confirm_deletes: Default::default(),
             }],
             min_free_space: None,
@@ -164,5 +176,63 @@ async fn engines_reconnect_after_a_partition_heals() {
     .await;
 
     engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn content_a_read_missed_is_offered_again_after_a_scan() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 30);
+    let b = Replica::new(dir.path(), "b", 31);
+    let c = Replica::new(dir.path(), "c", 32);
+    a.write("doc.txt", b"only on a");
+    // Send-only, so not a full replica: b and c, with a choice of devices, ask a which chunks
+    // it has instead of asking for them (ADR 0032).
+    let send_only = SyncOptions {
+        direction: Direction::SendOnly,
+        ..Default::default()
+    };
+    let engine_a = a.start_with(&user, &network, &[], send_only).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    // Unreadable while it is asked for, as a file is while it is moved: a's read fails, and a
+    // stops counting the content as here.
+    let file = a.root.join("doc.txt");
+    let mode = |m| fs::set_permissions(&file, fs::Permissions::from_mode(m)).unwrap();
+    mode(0o000);
+    if fs::read(&file).is_ok() {
+        // Running as root, which reads it anyway.
+        engine_a.shutdown().await;
+        return;
+    }
+    let engine_b = b.start(&user, &network, &[]).await;
+    let engine_c = c.start(&user, &network, &[]).await;
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    engine_b.connect(engine_c.addr()).await.unwrap();
+    engine_c.connect(engine_a.addr()).await.unwrap();
+    eventually("b and c find it unavailable", || {
+        [&engine_b, &engine_c].iter().all(|e| {
+            e.path_problems(FOLDER)
+                .unwrap()
+                .iter()
+                .any(|p| p.path == "doc.txt")
+        })
+    })
+    .await;
+
+    // The file is readable again, unchanged: once a scans, a offers it again. It is the only
+    // copy, so it would otherwise be unavailable for good.
+    mode(0o644);
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("b and c get it", || {
+        b.read("doc.txt").as_deref() == Some(b"only on a".as_slice())
+            && c.read("doc.txt").as_deref() == Some(b"only on a".as_slice())
+    })
+    .await;
+
+    engine_b.shutdown().await;
+    engine_c.shutdown().await;
     engine_a.shutdown().await;
 }

@@ -86,6 +86,17 @@ written down.
     the drive has hard links.
   - A file the user deleted just as the engine set it aside for another entry's file lost its
     record, so the delete was never recorded: the record is kept if setting it aside fails.
+- Found by the first runs of 10,000 seeds, about once in each:
+  - An engine shutting down saved its state before it stopped serving. A version stored in
+    between was lost while peers acknowledged its index sequence, so after a restart the
+    device's next changes reused those sequences and never reached them. The node now closes
+    first.
+  - A read that failed, as one racing a file's move into the recycle bin can, marked the chunk
+    as not here until it was fetched. When the device held the only copy, nobody could fetch
+    it, until a restart. A failed read now looks where the records say the chunk went and asks
+    for a scan, and a full scan clears the marks of chunks that read again. This is the likely
+    cause of two seeds that left a version's content, kept in its author's recycle bin,
+    unavailable everywhere; neither failed again in over a thousand tries, so it is not proven.
 - The harness's own deletes and overwrites move what they remove out of the folder in one step
   first, so what it counts as removed by the user is exactly what was.
 
