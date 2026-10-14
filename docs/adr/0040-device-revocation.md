@@ -41,6 +41,15 @@ Three facts shape it:
   each side sends the revocations the other has not seen (a new message pair, `Revocations`).
   A device that shares no folder with the revoking machine still hears of it through the
   devices it does share one with.
+- **Revocations come first.** Neither side sends or asks for an index, manifest or chunk until
+  revocations have been exchanged, and a revocation received is checked against both sides of
+  every open connection at once. A device that was offline when another was revoked learns of it
+  from the first of the user's devices it reaches, and refuses the lost device from then on,
+  before any sync with it.
+- **A device that meets the lost device first** syncs with it until it reaches another device
+  that knows of the revocation: the lost device does not pass it on. What it received in that
+  time is judged like anything else received from the lost device (with a time of loss, it is
+  withdrawn); what it sent cannot be taken back.
 
 ### Connections
 
