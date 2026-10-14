@@ -120,9 +120,10 @@ A user taken out of a folder's member list.
   certificate and key. Anyone who can read its storage has the device key.
 - **Gap: no device revocation.** A certificate cannot be revoked; the only way to cut off a lost
   device is to remove its whole user from every folder on every replica, and to certify the user's
-  other devices under a new user key. ADR 0038 decides a revocation list signed by the user key,
-  synced with folders and checked before accepting or serving a device; its ADR comes before
-  Phase 6.
+  other devices under a new user key. ADR 0040 decides revocations signed by the user key that
+  spread to every peer: a revoked device fails the handshake everywhere that has heard of it,
+  and its versions are taken over by the replicas that hold them and then refused. Refusing its
+  connections comes first; the rest ships with author vouching.
 - **Gap: the Android device key is a plain file.** It is in the app's private storage, which
   other apps cannot read, but a rooted phone or a forensic copy of the storage yields it. Phase 5l
   wraps it with an Android Keystore key, so a copy of the storage holds no usable key.

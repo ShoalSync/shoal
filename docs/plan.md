@@ -356,7 +356,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   every Android library for it. Nothing else changes; the Android pin takes 0.17.1.
 - Phase 5l: step 2 (threat model) is done: `docs/security/threat-model.md` covers every
   adversary in ADR 0038 and lists the gaps it found, with the step that closes each where one is
-  planned, and the pull request template asks whether a change affects it.
+  planned, and the pull request template asks whether a change affects it. Step 3 (device
+  revocation) is decided: ADR 0040, revocations signed by the user key and spread to every peer,
+  refused connections first, and a revoked device's versions taken over by the replicas that
+  hold them, with author vouching.
 
 ### Phase 2 work breakdown
 

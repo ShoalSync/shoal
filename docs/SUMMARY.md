@@ -76,3 +76,4 @@
   - [0037: Disk space and I/O errors](adr/0037-disk-space-and-io-errors.md)
   - [0038: Threat model](adr/0038-threat-model.md)
   - [0039: Android battery](adr/0039-android-battery.md)
+  - [0040: Device revocation](adr/0040-device-revocation.md)
