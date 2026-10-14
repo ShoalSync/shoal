@@ -1,7 +1,7 @@
 # 0040: Device revocation
 
 - Status: accepted
-- Date: 2026-10-14
+- Date: 2026-10-14 (a time of loss added the same day)
 
 ## Context
 
@@ -29,8 +29,9 @@ Three facts shape it:
 ### Revocations
 
 - A revocation is `Signed<DeviceRevocation>` with kind `identity/1/device-revocation`:
-  `user: UserId, device: DeviceId, revoked_ms: i64`, signed by the user key. It is permanent: a
-  device that is found again re-pairs, with a new device key.
+  `user: UserId, device: DeviceId, revoked_ms: i64, lost_ms: Option<i64>`, signed by the user
+  key. It is permanent: a device that is found again re-pairs, with a new device key. `lost_ms`
+  is when the user lost the device, if they say (see A time of loss).
 - A device holding the user key revokes: `tidefell device revoke <device>`, with the API and the
   web peer's admin pages. The machine holding the user key is the one that pairs devices
   (ADR 0015), so it knows the user's devices by name.
@@ -63,6 +64,40 @@ Three facts shape it:
   applied it, as with any member's change, and earlier versions are in the recycle bin and
   history. What it sends afterwards is refused.
 - A version by the revoked device that no replica holds a current copy of is simply refused.
+
+### A time of loss
+
+The user can say when the device was lost: `tidefell device revoke <device> --lost-at <time>`.
+Its changes from then on are then removed, not kept.
+
+- **Times come from trusted clocks.** The time a version says it was made is signed by the device
+  that made it, which the thief controls, so it is not used. Instead every device records when it
+  first received each version made by another device, by its own clock. Only devices that are not
+  revoked judge, each by its own record.
+- **Each replica judges by when it received a version.** For each entry whose current version, or
+  open conflict copy, is by the revoked device:
+  - received before `lost_ms`: taken over, as above;
+  - received at or after `lost_ms`: withdrawn. The replica makes a change of its own that puts
+    back the version before it, from its history (ADR 0029), or, where it has none, deletes the
+    file; either way the withdrawn content goes to the recycle bin. Versions the thief makes and
+    sends afterwards are refused as before.
+- **Replicas converge.** A replica that received a version in time takes it over, and its takeover
+  reaches the others, which then hold that content as an ordinary change by an honest device. A
+  replica withdraws only after an index exchange with its peers since it learned of the
+  revocation, so a takeover that exists usually reaches it first. Where a withdrawal and a
+  takeover still cross, they are concurrent and both are kept as a conflict for the user to
+  decide, never one lost.
+- **The user sees what will go before revoking.** The revoking machine lists, from its own record,
+  every file whose current version would be withdrawn and every version that would be put back,
+  with paths, sizes, times and the folder, and revokes only once the user confirms (`--yes` skips
+  the question for scripts). The web peer and the app show the same list. Afterwards each device
+  lists what it withdrew in its activity log, and the withdrawn versions are in its recycle bin.
+- **Clocks.** A replica's clock that is wrong moves its judgement by as much. The list shows
+  times, so the user can choose a time a little before the loss; `tidefell doctor` already warns
+  of a clock far from its peers' (ADR 0030). Changes the device made before the loss but sent
+  only afterwards, as when it was offline, are withdrawn too: nothing tells them from the thief's.
+- Recording receipt times costs one time per stored version made elsewhere, kept with the version
+  in the folder's database.
 
 Takeover is recommended over the alternatives:
 
@@ -99,5 +134,7 @@ Takeover is recommended over the alternatives:
 - Revoking adds versions: one per entry whose current version was by the revoked device, on each
   replica that holds it. A phone that made many files makes many takeovers; they carry no content
   and settle without conflicts.
-- Changes the thief made before the revocation spread are kept like any member's change; the
-  recycle bin and history are the way back.
+- Changes the thief made before the revocation spread are kept like any member's change, unless
+  the user gives a time of loss; then each replica withdraws what it received from the device
+  after that time, after showing the user what that will be. The recycle bin and history are the
+  way back either way.

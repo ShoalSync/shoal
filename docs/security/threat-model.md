@@ -122,8 +122,10 @@ A user taken out of a folder's member list.
   device is to remove its whole user from every folder on every replica, and to certify the user's
   other devices under a new user key. ADR 0040 decides revocations signed by the user key that
   spread to every peer: a revoked device fails the handshake everywhere that has heard of it,
-  and its versions are taken over by the replicas that hold them and then refused. Refusing its
-  connections comes first; the rest ships with author vouching.
+  and its versions are taken over by the replicas that hold them and then refused. With a time of
+  loss, what each replica received from it after that time is withdrawn instead, by the
+  replicas' own clocks, after the user has seen the list. Refusing its connections comes first;
+  the rest ships with author vouching.
 - **On Android the device key is sealed by the Keystore.** The FFI keeps it in a vault the app
   provides (`set_key_vault`), and the app's vault seals it with an AES key held in the Android
   Keystore, which never leaves it: a copy of the app's storage holds only the sealed key. A plain

@@ -359,7 +359,8 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   planned, and the pull request template asks whether a change affects it. Step 3 (device
   revocation) is decided: ADR 0040, revocations signed by the user key and spread to every peer,
   refused connections first, and a revoked device's versions taken over by the replicas that
-  hold them, with author vouching. Step 4 (Android keys) is done in this repository: the FFI keeps
+  hold them, or withdrawn where received after a time of loss the user gives, with author
+  vouching. Step 4 (Android keys) is done in this repository: the FFI keeps
   the device key in a vault the app provides (`set_key_vault`), moving a key file left from
   before into it.
 
