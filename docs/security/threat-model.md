@@ -133,7 +133,10 @@ A user taken out of a folder's member list.
   is overwritten and deleted. On a phone that is unlocked and in the thief's hands, the app can
   still use the key, so revocation (ADR 0040) is what cuts it off.
 - **Losing the user key** is worse than losing a device: whoever has it can certify devices for
-  the user. Keep it on one trusted machine, and back it up offline.
+  the user, and revoke the user's other devices. A revocation's time of loss reaches back at most
+  a folder's retention, and one that would withdraw much of a folder waits for the user on each
+  device (ADR 0040), so it cannot empty folders unseen. Keep the user key on one trusted
+  machine, and back it up offline.
 
 ### A share-link holder
 

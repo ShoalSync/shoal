@@ -107,6 +107,19 @@ Its changes from then on are then removed, not kept.
   only afterwards, as when it was offline, are withdrawn too: nothing tells them from the thief's.
 - Recording receipt times costs one time per stored version made elsewhere, kept with the version
   in the folder's database.
+- **Guards against a revocation meant to do harm.** Only the user key signs revocations, and a
+  phone never holds it, so a stolen phone cannot revoke anything. A stolen user key is out of
+  scope, but whoever holds one must not be able to empty every folder with one revocation:
+  - **The time of loss reaches back at most a folder's retention.** Each replica treats a
+    `lost_ms` earlier than `revoked_ms` minus the folder's recycle-bin retention (ADR 0021) as
+    that limit, 30 days for a folder that keeps deleted files forever. Everything withdrawn is
+    then still in the recycle bin. The revoke command says so when it moves the time.
+  - **Large withdrawals wait for the user on each device.** Where a revocation's withdrawals would
+    remove at least as many files as a scan's deletes that are held (ADR 0037: 100 files and
+    more than half the folder, or the folder's own `confirm_deletes_over`), the replica withdraws
+    nothing in that folder and holds them, as it holds such deletes. The status, the web peer and
+    the app say a revocation is waiting and list what it would remove; the user withdraws them
+    or keeps them, which takes them over instead. Takeovers are never held: they remove nothing.
 
 Takeover is recommended over the alternatives:
 
@@ -131,8 +144,8 @@ Takeover is recommended over the alternatives:
 ### Out of scope
 
 - **A lost user key.** Revocation needs the user key; whoever has it can certify and revoke
-  devices. Recovering from a lost or stolen user key means rotating it, which is a separate
-  decision.
+  devices, within the guards above. Recovering from a lost or stolen user key means rotating it,
+  which is a separate decision.
 - **Member lists that sync.** Removing a member still has to be done on every replica.
 
 ## Consequences
