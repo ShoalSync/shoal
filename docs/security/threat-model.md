@@ -124,9 +124,12 @@ A user taken out of a folder's member list.
   spread to every peer: a revoked device fails the handshake everywhere that has heard of it,
   and its versions are taken over by the replicas that hold them and then refused. Refusing its
   connections comes first; the rest ships with author vouching.
-- **Gap: the Android device key is a plain file.** It is in the app's private storage, which
-  other apps cannot read, but a rooted phone or a forensic copy of the storage yields it. Phase 5l
-  wraps it with an Android Keystore key, so a copy of the storage holds no usable key.
+- **On Android the device key is sealed by the Keystore.** The FFI keeps it in a vault the app
+  provides (`set_key_vault`), and the app's vault seals it with an AES key held in the Android
+  Keystore, which never leaves it: a copy of the app's storage holds only the sealed key. A plain
+  key file left by an earlier version moves into the vault the first time the key is used, and
+  is overwritten and deleted. On a phone that is unlocked and in the thief's hands, the app can
+  still use the key, so revocation (ADR 0040) is what cuts it off.
 - **Losing the user key** is worse than losing a device: whoever has it can certify devices for
   the user. Keep it on one trusted machine, and back it up offline.
 

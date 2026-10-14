@@ -30,6 +30,9 @@ use tidefell_engine::{
 
 uniffi::setup_scaffolding!();
 
+mod vault;
+pub use vault::{set_key_vault, KeyVault};
+
 fn runtime() -> &'static tokio::runtime::Runtime {
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
@@ -83,6 +86,12 @@ pub enum TidefellError {
         /// What failed.
         detail: String,
     },
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for TidefellError {
+    fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::Failed { detail: e.reason }
+    }
 }
 
 impl From<tidefell_engine::Error> for TidefellError {
@@ -340,7 +349,7 @@ pub fn recent_problems() -> Vec<Problem> {
 /// This device's ID, creating its key in `data_dir` on first use.
 #[uniffi::export]
 pub fn device_id(data_dir: String) -> Result<String> {
-    Ok(device::device_key(&PathBuf::from(data_dir))?
+    Ok(vault::device_key(&PathBuf::from(data_dir))?
         .id()
         .to_string())
 }
@@ -349,7 +358,7 @@ pub fn device_id(data_dir: String) -> Result<String> {
 #[uniffi::export]
 pub fn is_paired(data_dir: String) -> Result<bool> {
     let dir = PathBuf::from(data_dir);
-    let key = device::device_key(&dir)?;
+    let key = vault::device_key(&dir)?;
     Ok(device::certificate(&dir, &key)?.is_some())
 }
 
@@ -412,7 +421,7 @@ impl Pairing {
     #[uniffi::constructor]
     pub async fn start(data_dir: String, network: Network, name: String) -> Result<Arc<Self>> {
         let data_dir = PathBuf::from(data_dir);
-        let key = device::device_key(&data_dir)?;
+        let key = vault::device_key(&data_dir)?;
         if device::certificate(&data_dir, &key)?.is_some() {
             return Err(invalid("this device is already paired"));
         }
@@ -1077,7 +1086,7 @@ impl Node {
     #[uniffi::constructor]
     pub async fn start(data_dir: String, network: Network) -> Result<Arc<Self>> {
         let data_dir = PathBuf::from(data_dir);
-        let key = device::device_key(&data_dir)?;
+        let key = vault::device_key(&data_dir)?;
         let certificate = device::certificate(&data_dir, &key)?.ok_or(TidefellError::NotPaired)?;
         let config = EngineConfig {
             data_dir,
