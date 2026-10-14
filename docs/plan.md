@@ -354,6 +354,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - `v0.17.1` makes the FFI library loadable on Android: 0.17.0's needed static thread-local
   storage for mimalloc, which Android refuses in a library it loads at run time. CI now checks
   every Android library for it. Nothing else changes; the Android pin takes 0.17.1.
+- Phase 5l: step 2 (threat model) is done: `docs/security/threat-model.md` covers every
+  adversary in ADR 0038 and lists the gaps it found, with the step that closes each where one is
+  planned, and the pull request template asks whether a change affects it.
 
 ### Phase 2 work breakdown
 
@@ -516,7 +519,8 @@ Each fix starts with a test that reproduces the finding and fails, then makes it
    release only for tags on `main` that passed CI.
 6. **Hardening.** Author certificates (the stream in `v0.8.x`, enforcement in the release after),
    confirmed copies from current members only, web upload limits and login throttling, relay
-   access tokens and systemd hardening in infra.
+   access tokens and systemd hardening in infra, and an owner-only data directory
+   (`docs/security/threat-model.md`).
 7. **Maintainability.** Split `engine.rs`, view models and background dispatchers in the Android
    app, shared type conversions, and `unsafe_code = "forbid"` across the workspace.
 

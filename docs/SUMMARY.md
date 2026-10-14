@@ -27,6 +27,10 @@
   - [blobs/1](reference/blobs-v1.md)
   - [pair/1](reference/pair-v1.md)
 
+# Security
+
+- [Threat model](security/threat-model.md)
+
 # Project
 
 - [Implementation plan](plan.md)

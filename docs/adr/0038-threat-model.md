@@ -45,3 +45,13 @@ Gaps found while checking:
 - One place to reason about security, reviewed as the system changes.
 - A lost device can be cut off once revocation lands.
 - Some gaps stay by design and are written down instead of implied.
+
+## Implementation notes
+
+- `docs/security/threat-model.md` describes the code as it is. Writing it found gaps beyond those
+  above: author vouching (ADR 0024) is specified but not enforced, member lists are per replica
+  and do not sync, address lookup and local discovery are further metadata observers, web
+  logins and link passwords are throttled only by a fixed wait, uploads have no size limit by
+  default, the data directory gets the user's default permissions, and releases are not signed.
+  Each is listed there, with the step that closes it where one is planned, most in Phase 5c
+  steps 5 and 6; member lists that do not sync have no step yet.
