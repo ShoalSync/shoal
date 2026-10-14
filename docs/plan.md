@@ -362,7 +362,15 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   hold them, or withdrawn where received after a time of loss the user gives, with author
   vouching. Step 4 (Android keys) is done in this repository: the FFI keeps
   the device key in a vault the app provides (`set_key_vault`), moving a key file left from
-  before into it.
+  before into it. Step 5 (battery) is done: the benchmark in `tidefell/android`, the app's usage
+  counters in the diagnostics bundle, and budgets from the first, emulator, figures (ADR 0039).
+  Phase 5l is complete; ADR 0040's revocation is built with author vouching (Phase 5c step 6).
+- `v0.18.0` releases Phase 5l: the threat model, ADR 0040, and the FFI's key vault
+  (`set_key_vault`), which the Android pin uses to seal the device key with the Android
+  Keystore. It also adds the usage counters to the app's diagnostics bundle and runs the battery
+  benchmark. Battery figures on the emulator: idle with the service running 7.4 s of CPU an
+  hour, 60 s of CPU to receive 1 GiB and 87 s to back up 1 GiB, with no wake-ups while idle.
+  The database and the protocol are unchanged.
 
 ### Phase 2 work breakdown
 
