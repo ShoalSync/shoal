@@ -67,9 +67,14 @@ each release, and users uninstall apps that show up in the battery screen.
 - No change to save battery is made yet: idle costs about 0.2% of one core, and nothing the
   emulator can measure points at one. The likely changes above wait for figures from a phone,
   which shows radio time and wake-ups as an emulator cannot.
-- Backing up 1 GiB took 23 minutes against 1.5 minutes to receive it: the phone's scans picked up
-  the new photos a few at a time before the rest went at once. That is a speed problem, not a
-  battery one, and is looked into on its own.
+- Backing up 1 GiB took 23 minutes against 1.5 minutes to receive it. Looked into, the time is
+  not the phone's: it finds new photos within a second of them appearing, hashes 200 MiB in about
+  a second and pushes its index at once, and the photos then move at about 10 MB/s. The phone's
+  messages to the host wait in the QUIC connection, from 80 seconds to many minutes from one run
+  to the next. On Linux, the same two daemons with the phone behind NAT back up 200 MiB in under
+  5 seconds, directly or through the relay alone, so it is the emulator's network with iroh and
+  not the topology. Whether a phone is affected needs a run on one; until then the emulator's
+  backup figure is not one to hold the app to, and its budget only catches large regressions.
 - The app counts its own runs, running time, scanning time and bytes moved, on the phone, and the
   diagnostics bundle includes them, per hour since counting started (`usage` in the app's part of
   the summary).
