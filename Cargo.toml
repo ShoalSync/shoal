@@ -48,7 +48,7 @@ hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 ignore = "0.4"
 iroh = "1.2"
-iroh-mdns-address-lookup = "0.5"
+iroh-mdns-address-lookup = "0.6"
 iroh-metrics = "1.0"
 libc = "0.2"
 notify = "8.2"
