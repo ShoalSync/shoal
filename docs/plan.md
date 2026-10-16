@@ -371,6 +371,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   benchmark. Battery figures on the emulator: idle with the service running 7.4 s of CPU an
   hour, 60 s of CPU to receive 1 GiB and 87 s to back up 1 GiB, with no wake-ups while idle.
   The database and the protocol are unchanged.
+- `v0.19.0` updates iroh to 1.3 and records what the slow emulator backup turned out to be
+  (ADR 0039). The Android pin takes up the app's logging through the engine (`AppLog`), so its
+  messages are in the log files and diagnostics bundles. The database and the protocol are
+  unchanged.
 
 ### Phase 2 work breakdown
 
