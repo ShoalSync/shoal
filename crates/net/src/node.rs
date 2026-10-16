@@ -31,10 +31,33 @@ const MDNS_SERVICE: &str = "tidefell";
 pub enum RelayConfig {
     /// The public relays run by the iroh project.
     Default,
-    /// Self-hosted relays.
-    Custom(Vec<RelayUrl>),
+    /// Self-hosted relays, and the token they want, if they want one.
+    Custom {
+        urls: Vec<RelayUrl>,
+        token: Option<RelayToken>,
+    },
     /// No relays: only direct connections. For tests and fully local networks.
     Disabled,
+}
+
+/// A bearer token for self-hosted relays that admit only holders of it (iroh-relay's
+/// `access.shared_token`). Sent to the relays in [`RelayConfig::Custom`]'s `urls`, and not shown
+/// by `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RelayToken(String);
+
+impl RelayToken {
+    /// A token, if `token` is one: not empty, and only visible ASCII, so it fits in a header.
+    pub fn new(token: impl Into<String>) -> Option<Self> {
+        let token = token.into();
+        (!token.is_empty() && token.bytes().all(|b| b.is_ascii_graphic())).then_some(Self(token))
+    }
+}
+
+impl std::fmt::Debug for RelayToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RelayToken(..)")
+    }
 }
 
 /// How to start a [`Node`].
@@ -324,7 +347,13 @@ pub(crate) async fn bind_endpoint(config: &NodeConfig, alpns: Vec<Vec<u8>>) -> R
     let relay_mode = match &config.relay {
         RelayConfig::Default => RelayMode::Default,
         RelayConfig::Disabled => RelayMode::Disabled,
-        RelayConfig::Custom(urls) => RelayMode::Custom(RelayMap::from_iter(urls.iter().cloned())),
+        RelayConfig::Custom { urls, token } => {
+            let map = RelayMap::from_iter(urls.iter().cloned());
+            RelayMode::Custom(match token {
+                Some(token) => map.with_auth_token(token.0.clone()),
+                None => map,
+            })
+        }
     };
     let mut builder = Endpoint::builder(presets::N0)
         .secret_key(SecretKey::from_bytes(&config.secret_key))

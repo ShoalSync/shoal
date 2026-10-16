@@ -10,7 +10,8 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tidefell_engine::{
-    EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention, SyncOptions,
+    EngineConfig, FolderConfig, PeerAddr, RelayConfig, RelayToken, ReplicaMode, Retention,
+    SyncOptions,
 };
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
@@ -183,6 +184,11 @@ pub struct Relay {
     /// Relay URLs, for `mode = "custom"`.
     #[serde(default)]
     pub urls: Vec<String>,
+    /// A file holding the token the relays in `urls` want, for relays that admit only holders
+    /// of it (`access.shared_token` in iroh-relay). Read when the daemon starts; the token is
+    /// kept out of this file, which may be readable by others.
+    #[serde(default)]
+    pub token_file: Option<PathBuf>,
 }
 
 /// Which relays to use.
@@ -312,6 +318,9 @@ impl Config {
             tidefell_engine::diagnostics::check_report_url(url)
                 .map_err(|e| format!("report_url: {e}"))?;
         }
+        if self.network.relay.token_file.is_some() && self.network.relay.mode != RelayMode::Custom {
+            return Err("relay token_file is for mode \"custom\": the relays in urls".into());
+        }
         let relay = match self.network.relay.mode {
             RelayMode::Default => RelayConfig::Default,
             RelayMode::Disabled => RelayConfig::Disabled,
@@ -319,14 +328,17 @@ impl Config {
                 if self.network.relay.urls.is_empty() {
                     return Err("relay mode \"custom\" needs at least one URL".into());
                 }
-                RelayConfig::Custom(
-                    self.network
+                RelayConfig::Custom {
+                    urls: self
+                        .network
                         .relay
                         .urls
                         .iter()
                         .map(|u| u.parse().map_err(|_| format!("invalid relay URL {u:?}")))
                         .collect::<Result<_, _>>()?,
-                )
+                    // Read when the daemon starts: see `relay_token`.
+                    token: None,
+                }
             }
         };
         let peers = self
@@ -416,6 +428,20 @@ impl Config {
     }
 
     /// Folders to mount with FUSE, and where.
+    /// The token in `network.relay.token_file`, if one is set.
+    pub fn relay_token(&self) -> Result<Option<RelayToken>, String> {
+        let Some(path) = &self.network.relay.token_file else {
+            return Ok(None);
+        };
+        let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        RelayToken::new(text.trim()).map(Some).ok_or_else(|| {
+            format!(
+                "{}: not a relay token: empty, or not visible ASCII",
+                path.display()
+            )
+        })
+    }
+
     pub fn mounts(&self) -> Result<Vec<(FolderId, PathBuf)>, String> {
         let mut mounts: Vec<(FolderId, PathBuf)> = Vec::new();
         for f in &self.folders {
@@ -545,6 +571,45 @@ mod tests {
             "scan_interval_secs = 10\ndirection = \"receive-only\"\n",
         );
         assert!(parse(&bad).is_err());
+    }
+
+    #[test]
+    fn reads_the_relay_token_from_its_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("relay-token");
+        std::fs::write(&file, "s3cret-token\n").unwrap();
+        let config = |mode: &str| {
+            parse(&format!(
+                "data_dir = \"/x\"\n[network.relay]\nmode = \"{mode}\"\n\
+                 urls = [\"https://relay.example.org\"]\ntoken_file = \"{}\"\n",
+                file.display()
+            ))
+            .unwrap()
+        };
+        let custom = config("custom");
+        assert!(
+            custom.to_engine().is_ok(),
+            "validating does not read the file"
+        );
+        let token = custom.relay_token().unwrap().unwrap();
+        assert_eq!(
+            Some(token.clone()),
+            RelayToken::new("s3cret-token"),
+            "trimmed"
+        );
+        assert!(
+            !format!("{token:?}").contains("s3cret"),
+            "not shown by Debug"
+        );
+        assert!(
+            config("default").to_engine().is_err(),
+            "only for custom relays"
+        );
+
+        std::fs::write(&file, "\n").unwrap();
+        assert!(custom.relay_token().is_err(), "empty");
+        std::fs::remove_file(&file).unwrap();
+        assert!(custom.relay_token().is_err(), "missing");
     }
 
     #[test]

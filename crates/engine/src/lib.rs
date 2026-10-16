@@ -148,7 +148,9 @@ pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, R
 pub use probe::{Filesystem, NameLength};
 pub use tidefell_identity::{DeviceKey, UserKey};
 pub use tidefell_meta::{ChangeKind, Retention};
-pub use tidefell_net::{Limits, PathKind, RelayConfig, RelayUrl, Transfer, MIN_BYTES_PER_SEC};
+pub use tidefell_net::{
+    Limits, PathKind, RelayConfig, RelayToken, RelayUrl, Transfer, MIN_BYTES_PER_SEC,
+};
 pub use tidefell_proto::identity::DeviceCertificate;
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{

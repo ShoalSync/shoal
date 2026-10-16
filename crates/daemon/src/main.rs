@@ -425,7 +425,10 @@ async fn shutdown_signal() {
 
 async fn run(path: &Path) -> Result<(), String> {
     let config = read_config(path)?;
-    let engine_config = config.to_engine()?;
+    let mut engine_config = config.to_engine()?;
+    if let tidefell_engine::RelayConfig::Custom { token, .. } = &mut engine_config.relay {
+        *token = config.relay_token()?;
+    }
     let (key, cert) = load_identity(&config.data_dir)?;
     let engine = std::sync::Arc::new(
         Engine::start(engine_config, key, cert)

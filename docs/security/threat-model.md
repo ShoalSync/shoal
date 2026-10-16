@@ -80,8 +80,11 @@ publishes its addresses through iroh's DNS service.
   how much. The DNS service sees each device's addresses.
 - **By design.** This is stated rather than hidden. Users who mind run their own relay (the infra
   repository's relay role, or `relay.enable` on an always-on peer) and turn address lookup off.
-  A self-hosted relay serves any device that reaches it; access tokens for relays are planned in
-  Phase 5c step 6.
+  A self-hosted relay serves any device that reaches it, unless it is given an access token
+  (`accessTokenFile` in the infra relay module), which devices then present (`token_file`). The
+  token is shared by every device, so it keeps strangers off the relay, not one device from
+  another; a device that leaks it is handled by changing it everywhere. The Android app
+  cannot present one yet.
 
 ### A member
 

@@ -61,6 +61,18 @@ in
       '';
     };
 
+    relayTokenFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = ''
+        File holding the token for self-hosted relays that admit only holders of it
+        (`access.shared_token` in iroh-relay), with `settings.network.relay.mode = "custom"`.
+        Given to the service as a systemd credential, so it may be readable by root alone, and
+        kept out of the Nix store. Use a path to a secret, not a Nix path literal, which would
+        copy it into the store.
+      '';
+    };
+
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -90,6 +102,9 @@ in
 
   config = lib.mkIf cfg.enable {
     services.tidefelld.settings.data_dir = lib.mkDefault (toString cfg.dataDir);
+    services.tidefelld.settings.network.relay.token_file = lib.mkIf (
+      cfg.relayTokenFile != null
+    ) "/run/credentials/tidefelld.service/relay-token";
 
     users.users.tidefell = {
       isSystemUser = true;
@@ -128,6 +143,9 @@ in
         Group = "tidefell";
         Restart = "on-failure";
         RestartSec = 5;
+        LoadCredential = lib.optional (
+          cfg.relayTokenFile != null
+        ) "relay-token:${toString cfg.relayTokenFile}";
 
         NoNewPrivileges = true;
         PrivateTmp = true;
@@ -141,9 +159,27 @@ in
         ++ lib.optional (cfg.settings ? metadata_dir) (toString cfg.settings.metadata_dir);
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
+        ProtectKernelLogs = true;
         ProtectControlGroups = true;
+        ProtectClock = true;
+        ProtectHostname = true;
+        ProtectProc = "invisible";
+        # No devices and no capabilities: the daemon needs neither. FUSE mounts (`mount` on a
+        # folder) need both, so they are not available under this service.
+        PrivateDevices = true;
+        CapabilityBoundingSet = "";
+        RestrictNamespaces = true;
+        RestrictRealtime = true;
         RestrictSUIDSGID = true;
+        RemoveIPC = true;
         LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        SystemCallArchitectures = "native";
+        SystemCallFilter = [
+          "@system-service"
+          "~@privileged"
+          "~@resources"
+        ];
         RestrictAddressFamilies = [
           "AF_INET"
           "AF_INET6"

@@ -156,11 +156,13 @@ impl Network {
         Ok(match &self.relay {
             Relay::Default => RelayConfig::Default,
             Relay::Disabled => RelayConfig::Disabled,
-            Relay::Custom { urls } => RelayConfig::Custom(
-                urls.iter()
+            Relay::Custom { urls } => RelayConfig::Custom {
+                urls: urls
+                    .iter()
                     .map(|u| parse("relay URL", u))
                     .collect::<Result<_>>()?,
-            ),
+                token: None,
+            },
         })
     }
 

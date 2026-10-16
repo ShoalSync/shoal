@@ -42,9 +42,14 @@ The flake exposes a NixOS module, `nixosModules.tidefelld`.
 - `settings.web.bind` enables the web peer (see the example configuration). Create accounts
   on the host with `sudo -u tidefell tidefelld web account add --data-dir /var/lib/tidefell
   --username <name>`, and put a TLS reverse proxy in front of it.
-- The service runs as the `tidefell` system user with a hardened systemd sandbox. It can
+- `relayTokenFile` is the token for self-hosted relays that admit only holders of it, with
+  `settings.network.relay.mode = "custom"`. It is given to the service as a systemd
+  credential, so the file may be readable by root alone; give a path to a secret (agenix,
+  sops-nix), not a Nix path literal, which would copy it into the store.
+- The service runs as the `tidefell` system user with a hardened systemd sandbox: no
+  capabilities, no devices, a system call filter and no writable executable memory. It can
   write only its data directory and the configured folder paths, so those paths must be
-  writable by `tidefell`.
+  writable by `tidefell`. FUSE mounts (`mount` on a folder) are not available under it.
 
 ## First start and certification
 

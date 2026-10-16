@@ -37,7 +37,7 @@ pub use limits::{Limits, MIN_BYTES_PER_SEC};
 pub use memory::Network;
 pub use node::{
     Connectivity, NetworkReport, Node, NodeConfig, PathKind, PeerHandle, PeerStatus, RelayConfig,
-    RelayState,
+    RelayState, RelayToken,
 };
 pub use pair::{ApproverSession, Paired, PairingEvent, PairingServer};
 pub use traffic::{TrafficCounts, Transfer};

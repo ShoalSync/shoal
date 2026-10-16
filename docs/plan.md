@@ -386,6 +386,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   socket's moment at default permissions; web sign-ins and link passwords that keep failing wait
   longer each time; one uploaded file is bounded by `web.max_upload_bytes` (1 GiB by default),
   and uploads stop before the drive's free-space floor.
+- Phase 5c step 6 (hardening): relay access tokens. `network.relay.token_file` (and the NixOS
+  module's `relayTokenFile`, as a systemd credential) gives the daemon the token that relays
+  with iroh-relay's `access.shared_token` want; infra's relay module takes `accessTokenFile`. The
+  NixOS module drops every capability and device and filters system calls. The Android app has
+  no token setting yet.
 - `v0.19.0` updates iroh to 1.3 and records what the slow emulator backup turned out to be
   (ADR 0039). The Android pin takes up the app's logging through the engine (`AppLog`), so its
   messages are in the log files and diagnostics bundles. The database and the protocol are
