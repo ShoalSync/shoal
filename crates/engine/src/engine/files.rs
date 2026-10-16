@@ -16,6 +16,7 @@ impl Engine {
     pub fn files(&self, folder: FolderId) -> Result<Vec<FileInfo>> {
         let handle = self.inner.folder(&folder)?;
         let state = handle.lock();
+        let vouching = self.inner.vouching.lock().unwrap();
         // Few devices make many files: look each name up once.
         let mut names: std::collections::HashMap<tidefell_proto::DeviceId, String> =
             std::collections::HashMap::new();
@@ -46,8 +47,8 @@ impl Engine {
                             .entry(v.author())
                             .or_insert_with(|| self.device_name(&state, &v.author()))
                             .clone(),
-                        confirmed_copies: state.copies.get(content).map_or(0, |d| d.len()),
-                        only_here: copies::only_here(&state, self.inner.key.id(), v),
+                        confirmed_copies: copies::confirmed(&state, &vouching, content).len(),
+                        only_here: copies::only_here(&state, &vouching, self.inner.key.id(), v),
                         pinned: crate::pins::is_pinned(&state.pins, path),
                     })
                 }
@@ -73,20 +74,15 @@ impl Engine {
                 _ => None,
             })
             .ok_or_else(|| Error::NoSuchFile(path.to_owned()))?;
-        Ok(state
-            .copies
-            .get(content)
-            .map(|devices| {
-                devices
-                    .iter()
-                    .map(|(device, at)| CopyInfo {
-                        device: *device,
-                        name: state.copy_names.get(device).cloned().unwrap_or_default(),
-                        confirmed_ms: *at,
-                    })
-                    .collect()
+        let vouching = self.inner.vouching.lock().unwrap();
+        Ok(copies::confirmed(&state, &vouching, content)
+            .into_iter()
+            .map(|(device, at)| CopyInfo {
+                device,
+                name: state.copy_names.get(&device).cloned().unwrap_or_default(),
+                confirmed_ms: at,
             })
-            .unwrap_or_default())
+            .collect())
     }
 
     /// Where a live file of `folder` is on this device's disk, if its current version is there.

@@ -62,7 +62,9 @@ pub(crate) struct FolderHandle {
     pub(crate) fs_lock: tokio::sync::Mutex<()>,
     /// What the folder's status shows that takes a pass over every entry, and the revision of
     /// the state it was made from: made again only after a change.
-    pub(crate) summary: Mutex<Option<(u64, folders::Summary)>>,
+    /// The folder's summary, with the folder's revision and the certificates' generation it
+    /// was made at: which copies count depends on both.
+    pub(crate) summary: Mutex<Option<((u64, u64), folders::Summary)>>,
     /// True if the folder comes from the configuration file.
     configured: bool,
     scanner: Mutex<Option<AbortHandle>>,

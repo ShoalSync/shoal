@@ -11,15 +11,48 @@ use tracing::{debug, info};
 
 use crate::engine::{FolderHandle, Inner};
 use crate::state::FolderState;
+use crate::vouch::Vouching;
 use crate::Result;
 
 /// Most files checked with one peer per round, so a large backlog cannot monopolise a peer.
 const MAX_CHECKS_PER_ROUND: usize = 256;
 
+/// The devices that confirmed holding `content`, and when, that still count: those whose user,
+/// by the certificate this device holds for them, is a member of the folder now. A removed
+/// member's copies are not counted, nor those of a device whose certificate is not known until
+/// it is met again (Phase 5c step 6).
+pub(crate) fn confirmed(
+    state: &FolderState,
+    vouching: &Vouching,
+    content: &ContentHash,
+) -> Vec<(DeviceId, i64)> {
+    state
+        .copies
+        .get(content)
+        .map(|devices| {
+            devices
+                .iter()
+                .filter(|(device, _)| {
+                    vouching
+                        .user_of(**device)
+                        .is_some_and(|user| state.members.contains(&user))
+                })
+                .map(|(device, at)| (*device, *at))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Content of the current versions and conflict copies of `state` that this device made and
-/// that no full replica has confirmed yet, with their manifests: at most `limit`, the lowest
-/// first. Only those manifests are read: a large folder's would not fit in memory (ADR 0035).
-fn unconfirmed(state: &FolderState, me: DeviceId, limit: usize) -> Vec<Manifest> {
+/// that no full replica that counts has confirmed yet, with their manifests: at most `limit`,
+/// the lowest first. Only those manifests are read: a large folder's would not fit in memory
+/// (ADR 0035).
+fn unconfirmed(
+    state: &FolderState,
+    vouching: &Vouching,
+    me: DeviceId,
+    limit: usize,
+) -> Vec<Manifest> {
     let mut lowest = BTreeSet::new();
     let mut consider = |author: DeviceId, kind: &EntryKind| {
         if author != me {
@@ -28,7 +61,7 @@ fn unconfirmed(state: &FolderState, me: DeviceId, limit: usize) -> Vec<Manifest>
         let EntryKind::File { content, .. } = *kind else {
             return;
         };
-        if state.copies.contains_key(&content) {
+        if !confirmed(state, vouching, &content).is_empty() {
             return;
         }
         if lowest.len() == limit && lowest.last().is_some_and(|last| content > *last) {
@@ -52,11 +85,17 @@ fn unconfirmed(state: &FolderState, me: DeviceId, limit: usize) -> Vec<Manifest>
         .collect()
 }
 
-/// True if this device made `version` and no full replica has confirmed its content.
-pub(crate) fn only_here(state: &FolderState, me: DeviceId, version: Current<'_>) -> bool {
+/// True if this device made `version` and no full replica that counts has confirmed its
+/// content.
+pub(crate) fn only_here(
+    state: &FolderState,
+    vouching: &Vouching,
+    me: DeviceId,
+    version: Current<'_>,
+) -> bool {
     match *version.kind {
         EntryKind::File { content, .. } => {
-            version.author() == me && state.copies.get(&content).is_none_or(|d| d.is_empty())
+            version.author() == me && confirmed(state, vouching, &content).is_empty()
         }
         _ => false,
     }
@@ -77,7 +116,14 @@ pub(crate) async fn confirm(
     id: FolderId,
     handle: &FolderHandle,
 ) -> Result<()> {
-    let pending = unconfirmed(&handle.lock(), inner.key.id(), MAX_CHECKS_PER_ROUND);
+    let (pending, members) = {
+        let state = handle.lock();
+        let vouching = inner.vouching.lock().unwrap();
+        (
+            unconfirmed(&state, &vouching, inner.key.id(), MAX_CHECKS_PER_ROUND),
+            state.members.clone(),
+        )
+    };
     if pending.is_empty() {
         return Ok(());
     }
@@ -88,6 +134,10 @@ pub(crate) async fn confirm(
             continue;
         }
         let device = peer.device();
+        // Only a current member's copy counts.
+        if !members.contains(&peer.certificate().user) {
+            continue;
+        }
         let Ok(endpoint) = EndpointId::from_bytes(device.as_bytes()) else {
             continue;
         };

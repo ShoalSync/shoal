@@ -96,12 +96,14 @@ Another user in a folder's member list, or any device they certify.
 - **Can** certify as many devices as they like, and fill the folder with versions, limited only by
   batch sizes and the rate limits a replica sets.
 - **Cannot** make versions in another device's name, or read folders they are not a member of.
-- **Gap: authors are not vouched for.** ADR 0024 decides that a version is applied only if its
-  author has a certificate from a member user, with certificates fetched over `sync/1`
-  (`CertificateRequest`). This is not implemented yet: a version is checked to be signed by its
-  author, but not that the author belongs to a member. A member could relay versions authored by
-  devices of anyone. Planned in Phase 5c step 6 (hardening), with confirmed copies counted only
-  from current members.
+- **Gap: authors are vouched for, but not yet required to be.** ADR 0024 decides that a version
+  is applied only if its author has a certificate from a member user. From 0.20, replicas fetch
+  and keep authors' certificates over `sync/1` (`CertificateRequest`) and record whether each
+  author is vouched for; versions from authors who are not are still applied, so a member could
+  relay versions authored by devices of anyone. The release after refuses them, once every
+  replica has had a release to serve certificates.
+- **Cannot** make a file count as backed up by holding it on a device of theirs once removed:
+  a confirmed copy (ADR 0022) counts only while the confirming device's user is a member.
 
 ### A removed member
 

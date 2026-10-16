@@ -375,6 +375,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   stopped was taken for the one it replaced, so the move never synced (found by the nightly
   simulation). Inodes are now saved with each file's record, after it, where 0.19 reads past
   them; every file's record is written once more after upgrading.
+- Phase 5c step 6 (hardening): confirmed copies count only from current members. A copy
+  counts while the user of the device that confirmed it, by the certificate this device keeps
+  for it, is a member of the folder: a removed member's copies stop counting, so the files are
+  "only here" again and a partial replica keeps them. A copy confirmed before 0.20 counts once
+  its device has been met again, as its certificate was not kept before.
 - Phase 5c step 5 (supply chain) is done: releases run on a runner of their own with a pinned
   toolchain, only for tags on `main` whose commit passed CI, and every asset is signed keyless
   with Sigstore. Actions were already pinned by commit (ADR 0031).

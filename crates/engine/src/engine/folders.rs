@@ -52,7 +52,12 @@ impl Engine {
             .map(|h| {
                 let state = h.lock();
                 let id = state.config.id;
-                let summary = summary(h, &state, self.inner.key.id());
+                let summary = summary(
+                    h,
+                    &state,
+                    &self.inner.vouching.lock().unwrap(),
+                    self.inner.key.id(),
+                );
                 let activity = h.activity.lock().unwrap();
                 let unavailable = h.unavailable.lock().unwrap().clone();
                 let scan_error = activity
@@ -492,11 +497,13 @@ pub(crate) struct Summary {
 fn summary(
     handle: &super::FolderHandle,
     state: &crate::state::FolderState,
+    vouching: &crate::vouch::Vouching,
     me: DeviceId,
 ) -> Summary {
     let mut cached = handle.summary.lock().unwrap();
-    if let Some((revision, summary)) = *cached {
-        if revision == state.revision() {
+    let made_at = (state.revision(), vouching.generation());
+    if let Some((at, summary)) = *cached {
+        if at == made_at {
             return summary;
         }
     }
@@ -510,7 +517,7 @@ fn summary(
         recycle_bin: recycle_summary(state),
     };
     for v in state.meta.entries() {
-        if copies::only_here(state, me, v) {
+        if copies::only_here(state, vouching, me, v) {
             summary.only_here += 1;
         }
         if let EntryKind::File { size, .. } = v.kind {
@@ -523,7 +530,7 @@ fn summary(
             summary.conflicts += 1;
         }
     }
-    *cached = Some((state.revision(), summary));
+    *cached = Some((made_at, summary));
     summary
 }
 

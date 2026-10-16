@@ -23,13 +23,15 @@ struct Candidate {
     authored_here: bool,
 }
 
-/// True if a full replica has confirmed holding `content` (ADR 0022).
-fn has_confirmed_copy(handle: &FolderHandle, content: &tidefell_proto::ContentHash) -> bool {
-    handle
-        .lock()
-        .copies
-        .get(content)
-        .is_some_and(|devices| !devices.is_empty())
+/// True if a full replica that counts has confirmed holding `content` (ADR 0022).
+fn has_confirmed_copy(
+    inner: &Inner,
+    handle: &FolderHandle,
+    content: &tidefell_proto::ContentHash,
+) -> bool {
+    let state = handle.lock();
+    let vouching = inner.vouching.lock().unwrap();
+    !crate::copies::confirmed(&state, &vouching, content).is_empty()
 }
 
 /// Evicts least recently used files of partial folder `id` until its materialised files fit
@@ -86,7 +88,7 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
         if usage <= budget {
             break;
         }
-        if candidate.authored_here && !has_confirmed_copy(handle, &candidate.content) {
+        if candidate.authored_here && !has_confirmed_copy(inner, handle, &candidate.content) {
             debug!(folder = %id, path = %candidate.path, "keeping: no full replica holds it yet");
             continue;
         }

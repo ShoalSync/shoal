@@ -36,6 +36,11 @@ impl Device {
     }
 
     async fn start(&self) -> Engine {
+        self.start_with(&[]).await
+    }
+
+    /// Starts with `others` as members too.
+    async fn start_with(&self, others: &[&UserKey]) -> Engine {
         let config = EngineConfig {
             data_dir: self.dir.join("data"),
             metadata_dir: None,
@@ -50,7 +55,9 @@ impl Device {
                 id: FOLDER,
                 path: self.root(),
                 mode: self.mode,
-                members: vec![self.user.id()],
+                members: std::iter::once(self.user.id())
+                    .chain(others.iter().map(|u| u.id()))
+                    .collect(),
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
@@ -491,4 +498,45 @@ async fn a_pinned_directory_stays_over_the_budget() {
     let engine = partial.start().await;
     assert_eq!(engine.pins(FOLDER).unwrap(), ["keep"]);
     engine.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_removed_members_copies_no_longer_count() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (alice, bob) = (UserKey::from_seed([3; 32]), UserKey::from_seed([4; 32]));
+    let phone = Device::new(tmp.path(), "phone", 40, &alice, ReplicaMode::Full);
+    phone.write("one.txt", b"made on the phone");
+    let engine_phone = phone.start_with(&[&bob]).await;
+    engine_phone.scan(FOLDER).await.unwrap();
+
+    // Bob's NAS keeps the folder too, and confirms holding the phone's file.
+    let nas = Device::new(tmp.path(), "nas", 41, &bob, ReplicaMode::Full);
+    let engine_nas = nas.start_with(&[&alice]).await;
+    engine_nas.connect(engine_phone.addr()).await.unwrap();
+    eventually_within(
+        "the NAS's copy is confirmed",
+        Duration::from_secs(30),
+        || engine_phone.files(FOLDER).unwrap()[0].confirmed_copies == 1,
+    )
+    .await;
+    assert_eq!(engine_phone.folders()[0].only_here, 0);
+    engine_nas.shutdown().await;
+    engine_phone.shutdown().await;
+
+    // Once bob is no longer a member, his NAS's copy is not counted: the file is only here
+    // again.
+    let engine_phone = phone.start().await;
+    let file = &engine_phone.files(FOLDER).unwrap()[0];
+    assert_eq!(file.confirmed_copies, 0);
+    assert!(file.only_here);
+    assert!(engine_phone.copies(FOLDER, "one.txt").unwrap().is_empty());
+    assert_eq!(engine_phone.folders()[0].only_here, 1);
+
+    engine_phone.shutdown().await;
+
+    // Bob back: it counts again, with nothing asked of the NAS, which is gone, as the phone
+    // kept its certificate.
+    let engine_phone = phone.start_with(&[&bob]).await;
+    assert_eq!(engine_phone.files(FOLDER).unwrap()[0].confirmed_copies, 1);
+    engine_phone.shutdown().await;
 }

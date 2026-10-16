@@ -17,6 +17,8 @@ pub(crate) struct Vouching {
     pending: BTreeMap<FolderId, BTreeSet<DeviceId>>,
     /// Authors noted as not vouched for, once each, so the log says so once.
     noted: BTreeSet<(FolderId, DeviceId)>,
+    /// Counts the certificates learnt, so what was worked out from them can tell it is stale.
+    generation: u64,
 }
 
 /// Why an author is not vouched for.
@@ -55,7 +57,13 @@ impl Vouching {
             authors.remove(&body.device);
         }
         self.certificates.insert(body.device, certificate);
+        self.generation += 1;
         true
+    }
+
+    /// Changes each time a certificate is learnt.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub(crate) fn certificate(&self, device: DeviceId) -> Option<&Signed<DeviceCertificate>> {
