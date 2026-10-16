@@ -9,7 +9,8 @@ Tidefell ships two programs:
 ## Release binaries
 
 Each [GitHub release](https://github.com/tidefell/tidefell/releases) has archives for Linux
-(x86-64 and ARM64), each with a `.sha256` file. On macOS, build from source (below).
+(x86-64 and ARM64), each with a `.sha256` file and, from 0.20, a `.sigstore.json` signature. On
+macOS, build from source (below).
 
 ```sh
 version=X.Y.Z
@@ -20,6 +21,23 @@ sha256sum -c tidefell-$version-$target.tar.gz.sha256
 tar -xzf tidefell-$version-$target.tar.gz
 sudo install tidefell-$version-$target/tidefell tidefell-$version-$target/tidefelld /usr/local/bin/
 ```
+
+### Checking who built it
+
+Every asset is signed when it is released, without a key to steal: [Sigstore](https://sigstore.dev)
+issues the release workflow a short-lived certificate naming this repository, the workflow and
+the tag, and records the signature in its public log. [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+checks that an asset was signed by that workflow for its tag:
+
+```sh
+curl -LO https://github.com/tidefell/tidefell/releases/download/v$version/tidefell-$version-$target.tar.gz.sigstore.json
+cosign verify-blob tidefell-$version-$target.tar.gz \
+  --bundle tidefell-$version-$target.tar.gz.sigstore.json \
+  --certificate-identity https://github.com/Tidefell/tidefell/.github/workflows/release.yml@refs/tags/v$version \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A checksum shows a download arrived whole; this shows it is what the release built.
 
 ## Nix
 

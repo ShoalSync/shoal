@@ -173,11 +173,20 @@ Anyone with a share link's URL.
 Dependencies, the build machines and the release process.
 
 - **Protected by** locked dependencies, `cargo-deny`, pinned and checked workflow actions,
-  Renovate's waiting period, and SHA-256 files beside each release asset.
-- **Gap: releases are not signed.** A checksum beside an asset shows it arrived whole, not who made
-  it. Releases are built on self-hosted runners shared by the Tidefell repositories. Phase 5c
-  step 5 plans releases on a dedicated runner with no pull-request jobs, assets signed with build
-  provenance, and releases only for tags on `main` that passed CI.
+  Renovate's waiting period, a release toolchain pinned by version, and SHA-256 files beside
+  each release asset.
+- **Releases are made only from tags on `main` whose commit passed CI,** on a runner that runs
+  nothing else, as its own user with its own caches (`docs/project/release-runner.md`): a pull
+  request's job cannot poison what a release builds from.
+- **Every asset is signed, keyless.** Sigstore issues the release workflow a certificate naming
+  this repository, the workflow file and the tag, and the signature goes in its public log. A
+  signature cannot be made by anything but that workflow on a tag, and a checksum beside an
+  asset shows it arrived whole while the signature shows the release built it
+  (`docs/guide/install.md`). The log is public: it reveals that the repository exists and the
+  assets' hashes, which is accepted.
+- **Gap: the release runner shares a machine with the pull-request runners,** whose user can
+  become root. A separate machine is the boundary that closes this; until then it is a wall
+  against accidents and cache poisoning, not against a hostile pull request.
 
 ## Encrypted folders
 

@@ -1,0 +1,4 @@
+# Labels of the self-hosted runners (docs/project/release-runner.md), for actionlint.
+self-hosted-runner:
+  labels:
+    - release

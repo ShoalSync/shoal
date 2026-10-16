@@ -36,6 +36,7 @@
 - [Implementation plan](plan.md)
 - [Repository map](repos.md)
 - [Contributing](project/contributing.md)
+- [The release runner](project/release-runner.md)
 - [Architecture decisions](adr/README.md)
   - [0001: CONVENTIONS.md in every repository](adr/0001-conventions-file.md)
   - [0002: `org.tidefell` namespace](adr/0002-namespace.md)
