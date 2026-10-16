@@ -182,7 +182,7 @@ fn init(
     user_key: Option<PathBuf>,
     certificate: Option<PathBuf>,
 ) -> Result<(), String> {
-    fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let device =
         DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     let cert = match certificate {
@@ -238,7 +238,7 @@ fn load_identity(
 }
 
 fn print_id(data_dir: &Path) -> Result<(), String> {
-    fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     println!("device: {}", key.id());
     match load_identity(data_dir) {
@@ -266,7 +266,7 @@ async fn pair(
             data_dir.display()
         ));
     }
-    fs::create_dir_all(data_dir).map_err(|e| format!("{}: {e}", data_dir.display()))?;
+    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     let relay = if no_relay {
         tidefell_engine::RelayConfig::Disabled
@@ -465,6 +465,7 @@ async fn run(path: &Path) -> Result<(), String> {
             let settings = tidefell_web::WebConfig {
                 secure_cookies: web.secure_cookies,
                 share_links: web.share_links,
+                max_upload_bytes: (web.max_upload_bytes > 0).then_some(web.max_upload_bytes),
             };
             let (engine, data_dir) = (engine.clone(), config.data_dir.clone());
             tokio::spawn(

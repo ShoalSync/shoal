@@ -378,6 +378,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   and 7, error code 4) is implemented. Replicas keep the certificates of devices they meet and
   of authors they fetch, in the runtime settings (format 6), serve them to members, and record
   whether each author is vouched for, without refusing anything yet (ADR 0024's rollout).
+- Phase 5c step 6 (hardening): the data directory is owner-only, which also closes the control
+  socket's moment at default permissions; web sign-ins and link passwords that keep failing wait
+  longer each time; one uploaded file is bounded by `web.max_upload_bytes` (1 GiB by default),
+  and uploads stop before the drive's free-space floor.
 - `v0.19.0` updates iroh to 1.3 and records what the slow emulator backup turned out to be
   (ADR 0039). The Android pin takes up the app's logging through the engine (`AppLog`), so its
   messages are in the log files and diagnostics bundles. The database and the protocol are

@@ -147,7 +147,7 @@ pub fn parse_code(text: &str) -> Result<PairingCode> {
 /// Records the approver of a pairing as a peer to keep connected, for the engine that starts in
 /// `data_dir` next.
 pub fn remember_approver(data_dir: &Path, paired: &Paired) -> Result<()> {
-    std::fs::create_dir_all(data_dir).map_err(crate::io_err(data_dir))?;
+    crate::create_data_dir(data_dir)?;
     let peer = approver_peer(&paired.approver_addr, paired.approver.device);
     let mut runtime = Runtime::load(data_dir)?;
     runtime.add_peer(peer);

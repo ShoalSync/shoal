@@ -42,6 +42,24 @@ mod content;
 mod copies;
 mod db;
 pub mod device;
+
+/// Creates the data directory, or the metadata directory, if it is not there, readable by its
+/// owner alone, and makes an existing one so: keys, the control socket, the databases and the
+/// logs live in them, and other users of the machine have no business with any of them.
+pub fn create_data_dir(path: &std::path::Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(path)
+            .map_err(io_err(path))?;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(io_err(path))
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(path).map_err(io_err(path))
+}
 pub mod diagnostics;
 mod engine;
 mod evict;

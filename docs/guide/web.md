@@ -12,10 +12,17 @@ Add a `[web]` section to the daemon's configuration:
 [web]
 bind = "127.0.0.1:8080"
 secure_cookies = true
+# Most bytes one uploaded file may have, for signed-in uploads and for share links that set
+# no smaller limit; 1 GiB if left out, 0 for no limit.
+max_upload_bytes = 1073741824
 ```
 
 Serve it behind a TLS reverse proxy. Session cookies are marked `Secure` unless
 `secure_cookies = false`, which is only meant for local testing over plain HTTP.
+
+A sign-in that keeps failing waits longer each time, doubling from a second to fifteen
+minutes, for that account; so does a share link's password, for that link. Uploads stop before
+they would take the drive under its free-space floor (`min_free_space`).
 
 ## Accounts
 

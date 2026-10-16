@@ -19,6 +19,7 @@ mod sessions;
 mod shares;
 mod sharing;
 mod status;
+mod throttle;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -39,6 +40,9 @@ pub struct WebConfig {
     pub secure_cookies: bool,
     /// Let signed-in accounts create share links (ADR 0019). Off by default.
     pub share_links: bool,
+    /// Most bytes one uploaded file may have, for signed-in uploads and for links that set no
+    /// smaller limit of their own; none for no limit.
+    pub max_upload_bytes: Option<u64>,
 }
 
 pub(crate) struct AppState {
@@ -48,6 +52,8 @@ pub(crate) struct AppState {
     pub(crate) shares: shares::ShareStore,
     /// Held by an upload through a link from choosing a free name to writing the file.
     pub(crate) link_uploads: tokio::sync::Mutex<()>,
+    /// Sign-ins and link passwords that keep failing wait longer each time.
+    pub(crate) throttle: throttle::Throttle,
     pub(crate) config: WebConfig,
 }
 
@@ -80,6 +86,7 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         sessions: sessions::Sessions::default(),
         shares: shares::ShareStore::new(data_dir),
         link_uploads: tokio::sync::Mutex::new(()),
+        throttle: throttle::Throttle::default(),
         config,
     });
     Router::new()

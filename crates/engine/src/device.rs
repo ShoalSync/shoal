@@ -35,7 +35,7 @@ fn identity_err(path: &Path) -> impl FnOnce(tidefell_identity::Error) -> Error +
 
 /// Loads this device's key, creating it (and the data directory) on first use.
 pub fn device_key(data_dir: &Path) -> Result<DeviceKey> {
-    std::fs::create_dir_all(data_dir).map_err(crate::io_err(data_dir))?;
+    crate::create_data_dir(data_dir)?;
     let path = device_key_path(data_dir);
     DeviceKey::load_or_generate(&path).map_err(identity_err(&path))
 }

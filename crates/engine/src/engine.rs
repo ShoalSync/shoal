@@ -567,7 +567,8 @@ fn metadata_dir(config: &EngineConfig, runtime: &Runtime) -> Result<PathBuf> {
             }
         }
     }
-    std::fs::create_dir_all(&dir).map_err(crate::io_err(&dir))?;
+    // The databases are as private as the data directory, wherever they are kept.
+    crate::create_data_dir(&dir)?;
     if previous != dir || !marker.exists() {
         std::fs::write(&marker, dir.to_string_lossy().as_bytes())
             .map_err(crate::io_err(&marker))?;
@@ -610,7 +611,7 @@ impl Engine {
             .verify_certificate()
             .map_err(|e| Error::Invalid(format!("device certificate: {e}")))?
             .user;
-        std::fs::create_dir_all(&config.data_dir).map_err(crate::io_err(&config.data_dir))?;
+        crate::create_data_dir(&config.data_dir)?;
         let store = BlockStore::open(config.data_dir.join("blocks"))?;
         let runtime = Runtime::load(&config.data_dir)?;
         let metadata_dir = metadata_dir(&config, &runtime)?;
@@ -980,6 +981,15 @@ impl Engine {
 
     /// Keeps `bytes` free on every drive the engine writes to from now on, or 2% of each up to
     /// 1 GiB if `None` (ADR 0037). Downloads to a drive below it wait.
+    /// Whether `bytes` more can go on the drive holding `path` without crossing the free-space
+    /// floor (ADR 0037), with why not if not.
+    pub fn has_room(&self, path: &std::path::Path, bytes: u64) -> std::result::Result<(), String> {
+        self.inner
+            .floors
+            .room(path, bytes)
+            .map_err(|short| short.to_string())
+    }
+
     pub fn set_min_free_space(&self, bytes: Option<u64>) {
         self.inner.floors.set(bytes);
         // Writes that waited are tried again.

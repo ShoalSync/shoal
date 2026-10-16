@@ -246,6 +246,7 @@ async fn web_peer_end_to_end() {
                 WebConfig {
                     secure_cookies: false,
                     share_links: false,
+                    max_upload_bytes: None,
                 },
             )
             .await
@@ -268,6 +269,32 @@ async fn web_peer_end_to_end() {
     assert_eq!(page.status, StatusCode::UNAUTHORIZED);
     assert!(page.body.contains("Wrong username or password"));
     assert!(browser.cookie.is_none());
+
+    // Guessing is slowed down: after three failures each one waits longer, and a try during
+    // the wait is refused outright, for that name alone.
+    for _ in 0..3 {
+        browser.login("mallory", "guess").await;
+    }
+    let page = browser.login("mallory", "guess").await;
+    assert_eq!(page.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(page.headers["retry-after"], "1");
+    let page = browser.login("mallory", "guess").await;
+    assert_eq!(page.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(page.body.contains("Try again in 1 second"), "{}", page.body);
+    // Guesses sent at once count before any is answered: at most the free ones and one more
+    // are tried.
+    let guesses: Vec<_> = (0..10)
+        .map(|_| tokio::spawn(async move { Browser::new(addr).login("eve", "guess").await.status }))
+        .collect();
+    let mut statuses = Vec::new();
+    for guess in guesses {
+        statuses.push(guess.await.unwrap());
+    }
+    let tried = statuses
+        .iter()
+        .filter(|s| **s == StatusCode::UNAUTHORIZED)
+        .count();
+    assert!(tried <= 4, "{statuses:?}");
 
     // Sign in.
     let page = browser.login("alice", "alice password 1").await;
@@ -474,6 +501,7 @@ async fn uploads_and_share_links() {
     let config = WebConfig {
         secure_cookies: false,
         share_links: true,
+        max_upload_bytes: None,
     };
     let (engine, root, addr) = serve_folder(
         tmp.path(),
@@ -714,6 +742,7 @@ async fn upload_only_links() {
     let config = WebConfig {
         secure_cookies: false,
         share_links: true,
+        max_upload_bytes: None,
     };
     let (engine, root, addr) = serve_folder(
         tmp.path(),
@@ -891,6 +920,7 @@ async fn share_links_are_off_by_default() {
         WebConfig {
             secure_cookies: false,
             share_links: false,
+            max_upload_bytes: None,
         },
     )
     .await;
@@ -970,6 +1000,7 @@ async fn deciding_a_conflict() {
     let config = WebConfig {
         secure_cookies: false,
         share_links: false,
+        max_upload_bytes: None,
     };
     let (engine, root, addr) = serve_folder(tmp.path(), &[("doc.txt", b"original")], config).await;
     let laptop_root = tmp.path().join("laptop");
@@ -1068,6 +1099,7 @@ async fn status_and_problems() {
     let config = WebConfig {
         secure_cookies: false,
         share_links: false,
+        max_upload_bytes: None,
     };
     let (engine, root, addr) = serve_folder(tmp.path(), &[("readable.txt", b"fine")], config).await;
     AccountStore::new(&tmp.path().join("data"))

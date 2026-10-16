@@ -125,6 +125,14 @@ pub struct Web {
     /// have no account (ADR 0019).
     #[serde(default)]
     pub share_links: bool,
+    /// Most bytes one uploaded file may have: for signed-in uploads, and for share links that
+    /// set no smaller limit of their own. 1 GiB if left out; 0 for no limit.
+    #[serde(default = "default_max_upload_bytes")]
+    pub max_upload_bytes: u64,
+}
+
+fn default_max_upload_bytes() -> u64 {
+    1 << 30
 }
 
 /// Network settings.

@@ -21,6 +21,7 @@ use crate::handlers::{
 use crate::pages;
 use crate::shares::{NewShare, Share, UNLOCK_TTL};
 use crate::AppState;
+use tidefell_engine::Engine;
 
 type AppStateRef = State<Arc<AppState>>;
 
@@ -99,17 +100,29 @@ fn random_suffix() -> String {
 enum StageError {
     /// It went over the byte limit.
     TooLarge,
+    /// The drive would go under its free-space floor (ADR 0037).
+    NoSpace(String),
     Failed(String),
 }
 
 /// Streams one uploaded file to a staging file in the folder's reserved directory, stopping
 /// once it goes over `limit` bytes. Returns the staging file and its size.
 async fn stage_upload(
+    engine: &Engine,
     folder: &FolderInfo,
     field: &mut axum::extract::multipart::Field<'_>,
     limit: Option<u64>,
 ) -> Result<(PathBuf, u64), StageError> {
     let failed = |e: &dyn std::fmt::Display| StageError::Failed(e.to_string());
+    // Room is checked before the first byte and again every so many, so an upload never fills
+    // the drive past its floor.
+    const ROOM_EVERY: u64 = 16 << 20;
+    let room = |bytes: u64| {
+        engine
+            .has_room(&folder.path, bytes)
+            .map_err(StageError::NoSpace)
+    };
+    room(ROOM_EVERY)?;
     let staging_dir = folder.path.join(".tidefell").join("tmp");
     tokio::fs::create_dir_all(&staging_dir)
         .await
@@ -120,10 +133,15 @@ async fn stage_upload(
             .await
             .map_err(|e| failed(&e))?;
         let mut size = 0u64;
+        let mut checked_at = 0u64;
         while let Some(chunk) = field.chunk().await.map_err(|e| failed(&e))? {
             size += chunk.len() as u64;
             if limit.is_some_and(|limit| size > limit) {
                 return Err(StageError::TooLarge);
+            }
+            if size - checked_at >= ROOM_EVERY {
+                room(ROOM_EVERY)?;
+                checked_at = size;
             }
             out.write_all(&chunk).await.map_err(|e| failed(&e))?;
         }
@@ -166,10 +184,14 @@ async fn store_upload(
     path: &str,
     field: &mut axum::extract::multipart::Field<'_>,
 ) -> Result<(), String> {
-    let (staging, _) = stage_upload(folder, field, None)
+    let (staging, _) = stage_upload(&state.engine, folder, field, state.config.max_upload_bytes)
         .await
         .map_err(|e| match e {
-            StageError::TooLarge => "too large".to_string(),
+            StageError::TooLarge => format!(
+                "larger than the {} this web peer accepts",
+                size(state.config.max_upload_bytes.unwrap_or(0))
+            ),
+            StageError::NoSpace(why) => format!("not enough space: {why}"),
             StageError::Failed(e) => e,
         })?;
     write_staged(state, folder, path, &staging).await
@@ -717,21 +739,38 @@ pub(crate) async fn unlock_link(
         Ok(found) => found,
         Err(response) => return *response,
     };
+    let throttled = format!("link:{}", share.id);
+    let wait = match state.throttle.begin(&throttled) {
+        Ok(wait) => wait,
+        Err(wait) => {
+            return crate::handlers::too_many_attempts(
+                wait,
+                pages::LinkPassword {
+                    token,
+                    error: Some(crate::handlers::try_again_in(wait)),
+                },
+            );
+        }
+    };
     let checked = {
         let share = share.clone();
         tokio::task::spawn_blocking(move || share.password_ok(&form.password)).await
     };
     if !matches!(checked, Ok(true)) {
         tracing::info!(link = %share.id, "wrong share link password");
-        // Slow down guessing.
+        // Slow down guessing: a fixed wait, and a growing one once it keeps failing.
         tokio::time::sleep(Duration::from_millis(500)).await;
         let mut response = render(pages::LinkPassword {
             token,
             error: Some("Wrong password.".into()),
         });
         *response.status_mut() = StatusCode::UNAUTHORIZED;
+        if !wait.is_zero() {
+            crate::handlers::retry_after(&mut response, wait);
+        }
         return response;
     }
+    state.throttle.cleared(&throttled);
     let cookie = state.shares.unlock(&share.id);
     let secure = if state.config.secure_cookies {
         "; Secure"
@@ -857,21 +896,32 @@ pub(crate) async fn link_upload(
         if current.exhausted() {
             return full();
         }
-        let (staging, bytes) =
-            match stage_upload(&folder, &mut field, current.remaining_bytes()).await {
-                Ok(staged) => staged,
-                Err(StageError::TooLarge) => {
-                    tracing::info!(link = %share.id, "share link upload over the size limit");
-                    return link_gone(
-                        StatusCode::PAYLOAD_TOO_LARGE,
-                        "That is more than this link accepts.",
-                    );
-                }
-                Err(StageError::Failed(e)) => {
-                    tracing::warn!(link = %share.id, error = %e, "share link upload failed");
-                    return failed(StatusCode::INTERNAL_SERVER_ERROR, "Saving the file failed.");
-                }
-            };
+        // The link's own limit, if it has one, within the web peer's.
+        let limit = match (current.remaining_bytes(), state.config.max_upload_bytes) {
+            (Some(link), Some(peer)) => Some(link.min(peer)),
+            (link, peer) => link.or(peer),
+        };
+        let (staging, bytes) = match stage_upload(&state.engine, &folder, &mut field, limit).await {
+            Ok(staged) => staged,
+            Err(StageError::NoSpace(why)) => {
+                tracing::warn!(link = %share.id, %why, "share link upload refused: no space");
+                return failed(
+                    StatusCode::INSUFFICIENT_STORAGE,
+                    "There is no space for it.",
+                );
+            }
+            Err(StageError::TooLarge) => {
+                tracing::info!(link = %share.id, "share link upload over the size limit");
+                return link_gone(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "That is more than this link accepts.",
+                );
+            }
+            Err(StageError::Failed(e)) => {
+                tracing::warn!(link = %share.id, error = %e, "share link upload failed");
+                return failed(StatusCode::INTERNAL_SERVER_ERROR, "Saving the file failed.");
+            }
+        };
         // One upload through a link at a time from choosing a name to writing, so two uploads
         // of the same name do not pick the same free name.
         let _guard = state.link_uploads.lock().await;

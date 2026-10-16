@@ -146,27 +146,25 @@ Anyone with a share link's URL.
   expires, is revoked, reaches its download limit or its creator loses access.
 - **Cannot** see anything outside what the link names, or guess another link: tokens are 128-bit
   random.
-- **Gap: link passwords are guessed at the speed of a 500 ms wait.** Each wrong password waits
-  half a second; there is no lockout or limit per address. The same holds for web logins. A
-  strong password, or a link without one that expires soon, is the protection today. Login
-  throttling is planned in Phase 5c step 6.
-- **Gap: uploads have no size limit by default.** A signed-in upload has none, and an upload link
-  only if `max_upload_bytes` is set; an upload link should set it. Web upload limits are planned
-  in Phase 5c step 6.
+- **Guessing is slowed down.** Each wrong link password or sign-in waits half a second, and after
+  three failures the wait doubles each time, up to fifteen minutes, for that link or account.
+  Addresses are not counted, since a reverse proxy would hide them, so a stranger who knows a
+  username can keep its owner waiting up to fifteen minutes at a time, and no longer.
+- **Uploads are bounded.** One uploaded file may have at most `max_upload_bytes` (1 GiB unless
+  configured), an upload link can set less, and an upload stops before the drive would go under
+  its free-space floor.
 
 ### Other users on the same machine
 
 - **Cannot** read the device or user key (0600) or use the control socket (0600, owner only).
   The NixOS module runs `tidefelld` as its own user with a data directory only it can enter
   (0700), and with systemd's sandboxing.
-- **Can**, outside the NixOS module, read what the user's permissions allow: the data directory is
-  created with the user's default permissions, which usually lets others list it and read its
-  logs and metadata database. Synced files are written readable by everyone (0644, or 0755 for
+- **Cannot** enter the data directory, or a separate `metadata_dir`, at all: each is created
+  readable by its owner alone (0700), and an existing one is made so when the engine starts, which keeps the logs, the databases and
+  the control socket, from the moment it is bound, to the owner.
+- **Can** read synced files, which are written readable by everyone (0644, or 0755 for
   executables), as most sync tools do; a folder kept private needs a directory others cannot
   enter.
-- **Gap: the socket is made owner-only just after it is bound,** leaving a moment where it has the
-  default permissions. An owner-only data directory, which closes both, is planned in Phase 5c
-  step 6.
 
 ### The supply chain
 

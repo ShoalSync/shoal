@@ -129,6 +129,29 @@ pub(crate) fn folder_name(folder: &FolderInfo) -> String {
 
 // ---- Sign in and out ----
 
+/// "Try again in 40 seconds."
+pub(crate) fn try_again_in(wait: Duration) -> String {
+    let seconds = wait.as_secs().max(1);
+    format!(
+        "Too many attempts. Try again in {seconds} second{}.",
+        if seconds == 1 { "" } else { "s" }
+    )
+}
+
+pub(crate) fn retry_after(response: &mut Response, wait: Duration) {
+    if let Ok(value) = HeaderValue::from_str(&wait.as_secs().max(1).to_string()) {
+        response.headers_mut().insert(header::RETRY_AFTER, value);
+    }
+}
+
+/// A page refused because its key must wait: 429, saying how long.
+pub(crate) fn too_many_attempts(wait: Duration, page: impl askama::Template) -> Response {
+    let mut response = render(page);
+    *response.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+    retry_after(&mut response, wait);
+    response
+}
+
 pub(crate) async fn login_page(State(state): AppStateRef, headers: HeaderMap) -> Response {
     if session(&state, &headers).is_some() {
         return Redirect::to("/").into_response();
@@ -143,6 +166,18 @@ pub(crate) struct LoginForm {
 }
 
 pub(crate) async fn login(State(state): AppStateRef, Form(form): Form<LoginForm>) -> Response {
+    let throttled = format!("login:{}", form.username.trim().to_lowercase());
+    let wait = match state.throttle.begin(&throttled) {
+        Ok(wait) => wait,
+        Err(wait) => {
+            return too_many_attempts(
+                wait,
+                pages::Login {
+                    error: Some(try_again_in(wait)),
+                },
+            );
+        }
+    };
     let verified = {
         let state = state.clone();
         tokio::task::spawn_blocking(move || state.accounts.verify(&form.username, &form.password))
@@ -151,12 +186,15 @@ pub(crate) async fn login(State(state): AppStateRef, Form(form): Form<LoginForm>
     let account = match verified {
         Ok(Ok(Some(account))) => account,
         Ok(Ok(None)) => {
-            // Slow down guessing.
+            // Slow down guessing: a fixed wait, and a growing one once it keeps failing.
             tokio::time::sleep(Duration::from_millis(500)).await;
             let mut response = render(pages::Login {
                 error: Some("Wrong username or password.".into()),
             });
             *response.status_mut() = StatusCode::UNAUTHORIZED;
+            if !wait.is_zero() {
+                retry_after(&mut response, wait);
+            }
             return response;
         }
         Ok(Err(e)) => {
@@ -176,6 +214,7 @@ pub(crate) async fn login(State(state): AppStateRef, Form(form): Form<LoginForm>
             "This account is misconfigured.",
         );
     };
+    state.throttle.cleared(&throttled);
     let token = state.sessions.create(account.username, user, account.admin);
     let secure = if state.config.secure_cookies {
         "; Secure"
