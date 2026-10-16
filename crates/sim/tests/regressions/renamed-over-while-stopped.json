@@ -1,0 +1,8 @@
+[
+  { "Write": { "device": 2, "path": 49, "size": "Tiny", "scan": false } },
+  { "Write": { "device": 1, "path": 244, "size": "Tiny", "scan": true } },
+  { "Wait": { "ms": 218 } },
+  { "Write": { "device": 0, "path": 175, "size": "Tiny", "scan": true } },
+  { "Rename": { "device": 0, "file": 241, "to": 229 } },
+  { "Restart": { "device": 0 } }
+]

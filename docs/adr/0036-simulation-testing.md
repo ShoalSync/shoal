@@ -74,7 +74,9 @@ written down.
     the next scan: such a chunk is now fetched instead.
   - A file moved over another of the same size and modification time, to the millisecond, as
     files the engine writes can be, was taken for the one it replaced: inodes are compared too,
-    kept while the engine runs.
+    kept while the engine runs. Moved over while the engine was stopped, it was still taken for
+    it, so the move never synced: inodes are now saved with each file's record, after it, where
+    0.19 reads past them.
   - The old path of a file the engine moved aside was tidied after another entry's file had
     taken it, losing that file's record.
   - A version that lost a conflict, kept only on the device that made it, was not kept through

@@ -371,6 +371,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   benchmark. Battery figures on the emulator: idle with the service running 7.4 s of CPU an
   hour, 60 s of CPU to receive 1 GiB and 87 s to back up 1 GiB, with no wake-ups while idle.
   The database and the protocol are unchanged.
+- A file moved over another of the same size and modification time while the engine was
+  stopped was taken for the one it replaced, so the move never synced (found by the nightly
+  simulation). Inodes are now saved with each file's record, after it, where 0.19 reads past
+  them; every file's record is written once more after upgrading.
 - Phase 5c step 5 (supply chain) is done: releases run on a runner of their own with a pinned
   toolchain, only for tags on `main` whose commit passed CI, and every asset is signed keyless
   with Sigstore. Actions were already pinned by commit (ADR 0031).

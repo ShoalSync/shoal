@@ -82,7 +82,8 @@ struct Compact {
     mtime_ns: i64,
     base: Base,
     executable: bool,
-    /// Known only while the engine runs: not saved (see [`crate::scan::DiskStat::inode`]).
+    /// 0 if not known (see [`crate::scan::DiskStat::inode`]). Saved after the record, so a
+    /// file replaced while the engine was stopped is still told apart.
     inode: u64,
 }
 
@@ -109,6 +110,16 @@ impl Local<'_> {
     /// True if the base is unknown, as for files recorded before it was kept.
     pub(crate) fn base_is_empty(self) -> bool {
         self.base.is_empty()
+    }
+
+    /// The record as saved: the [`LocalFile`], then the inode if known. Readers that know
+    /// nothing of the inode, such as 0.19, read the record and leave the rest.
+    fn encode(self) -> Vec<u8> {
+        let mut bytes = encode(&self.to_file());
+        if self.inode != 0 {
+            bytes.extend(encode(&self.inode));
+        }
+        bytes
     }
 
     /// The record in full.
@@ -309,7 +320,7 @@ impl LocalFiles {
         std::mem::take(&mut self.changed)
             .into_iter()
             .map(|path| {
-                let file = self.get(&path).map(|f| encode(&f.to_file()));
+                let file = self.get(&path).map(Local::encode);
                 (encode(&&*path), file)
             })
             .collect()
@@ -318,7 +329,7 @@ impl LocalFiles {
     /// Every file, encoded for the database.
     pub(crate) fn all(&self) -> Vec<crate::tracked::Changed> {
         self.iter()
-            .map(|(p, f)| (encode(&&**p), Some(encode(&f.to_file()))))
+            .map(|(p, f)| (encode(&&**p), Some(f.encode())))
             .collect()
     }
 
@@ -331,9 +342,13 @@ impl LocalFiles {
         let mut files = LocalFiles::default();
         files.reserve(records.len());
         for (path, file) in records {
-            let file: LocalFile = postcard::from_bytes(&file)?;
+            let (file, rest): (LocalFile, _) = postcard::take_from_bytes(&file)?;
+            // Records saved before inodes were have none: 0, not known.
+            let inode = postcard::from_bytes(rest).unwrap_or(0);
             let shared = shared(&file.entry);
-            files.insert_shared(postcard::from_bytes(&path)?, file, shared);
+            let path: String = postcard::from_bytes(&path)?;
+            files.insert_shared(path.clone(), file, shared);
+            files.set_inode(&path, inode);
         }
         files.changed.clear();
         Ok(files)
@@ -355,10 +370,15 @@ impl LocalFiles {
     }
 
     /// Notes the inode of the file recorded at `path`, if it is recorded.
+    /// Saved with the record when it changes, so each file is written again once, not at
+    /// every scan.
     pub(crate) fn set_inode(&mut self, path: &str, inode: u64) {
         if let Some(slot) = self.find(path) {
-            if let Some(Some((_, file))) = self.slots.get_mut(slot as usize) {
-                file.inode = inode;
+            if let Some(Some((path, file))) = self.slots.get_mut(slot as usize) {
+                if file.inode != inode {
+                    file.inode = inode;
+                    self.changed.insert(path.clone());
+                }
             }
         }
     }
@@ -464,6 +484,48 @@ mod tests {
             executable: n.is_multiple_of(3),
             base,
         }
+    }
+
+    #[test]
+    fn inodes_are_saved_and_older_records_still_read() {
+        let mut files = LocalFiles::default();
+        files.insert("a".into(), file(1, VersionVector::new()));
+        files.insert("b".into(), file(2, VersionVector::new()));
+        files.take_changed();
+        files.set_inode("a", 77);
+        assert_eq!(files.take_changed().len(), 1, "a new inode is saved");
+        files.set_inode("a", 77);
+        assert!(
+            files.take_changed().is_empty(),
+            "the same one is not saved again"
+        );
+
+        let records: Vec<(Vec<u8>, Vec<u8>)> = files
+            .all()
+            .into_iter()
+            .map(|(path, file)| (path, file.unwrap()))
+            .collect();
+        let back = LocalFiles::decode(records.clone(), |_| None).unwrap();
+        assert_eq!(back.get("a").unwrap().inode, 77);
+        assert_eq!(back.get("b").unwrap().inode, 0, "not known");
+        assert!(back.changed.is_empty());
+
+        // A reader that knows nothing of inodes, such as 0.19, reads the record and leaves the
+        // inode after it; a record such a reader saved has none.
+        for (path, bytes) in &records {
+            let path: String = postcard::from_bytes(path).unwrap();
+            let old: LocalFile = postcard::from_bytes(bytes).unwrap();
+            assert_eq!(old, files.get(&path).unwrap().to_file());
+        }
+        let old_records = records
+            .iter()
+            .map(|(path, bytes)| {
+                let file: LocalFile = postcard::from_bytes(bytes).unwrap();
+                (path.clone(), encode(&file))
+            })
+            .collect();
+        let back = LocalFiles::decode(old_records, |_| None).unwrap();
+        assert_eq!(back.get("a").unwrap().inode, 0);
     }
 
     #[test]
