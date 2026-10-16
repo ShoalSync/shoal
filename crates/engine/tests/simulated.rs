@@ -236,3 +236,34 @@ async fn content_a_read_missed_is_offered_again_after_a_scan() {
     engine_c.shutdown().await;
     engine_a.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn engines_keep_the_certificates_of_devices_they_meet() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 50);
+    let b = Replica::new(dir.path(), "b", 51);
+    let engine_a = a.start(&user, &network, &[]).await;
+    let engine_b = b.start(&user, &network, &[]).await;
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    let knows = |engine: &Engine, device: DeviceId| {
+        engine
+            .certificates()
+            .iter()
+            .any(|c| c.verify_certificate().unwrap().device == device)
+    };
+    eventually(
+        "each knows the other's certificate from the handshake",
+        || knows(&engine_a, b.key.id()) && knows(&engine_b, a.key.id()),
+    )
+    .await;
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+
+    // Kept in the runtime settings: still known after a restart, without meeting again.
+    let engine_a = a.start(&user, &network, &[]).await;
+    assert!(knows(&engine_a, b.key.id()), "kept across a restart");
+    assert!(knows(&engine_a, a.key.id()), "its own too");
+    engine_a.shutdown().await;
+}

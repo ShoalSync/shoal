@@ -106,7 +106,9 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
-        (folders, verify_peer(&certificate, conn)?, offered, clock_ms)
+        let peer = verify_peer(&certificate, conn)?;
+        backend.learn_certificate(certificate);
+        (folders, peer, offered, clock_ms)
     } else {
         let SyncMessage::Hello {
             certificate,
@@ -117,6 +119,7 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
             return Err(Error::Protocol("expected Hello".into()));
         };
         let peer = verify_peer(&certificate, conn)?;
+        backend.learn_certificate(certificate);
         let offered = offer_for(backend, &peer);
         frame_io::write(
             &mut send,
@@ -169,6 +172,8 @@ struct Session {
     out: mpsc::UnboundedSender<Outgoing>,
     /// Versions received from this peer, not to be pushed back to it.
     received: Received,
+    /// Authors whose certificates to ask this peer for, by folder (ADR 0024).
+    vouch: Vec<(FolderId, DeviceId)>,
 }
 
 impl Session {
@@ -234,6 +239,7 @@ fn version_hash(version: &Signed<tidefell_proto::sync::EntryVersion>) -> [u8; 32
 pub(crate) async fn run(
     conn: Conn,
     backend: Arc<dyn Backend>,
+    limiter: Arc<RateLimiter>,
     initiator: bool,
     on_ready: impl FnOnce(Peer),
 ) -> Result<()> {
@@ -253,7 +259,7 @@ pub(crate) async fn run(
     debug!(%device, shared = initial.len(), "sync session started");
     on_ready(peer.clone());
 
-    tokio::spawn(serve_manifests(
+    tokio::spawn(serve_requests(
         conn.clone(),
         backend.clone(),
         peer.shared.clone(),
@@ -278,6 +284,7 @@ pub(crate) async fn run(
         offered,
         out,
         received,
+        vouch: Vec::new(),
     };
     session.request_index(backend.as_ref(), initial)?;
     // Subscribe before re-checking the offer: a folder added after the handshake computed it but
@@ -290,6 +297,16 @@ pub(crate) async fn run(
                 let Some(message) = message else { break Ok(()) };
                 if let Err(e) = message.and_then(|m| handle(m, &conn, &mut session, backend.as_ref())) {
                     break Err(e);
+                }
+                // Authors to vouch for: their certificates come on streams of their own.
+                for (folder, author) in std::mem::take(&mut session.vouch) {
+                    let (conn, backend, limiter) = (conn.clone(), backend.clone(), limiter.clone());
+                    tokio::spawn(async move {
+                        match request_certificate(&conn, &limiter, folder, author).await {
+                            Ok(certificate) => backend.learn_certificate(certificate),
+                            Err(e) => debug!(%author, error = %e, "certificate request failed"),
+                        }
+                    });
                 }
             }
             changed = changes.changed() => {
@@ -558,6 +575,12 @@ fn handle(
                 received.extend(versions.iter().map(version_hash));
             }
             backend.apply_versions(&folder, device, versions);
+            session.vouch.extend(
+                backend
+                    .authors_to_vouch(&folder)
+                    .into_iter()
+                    .map(|author| (folder, author)),
+            );
             if last {
                 backend.set_peer_progress(&folder, device, epoch, up_to);
             }
@@ -582,11 +605,13 @@ fn variant_name(message: &SyncMessage) -> &'static str {
         SyncMessage::ManifestRequest { .. } => "ManifestRequest",
         SyncMessage::ManifestResponse { .. } => "ManifestResponse",
         SyncMessage::Error { .. } => "Error",
+        SyncMessage::CertificateRequest { .. } => "CertificateRequest",
+        SyncMessage::CertificateResponse { .. } => "CertificateResponse",
     }
 }
 
-/// Answers manifest requests, one per extra stream.
-async fn serve_manifests(conn: Conn, backend: Arc<dyn Backend>, shared: Shared) {
+/// Answers manifest and certificate requests, one per extra stream.
+async fn serve_requests(conn: Conn, backend: Arc<dyn Backend>, shared: Shared) {
     while let Ok((mut send, mut recv)) = conn.accept_bi().await {
         let backend = backend.clone();
         let shared = shared.clone();
@@ -603,6 +628,20 @@ async fn serve_manifests(conn: Conn, backend: Arc<dyn Backend>, shared: Shared) 
                             Some(manifest) => SyncMessage::ManifestResponse { manifest },
                             None => SyncMessage::Error {
                                 code: ErrorCode::UnknownManifest,
+                            },
+                        }
+                    }
+                }
+                Ok(SyncMessage::CertificateRequest { folder, device }) => {
+                    if !shared.read_locked().contains(&folder) {
+                        SyncMessage::Error {
+                            code: ErrorCode::NotAMember,
+                        }
+                    } else {
+                        match backend.certificate_of(&folder, device) {
+                            Some(certificate) => SyncMessage::CertificateResponse { certificate },
+                            None => SyncMessage::Error {
+                                code: ErrorCode::UnknownDevice,
                             },
                         }
                     }
@@ -652,6 +691,55 @@ async fn manifest_exchange(
         SyncMessage::Error { code } => Err(Error::Rejected(format!("{code:?}"))),
         other => Err(Error::Protocol(format!(
             "unexpected manifest response: {}",
+            variant_name(&other)
+        ))),
+    }
+}
+
+/// Requests the certificate of `device`, an author in `folder`, from a connected peer on a new
+/// stream (ADR 0024). The certificate is verified and must be for `device`.
+pub(crate) async fn request_certificate(
+    conn: &Conn,
+    limiter: &RateLimiter,
+    folder: FolderId,
+    device: DeviceId,
+) -> Result<Signed<DeviceCertificate>> {
+    limiter.request(crate::traffic::Request::Certificate).await;
+    crate::within(
+        crate::REQUEST_TIMEOUT,
+        certificate_exchange(conn, folder, device),
+    )
+    .await
+}
+
+async fn certificate_exchange(
+    conn: &Conn,
+    folder: FolderId,
+    device: DeviceId,
+) -> Result<Signed<DeviceCertificate>> {
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| Error::Stream(e.to_string()))?;
+    frame_io::write(
+        &mut send,
+        &SyncMessage::CertificateRequest { folder, device },
+    )
+    .await?;
+    let _ = send.finish();
+    match frame_io::expect(&mut recv).await? {
+        SyncMessage::CertificateResponse { certificate } => {
+            let body = certificate
+                .verify_certificate()
+                .map_err(|_| Error::Auth("invalid device certificate"))?;
+            if body.device != device {
+                return Err(Error::Protocol("certificate for another device".into()));
+            }
+            Ok(certificate)
+        }
+        SyncMessage::Error { code } => Err(Error::Rejected(format!("{code:?}"))),
+        other => Err(Error::Protocol(format!(
+            "unexpected certificate response: {}",
             variant_name(&other)
         ))),
     }

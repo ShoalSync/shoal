@@ -74,6 +74,7 @@ pub(crate) struct Traffic {
 #[derive(Debug, Default)]
 struct Requests {
     manifests: AtomicU64,
+    certificates: AtomicU64,
     availability: AtomicU64,
     replica: AtomicU64,
     chunks: AtomicU64,
@@ -84,6 +85,8 @@ struct Requests {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Request {
     Manifest,
+    /// An author's certificate, to vouch for it (ADR 0024).
+    Certificate,
     Availability,
     Replica,
     /// A request for this many chunks.
@@ -105,6 +108,8 @@ pub struct TrafficCounts {
     pub chunks_served: u64,
     /// Manifests requested from peers.
     pub manifest_requests: u64,
+    /// Certificates requested from peers.
+    pub certificate_requests: u64,
     /// Availability queries sent to peers.
     pub availability_requests: u64,
     /// Full-replica queries sent to peers.
@@ -176,6 +181,7 @@ impl Traffic {
         let r = &self.requests;
         let counter = match request {
             Request::Manifest => &r.manifests,
+            Request::Certificate => &r.certificates,
             Request::Availability => &r.availability,
             Request::Replica => &r.replica,
             Request::Chunks(n) => {
@@ -194,6 +200,7 @@ impl Traffic {
             received_remote: self.received_remote.load(Ordering::Relaxed),
             chunks_served: self.chunks_served.load(Ordering::Relaxed),
             manifest_requests: self.requests.manifests.load(Ordering::Relaxed),
+            certificate_requests: self.requests.certificates.load(Ordering::Relaxed),
             availability_requests: self.requests.availability.load(Ordering::Relaxed),
             replica_requests: self.requests.replica.load(Ordering::Relaxed),
             chunk_requests: self.requests.chunks.load(Ordering::Relaxed),

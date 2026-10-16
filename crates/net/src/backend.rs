@@ -35,6 +35,26 @@ pub trait Backend: Send + Sync + 'static {
     /// True if `peer` (already verified) may sync `folder`.
     fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool;
 
+    /// The certificate of `device`, if this backend holds one and `device`'s user is a member of
+    /// `folder` (ADR 0024). Asked only by peers that share the folder.
+    fn certificate_of(
+        &self,
+        _folder: &FolderId,
+        _device: DeviceId,
+    ) -> Option<Signed<DeviceCertificate>> {
+        None
+    }
+
+    /// Keeps a device's certificate: a peer's at the handshake, or an author's fetched to vouch
+    /// for it (ADR 0024). The signature has been checked.
+    fn learn_certificate(&self, _certificate: Signed<DeviceCertificate>) {}
+
+    /// Authors of versions applied to `folder` whose certificates this backend lacks, each
+    /// once: the session asks the peer for them.
+    fn authors_to_vouch(&self, _folder: &FolderId) -> Vec<DeviceId> {
+        Vec::new()
+    }
+
     /// At most `limit` index entries of `folder` after `since`, from the start if `epoch` does
     /// not match. `up_to` is the sequence of the last entry returned if more follow, otherwise
     /// the index's current sequence. `None` if the folder is unknown.

@@ -374,6 +374,10 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
 - Phase 5c step 5 (supply chain) is done: releases run on a runner of their own with a pinned
   toolchain, only for tags on `main` whose commit passed CI, and every asset is signed keyless
   with Sigstore. Actions were already pinned by commit (ADR 0031).
+- Phase 5c step 6 (hardening) is in progress: the certificate stream of sync/1 (messages 6
+  and 7, error code 4) is implemented. Replicas keep the certificates of devices they meet and
+  of authors they fetch, in the runtime settings (format 6), serve them to members, and record
+  whether each author is vouched for, without refusing anything yet (ADR 0024's rollout).
 - `v0.19.0` updates iroh to 1.3 and records what the slow emulator backup turned out to be
   (ADR 0039). The Android pin takes up the app's logging through the engine (`AppLog`), so its
   messages are in the log files and diagnostics bundles. The database and the protocol are

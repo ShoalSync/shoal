@@ -31,6 +31,18 @@
     {
       "frame": "020500",
       "name": "error-not-a-member"
+    },
+    {
+      "frame": "41062222222222222222222222222222222222222222222222222222222222222222d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+      "name": "certificate-request"
+    },
+    {
+      "frame": "b40107c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a752c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787370b746573742064657669636580c8d3cbae667d729b8774f97583e7bf1636b4e3e4d60f6950f7e08ee9d26285bbb9cc565274e2b87d7adc85bcef55f5de8a7f65c99189feefdeeee79a9ef495c4ff150fb700",
+      "name": "certificate-response"
+    },
+    {
+      "frame": "020504",
+      "name": "error-unknown-device"
     }
   ]
 }

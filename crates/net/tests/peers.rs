@@ -28,6 +28,9 @@ struct TestBackend {
     manifests: Mutex<HashMap<ContentHash, Manifest>>,
     chunks: Mutex<HashMap<ChunkHash, Vec<u8>>>,
     changes: watch::Sender<u64>,
+    /// Certificates known, and authors of applied versions not among them (ADR 0024).
+    certificates: Mutex<HashMap<DeviceId, Signed<DeviceCertificate>>>,
+    unknown_authors: Mutex<Vec<DeviceId>>,
 }
 
 impl TestBackend {
@@ -47,6 +50,8 @@ impl TestBackend {
             manifests: Mutex::default(),
             chunks: Mutex::default(),
             changes: watch::channel(0).0,
+            certificates: Mutex::default(),
+            unknown_authors: Mutex::default(),
         })
     }
 
@@ -170,11 +175,32 @@ impl Backend for TestBackend {
         })
     }
 
+    fn certificate_of(&self, _: &FolderId, device: DeviceId) -> Option<Signed<DeviceCertificate>> {
+        if device == self.key.id() {
+            return Some(self.cert.clone());
+        }
+        self.certificates.lock().unwrap().get(&device).cloned()
+    }
+    fn learn_certificate(&self, certificate: Signed<DeviceCertificate>) {
+        let device = certificate.verify_certificate().unwrap().device;
+        self.certificates
+            .lock()
+            .unwrap()
+            .insert(device, certificate);
+    }
+    fn authors_to_vouch(&self, _: &FolderId) -> Vec<DeviceId> {
+        std::mem::take(&mut *self.unknown_authors.lock().unwrap())
+    }
     fn apply_versions(&self, _: &FolderId, _: DeviceId, versions: Vec<Signed<EntryVersion>>) {
         let mut changed = false;
         {
             let mut folder = self.folder.lock().unwrap();
+            let certificates = self.certificates.lock().unwrap();
             for v in versions {
+                let author = v.verify().unwrap().author;
+                if author != self.key.id() && !certificates.contains_key(&author) {
+                    self.unknown_authors.lock().unwrap().push(author);
+                }
                 if let Ok(applied) = folder.apply_remote(v, 0) {
                     changed |= applied != tidefell_meta::Applied::Stale;
                 }
@@ -341,6 +367,58 @@ async fn manifests_chunks_and_availability() {
         .is_full_replica(node_a.addr(), FolderId([0x99; 32]))
         .await
         .is_err());
+
+    node_b.shutdown().await;
+    node_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn certificates_of_unknown_authors_are_fetched() {
+    let alice = UserKey::from_seed([100; 32]);
+    let a = TestBackend::new(1, &alice, &[&alice]);
+    let b = TestBackend::new(2, &alice, &[&alice]);
+    // A third device of alice's wrote a file that a holds: a knows its certificate, b does not.
+    let c = DeviceKey::from_seed([3; 32]);
+    let mut by_c = Folder::new(FOLDER, c.id(), 3, Retention::Forever);
+    let version = by_c
+        .local_change(
+            c.signing_key(),
+            EntryId([9; 16]),
+            "by-c.txt",
+            EntryKind::File {
+                content: ContentHash([1; 32]),
+                size: 1,
+                executable: false,
+            },
+            0,
+        )
+        .unwrap();
+    a.folder.lock().unwrap().apply_remote(version, 0).unwrap();
+    a.learn_certificate(alice.certify(c.id(), "device 3", 0));
+    a.bump();
+
+    let node_a = Node::spawn(a.config(), a.clone()).await.unwrap();
+    let node_b = Node::spawn(b.config(), b.clone()).await.unwrap();
+    let peer = node_b.connect(node_a.addr()).await.unwrap();
+    eventually("b has c's version", || b.current(9).is_some()).await;
+    eventually("b fetched c's certificate from a", || {
+        b.certificates.lock().unwrap().contains_key(&c.id())
+    })
+    .await;
+    assert!(
+        b.certificates.lock().unwrap().contains_key(&a.key.id()),
+        "a's, from the handshake"
+    );
+    assert!(
+        a.certificates.lock().unwrap().contains_key(&b.key.id()),
+        "and b's on a"
+    );
+    // A device nobody knows gets an error, not a certificate.
+    let unknown = peer.request_certificate(FOLDER, DeviceId([0x55; 32])).await;
+    assert!(
+        matches!(unknown, Err(tidefell_net::Error::Rejected(ref code)) if code == "UnknownDevice"),
+        "{unknown:?}"
+    );
 
     node_b.shutdown().await;
     node_a.shutdown().await;

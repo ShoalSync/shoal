@@ -41,6 +41,32 @@ impl Backend for EngineBackend {
                 .is_ok_and(|h| h.lock().members.contains(&peer.user))
     }
 
+    /// Only for a device whose user is a member of the folder: a certificate is served to those
+    /// it vouches an author to (ADR 0024).
+    fn certificate_of(
+        &self,
+        folder: &FolderId,
+        device: DeviceId,
+    ) -> Option<Signed<DeviceCertificate>> {
+        let handle = self.0.folder(folder).ok()?;
+        let certificate = if device == self.0.key.id() {
+            self.0.certificate.clone()
+        } else {
+            self.0.vouching.lock().unwrap().certificate(device)?.clone()
+        };
+        let user = certificate.verify_certificate().ok()?.user;
+        let member = handle.lock().members.contains(&user);
+        member.then_some(certificate)
+    }
+
+    fn learn_certificate(&self, certificate: Signed<DeviceCertificate>) {
+        self.0.learn_certificate(certificate);
+    }
+
+    fn authors_to_vouch(&self, folder: &FolderId) -> Vec<DeviceId> {
+        self.0.vouching.lock().unwrap().take_pending(folder)
+    }
+
     fn index_since(
         &self,
         folder: &FolderId,
@@ -115,8 +141,24 @@ impl Backend for EngineBackend {
                     entry.map_or(0, |e| state.meta.open_conflicts(&e).count())
                 };
                 let before = open(&state);
+                let author = version.version().author;
                 match state.meta.apply_verified(version, now) {
-                    Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
+                    Ok(applied) => {
+                        changed |= applied != tidefell_meta::Applied::Stale;
+                        // Recorded, not enforced, in this release (ADR 0024's rollout).
+                        if author != self.0.key.id() {
+                            let noted = self.0.vouching.lock().unwrap().note_author(
+                                *folder,
+                                author,
+                                |user| state.members.contains(user),
+                            );
+                            if let Some((why, first)) = noted {
+                                if first {
+                                    tracing::info!(%folder, %author, ?why, "applied versions from an author not vouched for");
+                                }
+                            }
+                        }
+                    }
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
                 }
                 if open(&state) > before {

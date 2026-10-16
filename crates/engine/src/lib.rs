@@ -70,6 +70,7 @@ mod tracked;
 #[doc(hidden)]
 pub mod fuzzing;
 mod views;
+pub(crate) mod vouch;
 mod watch;
 
 /// The allocator every program running the engine uses (ADR 0035): it returns freed memory to

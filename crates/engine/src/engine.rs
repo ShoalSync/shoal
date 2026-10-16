@@ -159,6 +159,8 @@ pub(crate) struct Inner {
     events: broadcast::Sender<Event>,
     /// Serialises changes to the folder set and their persistence.
     runtime_lock: Mutex<()>,
+    /// Known devices' certificates, and authors not vouched for (ADR 0024).
+    pub(crate) vouching: Mutex<crate::vouch::Vouching>,
     /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
     watch: bool,
     /// Set once a task panics: the engine has stopped working (ADR 0030).
@@ -308,8 +310,26 @@ impl Inner {
             paused,
             paused_folders: paused_folders.into_iter().collect(),
             pins: pins.into_iter().collect(),
+            certificates: self
+                .vouching
+                .lock()
+                .unwrap()
+                .certificates()
+                .cloned()
+                .collect(),
         };
         runtime.save(&self.data_dir)
+    }
+
+    /// Keeps a device's certificate, if it is new or newer than the one held (ADR 0024).
+    pub(crate) fn learn_certificate(&self, certificate: Signed<DeviceCertificate>) {
+        if !self.vouching.lock().unwrap().learn(certificate) {
+            return;
+        }
+        let _guard = self.runtime_lock.lock().unwrap();
+        if let Err(e) = self.save_runtime() {
+            warn!(error = %e, "saving a learnt certificate failed");
+        }
     }
 }
 
@@ -667,6 +687,7 @@ impl Engine {
             materialize: Notify::new(),
             events: broadcast::channel(256).0,
             runtime_lock: Mutex::new(()),
+            vouching: Mutex::new(crate::vouch::Vouching::new(runtime.certificates)),
             watch: config.watch,
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
@@ -968,6 +989,16 @@ impl Engine {
     /// Materialises remote changes to `folder` now.
     pub async fn materialize(&self, folder: FolderId) -> Result<()> {
         run_materialize(&self.inner, &self.node, folder).await
+    }
+
+    /// The certificates of the devices this one knows: its own, its peers' and those of authors
+    /// it has vouched for (ADR 0024).
+    pub fn certificates(&self) -> Vec<Signed<DeviceCertificate>> {
+        let vouching = self.inner.vouching.lock().unwrap();
+        std::iter::once(&self.inner.certificate)
+            .chain(vouching.certificates())
+            .cloned()
+            .collect()
     }
 
     /// Stops all tasks, closes the endpoint and saves state.

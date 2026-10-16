@@ -149,6 +149,25 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
                 code: ErrorCode::NotAMember,
             },
         ),
+        (
+            "certificate-request",
+            SyncMessage::CertificateRequest {
+                folder,
+                device: DeviceId(device_key().verifying_key().to_bytes()),
+            },
+        ),
+        (
+            "certificate-response",
+            SyncMessage::CertificateResponse {
+                certificate: certificate(),
+            },
+        ),
+        (
+            "error-unknown-device",
+            SyncMessage::Error {
+                code: ErrorCode::UnknownDevice,
+            },
+        ),
     ];
     messages
         .into_iter()

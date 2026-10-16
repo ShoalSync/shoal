@@ -162,6 +162,8 @@ pub enum ErrorCode {
     UnknownManifest,
     /// The message was malformed or unexpected.
     ProtocolViolation,
+    /// The requested device's certificate is unknown here.
+    UnknownDevice,
 }
 
 /// A message on a `tidefell/sync/1` stream.
@@ -221,6 +223,20 @@ pub enum SyncMessage {
     Error {
         /// Reason.
         code: ErrorCode,
+    },
+    /// Ask for the certificate of `device`, an author of versions in `folder`, to vouch for it
+    /// (ADR 0024). Appended, with the response and `UnknownDevice`: a peer from before closes
+    /// the stream.
+    CertificateRequest {
+        /// Folder the author's versions are in; used for access control.
+        folder: FolderId,
+        /// The device whose certificate is wanted.
+        device: DeviceId,
+    },
+    /// The certificate answering a [`SyncMessage::CertificateRequest`].
+    CertificateResponse {
+        /// The device's certificate, signed by its user.
+        certificate: Signed<DeviceCertificate>,
     },
 }
 

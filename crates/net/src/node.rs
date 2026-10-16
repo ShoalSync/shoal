@@ -10,7 +10,7 @@ use iroh::{Endpoint, EndpointAddr, RelayMap, RelayMode, RelayUrl, SecretKey};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::{
-    ChunkHash, ContentHash, DeviceId, FolderId, Manifest, ALPN_BLOBS_V1, ALPN_SYNC_V1,
+    ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed, ALPN_BLOBS_V1, ALPN_SYNC_V1,
 };
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
@@ -174,6 +174,15 @@ impl PeerHandle {
     ) -> Result<Manifest> {
         sync::request_manifest(&self.conn, &self.limiter, folder, content).await
     }
+
+    /// Requests the certificate of `device`, an author in `folder` (ADR 0024).
+    pub async fn request_certificate(
+        &self,
+        folder: FolderId,
+        device: DeviceId,
+    ) -> Result<Signed<DeviceCertificate>> {
+        sync::request_certificate(&self.conn, &self.limiter, folder, device).await
+    }
 }
 
 #[derive(Clone)]
@@ -227,6 +236,7 @@ async fn run_session(
 ) {
     let device = sync::device_of(&conn);
     let ready = Arc::new(Mutex::new(ready));
+    let session_limiter = limiter.clone();
     let on_ready = {
         let conn = conn.clone();
         let peers = peers.clone();
@@ -251,7 +261,14 @@ async fn run_session(
             }
         }
     };
-    let result = sync::run(conn.clone(), backend.clone(), initiator, on_ready).await;
+    let result = sync::run(
+        conn.clone(),
+        backend.clone(),
+        session_limiter,
+        initiator,
+        on_ready,
+    )
+    .await;
     let ended = {
         let mut peers = peers.locked();
         let current = peers

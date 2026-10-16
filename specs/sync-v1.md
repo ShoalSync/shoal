@@ -40,7 +40,9 @@ The author of every version a replica applies must be vouched for: it must have 
 certificate signed by a user who is a member of the folder (ADR 0024). Replicas keep the
 certificates of the authors of the versions they store and serve them on certificate streams
 (see Exchange). Versions later received from the devices of a user who has been removed from
-the folder are refused; versions already applied stay.
+the folder are refused; versions already applied stay. Rollout (ADR 0024): from 0.20 replicas
+keep and serve certificates and record whether each author is vouched for; the release after
+refuses versions whose author is not.
 
 ## Encoding
 

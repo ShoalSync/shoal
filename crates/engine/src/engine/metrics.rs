@@ -127,6 +127,7 @@ impl Engine {
             "Requests sent to peers, by kind; each opens a stream.",
             &[
                 (&[("kind", "manifest")], traffic.manifest_requests),
+                (&[("kind", "certificate")], traffic.certificate_requests),
                 (&[("kind", "availability")], traffic.availability_requests),
                 (&[("kind", "replica")], traffic.replica_requests),
                 (&[("kind", "chunks")], traffic.chunk_requests),
