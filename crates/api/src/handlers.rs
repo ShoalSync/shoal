@@ -22,8 +22,8 @@ use tidefell_sdk::types::{
     HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
     OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState,
     PinRequest, Problem, ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest,
-    RenameRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions, Transfer, Version,
-    VersionKind, VersionRequest,
+    RenameRequest, ResolveRequest, RetentionUpdate, Revocation, Status, SyncOptions, Transfer,
+    Version, VersionKind, VersionRequest,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -83,6 +83,8 @@ type AppState = State<Arc<Engine>>;
         crate::pairing::start,
         crate::pairing::approve,
         crate::pairing::decline,
+        crate::pairing::revoke,
+        revocations,
         events,
         log_settings,
         set_log_level,
@@ -99,6 +101,7 @@ type AppState = State<Arc<Engine>>;
     ),
     components(schemas(
         Status,
+        Revocation,
         Folder,
         Mode,
         NewFolder,
@@ -194,7 +197,9 @@ impl From<EngineError> for ApiFailure {
             | EngineError::Configured(_)
             | EngineError::LocalChanges(_)
             | EngineError::PathTaken(_) => (StatusCode::CONFLICT, ErrorKind::Conflict),
-            EngineError::Invalid(_) => (StatusCode::BAD_REQUEST, ErrorKind::BadRequest),
+            EngineError::Invalid(_) | EngineError::RevokeSelf => {
+                (StatusCode::BAD_REQUEST, ErrorKind::BadRequest)
+            }
             EngineError::NoSuchFile(_) | EngineError::NotRecycled(_) => {
                 (StatusCode::NOT_FOUND, ErrorKind::NotFound)
             }
@@ -259,7 +264,26 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
             .collect(),
         transfer: convert::transfer(engine.transfer()),
         metadata_dir: engine.metadata_dir().display().to_string(),
+        revoked: engine.revoked(),
     }))
+}
+
+/// The devices their users revoked that this device knows of (ADR 0040).
+#[utoipa::path(get, path = "/v1/revocations", tag = "device",
+    responses((status = 200, body = [Revocation])))]
+pub(crate) async fn revocations(State(engine): AppState) -> Json<Vec<Revocation>> {
+    Json(
+        engine
+            .revocations()
+            .into_iter()
+            .map(|(r, name)| Revocation {
+                device: r.device.to_string(),
+                user: r.user.to_string(),
+                name,
+                revoked_ms: r.revoked_ms,
+            })
+            .collect(),
+    )
 }
 
 /// All folders.

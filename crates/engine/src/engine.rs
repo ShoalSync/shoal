@@ -18,9 +18,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use tidefell_identity::DeviceKey;
+use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_net::{EndpointAddr, Node, NodeConfig};
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
 use tidefell_store::BlockStore;
 use tokio::sync::{broadcast, watch, Notify};
@@ -290,6 +290,8 @@ impl Inner {
             pins.insert(*id, handle.lock().pins.iter().cloned().collect());
         }
         let (paused, paused_folders) = self.paused.read().unwrap().clone();
+        // Locked once: two guards of it in one statement would wait on each other.
+        let vouching = self.vouching.lock().unwrap();
         let runtime = Runtime {
             folders: folders
                 .values()
@@ -312,15 +314,49 @@ impl Inner {
             paused,
             paused_folders: paused_folders.into_iter().collect(),
             pins: pins.into_iter().collect(),
-            certificates: self
-                .vouching
-                .lock()
-                .unwrap()
-                .certificates()
-                .cloned()
-                .collect(),
+            certificates: vouching.certificates().cloned().collect(),
+            revocations: vouching.revocations().cloned().collect(),
         };
         runtime.save(&self.data_dir)
+    }
+
+    /// Keeps the revocations that are new and concern a user this device has to do with
+    /// (ADR 0040), and tells every session, so each refuses a revoked peer and passes them on.
+    pub(crate) fn learn_revocations(&self, revocations: Vec<Signed<DeviceRevocation>>) {
+        let own = self.certificate.verify_certificate().ok();
+        // Folder locks before the vouching lock, as everywhere.
+        let mut users: std::collections::BTreeSet<UserId> = own.iter().map(|c| c.user).collect();
+        let handles: Vec<_> = self.folders.read().unwrap().values().cloned().collect();
+        for handle in handles {
+            users.extend(handle.lock().members.users().copied());
+        }
+        let learnt: Vec<_> = {
+            let mut vouching = self.vouching.lock().unwrap();
+            revocations
+                .into_iter()
+                .filter(|r| vouching.learn_revocation(r.clone(), |u| users.contains(u)))
+                .filter_map(|r| r.verify_revocation().ok())
+                .collect()
+        };
+        if learnt.is_empty() {
+            return;
+        }
+        for revocation in &learnt {
+            if own.as_ref().is_some_and(|own| revocation.revokes(own)) {
+                error!(
+                    "this device has been revoked by its user: it syncs with no one; pair it again"
+                );
+            } else {
+                warn!(device = %revocation.device, user = %revocation.user, "a device was revoked");
+            }
+        }
+        {
+            let _guard = self.runtime_lock.lock().unwrap();
+            if let Err(e) = self.save_runtime() {
+                warn!(error = %e, "saving learnt revocations failed");
+            }
+        }
+        self.changes.send_modify(|n| *n += 1);
     }
 
     /// Keeps a device's certificate, if it is new or newer than the one held (ADR 0024).
@@ -690,7 +726,10 @@ impl Engine {
             materialize: Notify::new(),
             events: broadcast::channel(256).0,
             runtime_lock: Mutex::new(()),
-            vouching: Mutex::new(crate::vouch::Vouching::new(runtime.certificates)),
+            vouching: Mutex::new(crate::vouch::Vouching::new(
+                runtime.certificates,
+                runtime.revocations,
+            )),
             watch: config.watch,
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
@@ -1001,6 +1040,44 @@ impl Engine {
     /// Materialises remote changes to `folder` now.
     pub async fn materialize(&self, folder: FolderId) -> Result<()> {
         run_materialize(&self.inner, &self.node, folder).await
+    }
+
+    /// Revokes `device`, one of `user`'s devices, for good (ADR 0040): every peer that hears of
+    /// it, from this device or from any other that has, refuses it from then on. Not this
+    /// device itself.
+    pub fn revoke_device(&self, user: &UserKey, device: DeviceId) -> Result<()> {
+        if device == self.id() {
+            return Err(Error::RevokeSelf);
+        }
+        let revocation = user.revoke(device, self.inner.now_ms(), None);
+        self.inner.learn_revocations(vec![revocation]);
+        Ok(())
+    }
+
+    /// The device revocations this device knows, with the revoked devices' names where it
+    /// holds their certificates.
+    pub fn revocations(&self) -> Vec<(DeviceRevocation, Option<String>)> {
+        let vouching = self.inner.vouching.lock().unwrap();
+        vouching
+            .revocations()
+            .filter_map(|r| r.verify_revocation().ok())
+            .map(|r| {
+                let name = vouching
+                    .certificate(r.device)
+                    .and_then(|c| c.verify_certificate().ok())
+                    .filter(|c| c.user == r.user)
+                    .map(|c| c.name);
+                (r, name)
+            })
+            .collect()
+    }
+
+    /// Whether this device's user has revoked it (ADR 0040): it then syncs with no one.
+    pub fn revoked(&self) -> bool {
+        self.inner
+            .certificate
+            .verify_certificate()
+            .is_ok_and(|own| self.inner.vouching.lock().unwrap().is_revoked(&own))
     }
 
     /// The certificates of the devices this one knows: its own, its peers' and those of authors

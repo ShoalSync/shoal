@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use crate::transport::{Conn, RecvHalf, SendHalf};
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::sync::{ErrorCode, SyncMessage};
 use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::mpsc;
@@ -76,6 +76,39 @@ struct Handshake {
     recv: RecvHalf,
 }
 
+/// Most revocations read from one `Hello`: a user revokes few devices, and a peer cannot make
+/// this device keep an unbounded list.
+const MAX_REVOCATIONS_PER_HELLO: usize = 256;
+
+/// Passes on the revocations in a peer's `Hello` whose signatures hold (ADR 0040).
+fn learn_revocations(backend: &dyn Backend, revocations: Option<Vec<Signed<DeviceRevocation>>>) {
+    let verified: Vec<_> = revocations
+        .unwrap_or_default()
+        .into_iter()
+        .take(MAX_REVOCATIONS_PER_HELLO)
+        .filter(|r| r.verify_revocation().is_ok())
+        .collect();
+    if !verified.is_empty() {
+        backend.learn_revocations(verified);
+    }
+}
+
+/// Refuses a session with a revoked peer, and any session once this device is revoked
+/// (ADR 0040).
+fn check_revoked(backend: &dyn Backend, peer: &DeviceCertificate) -> Result<()> {
+    if backend.is_revoked(peer) {
+        return Err(Error::Auth("the peer's device is revoked"));
+    }
+    let own = backend.certificate();
+    if own
+        .verify_certificate()
+        .is_ok_and(|own| backend.is_revoked(&own))
+    {
+        return Err(Error::Auth("this device is revoked"));
+    }
+    Ok(())
+}
+
 /// Performs the `Hello` exchange on the main stream.
 async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Result<Handshake> {
     let (mut send, mut recv) = if initiator {
@@ -95,6 +128,7 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
                 clock_ms: Some(backend.now_ms()),
+                revocations: Some(backend.revocations()),
             },
         )
         .await?;
@@ -102,11 +136,14 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
             certificate,
             folders,
             clock_ms,
+            revocations,
         } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
         let peer = verify_peer(&certificate, conn)?;
+        learn_revocations(backend, revocations);
+        check_revoked(backend, &peer)?;
         backend.learn_certificate(certificate);
         (folders, peer, offered, clock_ms)
     } else {
@@ -114,22 +151,36 @@ async fn handshake(conn: &Conn, backend: &dyn Backend, initiator: bool) -> Resul
             certificate,
             folders,
             clock_ms,
+            revocations,
         } = frame_io::expect_limited(&mut recv, crate::MAX_UNAUTHENTICATED).await?
         else {
             return Err(Error::Protocol("expected Hello".into()));
         };
         let peer = verify_peer(&certificate, conn)?;
-        backend.learn_certificate(certificate);
-        let offered = offer_for(backend, &peer);
+        learn_revocations(backend, revocations);
+        // A revoked peer is still told what this side knows, so it learns that it is revoked,
+        // and is offered nothing.
+        let refused = check_revoked(backend, &peer);
+        let offered = if refused.is_ok() {
+            backend.learn_certificate(certificate);
+            offer_for(backend, &peer)
+        } else {
+            BTreeSet::new()
+        };
         frame_io::write(
             &mut send,
             &SyncMessage::Hello {
                 certificate: backend.certificate(),
                 folders: offered.iter().copied().collect(),
                 clock_ms: Some(backend.now_ms()),
+                revocations: Some(backend.revocations()),
             },
         )
         .await?;
+        if refused.is_err() {
+            let _ = send.finish();
+        }
+        refused?;
         (folders, peer, offered, clock_ms)
     };
     // Measured when the peer's Hello arrived; the time it took on the way is small next to the
@@ -174,6 +225,8 @@ struct Session {
     received: Received,
     /// Authors whose certificates to ask this peer for, by folder (ADR 0024).
     vouch: Vec<(FolderId, DeviceId)>,
+    /// How many revocations this peer has been told of (ADR 0040).
+    revocations_told: usize,
 }
 
 impl Session {
@@ -285,6 +338,7 @@ pub(crate) async fn run(
         out,
         received,
         vouch: Vec::new(),
+        revocations_told: backend.revocations().len(),
     };
     session.request_index(backend.as_ref(), initial)?;
     // Subscribe before re-checking the offer: a folder added after the handshake computed it but
@@ -494,15 +548,24 @@ async fn send_index(
 /// Re-sends `Hello` if the folders we offer the peer changed (a folder was added or removed,
 /// or membership changed).
 fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
+    check_revoked(backend, &session.peer.certificate)?;
     let offer = offer_for(backend, &session.peer.certificate);
-    if offer == session.offered {
+    // The set of revocations only grows: more of them than were told is something new.
+    let revocations = backend.revocations();
+    let told = revocations.len() <= session.revocations_told;
+    if offer == session.offered && told {
         return Ok(());
     }
+    session.revocations_told = revocations.len();
     session.send(Outgoing::Message(SyncMessage::Hello {
         certificate: backend.certificate(),
         folders: offer.iter().copied().collect(),
         clock_ms: Some(backend.now_ms()),
+        revocations: Some(revocations),
     }))?;
+    if offer == session.offered {
+        return Ok(());
+    }
     session.offered = offer;
     let added = session.reshare();
     debug!(device = %session.peer.certificate.device, newly_shared = added.len(), "offer updated");
@@ -520,10 +583,13 @@ fn handle(
         SyncMessage::Hello {
             certificate,
             folders,
+            revocations,
             ..
         } => {
             // An updated offer. The certificate must still be for this connection's device.
             let certificate = verify_peer(&certificate, conn)?;
+            learn_revocations(backend, revocations);
+            check_revoked(backend, &certificate)?;
             if certificate.user != session.peer.certificate.user {
                 return Err(Error::Protocol(
                     "certificate changed user mid-session".into(),

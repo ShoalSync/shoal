@@ -1,6 +1,6 @@
 //! The storage and policy interface a [`crate::Node`] needs. Implemented by `engine`.
 
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::sync::EntryVersion;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
@@ -48,6 +48,20 @@ pub trait Backend: Send + Sync + 'static {
     /// Keeps a device's certificate: a peer's at the handshake, or an author's fetched to vouch
     /// for it (ADR 0024). The signature has been checked.
     fn learn_certificate(&self, _certificate: Signed<DeviceCertificate>) {}
+
+    /// The device revocations to tell peers of (ADR 0040).
+    fn revocations(&self) -> Vec<Signed<DeviceRevocation>> {
+        Vec::new()
+    }
+
+    /// Keeps revocations a peer told of. Their signatures have been checked.
+    fn learn_revocations(&self, _revocations: Vec<Signed<DeviceRevocation>>) {}
+
+    /// Whether the device `certificate` is for is revoked: such a peer is refused, and this
+    /// device, if it is its own, syncs with no one.
+    fn is_revoked(&self, _certificate: &DeviceCertificate) -> bool {
+        false
+    }
 
     /// Authors of versions applied to `folder` whose certificates this backend lacks, each
     /// once: the session asks the peer for them.

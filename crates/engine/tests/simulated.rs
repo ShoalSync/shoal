@@ -267,3 +267,64 @@ async fn engines_keep_the_certificates_of_devices_they_meet() {
     assert!(knows(&engine_a, a.key.id()), "its own too");
     engine_a.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_revoked_device_is_refused_by_every_peer_that_hears_of_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([1; 32]);
+    let a = Replica::new(dir.path(), "a", 60);
+    let b = Replica::new(dir.path(), "b", 61);
+    let phone = Replica::new(dir.path(), "phone", 62);
+    phone.write("before.txt", b"before the loss");
+    let engine_a = a.start(&user, &network, &[]).await;
+    let engine_phone = phone.start(&user, &network, &[a.key.id()]).await;
+    engine_phone.scan(FOLDER).await.unwrap();
+    eventually("a has the phone's file", || a.read("before.txt").is_some()).await;
+    // The phone is lost, offline: it does not hear of what follows.
+    engine_phone.shutdown().await;
+
+    assert!(
+        engine_a.revoke_device(&user, a.key.id()).is_err(),
+        "not itself"
+    );
+    engine_a.revoke_device(&user, phone.key.id()).unwrap();
+    assert_eq!(engine_a.revocations().len(), 1);
+
+    // B was offline too: it hears of the revocation from A.
+    let engine_b = b.start(&user, &network, &[a.key.id()]).await;
+    eventually("b knows of the revocation", || {
+        !engine_b.revocations().is_empty()
+    })
+    .await;
+    eventually("b has a's files", || b.read("before.txt").is_some()).await;
+
+    // The phone comes back, and reaches B first: B refuses it, and tells it why.
+    phone.write("after.txt", b"by the thief");
+    let engine_phone = phone.start(&user, &network, &[b.key.id()]).await;
+    engine_phone.scan(FOLDER).await.unwrap();
+    eventually("the phone learns it is revoked", || engine_phone.revoked()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(b.read("after.txt").is_none(), "nothing from the phone");
+    assert!(engine_b
+        .connected_peers()
+        .iter()
+        .all(|p| p.device != phone.key.id()));
+    // Kept across a restart.
+    engine_b.shutdown().await;
+    let engine_b = b.start(&user, &network, &[a.key.id()]).await;
+    assert_eq!(engine_b.revocations().len(), 1);
+
+    // Another user's revocation of the same device ID revokes nothing.
+    let other = UserKey::from_seed([9; 32]);
+    assert!(engine_b.revoke_device(&other, a.key.id()).is_ok());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(engine_b
+        .connected_peers()
+        .iter()
+        .any(|p| p.device == a.key.id()));
+
+    engine_phone.shutdown().await;
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}

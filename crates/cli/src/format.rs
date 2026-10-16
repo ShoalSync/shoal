@@ -70,6 +70,11 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
     if !s.metadata_dir.is_empty() {
         out.push_str(&format!("\nmetadata: {}", s.metadata_dir));
     }
+    if s.revoked {
+        out.push_str(
+            "\nREVOKED: your user revoked this device; it syncs with no one. Pair it again.",
+        );
+    }
     if s.paused {
         out.push_str("\nsyncing paused on this device: `tidefell resume` to continue");
     }
@@ -753,6 +758,19 @@ pub(crate) fn problems(problems: &[Problem]) -> String {
     }
     out.pop();
     out
+}
+
+pub(crate) fn revocations(list: &[tidefell_sdk::types::Revocation]) -> String {
+    if list.is_empty() {
+        return "no revoked devices".into();
+    }
+    list.iter()
+        .map(|r| {
+            let name = r.name.as_deref().map_or(String::new(), |n| format!("{n} "));
+            format!("{name}{} revoked {}", r.device, time(r.revoked_ms))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

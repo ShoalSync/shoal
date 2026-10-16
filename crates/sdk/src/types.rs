@@ -34,6 +34,9 @@ pub struct Status {
     /// Where each folder's metadata database is kept (ADR 0034).
     #[serde(default)]
     pub metadata_dir: String,
+    /// This device's user has revoked it (ADR 0040): it syncs with no one; pair it again.
+    #[serde(default)]
+    pub revoked: bool,
 }
 
 /// How a connection reaches its peer.
@@ -600,6 +603,20 @@ pub struct KnownPeer {
     /// A relay the peer is reachable through.
     #[serde(default)]
     pub relay: Option<String>,
+}
+
+/// A device its user revoked (ADR 0040).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Revocation {
+    /// The revoked device's ID.
+    pub device: String,
+    /// The user who revoked it.
+    pub user: String,
+    /// The device's name, if this device holds its certificate.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// When it was revoked, in milliseconds since the Unix epoch.
+    pub revoked_ms: i64,
 }
 
 /// A change, streamed from `GET /v1/events` as server-sent events.

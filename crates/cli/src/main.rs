@@ -223,8 +223,27 @@ enum Command {
     /// Manage peers.
     #[command(subcommand)]
     Peer(PeerCommand),
+    /// Revoke a lost or stolen device (ADR 0040).
+    #[command(subcommand)]
+    Device(DeviceCommand),
     /// Follow changes as they happen.
     Events,
+}
+
+#[derive(Subcommand)]
+enum DeviceCommand {
+    /// Revoke one of your devices for good: every peer that hears of it refuses it from then
+    /// on, and it syncs with no one. A device found again pairs again. The daemon must hold
+    /// your user key.
+    Revoke {
+        /// The device's ID.
+        device: String,
+        /// Revoke without asking.
+        #[arg(long)]
+        yes: bool,
+    },
+    /// List the devices their users revoked that this device knows of.
+    Revocations,
 }
 
 #[derive(Subcommand)]
@@ -990,6 +1009,37 @@ async fn run(cli: Cli) -> Result<(), String> {
             PeerCommand::Remove { device } => {
                 client.remove_peer(&device).await.map_err(e)?;
                 print(json, &(), |_| format!("forgot {device}"));
+            }
+        },
+        Command::Device(command) => match command {
+            DeviceCommand::Revoke { device, yes } => {
+                let name = client
+                    .status()
+                    .await
+                    .map_err(e)?
+                    .peers
+                    .into_iter()
+                    .find(|p| p.device == device)
+                    .and_then(|p| p.name)
+                    .map(|n| format!("\"{n}\" ({device})"))
+                    .unwrap_or_else(|| device.clone());
+                let revoke = yes
+                    || confirm(&format!(
+                        "Revoke {name} for good? It will sync with none of your devices again; \
+                         if it is found, pair it again."
+                    ))?;
+                if !revoke {
+                    return Err("not revoked".into());
+                }
+                client.revoke_device(&device).await.map_err(e)?;
+                print(json, &(), |_| {
+                    format!("revoked {name}; your other devices refuse it once they hear of it")
+                });
+            }
+            DeviceCommand::Revocations => {
+                print(json, &client.revocations().await.map_err(e)?, |list| {
+                    format::revocations(list)
+                });
             }
         },
         Command::Events => {

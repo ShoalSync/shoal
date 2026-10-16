@@ -123,14 +123,14 @@ A user taken out of a folder's member list.
 
 - **Can** do everything its user's devices can until it is cut off: it holds a valid device
   certificate and key. Anyone who can read its storage has the device key.
-- **Gap: no device revocation.** A certificate cannot be revoked; the only way to cut off a lost
-  device is to remove its whole user from every folder on every replica, and to certify the user's
-  other devices under a new user key. ADR 0040 decides revocations signed by the user key that
-  spread to every peer: a revoked device fails the handshake everywhere that has heard of it,
-  and its versions are taken over by the replicas that hold them and then refused. With a time of
-  loss, what each replica received from it after that time is withdrawn instead, by the
-  replicas' own clocks, after the user has seen the list. Refusing its connections comes first;
-  the rest ships with author vouching.
+- **Cannot** sync with a replica that has heard it was revoked (ADR 0040, from 0.20):
+  `tidefell device revoke` on the device holding the user key signs a revocation, which every
+  peer passes on in its `Hello`, before anything else is exchanged, and keeps for good. A revoked
+  device is refused at the handshake, told why, and syncs with no one once it knows.
+- **Gap: what it made stays, and what it relays still counts.** Until author vouching is
+  enforced, in the release after 0.20, its versions already applied stay as they are, and its
+  versions relayed by a replica that has not heard of the revocation are still applied. ADR
+  0040's takeover, a time of loss and the guards against a harmful revocation ship then.
 - **On Android the device key is sealed by the Keystore.** The FFI keeps it in a vault the app
   provides (`set_key_vault`), and the app's vault seals it with an AES key held in the Android
   Keystore, which never leaves it: a copy of the app's storage holds only the sealed key. A plain

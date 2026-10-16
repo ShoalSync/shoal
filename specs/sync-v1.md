@@ -34,7 +34,20 @@ DeviceCertificate = user: UserId || device: DeviceId || name: string || issued_m
 ```
 
 A certificate is sent as `Signed<DeviceCertificate>` with kind `identity/1/device-certificate`,
-and its signer must equal `user`. Revocation is not yet specified.
+and its signer must equal `user`.
+
+A user revokes one of their devices for good with a revocation (ADR 0040):
+
+```
+DeviceRevocation = user: UserId || device: DeviceId || revoked_ms: i64 || lost_ms: Option<i64>
+```
+
+It is sent as `Signed<DeviceRevocation>` with kind `identity/1/device-revocation`, and its signer
+must equal `user`. It revokes a device only if that device's certificate names the same `user`:
+one user cannot revoke another's devices. Replicas keep every revocation they verify by a user
+they have to do with (their own, a member of one of their folders, or the user of a certificate
+they hold), at most 4096, and never drop one. They send them in `Hello` (see Exchange), refuse a
+session with a revoked peer, and sync with no one once their own device is revoked.
 
 The author of every version a replica applies must be vouched for: it must have a device
 certificate signed by a user who is a member of the folder (ADR 0024). Replicas keep the
@@ -134,12 +147,13 @@ verified in strict mode. Each kind states who must sign:
 | --- | --- | --- |
 | `sync/1/entry-version` | `EntryVersion` | `EntryVersion.author` |
 | `identity/1/device-certificate` | `DeviceCertificate` | `DeviceCertificate.user` |
+| `identity/1/device-revocation` | `DeviceRevocation` | `DeviceRevocation.user` |
 
 ## Messages
 
 | Index | Message | Fields |
 | --- | --- | --- |
-| 0 | `Hello` | `certificate: Signed<DeviceCertificate>`, `folders: Vec<FolderId>`, `clock_ms: Option<i64>` |
+| 0 | `Hello` | `certificate: Signed<DeviceCertificate>`, `folders: Vec<FolderId>`, `clock_ms: Option<i64>`, `revocations: Option<Vec<Signed<DeviceRevocation>>>` |
 | 1 | `IndexRequest` | `folder: FolderId`, `epoch: u64`, `since: u64` |
 | 2 | `IndexBatch` | `folder: FolderId`, `epoch: u64`, `up_to: u64`, `versions: Vec<Signed<EntryVersion>>`, `last: bool` |
 | 3 | `ManifestRequest` | `folder: FolderId`, `content: ContentHash` |
@@ -152,6 +166,11 @@ verified in strict mode. Each kind states who must sign:
 Unix epoch, so each side can tell how far apart their clocks are (ADR 0030). It was appended
 later: a `Hello` whose frame ends after `folders` is read with `clock_ms` absent. Every other
 message must be complete.
+
+`Hello`'s `revocations` are the device revocations the sender knows (ADR 0040), at most 256 read
+from one `Hello`. It was appended after `clock_ms`: a `Hello` whose frame ends after `clock_ms`
+is read with `revocations` absent, and peers that predate it read a `Hello` and ignore what
+follows `clock_ms`.
 
 `EntryVersion`:
 
@@ -183,10 +202,15 @@ cannot decode a certificate request and closes that stream.
 Before the handshake completes, a peer reads at most 64 KiB for a message, and the handshake
 must complete within 10 seconds.
 
-1. The connecting peer sends `Hello` listing the folders it syncs. The accepting peer checks
-   the certificate (see Membership) and replies with `Hello` listing only the folders the
-   connecting peer is a member of. Each side then proceeds only with folders that both sides
-   listed and for which the peer is a member.
+1. The connecting peer sends `Hello` listing the folders it syncs, with its revocations. The
+   accepting peer keeps the revocations, checks the certificate (see Membership) and replies
+   with `Hello` listing only the folders the connecting peer is a member of, with its own
+   revocations; if the connecting peer's device is revoked, it lists none and closes the
+   session after its `Hello`, so the revoked device learns why. Each side then proceeds only
+   with folders that both sides listed and for which the peer is a member. Revocations are thus
+   exchanged before anything else. A side that learns of new revocations during the session
+   sends `Hello` again with them, and ends the session if the peer's device, or its own, is
+   now revoked.
 2. For each shared folder, each side sends `IndexRequest` with the epoch and sequence it last
    received from this peer (both 0 the first time).
 3. The responder sends, in sequence order, every version currently in its index (current

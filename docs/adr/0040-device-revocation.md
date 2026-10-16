@@ -1,7 +1,7 @@
 # 0040: Device revocation
 
 - Status: accepted
-- Date: 2026-10-14 (a time of loss added the same day)
+- Date: 2026-10-14 (a time of loss added the same day; the exchange amended 2026-10-16)
 
 ## Context
 
@@ -37,10 +37,18 @@ Three facts shape it:
   (ADR 0015), so it knows the user's devices by name.
 - Every device keeps every revocation it has verified, in its runtime settings. The set only
   grows, so copies merge by union and an old copy cannot undo a revocation.
-- Revocations spread to every peer, whatever folders they share: after the `sync/1` handshake
-  each side sends the revocations the other has not seen (a new message pair, `Revocations`).
-  A device that shares no folder with the revoking machine still hears of it through the
-  devices it does share one with.
+- Revocations spread to every peer, whatever folders they share: each side sends every
+  revocation it knows in its `sync/1` `Hello`, and a `Hello` again during the session when it
+  learns of new ones. (Amended from a new message pair: the field in `Hello` is exchanged first
+  by construction, a set of revocations is small, and peers from before it read a `Hello` and
+  ignore the field, so no peer needs to know which others understand it.) A device that shares
+  no folder with the revoking machine still hears of it through the devices it does share one
+  with.
+- A revocation revokes a device only if the device's certificate names the user that signed it,
+  so one user cannot revoke another's devices. A device keeps revocations only by users it has
+  to do with (its own, the members of its folders, the users of certificates it holds), at most
+  4096, and reads at most 256 from one `Hello`, so a stranger cannot make it keep an unbounded
+  list.
 - **Revocations come first.** Neither side sends or asks for an index, manifest or chunk until
   revocations have been exchanged, and a revocation received is checked against both sides of
   every open connection at once. A device that was offline when another was revoked learns of it

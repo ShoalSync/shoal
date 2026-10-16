@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::Path;
 
 use ed25519_dalek::SigningKey;
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::{DeviceId, Signed, UserId};
 
 use crate::{Error, Result};
@@ -149,6 +149,24 @@ impl UserKey {
                 device,
                 name: name.into(),
                 issued_ms,
+            },
+            &self.0,
+        )
+    }
+
+    /// Revokes this user's `device` for good (ADR 0040), lost at `lost_ms` if the user said.
+    pub fn revoke(
+        &self,
+        device: DeviceId,
+        revoked_ms: i64,
+        lost_ms: Option<i64>,
+    ) -> Signed<DeviceRevocation> {
+        Signed::sign(
+            &DeviceRevocation {
+                user: self.id(),
+                device,
+                revoked_ms,
+                lost_ms,
             },
             &self.0,
         )

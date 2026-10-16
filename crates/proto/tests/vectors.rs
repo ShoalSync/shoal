@@ -10,7 +10,7 @@ use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
 use tidefell_proto::frame::Message;
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
@@ -26,6 +26,14 @@ fn hex(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
         s
     })
+}
+
+fn unhex(text: &str) -> Vec<u8> {
+    let digits: Vec<u8> = text.bytes().filter(u8::is_ascii_hexdigit).collect();
+    digits
+        .chunks(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
 }
 
 fn device_key() -> SigningKey {
@@ -79,6 +87,18 @@ fn version_with_holes() -> EntryVersion {
     version
 }
 
+fn revocation() -> Signed<DeviceRevocation> {
+    Signed::sign(
+        &DeviceRevocation {
+            user: UserId(user_key().verifying_key().to_bytes()),
+            device: DeviceId([0x33; 32]),
+            revoked_ms: 1_760_400_000_000,
+            lost_ms: Some(1_760_300_000_000),
+        },
+        &user_key(),
+    )
+}
+
 fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
     let folder = FolderId([0x22; 32]);
     let messages = [
@@ -88,6 +108,16 @@ fn sync_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
                 certificate: certificate(),
                 folders: vec![folder],
                 clock_ms: Some(1_758_600_000_000),
+                revocations: Some(Vec::new()),
+            },
+        ),
+        (
+            "hello-with-revocations",
+            SyncMessage::Hello {
+                certificate: certificate(),
+                folders: vec![folder],
+                clock_ms: Some(1_758_600_000_000),
+                revocations: Some(vec![revocation()]),
             },
         ),
         (
@@ -436,15 +466,93 @@ fn alpn_constants_match_specs() {
 }
 
 #[test]
+fn hello_from_before_revocations_decodes_and_is_read_by_0_19() {
+    // 0.19's "hello" vector: its frame ends after `clock_ms` (ADR 0040).
+    let frame = unhex(
+        "dc0100c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a752c853ad0f0cd2b6\
+         19aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7d04ab232742bb4ab3a1368bd4615e4e6d02\
+         24ab71a016baf8520a332c97787370b746573742064657669636580c8d3cbae667d729b8774f97583e7bf\
+         1636b4e3e4d60f6950f7e08ee9d26285bbb9cc565274e2b87d7adc85bcef55f5de8a7f65c99189feefdee\
+         ee79a9ef495c4ff150fb7000122222222222222222222222222222222222222222222222222222222222222\
+         220180c8d3cbae66",
+    );
+    let (decoded, _) = tidefell_proto::frame::decode::<SyncMessage>(&frame).unwrap();
+    let SyncMessage::Hello {
+        clock_ms,
+        revocations,
+        ..
+    } = decoded
+    else {
+        panic!("not a hello");
+    };
+    assert_eq!(clock_ms, Some(1_758_600_000_000));
+    assert_eq!(revocations, None, "absent, not empty");
+
+    // 0.19 reads a Hello's body with postcard, which stops after `clock_ms` and leaves the
+    // revocations unread: the same fields as 0.19's Hello.
+    #[derive(serde::Deserialize, Debug)]
+    enum Hello019 {
+        Hello {
+            _certificate: Signed<DeviceCertificate>,
+            _folders: Vec<FolderId>,
+            clock_ms: Option<i64>,
+        },
+    }
+    let new = postcard::to_stdvec(&SyncMessage::Hello {
+        certificate: certificate(),
+        folders: vec![FolderId([0x22; 32])],
+        clock_ms: Some(5),
+        revocations: Some(vec![revocation()]),
+    })
+    .unwrap();
+    let Hello019::Hello { clock_ms, .. } = postcard::from_bytes(&new).unwrap();
+    assert_eq!(clock_ms, Some(5));
+}
+
+#[test]
+fn a_revocation_binds_its_user() {
+    let revocation = revocation().verify_revocation().unwrap();
+    let mine = DeviceCertificate {
+        device: revocation.device,
+        ..certificate().verify_certificate().unwrap()
+    };
+    assert!(revocation.revokes(&mine));
+    let theirs = DeviceCertificate {
+        user: UserId([0x44; 32]),
+        ..mine.clone()
+    };
+    assert!(
+        !revocation.revokes(&theirs),
+        "another user's device of the same ID"
+    );
+    let other = DeviceCertificate {
+        device: DeviceId([0x55; 32]),
+        ..mine
+    };
+    assert!(!revocation.revokes(&other));
+    // Signed by someone other than the user it names: refused.
+    let forged = Signed::sign(
+        &DeviceRevocation {
+            user: UserId(user_key().verifying_key().to_bytes()),
+            ..revocation
+        },
+        &device_key(),
+    );
+    assert!(forged.verify_revocation().is_err());
+}
+
+#[test]
 fn hello_from_before_the_clock_decodes() {
     // A Hello as devices sent it before `clock_ms` (ADR 0030): the frame ends after `folders`.
     let old = SyncMessage::Hello {
         certificate: certificate(),
         folders: vec![FolderId([0x22; 32])],
         clock_ms: None,
+        revocations: None,
     };
     let mut body = postcard::to_stdvec(&old).unwrap();
     assert_eq!(body.pop(), Some(0), "None is one zero byte at the end");
+    assert_eq!(body.pop(), Some(0), "and another");
     let decoded = SyncMessage::decode_body(&body).unwrap();
     assert_eq!(decoded, old);
     // Any other message must be complete: an index batch cut short before `last` is refused,

@@ -14,8 +14,8 @@ use crate::types::{
     DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, HeldDeletes,
     HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember,
     OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem, Recycled,
-    RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Status, SyncOptions,
-    Version, VersionRequest,
+    RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Revocation, Status,
+    SyncOptions, Version, VersionRequest,
 };
 
 /// Client errors.
@@ -639,6 +639,21 @@ impl Client {
     /// Remembers a peer to keep connected.
     pub async fn add_peer(&self, peer: &KnownPeer) -> Result<(), Error> {
         self.call(Method::POST, "/v1/peers/known", Some(peer)).await
+    }
+
+    /// The devices their users revoked that this device knows of (ADR 0040).
+    pub async fn revocations(&self) -> Result<Vec<Revocation>, Error> {
+        self.call(Method::GET, "/v1/revocations", None::<&()>).await
+    }
+
+    /// Revokes one of the user's devices for good (ADR 0040). The daemon must hold the user key.
+    pub async fn revoke_device(&self, device: &str) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/devices/{device}/revoke"),
+            None::<&()>,
+        )
+        .await
     }
 
     /// Forgets a peer added at runtime.

@@ -151,7 +151,7 @@ pub use tidefell_meta::{ChangeKind, Retention};
 pub use tidefell_net::{
     Limits, PathKind, RelayConfig, RelayToken, RelayUrl, Transfer, MIN_BYTES_PER_SEC,
 };
-pub use tidefell_proto::identity::DeviceCertificate;
+pub use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer,
@@ -209,6 +209,9 @@ pub enum Error {
     /// No live file has this path.
     #[error("no such file: {0}")]
     NoSuchFile(String),
+    /// A device cannot revoke itself (ADR 0040): revoke it from another device of the user.
+    #[error("a device cannot revoke itself; revoke it from another of your devices")]
+    RevokeSelf,
     /// A file on disk changed since the last scan, so it cannot be removed yet.
     #[error("{0} has changes that are not recorded yet; try again after the next scan")]
     LocalChanges(String),

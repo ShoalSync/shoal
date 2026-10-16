@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use tidefell_net::{Backend, IndexPage};
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::sync::EntryVersion;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
@@ -61,6 +61,24 @@ impl Backend for EngineBackend {
 
     fn learn_certificate(&self, certificate: Signed<DeviceCertificate>) {
         self.0.learn_certificate(certificate);
+    }
+
+    fn revocations(&self) -> Vec<Signed<DeviceRevocation>> {
+        self.0
+            .vouching
+            .lock()
+            .unwrap()
+            .revocations()
+            .cloned()
+            .collect()
+    }
+
+    fn learn_revocations(&self, revocations: Vec<Signed<DeviceRevocation>>) {
+        self.0.learn_revocations(revocations);
+    }
+
+    fn is_revoked(&self, certificate: &DeviceCertificate) -> bool {
+        self.0.vouching.lock().unwrap().is_revoked(certificate)
     }
 
     fn authors_to_vouch(&self, folder: &FolderId) -> Vec<DeviceId> {

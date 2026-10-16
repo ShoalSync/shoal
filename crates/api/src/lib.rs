@@ -128,6 +128,8 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/pairings", post(pairing::start))
         .route("/v1/pairings/{id}/approve", post(pairing::approve))
         .route("/v1/pairings/{id}", delete(pairing::decline))
+        .route("/v1/revocations", get(handlers::revocations))
+        .route("/v1/devices/{device}/revoke", post(pairing::revoke))
         .route("/v1/events", get(handlers::events))
         .route(
             "/v1/log",

@@ -49,18 +49,30 @@ impl Message for crate::blobs::BlobsMessage {}
 impl Message for crate::pair::PairMessage {}
 
 impl Message for crate::sync::SyncMessage {
-    /// Also reads a `Hello` from before `clock_ms` (ADR 0030): its frame ends after `folders`,
-    /// and it is read with the clock absent. Every other message must be complete.
+    /// Also reads a `Hello` from before `revocations` (ADR 0040), whose frame ends after
+    /// `clock_ms`, or from before `clock_ms` (ADR 0030), whose frame ends after `folders`: the
+    /// fields left out are read as absent. Every other message must be complete.
     fn decode_body(body: &[u8]) -> Result<Self, Error> {
         match postcard::from_bytes(body) {
             Ok(message) => Ok(message),
             Err(e) => {
-                let mut padded = body.to_vec();
-                padded.push(0);
-                match postcard::from_bytes(&padded) {
-                    Ok(hello @ Self::Hello { clock_ms: None, .. }) => Ok(hello),
-                    _ => Err(Error::Decode(e)),
+                // The fields left out, each one zero byte (absent): one, then both.
+                for absent in [1, 2] {
+                    let mut padded = body.to_vec();
+                    padded.resize(body.len().saturating_add(absent), 0);
+                    if let Ok(
+                        hello @ Self::Hello {
+                            revocations: None, ..
+                        },
+                    ) = postcard::from_bytes(&padded)
+                    {
+                        // Both left out means no clock either: a clock cut short is not read.
+                        if absent == 1 || matches!(hello, Self::Hello { clock_ms: None, .. }) {
+                            return Ok(hello);
+                        }
+                    }
                 }
+                Err(Error::Decode(e))
             }
         }
     }

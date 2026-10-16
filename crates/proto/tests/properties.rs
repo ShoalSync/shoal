@@ -121,13 +121,17 @@ fn sync_message() -> impl Strategy<Value = SyncMessage> {
         (
             certificate(),
             prop::collection::vec(bytes32().prop_map(FolderId), 0..3),
-            any::<Option<i64>>()
+            any::<Option<i64>>(),
+            any::<bool>()
         )
-            .prop_map(|(certificate, folders, clock_ms)| SyncMessage::Hello {
-                certificate,
-                folders,
-                clock_ms,
-            }),
+            .prop_map(
+                |(certificate, folders, clock_ms, revocations)| SyncMessage::Hello {
+                    certificate,
+                    folders,
+                    clock_ms,
+                    revocations: revocations.then(Vec::new),
+                }
+            ),
         (bytes32(), any::<u64>(), any::<u64>()).prop_map(|(f, epoch, since)| {
             SyncMessage::IndexRequest {
                 folder: FolderId(f),

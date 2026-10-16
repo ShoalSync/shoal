@@ -124,3 +124,27 @@ pub(crate) async fn decline(
     pairings.take(&id)?.decline().await?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Revokes one of the user's devices for good (ADR 0040): every peer that hears of it refuses
+/// it from then on. Needs the user key, like approving a pairing.
+#[utoipa::path(post, path = "/v1/devices/{device}/revoke", tag = "pairing",
+    params(("device" = String, Path, description = "Device ID")),
+    responses((status = 204), (status = 400, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn revoke(
+    State(engine): State<Arc<Engine>>,
+    State(pairings): State<Arc<Pairings>>,
+    Path(device): Path<String>,
+) -> Result<StatusCode, ApiFailure> {
+    let Some(user) = pairings.user_key.as_ref() else {
+        return Err(failure(
+            StatusCode::CONFLICT,
+            ErrorKind::Conflict,
+            "this device does not hold the user key, so it cannot revoke devices",
+        ));
+    };
+    let device: tidefell_engine::DeviceId = device
+        .parse()
+        .map_err(|_| ApiFailure::bad_request(format!("invalid device ID {device:?}")))?;
+    engine.revoke_device(user, device)?;
+    Ok(StatusCode::NO_CONTENT)
+}

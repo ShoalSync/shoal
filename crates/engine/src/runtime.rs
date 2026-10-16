@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tidefell_meta::Retention;
-use tidefell_proto::identity::DeviceCertificate;
+use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::Signed;
 use tidefell_proto::{DeviceId, FolderId, UserId};
 
@@ -28,7 +28,8 @@ use crate::config::{
 };
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 6\n";
+const HEADER: &[u8] = b"tidefell-engine-runtime 7\n";
+const HEADER_V6: &[u8] = b"tidefell-engine-runtime 6\n";
 const HEADER_V5: &[u8] = b"tidefell-engine-runtime 5\n";
 const HEADER_V4: &[u8] = b"tidefell-engine-runtime 4\n";
 const HEADER_V3: &[u8] = b"tidefell-engine-runtime 3\n";
@@ -50,6 +51,34 @@ pub(crate) struct Runtime {
     /// Certificates of devices this one has met or vouched for (ADR 0024): peers' from their
     /// handshakes, and authors' fetched from peers. Format 6.
     pub(crate) certificates: Vec<Signed<DeviceCertificate>>,
+    /// Device revocations this device knows (ADR 0040). Format 7.
+    pub(crate) revocations: Vec<Signed<DeviceRevocation>>,
+}
+
+/// [`Runtime`] in format 6, before revocations.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct RuntimeV6 {
+    folders: Vec<StoredFolder>,
+    peers: Vec<StoredPeer>,
+    paused: bool,
+    paused_folders: Vec<FolderId>,
+    pins: Vec<(FolderId, Vec<String>)>,
+    certificates: Vec<Signed<DeviceCertificate>>,
+}
+
+impl From<RuntimeV6> for Runtime {
+    fn from(v6: RuntimeV6) -> Self {
+        Self {
+            folders: v6.folders,
+            peers: v6.peers,
+            paused: v6.paused,
+            paused_folders: v6.paused_folders,
+            pins: v6.pins,
+            certificates: v6.certificates,
+            revocations: Vec::new(),
+        }
+    }
 }
 
 /// [`Runtime`] in format 5, before certificates.
@@ -72,6 +101,7 @@ impl From<RuntimeV5> for Runtime {
             paused_folders: v5.paused_folders,
             pins: v5.pins,
             certificates: Vec::new(),
+            revocations: Vec::new(),
         }
     }
 }
@@ -95,6 +125,7 @@ impl From<RuntimeV4> for Runtime {
             paused_folders: v4.paused_folders,
             pins: Vec::new(),
             certificates: Vec::new(),
+            revocations: Vec::new(),
         }
     }
 }
@@ -301,6 +332,8 @@ impl Runtime {
         match fs::read(&path) {
             Ok(bytes) => if let Some(body) = bytes.strip_prefix(HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(HEADER_V6) {
+                postcard::from_bytes::<RuntimeV6>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V5) {
                 postcard::from_bytes::<RuntimeV5>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V4) {

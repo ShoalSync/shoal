@@ -380,6 +380,13 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   for it, is a member of the folder: a removed member's copies stop counting, so the files are
   "only here" again and a partial replica keeps them. A copy confirmed before 0.20 counts once
   its device has been met again, as its certificate was not kept before.
+- ADR 0040's first part, revoking a device's connections, is implemented: `tidefell device
+  revoke` (and `POST /v1/devices/{device}/revoke`) on the device holding the user key signs a
+  revocation; `sync/1`'s `Hello` carries every revocation the sender knows (appended after
+  `clock_ms`, which 0.19 reads past), so they are exchanged before anything else; a revoked peer
+  is refused at the handshake and told why, and a revoked device syncs with no one. Revocations
+  are kept in the runtime settings (format 7). Takeover, a time of loss, its preview and the
+  guards ship with author enforcement in the release after (ADR 0040's order of work).
 - Phase 5c step 5 (supply chain) is done: releases run on a runner of their own with a pinned
   toolchain, only for tags on `main` whose commit passed CI, and every asset is signed keyless
   with Sigstore. Actions were already pinned by commit (ADR 0031).

@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::identity::DeviceCertificate;
+use crate::identity::{DeviceCertificate, DeviceRevocation};
 use crate::{
     ContentHash, DeviceId, EntryId, Error, FolderId, Manifest, PublicKey, Signed, SignedKind,
     VersionVector,
@@ -180,6 +180,10 @@ pub enum SyncMessage {
         /// other side can tell how far apart their clocks are (ADR 0030). Devices from before
         /// it leave it out: the frame ends after `folders`.
         clock_ms: Option<i64>,
+        /// The device revocations the sender knows (ADR 0040), so they are exchanged before
+        /// anything else; a `Hello` during the session carries those learned since. Devices
+        /// from before them leave it out: the frame ends after `clock_ms`.
+        revocations: Option<Vec<Signed<DeviceRevocation>>>,
     },
     /// Ask for every version the responder has recorded after sequence `since` in its index
     /// for `folder`.

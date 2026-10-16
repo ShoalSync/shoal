@@ -19,8 +19,8 @@ const MAX_CHECKS_PER_ROUND: usize = 256;
 
 /// The devices that confirmed holding `content`, and when, that still count: those whose user,
 /// by the certificate this device holds for them, is a member of the folder now. A removed
-/// member's copies are not counted, nor those of a device whose certificate is not known until
-/// it is met again (Phase 5c step 6).
+/// member's copies are not counted, nor a revoked device's, nor those of a device whose
+/// certificate is not known until it is met again (Phase 5c step 6).
 pub(crate) fn confirmed(
     state: &FolderState,
     vouching: &Vouching,
@@ -33,9 +33,13 @@ pub(crate) fn confirmed(
             devices
                 .iter()
                 .filter(|(device, _)| {
+                    // Nor a revoked device's (ADR 0040).
                     vouching
-                        .user_of(**device)
-                        .is_some_and(|user| state.members.contains(&user))
+                        .certificate(**device)
+                        .and_then(|c| c.verify_certificate().ok())
+                        .is_some_and(|c| {
+                            state.members.contains(&c.user) && !vouching.is_revoked(&c)
+                        })
                 })
                 .map(|(device, at)| (*device, *at))
                 .collect()

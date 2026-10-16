@@ -40,6 +40,19 @@ device receives its certificate, remembers the approving device as a peer, and l
 folders you can join. The code expires after ten minutes or one use. A daemon can approve only
 if its data directory has `user.key` (the default location `tidefelld init` uses).
 
+## A lost or stolen device
+
+Where your user key is, revoke it:
+
+```sh
+tidefell device revoke <device ID>
+```
+
+Every one of your devices that hears of it, from this one or from any other that has, refuses
+it from then on, and it syncs with no one once it hears of it itself. A revocation is for good:
+a device that is found again pairs again. `tidefell device revocations` lists those this device
+knows of. Files the device already made stay.
+
 ## More devices: certificate files
 
 Without pairing, certify a device by hand. On the new device, print its ID. This creates its device key:
