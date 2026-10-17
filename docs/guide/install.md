@@ -27,15 +27,19 @@ sudo install tidefell-$version-$target/tidefell tidefell-$version-$target/tidefe
 Every asset is signed when it is released, without a key to steal: [Sigstore](https://sigstore.dev)
 issues the release workflow a short-lived certificate naming this repository, the workflow and
 the tag, and records the signature in its public log. [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-checks that an asset was signed by that workflow for its tag:
+checks that an asset was signed by that workflow:
 
 ```sh
 curl -LO https://github.com/tidefell/tidefell/releases/download/v$version/tidefell-$version-$target.tar.gz.sigstore.json
 cosign verify-blob tidefell-$version-$target.tar.gz \
   --bundle tidefell-$version-$target.tar.gz.sigstore.json \
-  --certificate-identity https://github.com/Tidefell/tidefell/.github/workflows/release.yml@refs/tags/v$version \
+  --certificate-identity-regexp '^https://github\.com/Tidefell/tidefell/\.github/workflows/release\.yml@refs/(tags/v.+|heads/main)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
+
+A release is normally built when its tag is pushed, and the certificate names the tag. One built
+by hand, as 0.20.0 was, runs the workflow from `main` and the certificate names `main`; either
+way the workflow builds only a tag on `main` whose commit passed CI.
 
 A checksum shows a download arrived whole; this shows it is what the release built.
 
