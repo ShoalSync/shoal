@@ -381,6 +381,18 @@ pub(crate) async fn run(
             }
         }
     };
+    if matches!(result, Err(Error::Auth(_))) {
+        // A peer refused for a revocation has been sent it: let the writer send it, and give
+        // the peer a moment to read it and close its side, rather than cut it off unread.
+        drop(session);
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), &mut writer).await;
+        for _ in 0..30 {
+            if conn.is_closed() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
     writer.abort();
     conn.close(0, b"done");
     result
@@ -476,6 +488,8 @@ async fn write_loop(
             }
         }
     }
+    // Everything queued is written: the peer reads it to the end.
+    let _ = send.finish();
     Ok(())
 }
 
@@ -548,7 +562,17 @@ async fn send_index(
 /// Re-sends `Hello` if the folders we offer the peer changed (a folder was added or removed,
 /// or membership changed).
 fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
-    check_revoked(backend, &session.peer.certificate)?;
+    if let Err(e) = check_revoked(backend, &session.peer.certificate) {
+        // Told why before the session ends: the Hello carries the revocations, and offers
+        // nothing.
+        let _ = session.send(Outgoing::Message(SyncMessage::Hello {
+            certificate: backend.certificate(),
+            folders: Vec::new(),
+            clock_ms: Some(backend.now_ms()),
+            revocations: Some(backend.revocations()),
+        }));
+        return Err(e);
+    }
     let offer = offer_for(backend, &session.peer.certificate);
     // The set of revocations only grows: more of them than were told is something new.
     let revocations = backend.revocations();

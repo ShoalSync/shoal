@@ -21,14 +21,25 @@
 <p class="muted">This server does not sync with any other device yet.</p>
 {% else %}
 <table>
-  <thead><tr><th>Device</th><th>Connection</th><th>Since</th></tr></thead>
+  <thead><tr><th>Device</th><th>Connection</th><th>Since</th><th></th></tr></thead>
   <tbody>
   {% for p in peers %}
     <tr>
       <td>{{ p.name }}<div class="muted mono">{{ p.device }}</div></td>
       <td>{% if p.connected %}{{ p.connection }}{% else %}<span class="tag warn">{{ p.connection }}</span>{% endif %}{% if let Some(e) = p.error %}<div class="muted">{{ e }}</div>{% endif %}</td>
       <td>{% if p.connected %}since {% else %}last seen {% endif %}{{ p.since }}</td>
+      <td>{% if p.revocable %}<a href="/status/revoke?device={{ p.device }}">Revoke…</a>{% endif %}</td>
     </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if !revoked.is_empty() %}
+<h2>Revoked devices</h2>
+<table>
+  <tbody>
+  {% for r in revoked %}
+    <tr><td>{{ r.name }}<div class="muted mono">{{ r.device }}</div></td><td>revoked {{ r.when }}</td></tr>
   {% endfor %}
   </tbody>
 </table>

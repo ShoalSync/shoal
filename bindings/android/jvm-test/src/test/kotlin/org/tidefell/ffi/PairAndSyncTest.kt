@@ -124,6 +124,7 @@ class PairAndSyncTest {
                     }
                 })
                 assertEquals(device, node.status().device)
+                assertFalse(node.status().revoked)
                 val offer = paired.folders.single()
                 assertEquals(folderId, offer.id)
                 assertEquals("Photos", offer.name)

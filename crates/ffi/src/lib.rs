@@ -24,8 +24,8 @@ use std::time::Duration;
 use tidefell_engine::diagnostics;
 use tidefell_engine::pairing::{self, PairingEvent, PairingServer};
 use tidefell_engine::{
-    device, Engine, EngineConfig, FolderId, NewFolder, PeerAddr, RelayConfig, ReplicaMode,
-    Retention,
+    device, Engine, EngineConfig, FolderId, NewFolder, PeerAddr, RelayConfig, RelayToken,
+    ReplicaMode, Retention,
 };
 
 uniffi::setup_scaffolding!();
@@ -133,6 +133,9 @@ pub enum Relay {
     Custom {
         /// Relay URLs.
         urls: Vec<String>,
+        /// The token the relays want, for relays that admit only holders of it
+        /// (`access.shared_token` in iroh-relay); none for relays that admit anyone.
+        token: Option<String>,
     },
     /// Direct connections only.
     Disabled,
@@ -156,12 +159,20 @@ impl Network {
         Ok(match &self.relay {
             Relay::Default => RelayConfig::Default,
             Relay::Disabled => RelayConfig::Disabled,
-            Relay::Custom { urls } => RelayConfig::Custom {
+            Relay::Custom { urls, token } => RelayConfig::Custom {
                 urls: urls
                     .iter()
                     .map(|u| parse("relay URL", u))
                     .collect::<Result<_>>()?,
-                token: None,
+                token: token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(|t| {
+                        RelayToken::new(t)
+                            .ok_or_else(|| invalid("a relay token is visible ASCII only"))
+                    })
+                    .transpose()?,
             },
         })
     }
@@ -524,6 +535,8 @@ pub struct DeviceStatus {
     pub name: String,
     /// Syncing is paused for the whole device (ADR 0029).
     pub paused: bool,
+    /// Its user revoked it (ADR 0040): it syncs with no one, and has to be paired again.
+    pub revoked: bool,
 }
 
 /// Whether other devices' changes are written to this device (ADR 0025).
@@ -1136,6 +1149,7 @@ impl Node {
             user: certificate.user.to_string(),
             name: certificate.name,
             paused: engine.paused(),
+            revoked: engine.revoked(),
         })
     }
 

@@ -60,7 +60,9 @@ the daemon.
 - Admins: add and remove accounts, and see and revoke everyone's share links. The **Status**
   page lists the devices this server syncs with, connected or not and how, what it has sent
   and received, and a crash not yet dismissed, with **Report this crash**: an issue for the
-  project's tracker, written up to review and file.
+  project's tracker, written up to review and file. On a server holding your user key, it also
+  offers **Revoke…** beside each of your devices, for one that is lost or stolen (ADR 0040),
+  after asking, and lists the devices revoked.
 
 Sessions expire after 12 hours. Every form is protected against cross-site request forgery.
 

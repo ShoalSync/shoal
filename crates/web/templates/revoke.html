@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Revoke a device · Tidefell{% endblock %}
+{% block nav %}{% include "nav.html" %}{% endblock %}
+{% block content %}
+<section class="narrow">
+  <h1>Revoke {{ name }}?</h1>
+  <p class="muted mono">{{ device }}</p>
+  <p>For a lost or stolen device. Every one of your devices that hears of it refuses it from then
+    on, and it syncs with no one once it hears of it itself. This cannot be undone: if the device
+    is found, pair it again. Files it already made stay.</p>
+  <form method="post" action="/status/revoke">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="device" value="{{ device }}">
+    <button type="submit" class="danger">Revoke {{ name }}</button>
+    <a href="/status">Cancel</a>
+  </form>
+</section>
+{% endblock %}

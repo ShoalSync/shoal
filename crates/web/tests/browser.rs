@@ -1196,3 +1196,72 @@ async fn status_and_problems() {
         StatusCode::NOT_FOUND
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn administrators_revoke_a_lost_device() {
+    let tmp = tempfile::tempdir().unwrap();
+    let config = WebConfig {
+        secure_cookies: false,
+        share_links: false,
+        max_upload_bytes: None,
+    };
+    let (engine, _root, plain) = serve_folder(tmp.path(), &[], config).await;
+    let alice = UserKey::from_seed([1; 32]);
+    AccountStore::new(&tmp.path().join("data"))
+        .upsert("root", "root password 12", alice.id(), true)
+        .unwrap();
+    // The same server with the user key.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let keyed = listener.local_addr().unwrap();
+    tokio::spawn({
+        let (engine, data_dir, key) = (engine.clone(), tmp.path().join("data"), alice.clone());
+        async move {
+            tidefell_web::serve_with_user_key(listener, engine, &data_dir, config, Some(key)).await
+        }
+    });
+    let laptop = laptop(tmp.path()).await;
+    laptop.connect(engine.addr()).await.unwrap();
+    eventually("the laptop is connected", || {
+        !engine.connected_peers().is_empty()
+    })
+    .await;
+    let device = laptop.id().to_string();
+
+    // Without the user key, nothing can be revoked.
+    let mut admin = Browser::new(plain);
+    admin.login("root", "root password 12").await;
+    let status = admin.get("/status").await;
+    assert!(status.body.contains(&device) && !status.body.contains("Revoke"));
+
+    let mut admin = Browser::new(keyed);
+    admin.login("root", "root password 12").await;
+    let status = admin.get("/status").await;
+    assert!(
+        status
+            .body
+            .contains(&format!("/status/revoke?device={device}")),
+        "{}",
+        status.body
+    );
+    // Asked first.
+    let ask = admin.get(&format!("/status/revoke?device={device}")).await;
+    assert!(ask.body.contains("Revoke laptop?"), "{}", ask.body);
+    let csrf = ask.csrf();
+    let done = admin
+        .post("/status/revoke", &[("csrf", &csrf), ("device", &device)])
+        .await;
+    assert_eq!(done.status, StatusCode::SEE_OTHER);
+    let status = admin.get("/status").await;
+    assert!(status.body.contains("Revoked devices"), "{}", status.body);
+    assert!(!status
+        .body
+        .contains(&format!("/status/revoke?device={device}")));
+    assert_eq!(engine.revocations().len(), 1);
+    eventually("the laptop is dropped", || {
+        engine.connected_peers().is_empty()
+    })
+    .await;
+    eventually("the laptop learns it is revoked", || laptop.revoked()).await;
+
+    laptop.shutdown().await;
+}

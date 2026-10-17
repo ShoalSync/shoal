@@ -385,6 +385,12 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   after the signed version in its row (0.19 reads past it), except while a folder is rebuilt.
   The database notes when recording began. Times are read from disk when needed, not kept in
   memory.
+- The web peer's Status page offers **Revoke…** beside each of the user's devices on a server
+  holding the user key, after asking, and lists revoked devices. A session ended because its
+  peer was just revoked sends it the revocations first and waits a moment, so the device learns
+  it is revoked at once rather than at its next connection.
+- The FFI takes a relay token (`Relay.Custom.token`) and reports a revoked device
+  (`DeviceStatus.revoked`), for the Android app's relay setting and its "pair again" notice.
 - ADR 0040's first part, revoking a device's connections, is implemented: `tidefell device
   revoke` (and `POST /v1/devices/{device}/revoke`) on the device holding the user key signs a
   revocation; `sync/1`'s `Hello` carries every revocation the sender knows (appended after

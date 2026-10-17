@@ -457,7 +457,9 @@ async fn run(path: &Path) -> Result<(), String> {
     };
     let api = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        let options = tidefell_api::Options { user_key };
+        let options = tidefell_api::Options {
+            user_key: user_key.clone(),
+        };
         async move { tidefell_api::serve_unix_with(engine, &socket, options).await }
     });
     let web = match &config.web {
@@ -471,9 +473,12 @@ async fn run(path: &Path) -> Result<(), String> {
                 max_upload_bytes: (web.max_upload_bytes > 0).then_some(web.max_upload_bytes),
             };
             let (engine, data_dir) = (engine.clone(), config.data_dir.clone());
-            tokio::spawn(
-                async move { tidefell_web::serve(listener, engine, &data_dir, settings).await },
-            )
+            // Its administrators can revoke devices if this daemon holds the user key.
+            let user_key = user_key.clone();
+            tokio::spawn(async move {
+                tidefell_web::serve_with_user_key(listener, engine, &data_dir, settings, user_key)
+                    .await
+            })
         }
         None => tokio::spawn(std::future::pending()),
     };

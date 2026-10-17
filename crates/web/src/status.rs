@@ -39,11 +39,24 @@ pub(crate) async fn status(
     if let Some(response) = admin_only(&session) {
         return response;
     }
+    let revocations = state.engine.revocations();
+    let own_user = state
+        .engine
+        .certificate()
+        .verify_certificate()
+        .ok()
+        .map(|c| c.user);
+    let revoked_ids: Vec<_> = revocations.iter().map(|(r, _)| r.device).collect();
+    let certificates = state.engine.certificates();
     let peers = state
         .engine
         .peer_states()
         .into_iter()
         .map(|p| {
+            // Only the user's own devices: the key cannot revoke another user's.
+            let revocable = state.user_key.is_some()
+                && !revoked_ids.contains(&p.device)
+                && user_of(&certificates, p.device).is_some_and(|u| Some(u) == own_user);
             let connection = if p.connected {
                 let path = match p.path {
                     Some(PathKind::Direct) => "direct",
@@ -67,7 +80,16 @@ pub(crate) async fn status(
                 }
                 .unwrap_or_default(),
                 error: p.last_error,
+                revocable,
             }
+        })
+        .collect();
+    let revoked = revocations
+        .into_iter()
+        .map(|(r, name)| pages::RevokedRow {
+            name: name.unwrap_or_else(|| "a device".into()),
+            device: r.device.to_string(),
+            when: time(r.revoked_ms),
         })
         .collect();
     let t = state.engine.transfer();
@@ -110,6 +132,7 @@ pub(crate) async fn status(
             message: c.message,
             file: c.file.display().to_string(),
         }),
+        revoked,
     })
 }
 
@@ -255,4 +278,94 @@ pub(crate) async fn diagnostics_zip(
             axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// The user a device belongs to, by the certificate this server keeps for it.
+fn user_of(
+    certificates: &[tidefell_engine::Signed<tidefell_engine::DeviceCertificate>],
+    device: tidefell_engine::DeviceId,
+) -> Option<tidefell_engine::UserId> {
+    certificates
+        .iter()
+        .filter_map(|c| c.verify_certificate().ok())
+        .find(|c| c.device == device)
+        .map(|c| c.user)
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct RevokeQuery {
+    device: String,
+}
+
+/// Which peer `device` names, if this server may revoke it: it holds the user key, and the
+/// device is the user's and not revoked yet.
+fn revocable(state: &AppState, device: &str) -> Option<(tidefell_engine::DeviceId, String)> {
+    state.user_key.as_ref()?;
+    let device: tidefell_engine::DeviceId = device.parse().ok()?;
+    if device == state.engine.id()
+        || state
+            .engine
+            .revocations()
+            .iter()
+            .any(|(r, _)| r.device == device)
+    {
+        return None;
+    }
+    let own_user = state.engine.certificate().verify_certificate().ok()?.user;
+    let peer = state
+        .engine
+        .peer_states()
+        .into_iter()
+        .find(|p| p.device == device)?;
+    (user_of(&state.engine.certificates(), device) == Some(own_user))
+        .then(|| (device, peer.name.unwrap_or_else(|| "this device".into())))
+}
+
+/// Asks before revoking a device (ADR 0040).
+pub(crate) async fn revoke_page(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    axum::extract::Query(query): axum::extract::Query<RevokeQuery>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session) {
+        return response;
+    }
+    let Some((device, name)) = revocable(&state, &query.device) else {
+        return Redirect::to("/status").into_response();
+    };
+    render(pages::Revoke {
+        username: session.username,
+        admin: session.admin,
+        csrf: session.csrf,
+        name,
+        device: device.to_string(),
+    })
+}
+
+#[derive(serde::Deserialize)]
+pub(crate) struct RevokeForm {
+    csrf: String,
+    device: String,
+}
+
+/// Revokes one of the user's devices for good (ADR 0040).
+pub(crate) async fn revoke(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Form(form): Form<RevokeForm>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session).or_else(|| check_csrf(&session, &form.csrf)) {
+        return response;
+    }
+    if let (Some((device, name)), Some(user)) = (revocable(&state, &form.device), &state.user_key) {
+        match state.engine.revoke_device(user, device) {
+            Ok(()) => {
+                tracing::warn!(%device, %name, by = %session.username, "device revoked from the web peer")
+            }
+            Err(e) => tracing::warn!(%device, error = %e, "revoking a device failed"),
+        }
+    }
+    Redirect::to("/status").into_response()
 }

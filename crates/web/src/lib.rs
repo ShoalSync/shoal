@@ -54,6 +54,9 @@ pub(crate) struct AppState {
     pub(crate) link_uploads: tokio::sync::Mutex<()>,
     /// Sign-ins and link passwords that keep failing wait longer each time.
     pub(crate) throttle: throttle::Throttle,
+    /// The user key, if this server holds it: administrators can then revoke devices
+    /// (ADR 0040).
+    pub(crate) user_key: Option<tidefell_engine::UserKey>,
     pub(crate) config: WebConfig,
 }
 
@@ -80,6 +83,17 @@ async fn security_headers(mut response: Response) -> Response {
 
 /// The web peer's router.
 pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router {
+    router_with_user_key(engine, data_dir, config, None)
+}
+
+/// The web peer's router, for a server holding the user key: its administrators can revoke
+/// devices (ADR 0040).
+pub fn router_with_user_key(
+    engine: Arc<Engine>,
+    data_dir: &Path,
+    config: WebConfig,
+    user_key: Option<tidefell_engine::UserKey>,
+) -> Router {
     let state = Arc::new(AppState {
         engine,
         accounts: AccountStore::new(data_dir),
@@ -87,6 +101,7 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         shares: shares::ShareStore::new(data_dir),
         link_uploads: tokio::sync::Mutex::new(()),
         throttle: throttle::Throttle::default(),
+        user_key,
         config,
     });
     Router::new()
@@ -95,6 +110,10 @@ pub fn router(engine: Arc<Engine>, data_dir: &Path, config: WebConfig) -> Router
         .route("/status/crashes/dismiss", post(status::dismiss_crashes))
         .route("/status/crashes/report", get(status::crash_report))
         .route("/status/diagnostics", get(status::diagnostics))
+        .route(
+            "/status/revoke",
+            get(status::revoke_page).post(status::revoke),
+        )
         .route("/status/diagnostics.zip", get(status::diagnostics_zip))
         .route("/login", get(handlers::login_page).post(handlers::login))
         .route("/logout", post(handlers::logout))
@@ -160,8 +179,23 @@ pub async fn serve(
     data_dir: &Path,
     config: WebConfig,
 ) -> std::io::Result<()> {
+    serve_with_user_key(listener, engine, data_dir, config, None).await
+}
+
+/// [`serve`] for a server holding the user key (see [`router_with_user_key`]).
+pub async fn serve_with_user_key(
+    listener: tokio::net::TcpListener,
+    engine: Arc<Engine>,
+    data_dir: &Path,
+    config: WebConfig,
+    user_key: Option<tidefell_engine::UserKey>,
+) -> std::io::Result<()> {
     if let Ok(addr) = listener.local_addr() {
         tracing::info!(%addr, "web peer listening");
     }
-    axum::serve(listener, router(engine, data_dir, config)).await
+    axum::serve(
+        listener,
+        router_with_user_key(engine, data_dir, config, user_key),
+    )
+    .await
 }

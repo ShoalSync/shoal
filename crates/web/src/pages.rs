@@ -95,6 +95,26 @@ pub(crate) struct PeerRow {
     /// When the session started, or when the device was last seen.
     pub(crate) since: String,
     pub(crate) error: Option<String>,
+    /// This server holds the user key, and the device is the user's and not revoked yet.
+    pub(crate) revocable: bool,
+}
+
+/// A device its user revoked (ADR 0040).
+pub(crate) struct RevokedRow {
+    pub(crate) name: String,
+    pub(crate) device: String,
+    pub(crate) when: String,
+}
+
+/// Asks before revoking a device (ADR 0040).
+#[derive(Template)]
+#[template(path = "revoke.html")]
+pub(crate) struct Revoke {
+    pub(crate) username: String,
+    pub(crate) admin: bool,
+    pub(crate) csrf: String,
+    pub(crate) name: String,
+    pub(crate) device: String,
 }
 
 pub(crate) struct CrashNotice {
@@ -134,6 +154,7 @@ pub(crate) struct Status {
     /// The checks of `tidefell doctor`, when asked for.
     pub(crate) checks: Option<Vec<CheckRow>>,
     pub(crate) crash: Option<CrashNotice>,
+    pub(crate) revoked: Vec<RevokedRow>,
 }
 
 pub(crate) struct BundleRow {
