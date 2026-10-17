@@ -427,6 +427,14 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   settings are format 7; the folder database format is unchanged (inodes and receipt times
   follow each row, where 0.19 reads past them). Author enforcement, takeover, the time of loss
   and its guards follow in 0.21.
+- `v0.21.0` completes Phase 5c step 6: author vouching is enforced (ADR 0024), and what an
+  author no longer vouched for made is taken over where held; ADR 0040's time of loss withdraws
+  what a revoked device changed after it, putting back what each change replaced, with a
+  preview (`tidefell device revoke --lost-at`, the web peer's revoke page), the retention clamp,
+  held withdrawals (`tidefell folder withdrawals`, the web peer's folder page) and one
+  revocation per device. A direct path over a network this device is on, such as a home's
+  global IPv6 prefix, counts as local. Runtime settings are unchanged (format 7); the folder
+  database gains a table of which version replaced each kept one, which 0.20 does not read.
 - Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
   asked of the peer that sent it before it is applied; versions by authors not vouched for are
   refused, and those whose certificate request went unanswered come again. Replicas take over
