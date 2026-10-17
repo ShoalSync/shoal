@@ -63,11 +63,20 @@ pub trait Backend: Send + Sync + 'static {
         false
     }
 
-    /// Authors of versions applied to `folder` whose certificates this backend lacks, each
-    /// once: the session asks the peer for them.
-    fn authors_to_vouch(&self, _folder: &FolderId) -> Vec<DeviceId> {
+    /// The authors of `versions` whose certificates this backend lacks, each once: the session
+    /// asks the peer that sent them for those before applying them (ADR 0024).
+    fn unknown_authors(&self, _versions: &[Signed<EntryVersion>]) -> Vec<DeviceId> {
         Vec::new()
     }
+
+    /// Authors of versions this backend stores in `folder` whose certificates it lacks, a few
+    /// at a time: each session asks its peer for them (ADR 0024).
+    fn stored_unknown_authors(&self, _folder: &FolderId) -> Vec<DeviceId> {
+        Vec::new()
+    }
+
+    /// A peer that shares `folder` answered it cannot vouch for `author` (ADR 0024).
+    fn cannot_vouch(&self, _folder: &FolderId, _author: DeviceId) {}
 
     /// At most `limit` index entries of `folder` after `since`, from the start if `epoch` does
     /// not match. `up_to` is the sequence of the last entry returned if more follow, otherwise

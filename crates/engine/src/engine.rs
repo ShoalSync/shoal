@@ -164,6 +164,9 @@ pub(crate) struct Inner {
     /// Known devices' certificates, and authors not vouched for (ADR 0024). Taken after a
     /// folder's lock, never before one, and never while waiting for one.
     pub(crate) vouching: Mutex<crate::vouch::Vouching>,
+    /// Folders with versions of a revoked device this replica could not take over, waiting for
+    /// an index exchange before they are withdrawn (ADR 0040).
+    pub(crate) takeover_waiting: Mutex<BTreeSet<FolderId>>,
     /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
     watch: bool,
     /// Set once a task panics: the engine has stopped working (ADR 0030).
@@ -330,7 +333,9 @@ impl Inner {
 
     /// Keeps the revocations that are new and concern a user this device has to do with
     /// (ADR 0040), and tells every session, so each refuses a revoked peer and passes them on.
-    pub(crate) fn learn_revocations(&self, revocations: Vec<Signed<DeviceRevocation>>) {
+    /// Returns true if any was new: the caller schedules the takeover (see
+    /// [`Inner::schedule_takeover`]).
+    pub(crate) fn learn_revocations(&self, revocations: Vec<Signed<DeviceRevocation>>) -> bool {
         let own = self.certificate.verify_certificate().ok();
         // Folder locks before the vouching lock, as everywhere.
         let mut users: std::collections::BTreeSet<UserId> = own.iter().map(|c| c.user).collect();
@@ -342,12 +347,14 @@ impl Inner {
             let mut vouching = self.vouching.lock().unwrap();
             revocations
                 .into_iter()
-                .filter(|r| vouching.learn_revocation(r.clone(), |u| users.contains(u)))
+                .filter(|r| {
+                    vouching.learn_revocation(r.clone(), |u| users.contains(u), self.now_ms())
+                })
                 .filter_map(|r| r.verify_revocation().ok())
                 .collect()
         };
         if learnt.is_empty() {
-            return;
+            return false;
         }
         for revocation in &learnt {
             if own.as_ref().is_some_and(|own| revocation.revokes(own)) {
@@ -365,6 +372,25 @@ impl Inner {
             }
         }
         self.changes.send_modify(|n| *n += 1);
+        true
+    }
+
+    /// Takes over, away from the caller, the versions of authors no longer vouched for in
+    /// `folder`, or in every folder (ADR 0040). It is idempotent, so running it more often than
+    /// needed costs only the work.
+    pub(crate) fn schedule_takeover(self: &Arc<Self>, folder: Option<FolderId>) {
+        let inner = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let handles: Vec<_> = match folder {
+                Some(id) => inner.folder(&id).into_iter().collect(),
+                None => inner.folders.read().unwrap().values().cloned().collect(),
+            };
+            for handle in handles {
+                if let Err(e) = crate::takeover::take_over(&inner, &handle) {
+                    warn!(error = %e, "taking over versions failed");
+                }
+            }
+        });
     }
 
     /// Keeps a device's certificate, if it is new or newer than the one held (ADR 0024).
@@ -737,7 +763,9 @@ impl Engine {
             vouching: Mutex::new(crate::vouch::Vouching::new(
                 runtime.certificates,
                 runtime.revocations,
+                crate::clock::Clock::default().now_ms(),
             )),
+            takeover_waiting: Mutex::default(),
             watch: config.watch,
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
@@ -778,6 +806,10 @@ impl Engine {
             inner.save_runtime()?;
         }
         for (id, handle) in inner.folders.read().unwrap().iter() {
+            // Versions of authors no longer vouched for, from before this start (ADR 0040).
+            if let Err(e) = crate::takeover::take_over(&inner, handle) {
+                warn!(folder = %id, error = %e, "taking over versions failed");
+            }
             inner.watch_commits(handle);
             spawn_scanner(&inner, *id, handle);
         }
@@ -793,6 +825,10 @@ impl Engine {
                             true => Ok(()),
                             false => run_materialize(&inner, &node, id).await,
                         };
+                        // Content a waiting takeover lacked may have arrived (ADR 0040).
+                        if result.is_ok() && inner.takeover_waiting.lock().unwrap().remove(&id) {
+                            inner.schedule_takeover(Some(id));
+                        }
                         match result {
                             Ok(())
                             | Err(Error::UnknownFolder(_) | Error::FolderUnavailable(..)) => {}
@@ -1058,7 +1094,9 @@ impl Engine {
             return Err(Error::RevokeSelf);
         }
         let revocation = user.revoke(device, self.inner.now_ms(), None);
-        self.inner.learn_revocations(vec![revocation]);
+        if self.inner.learn_revocations(vec![revocation]) {
+            self.inner.schedule_takeover(None);
+        }
         Ok(())
     }
 

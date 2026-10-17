@@ -1,7 +1,6 @@
-//! Which devices this one knows, and whether an author is vouched for (ADR 0024): a version's
-//! author must hold a certificate from a user who is a member of the folder. This release keeps
-//! and serves certificates and records whether each author is vouched for; a later one refuses
-//! versions that are not (ADR 0024's rollout).
+//! Which devices this one knows, and whether an author is vouched for (ADR 0024): a version is
+//! applied only if its author holds a certificate from a user who is a member of the folder now,
+//! and that user has not revoked the device (ADR 0040).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,9 +11,6 @@ use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
 pub(crate) struct Vouching {
     /// The newest certificate seen for each device, as issued.
     certificates: BTreeMap<DeviceId, Signed<DeviceCertificate>>,
-    /// Authors to ask the next peer for, by folder: ones that have versions here and no
-    /// certificate.
-    pending: BTreeMap<FolderId, BTreeSet<DeviceId>>,
     /// Authors noted as not vouched for, once each, so the log says so once.
     noted: BTreeSet<(FolderId, DeviceId)>,
     /// Counts the certificates and revocations learnt, so what was worked out from them can tell
@@ -23,6 +19,13 @@ pub(crate) struct Vouching {
     /// Device revocations, by user and device (ADR 0040): the first seen of each is kept. The
     /// set only grows.
     revocations: BTreeMap<(UserId, DeviceId), Signed<DeviceRevocation>>,
+    /// When each revoked device's revocation was learnt by this run, this device's time: those
+    /// kept from before it count from its start. A replica withdraws what it cannot take over
+    /// only after an index exchange since then (ADR 0040).
+    learnt: BTreeMap<DeviceId, i64>,
+    /// Authors a peer that sent their versions answered it cannot vouch for: those versions
+    /// can be taken over. Not kept: asked again after a restart.
+    unvouchable: BTreeSet<DeviceId>,
 }
 
 /// Most revocations kept: users revoke few devices, and a peer cannot make this device keep
@@ -32,16 +35,20 @@ const MAX_REVOCATIONS: usize = 4096;
 /// Why an author is not vouched for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Unvouched {
-    /// No certificate for the author is known; one is asked for.
+    /// No certificate for the author is known: the peer that sent its versions could not vouch
+    /// for it either.
     NoCertificate,
-    /// The author's certificate is from a user who is not a member of the folder.
+    /// The author's certificate is from a user who is not a member of the folder now.
     NotAMember,
+    /// Its user revoked it (ADR 0040).
+    Revoked,
 }
 
 impl Vouching {
     pub(crate) fn new(
         certificates: impl IntoIterator<Item = Signed<DeviceCertificate>>,
         revocations: impl IntoIterator<Item = Signed<DeviceRevocation>>,
+        now_ms: i64,
     ) -> Self {
         let mut this = Self::default();
         for certificate in certificates {
@@ -49,7 +56,7 @@ impl Vouching {
         }
         // Kept before, so relevant then.
         for revocation in revocations {
-            this.learn_revocation(revocation, |_| true);
+            this.learn_revocation(revocation, |_| true, now_ms);
         }
         this
     }
@@ -68,9 +75,6 @@ impl Vouching {
         if !newer {
             return false;
         }
-        for authors in self.pending.values_mut() {
-            authors.remove(&body.device);
-        }
         self.certificates.insert(body.device, certificate);
         self.generation += 1;
         true
@@ -88,6 +92,7 @@ impl Vouching {
         &mut self,
         revocation: Signed<DeviceRevocation>,
         relevant: impl Fn(&UserId) -> bool,
+        now_ms: i64,
     ) -> bool {
         let Ok(body) = revocation.verify_revocation() else {
             return false;
@@ -106,6 +111,7 @@ impl Vouching {
             return false;
         }
         self.revocations.insert(key, revocation);
+        self.learnt.entry(body.device).or_insert(now_ms);
         self.generation += 1;
         true
     }
@@ -128,39 +134,46 @@ impl Vouching {
         self.certificates.values()
     }
 
-    /// The user a device's certificate names, if one is held.
-    pub(crate) fn user_of(&self, device: DeviceId) -> Option<UserId> {
-        self.certificates
-            .get(&device)
-            .and_then(|c| c.verify_certificate().ok())
-            .map(|c| c.user)
+    /// Whether a certificate for `device` is held.
+    pub(crate) fn knows(&self, device: DeviceId) -> bool {
+        self.certificates.contains_key(&device)
     }
 
-    /// Records that `author` made a version in `folder`, whose members `is_member` tells.
-    /// Returns why it is not vouched for, if it is not, and whether that is new, for the log.
-    pub(crate) fn note_author(
+    /// When this run learnt that `device` is revoked, if it is.
+    pub(crate) fn revoked_since(&self, device: DeviceId) -> Option<i64> {
+        self.learnt.get(&device).copied()
+    }
+
+    /// Notes that a peer holding `author`'s versions answered it cannot vouch for it. Returns
+    /// true if that is new.
+    pub(crate) fn cannot_vouch(&mut self, author: DeviceId) -> bool {
+        !self.knows(author) && self.unvouchable.insert(author)
+    }
+
+    /// Whether a peer answered it cannot vouch for `author`.
+    pub(crate) fn unvouchable(&self, author: DeviceId) -> bool {
+        self.unvouchable.contains(&author)
+    }
+
+    /// Whether `author`'s versions in `folder`, whose members `is_member` tells, may be applied:
+    /// why not if not, and whether that is new, for the log (ADR 0024).
+    pub(crate) fn judge(
         &mut self,
         folder: FolderId,
         author: DeviceId,
         is_member: impl Fn(&UserId) -> bool,
-    ) -> Option<(Unvouched, bool)> {
-        let why = match self.user_of(author) {
-            Some(user) if is_member(&user) => return None,
-            Some(_) => Unvouched::NotAMember,
-            None => {
-                self.pending.entry(folder).or_default().insert(author);
-                Unvouched::NoCertificate
-            }
+    ) -> Result<(), (Unvouched, bool)> {
+        let why = match self
+            .certificates
+            .get(&author)
+            .and_then(|c| c.verify_certificate().ok())
+        {
+            None => Unvouched::NoCertificate,
+            Some(c) if self.is_revoked(&c) => Unvouched::Revoked,
+            Some(c) if !is_member(&c.user) => Unvouched::NotAMember,
+            Some(_) => return Ok(()),
         };
-        Some((why, self.noted.insert((folder, author))))
-    }
-
-    /// Takes the authors of `folder` to ask a peer for.
-    pub(crate) fn take_pending(&mut self, folder: &FolderId) -> Vec<DeviceId> {
-        self.pending
-            .remove(folder)
-            .map(|authors| authors.into_iter().collect())
-            .unwrap_or_default()
+        Err((why, self.noted.insert((folder, author))))
     }
 }
 
@@ -184,18 +197,20 @@ mod tests {
             .unwrap();
         // Mallory revoking alice's phone revokes nothing: it is not mallory's device.
         let by_mallory = mallory.revoke(phone.id(), 5, None);
-        assert!(vouching.learn_revocation(by_mallory, |_| true));
+        assert!(vouching.learn_revocation(by_mallory, |_| true, 0));
         assert!(!vouching.is_revoked(&alices_phone));
         // A user this device has nothing to do with is not kept at all.
         let stranger = UserKey::from_seed([4; 32]);
-        assert!(
-            !vouching.learn_revocation(stranger.revoke(phone.id(), 5, None), |u| *u == alice.id())
-        );
+        assert!(!vouching.learn_revocation(
+            stranger.revoke(phone.id(), 5, None),
+            |u| *u == alice.id(),
+            0
+        ));
         // Alice's own: kept once, and it revokes the phone.
         let by_alice = alice.revoke(phone.id(), 6, None);
-        assert!(vouching.learn_revocation(by_alice.clone(), |u| *u == alice.id()));
+        assert!(vouching.learn_revocation(by_alice.clone(), |u| *u == alice.id(), 0));
         assert!(
-            !vouching.learn_revocation(by_alice, |u| *u == alice.id()),
+            !vouching.learn_revocation(by_alice, |u| *u == alice.id(), 0),
             "already known"
         );
         assert!(vouching.is_revoked(&alices_phone));
@@ -203,37 +218,35 @@ mod tests {
     }
 
     #[test]
-    fn an_author_is_vouched_for_by_a_member_users_certificate() {
+    fn an_author_is_vouched_for_by_a_member_users_certificate_not_revoked() {
         let (alice, bob) = (UserKey::from_seed([1; 32]), UserKey::from_seed([2; 32]));
         let device = DeviceKey::from_seed([3; 32]);
         let folder = FolderId([9; 32]);
+        let alice_only = |u: &UserId| *u == alice.id();
         let mut vouching = Vouching::default();
         assert_eq!(
-            vouching.note_author(folder, device.id(), |u| *u == alice.id()),
-            Some((Unvouched::NoCertificate, true))
+            vouching.judge(folder, device.id(), alice_only),
+            Err((Unvouched::NoCertificate, true))
         );
-        assert_eq!(vouching.take_pending(&folder), vec![device.id()]);
-        assert!(vouching.take_pending(&folder).is_empty(), "asked once");
+        assert!(!vouching.knows(device.id()));
 
         assert!(vouching.learn(certify(&bob, &device, 1)));
         assert_eq!(
-            vouching.note_author(folder, device.id(), |u| *u == alice.id()),
-            Some((Unvouched::NotAMember, false)),
+            vouching.judge(folder, device.id(), alice_only),
+            Err((Unvouched::NotAMember, false)),
             "bob is not a member, and it was noted already"
         );
-        assert!(
-            vouching.take_pending(&folder).is_empty(),
-            "a certificate is held"
-        );
-
         assert!(vouching.learn(certify(&alice, &device, 2)), "newer");
         assert!(
             !vouching.learn(certify(&bob, &device, 1)),
             "older is ignored"
         );
+        assert_eq!(vouching.judge(folder, device.id(), alice_only), Ok(()));
+
+        assert!(vouching.learn_revocation(alice.revoke(device.id(), 3, None), |_| true, 0));
         assert_eq!(
-            vouching.note_author(folder, device.id(), |u| *u == alice.id()),
-            None
+            vouching.judge(folder, device.id(), alice_only),
+            Err((Unvouched::Revoked, false))
         );
     }
 }

@@ -74,15 +74,66 @@ impl Backend for EngineBackend {
     }
 
     fn learn_revocations(&self, revocations: Vec<Signed<DeviceRevocation>>) {
-        self.0.learn_revocations(revocations);
+        // Taken over after the handshake that brought them, not during it (ADR 0040).
+        if self.0.learn_revocations(revocations) {
+            self.0.schedule_takeover(None);
+        }
     }
 
     fn is_revoked(&self, certificate: &DeviceCertificate) -> bool {
         self.0.vouching.lock().unwrap().is_revoked(certificate)
     }
 
-    fn authors_to_vouch(&self, folder: &FolderId) -> Vec<DeviceId> {
-        self.0.vouching.lock().unwrap().take_pending(folder)
+    fn stored_unknown_authors(&self, folder: &FolderId) -> Vec<DeviceId> {
+        const AT_ONCE: usize = 64;
+        let Ok(handle) = self.0.folder(folder) else {
+            return Vec::new();
+        };
+        let me = self.0.key.id();
+        // Authors are few: gathered first, then checked, so neither lock is held long with the
+        // other.
+        let authors: std::collections::BTreeSet<DeviceId> = {
+            let state = handle.lock();
+            state
+                .meta
+                .entries()
+                .flat_map(|current| {
+                    let conflicts: Vec<DeviceId> = state
+                        .meta
+                        .open_conflicts(&current.entry)
+                        .map(|c| c.version.author)
+                        .collect();
+                    std::iter::once(current.author()).chain(conflicts)
+                })
+                .filter(|author| *author != me)
+                .collect()
+        };
+        let vouching = self.0.vouching.lock().unwrap();
+        authors
+            .into_iter()
+            .filter(|author| !vouching.knows(*author) && !vouching.unvouchable(*author))
+            .take(AT_ONCE)
+            .collect()
+    }
+
+    fn cannot_vouch(&self, folder: &FolderId, author: DeviceId) {
+        if self.0.vouching.lock().unwrap().cannot_vouch(author) {
+            self.0.schedule_takeover(Some(*folder));
+        }
+    }
+
+    fn unknown_authors(&self, versions: &[Signed<EntryVersion>]) -> Vec<DeviceId> {
+        let me = self.0.key.id();
+        let vouching = self.0.vouching.lock().unwrap();
+        let mut authors: Vec<DeviceId> = versions
+            .iter()
+            // A version's signer must be its author: a version where it is not is refused.
+            .map(|v| DeviceId(*v.signer.as_bytes()))
+            .filter(|author| *author != me && !vouching.knows(*author))
+            .collect();
+        authors.sort_unstable();
+        authors.dedup();
+        authors
     }
 
     fn index_since(
@@ -164,23 +215,24 @@ impl Backend for EngineBackend {
                 };
                 let before = open(&state);
                 let author = version.version().author;
-                match state.meta.apply_verified(version, now) {
-                    Ok(applied) => {
-                        changed |= applied != tidefell_meta::Applied::Stale;
-                        // Recorded, not enforced, in this release (ADR 0024's rollout).
-                        if author != self.0.key.id() {
-                            let noted = self.0.vouching.lock().unwrap().note_author(
-                                *folder,
-                                author,
-                                |user| state.members.contains(user),
-                            );
-                            if let Some((why, first)) = noted {
-                                if first {
-                                    tracing::info!(%folder, %author, ?why, "applied versions from an author not vouched for");
-                                }
-                            }
+                // Only an author vouched for: this device, or one with a certificate from a
+                // user who is a member now, not revoked (ADR 0024, ADR 0040).
+                if author != self.0.key.id() {
+                    let judged = self
+                        .0
+                        .vouching
+                        .lock()
+                        .unwrap()
+                        .judge(*folder, author, |user| state.members.contains(user));
+                    if let Err((why, first)) = judged {
+                        if first {
+                            tracing::info!(%folder, %author, ?why, "refused versions from an author not vouched for");
                         }
+                        continue;
                     }
+                }
+                match state.meta.apply_verified(version, now) {
+                    Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
                 }
                 if open(&state) > before {
@@ -231,6 +283,10 @@ impl Backend for EngineBackend {
                 .unwrap()
                 .exchanged
                 .insert(peer, self.0.now_ms());
+            // A takeover waiting for an exchange may go ahead (ADR 0040).
+            if self.0.takeover_waiting.lock().unwrap().remove(folder) {
+                self.0.schedule_takeover(Some(*folder));
+            }
             let mut state = handle.lock();
             // Versions not applied for want of saving them are not acknowledged (ADR 0037).
             if state.save_failed().is_some() {

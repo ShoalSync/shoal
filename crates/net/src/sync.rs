@@ -223,8 +223,10 @@ struct Session {
     out: mpsc::UnboundedSender<Outgoing>,
     /// Versions received from this peer, not to be pushed back to it.
     received: Received,
-    /// Authors whose certificates to ask this peer for, by folder (ADR 0024).
-    vouch: Vec<(FolderId, DeviceId)>,
+    /// Folders whose versions from this peer were held this session, for want of their authors'
+    /// certificates: the peer is not told it is caught up with them, so it sends them again next
+    /// time (ADR 0024).
+    held: BTreeSet<FolderId>,
     /// How many revocations this peer has been told of (ADR 0040).
     revocations_told: usize,
 }
@@ -337,7 +339,7 @@ pub(crate) async fn run(
         offered,
         out,
         received,
-        vouch: Vec::new(),
+        held: BTreeSet::new(),
         revocations_told: backend.revocations().len(),
     };
     session.request_index(backend.as_ref(), initial)?;
@@ -345,22 +347,41 @@ pub(crate) async fn run(
     // before this point would otherwise never be offered.
     let mut changes = backend.changes();
     reoffer(&mut session, backend.as_ref())?;
+    // The peer is asked about the authors of versions stored here that this side cannot vouch
+    // for yet: from 0.20, versions were applied before their authors were vouched for.
+    tokio::spawn({
+        let (conn, limiter, backend) = (conn.clone(), limiter.clone(), backend.clone());
+        let shared: Vec<FolderId> = session.peer.shared.read_locked().iter().copied().collect();
+        async move {
+            for folder in shared {
+                let authors = backend.stored_unknown_authors(&folder);
+                if !authors.is_empty() {
+                    fetch_certificates(&conn, &limiter, &backend, folder, authors).await;
+                }
+            }
+        }
+    });
     let result = loop {
         tokio::select! {
             message = incoming.recv() => {
                 let Some(message) = message else { break Ok(()) };
-                if let Err(e) = message.and_then(|m| handle(m, &conn, &mut session, backend.as_ref())) {
-                    break Err(e);
+                let message = match message {
+                    Ok(message) => message,
+                    Err(e) => break Err(e),
+                };
+                // The certificates of authors this side does not know come before their
+                // versions, from the peer that sent them (ADR 0024).
+                if let SyncMessage::IndexBatch { folder, versions, .. } = &message {
+                    let unknown = backend.unknown_authors(versions);
+                    if session.peer.shares(folder)
+                        && !unknown.is_empty()
+                        && !fetch_certificates(&conn, &limiter, &backend, *folder, unknown).await
+                    {
+                        session.held.insert(*folder);
+                    }
                 }
-                // Authors to vouch for: their certificates come on streams of their own.
-                for (folder, author) in std::mem::take(&mut session.vouch) {
-                    let (conn, backend, limiter) = (conn.clone(), backend.clone(), limiter.clone());
-                    tokio::spawn(async move {
-                        match request_certificate(&conn, &limiter, folder, author).await {
-                            Ok(certificate) => backend.learn_certificate(certificate),
-                            Err(e) => debug!(%author, error = %e, "certificate request failed"),
-                        }
-                    });
+                if let Err(e) = handle(message, &conn, &mut session, backend.as_ref()) {
+                    break Err(e);
                 }
             }
             changed = changes.changed() => {
@@ -665,13 +686,7 @@ fn handle(
                 received.extend(versions.iter().map(version_hash));
             }
             backend.apply_versions(&folder, device, versions);
-            session.vouch.extend(
-                backend
-                    .authors_to_vouch(&folder)
-                    .into_iter()
-                    .map(|author| (folder, author)),
-            );
-            if last {
+            if last && !session.held.contains(&folder) {
                 backend.set_peer_progress(&folder, device, epoch, up_to);
             }
             Ok(())
@@ -745,6 +760,54 @@ async fn serve_requests(conn: Conn, backend: Arc<dyn Backend>, shared: Shared) {
             }
         });
     }
+}
+
+/// Most certificate requests in flight at once for one batch.
+const CERTIFICATES_AT_ONCE: usize = 8;
+
+/// Asks the peer for the certificates of `authors` and keeps those it sends. Returns false if
+/// any went unanswered (the peer did not reply in time, or the connection failed), so their
+/// versions are held and sent again; a peer answering that it cannot vouch for an author is
+/// final, and that author's versions are refused (ADR 0024).
+async fn fetch_certificates(
+    conn: &Conn,
+    limiter: &Arc<RateLimiter>,
+    backend: &Arc<dyn Backend>,
+    folder: FolderId,
+    authors: Vec<DeviceId>,
+) -> bool {
+    let mut answered = true;
+    for chunk in authors.chunks(CERTIFICATES_AT_ONCE) {
+        let mut requests = tokio::task::JoinSet::new();
+        for author in chunk.iter().copied() {
+            let (conn, limiter) = (conn.clone(), limiter.clone());
+            requests.spawn(async move {
+                (
+                    author,
+                    request_certificate(&conn, &limiter, folder, author).await,
+                )
+            });
+        }
+        while let Some(joined) = requests.join_next().await {
+            match joined {
+                Ok((_, Ok(certificate))) => backend.learn_certificate(certificate),
+                // Only these say the peer knows and cannot vouch: anything else, such as a
+                // peer from before certificate streams, may vouch later.
+                Ok((author, Err(Error::Rejected(code))))
+                    if code == "UnknownDevice" || code == "NotAMember" =>
+                {
+                    debug!(%author, %code, "the peer cannot vouch for an author");
+                    backend.cannot_vouch(&folder, author);
+                }
+                Ok((author, Err(e))) => {
+                    debug!(%author, error = %e, "certificate request failed; holding its versions");
+                    answered = false;
+                }
+                Err(_) => answered = false,
+            }
+        }
+    }
+    answered
 }
 
 /// Requests a manifest from a connected peer on a new stream.

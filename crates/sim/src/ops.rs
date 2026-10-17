@@ -47,6 +47,9 @@ pub enum Op {
     SendOnly { device: u8, on: bool },
     /// Adds a user to a device's members of the folder, or removes them.
     Member { device: u8, add: bool },
+    /// One device revokes another (ADR 0040), at most once a run: the revoked device carries on
+    /// as a thief would, and the others must agree without it, keeping what it had made.
+    Revoke { by: u8, device: u8 },
 }
 
 /// How much a write writes.
@@ -173,6 +176,10 @@ pub fn generate(seed: u64, devices: u8, steps: usize) -> Vec<Op> {
             84 => Op::Member {
                 device,
                 add: rng.below(2) == 0,
+            },
+            85 => Op::Revoke {
+                by: device,
+                device: rng.byte(),
             },
             _ => Op::Wait {
                 ms: (rng.below(300) + 20) as u16,

@@ -28,9 +28,10 @@ struct TestBackend {
     manifests: Mutex<HashMap<ContentHash, Manifest>>,
     chunks: Mutex<HashMap<ChunkHash, Vec<u8>>>,
     changes: watch::Sender<u64>,
-    /// Certificates known, and authors of applied versions not among them (ADR 0024).
+    /// Certificates known (ADR 0024).
     certificates: Mutex<HashMap<DeviceId, Signed<DeviceCertificate>>>,
-    unknown_authors: Mutex<Vec<DeviceId>>,
+    /// Certificate requests go unanswered: the stream is reset.
+    silent: std::sync::atomic::AtomicBool,
 }
 
 impl TestBackend {
@@ -51,7 +52,7 @@ impl TestBackend {
             chunks: Mutex::default(),
             changes: watch::channel(0).0,
             certificates: Mutex::default(),
-            unknown_authors: Mutex::default(),
+            silent: Default::default(),
         })
     }
 
@@ -176,6 +177,10 @@ impl Backend for TestBackend {
     }
 
     fn certificate_of(&self, _: &FolderId, device: DeviceId) -> Option<Signed<DeviceCertificate>> {
+        assert!(
+            !self.silent.load(std::sync::atomic::Ordering::Relaxed),
+            "this peer does not answer"
+        );
         if device == self.key.id() {
             return Some(self.cert.clone());
         }
@@ -188,19 +193,21 @@ impl Backend for TestBackend {
             .unwrap()
             .insert(device, certificate);
     }
-    fn authors_to_vouch(&self, _: &FolderId) -> Vec<DeviceId> {
-        std::mem::take(&mut *self.unknown_authors.lock().unwrap())
+    fn unknown_authors(&self, versions: &[Signed<EntryVersion>]) -> Vec<DeviceId> {
+        let certificates = self.certificates.lock().unwrap();
+        let mut authors: Vec<DeviceId> = versions
+            .iter()
+            .map(|v| v.verify().unwrap().author)
+            .filter(|a| *a != self.key.id() && !certificates.contains_key(a))
+            .collect();
+        authors.dedup();
+        authors
     }
     fn apply_versions(&self, _: &FolderId, _: DeviceId, versions: Vec<Signed<EntryVersion>>) {
         let mut changed = false;
         {
             let mut folder = self.folder.lock().unwrap();
-            let certificates = self.certificates.lock().unwrap();
             for v in versions {
-                let author = v.verify().unwrap().author;
-                if author != self.key.id() && !certificates.contains_key(&author) {
-                    self.unknown_authors.lock().unwrap().push(author);
-                }
                 if let Ok(applied) = folder.apply_remote(v, 0) {
                     changed |= applied != tidefell_meta::Applied::Stale;
                 }
@@ -419,6 +426,63 @@ async fn certificates_of_unknown_authors_are_fetched() {
         matches!(unknown, Err(tidefell_net::Error::Rejected(ref code)) if code == "UnknownDevice"),
         "{unknown:?}"
     );
+
+    node_b.shutdown().await;
+    node_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unanswered_certificate_request_leaves_the_index_unacknowledged() {
+    let alice = UserKey::from_seed([100; 32]);
+    let a = TestBackend::new(1, &alice, &[&alice]);
+    let b = TestBackend::new(2, &alice, &[&alice]);
+    // A holds a version by C, a device B does not know, and does not answer B about it.
+    let c = DeviceKey::from_seed([3; 32]);
+    let mut by_c = Folder::new(FOLDER, c.id(), 3, Retention::Forever);
+    let version = by_c
+        .local_change(
+            c.signing_key(),
+            EntryId([9; 16]),
+            "by-c.txt",
+            EntryKind::File {
+                content: ContentHash([1; 32]),
+                size: 1,
+                executable: false,
+            },
+            0,
+        )
+        .unwrap();
+    a.folder.lock().unwrap().apply_remote(version, 0).unwrap();
+    a.learn_certificate(alice.certify(c.id(), "device 3", 0));
+    a.silent.store(true, std::sync::atomic::Ordering::Relaxed);
+    a.bump();
+
+    let node_a = Node::spawn(a.config(), a.clone()).await.unwrap();
+    let node_b = Node::spawn(b.config(), b.clone()).await.unwrap();
+    node_b.connect(node_a.addr()).await.unwrap();
+    // This backend applies anything; what matters is that B does not record A's index as
+    // received, so A sends it again next session (ADR 0024).
+    eventually("b has c's version", || b.current(9).is_some()).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(!b
+        .progress
+        .lock()
+        .unwrap()
+        .contains_key(&(FOLDER, a.key.id())));
+    node_b.shutdown().await;
+
+    // Answered next time: the index is acknowledged.
+    a.silent.store(false, std::sync::atomic::Ordering::Relaxed);
+    let node_b = Node::spawn(b.config(), b.clone()).await.unwrap();
+    node_b.connect(node_a.addr()).await.unwrap();
+    eventually("b acknowledges a's index", || {
+        b.progress
+            .lock()
+            .unwrap()
+            .contains_key(&(FOLDER, a.key.id()))
+    })
+    .await;
+    assert!(b.certificates.lock().unwrap().contains_key(&c.id()));
 
     node_b.shutdown().await;
     node_a.shutdown().await;

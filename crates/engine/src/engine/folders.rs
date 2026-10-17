@@ -423,6 +423,8 @@ impl Engine {
         };
         if changed {
             self.inner.save_runtime()?;
+            // A removed member's versions are taken over before they are refused (ADR 0040).
+            crate::takeover::take_over(&self.inner, &handle)?;
             self.inner.emit(Event::FolderChanged(id));
             // Sessions re-offer folders to peers whose access changed.
             self.inner.changed();

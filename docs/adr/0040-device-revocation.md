@@ -81,6 +81,25 @@ Three facts shape it:
   applied it, as with any member's change, and earlier versions are in the recycle bin and
   history. What it sends afterwards is refused.
 - A version by the revoked device that no replica holds a current copy of is simply refused.
+- (Amended 2026-10-17, as built.) **A replica takes over only content it holds.** A version of a
+  revoked device whose content it lacks, as a partial replica or one that had not fetched it
+  yet, it deletes, but only once it has had a peer's whole index since it learnt of the
+  revocation: revocations come before anything else, so by then a peer holding the content has
+  taken it over, and that live version wins over the delete. The file stays wherever it can be
+  had; content no replica holds could not be had anyway. The simulation found files stuck
+  waiting for content only the revoked device had.
+- (Amended, as built.) **Removed members and missing certificates never lead to a delete.**
+  Member lists are each replica's own, and a certificate missing here may be held elsewhere:
+  their versions are taken over only where the content is held, and otherwise left alone. An
+  author without a certificate here is taken over only after a peer answered it cannot vouch
+  for it; each session asks its peer about such authors of stored versions. Authors 0.20
+  applied versions of while it only recorded vouching are handled this way.
+- (Amended, as built.) **Takeover keeps no marker:** it acts on every current version and open
+  conflict copy it should, so once done there is nothing left, and running it again after a
+  restart part way finishes it. It runs, away from the handshake, when a revocation is learnt,
+  when a member is removed, when the engine starts, after an exchange a withdrawal waits for,
+  and when a peer answers it cannot vouch for an author; never while a folder is rebuilt
+  (ADR 0034).
 
 ### A time of loss
 

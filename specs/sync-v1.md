@@ -49,13 +49,29 @@ they have to do with (their own, a member of one of their folders, or the user o
 they hold), at most 4096, and never drop one. They send them in `Hello` (see Exchange), refuse a
 session with a revoked peer, and sync with no one once their own device is revoked.
 
-The author of every version a replica applies must be vouched for: it must have a device
-certificate signed by a user who is a member of the folder (ADR 0024). Replicas keep the
-certificates of the authors of the versions they store and serve them on certificate streams
-(see Exchange). Versions later received from the devices of a user who has been removed from
-the folder are refused; versions already applied stay. Rollout (ADR 0024): from 0.20 replicas
-keep and serve certificates and record whether each author is vouched for; the release after
-refuses versions whose author is not.
+The author of every version a replica applies must be vouched for: it must be the replica's own
+device, or have a device certificate signed by a user who is a member of the folder now, that
+user not having revoked it (ADR 0024, ADR 0040). Replicas keep the certificates of the authors
+of the versions they store and serve them on certificate streams (see Exchange).
+
+Before applying an `IndexBatch`, a replica asks the peer that sent it for the certificate of
+each author it does not know. A version whose author the peer answers it cannot vouch for
+(`UnknownDevice` or `NotAMember`), or whose certificate does not vouch, is refused. If a request
+goes unanswered, the replica holds the batch's folder for the rest of the session: it still
+applies what it can, but does not record the peer's index as received, so the peer sends those
+versions again next time.
+
+Validity depends only on the version, the member list and the revocations, never on what arrived
+first. A replica takes over, as changes of its own, the current versions and open conflict
+copies whose content it holds by authors no longer vouched for (a revoked device, a device of a
+user no longer a member, or one a peer answered it cannot vouch for): the same path, content and
+modification time, building on that version. Replicas taking over the same version make
+concurrent versions with the same content, which need no decision. A version whose content it
+does not hold it leaves alone, except a revoked device's, which it deletes once it has had a
+peer's whole index since it learnt of the revocation: by then any peer holding the content has
+taken it over, and that live version wins over the delete. Each session asks its peer for the
+certificates of authors of stored versions it cannot vouch for yet. Enforced from 0.21 (ADR
+0024's rollout).
 
 ## Encoding
 

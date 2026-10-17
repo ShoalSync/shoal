@@ -807,3 +807,43 @@ fn changes_are_noted_for_the_activity_log() {
     assert_eq!(changes[0].kind, ChangeKind::Conflict);
     assert_eq!(changes[0].author, device(2));
 }
+
+#[test]
+fn replicas_taking_over_one_version_agree_without_a_conflict() {
+    // ADR 0040's takeover: two replicas each make a change of their own with the content of a
+    // version by a device since revoked. The two are concurrent, with the same content: settled,
+    // so neither is an open conflict, wherever they meet.
+    let mut lost = replica(1);
+    let made = lost
+        .local_change(&key(1), EntryId([5; 16]), "photo.jpg", file(7), 100)
+        .unwrap();
+    let (mut a, mut b) = (replica(2), replica(3));
+    a.apply_remote(made.clone(), 1).unwrap();
+    b.apply_remote(made, 1).unwrap();
+    let take_over = |folder: &mut Folder, n: u8| {
+        let base = folder.current_vector(&EntryId([5; 16]));
+        folder
+            .local_change_from(&key(n), EntryId([5; 16]), &base, "photo.jpg", file(7), 100)
+            .unwrap()
+            .0
+    };
+    let by_a = take_over(&mut a, 2);
+    let by_b = take_over(&mut b, 3);
+    a.apply_remote(by_b, 2).unwrap();
+    b.apply_remote(by_a, 2).unwrap();
+    for folder in [&a, &b] {
+        let current = folder.current(&EntryId([5; 16])).unwrap();
+        assert_eq!(*current.kind, file(7));
+        assert_ne!(
+            current.author(),
+            device(1),
+            "no longer the revoked device's"
+        );
+        assert_eq!(folder.open_conflicts(&EntryId([5; 16])).count(), 0);
+    }
+    assert_eq!(
+        a.current(&EntryId([5; 16])).unwrap().author(),
+        b.current(&EntryId([5; 16])).unwrap().author(),
+        "the same winner on both"
+    );
+}

@@ -96,12 +96,11 @@ Another user in a folder's member list, or any device they certify.
 - **Can** certify as many devices as they like, and fill the folder with versions, limited only by
   batch sizes and the rate limits a replica sets.
 - **Cannot** make versions in another device's name, or read folders they are not a member of.
-- **Gap: authors are vouched for, but not yet required to be.** ADR 0024 decides that a version
-  is applied only if its author has a certificate from a member user. From 0.20, replicas fetch
-  and keep authors' certificates over `sync/1` (`CertificateRequest`) and record whether each
-  author is vouched for; versions from authors who are not are still applied, so a member could
-  relay versions authored by devices of anyone. The release after refuses them, once every
-  replica has had a release to serve certificates.
+- **Cannot** relay versions authored by devices of anyone (from 0.21): a version is applied only
+  if its author has a certificate from a user who is a member of the folder now and has not
+  revoked it (ADR 0024). Versions such authors made earlier are taken over by the replicas that
+  hold them, so files stay while their authors stop counting. A member removed on one replica
+  only is refused there and nowhere else; nothing is deleted on its account.
 - **Cannot** make a file count as backed up by holding it on a device of theirs once removed:
   a confirmed copy (ADR 0022) counts only while the confirming device's user is a member.
 
@@ -127,10 +126,11 @@ A user taken out of a folder's member list.
   `tidefell device revoke` on the device holding the user key signs a revocation, which every
   peer passes on in its `Hello`, before anything else is exchanged, and keeps for good. A revoked
   device is refused at the handshake, told why, and syncs with no one once it knows.
-- **Gap: what it made stays, and what it relays still counts.** Until author vouching is
-  enforced, in the release after 0.20, its versions already applied stay as they are, and its
-  versions relayed by a replica that has not heard of the revocation are still applied. ADR
-  0040's takeover, a time of loss and the guards against a harmful revocation ship then.
+- **Cannot** get its changes in through another device (from 0.21): its versions are refused by
+  every replica that knows of the revocation, however they arrive. What it made before is taken
+  over by the replicas that hold it, so those files stay.
+- **Gap: what it changed before the revocation reached a replica stays** until a time of loss
+  can be given (ADR 0040), which is the next step.
 - **On Android the device key is sealed by the Keystore.** The FFI keeps it in a vault the app
   provides (`set_key_vault`), and the app's vault seals it with an AES key held in the Android
   Keystore, which never leaves it: a copy of the app's storage holds only the sealed key. A plain

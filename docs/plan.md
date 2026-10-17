@@ -427,6 +427,14 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   settings are format 7; the folder database format is unchanged (inodes and receipt times
   follow each row, where 0.19 reads past them). Author enforcement, takeover, the time of loss
   and its guards follow in 0.21.
+- Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
+  asked of the peer that sent it before it is applied; versions by authors not vouched for are
+  refused, and those whose certificate request went unanswered come again. Replicas take over
+  the versions of revoked devices, removed members' devices and authors never vouched for
+  (ADR 0040) whose content they hold. A revoked device's version whose content a replica lacks
+  is deleted only after an exchange since the revocation, by when a peer holding it has taken it
+  over; removed members and missing certificates never lead to a delete. The simulation revokes
+  a device (`Revoke`) and checks the others still agree.
 
 ### Phase 2 work breakdown
 

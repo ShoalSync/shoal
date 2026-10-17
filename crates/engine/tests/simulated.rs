@@ -12,7 +12,7 @@ use tidefell_engine::{
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_net::Network;
-use tidefell_proto::{DeviceId, FolderId};
+use tidefell_proto::{DeviceId, FolderId, UserId};
 
 const FOLDER: FolderId = FolderId([42; 32]);
 
@@ -43,6 +43,56 @@ impl Replica {
         peers: &[DeviceId],
         sync: SyncOptions,
     ) -> Engine {
+        self.launch(user, &[user.id()], network, peers, sync).await
+    }
+
+    /// Starts with `members` as the folder's members.
+    async fn start_with_members(
+        &self,
+        user: &UserKey,
+        members: &[UserId],
+        network: &Network,
+        peers: &[DeviceId],
+    ) -> Engine {
+        self.launch(user, members, network, peers, SyncOptions::default())
+            .await
+    }
+
+    async fn launch(
+        &self,
+        user: &UserKey,
+        members: &[UserId],
+        network: &Network,
+        peers: &[DeviceId],
+        sync: SyncOptions,
+    ) -> Engine {
+        self.launch_as(user, members, network, peers, sync, ReplicaMode::Full)
+            .await
+    }
+
+    /// A partial replica that keeps nothing it did not make: other devices' files stay
+    /// placeholders until opened.
+    async fn start_partial(
+        &self,
+        user: &UserKey,
+        members: &[UserId],
+        network: &Network,
+        peers: &[DeviceId],
+    ) -> Engine {
+        let mode = ReplicaMode::Partial { budget_bytes: 0 };
+        self.launch_as(user, members, network, peers, SyncOptions::default(), mode)
+            .await
+    }
+
+    async fn launch_as(
+        &self,
+        user: &UserKey,
+        members: &[UserId],
+        network: &Network,
+        peers: &[DeviceId],
+        sync: SyncOptions,
+        mode: ReplicaMode,
+    ) -> Engine {
         let config = EngineConfig {
             data_dir: self.data.clone(),
             metadata_dir: None,
@@ -63,8 +113,8 @@ impl Replica {
             folders: vec![FolderConfig {
                 id: FOLDER,
                 path: self.root.clone(),
-                mode: ReplicaMode::Full,
-                members: vec![user.id()],
+                mode,
+                members: members.to_vec(),
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
                 sync,
@@ -298,6 +348,17 @@ async fn a_revoked_device_is_refused_by_every_peer_that_hears_of_it() {
     })
     .await;
     eventually("b has a's files", || b.read("before.txt").is_some()).await;
+    // The phone's file reached B as A's: A took it over when it revoked the phone (ADR 0040).
+    let author = |engine: &Engine| {
+        engine
+            .files(FOLDER)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == "before.txt")
+            .map(|f| f.author)
+    };
+    assert_eq!(author(&engine_b), Some(a.key.id()));
+    assert_eq!(author(&engine_a), Some(a.key.id()));
 
     // The phone comes back, and reaches B first: B refuses it, and tells it why.
     phone.write("after.txt", b"by the thief");
@@ -327,4 +388,112 @@ async fn a_revoked_device_is_refused_by_every_peer_that_hears_of_it() {
     engine_phone.shutdown().await;
     engine_b.shutdown().await;
     engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn versions_by_an_author_not_vouched_for_are_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let (alice, bob) = (UserKey::from_seed([1; 32]), UserKey::from_seed([2; 32]));
+    let a = Replica::new(dir.path(), "a", 70);
+    let b = Replica::new(dir.path(), "b", 71);
+    let bobs = Replica::new(dir.path(), "bobs", 72);
+    // A shares the folder with bob; B, alice's other device, does not.
+    let engine_a = a
+        .start_with_members(&alice, &[alice.id(), bob.id()], &network, &[])
+        .await;
+    let engine_bobs = bobs
+        .start_with_members(&bob, &[alice.id(), bob.id()], &network, &[a.key.id()])
+        .await;
+    a.write("alice.txt", b"by alice");
+    engine_a.scan(FOLDER).await.unwrap();
+    bobs.write("bob.txt", b"by bob");
+    engine_bobs.scan(FOLDER).await.unwrap();
+    eventually("a has bob's file", || a.read("bob.txt").is_some()).await;
+
+    // B hears of bob's version from A, can learn bob's device's certificate from A, and still
+    // refuses it: bob is not a member of the folder on B.
+    let engine_b = b.start(&alice, &network, &[a.key.id()]).await;
+    eventually("b has alice's file", || b.read("alice.txt").is_some()).await;
+    eventually("b has learnt the author's certificate", || {
+        engine_b
+            .certificates()
+            .iter()
+            .any(|c| c.verify_certificate().unwrap().device == bobs.key.id())
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(b.read("bob.txt").is_none(), "refused");
+    assert!(engine_b
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .all(|f| f.path != "bob.txt"));
+
+    // Bob removed on A: A takes bob's file over before refusing his devices' versions, so it
+    // stays, now A's, and B gets it from A (ADR 0040, ADR 0024).
+    engine_bobs.shutdown().await;
+    engine_a.shutdown().await;
+    let engine_a = a.start(&alice, &network, &[b.key.id()]).await;
+    let author = engine_a
+        .files(FOLDER)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.path == "bob.txt")
+        .map(|f| f.author);
+    assert_eq!(author, Some(a.key.id()), "taken over at start");
+    eventually("b has bob's file as a's", || b.read("bob.txt").is_some()).await;
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_member_on_a_replica_without_their_files_deletes_nothing() {
+    // Member lists are each replica's own: removing bob on alice's phone, a partial replica
+    // without bob's file's content, must not delete it on the NAS, where bob is still a member.
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let (alice, bob) = (UserKey::from_seed([1; 32]), UserKey::from_seed([2; 32]));
+    let nas = Replica::new(dir.path(), "nas", 80);
+    let phone = Replica::new(dir.path(), "phone", 81);
+    let bobs = Replica::new(dir.path(), "bobs", 82);
+    let both = [alice.id(), bob.id()];
+    let engine_nas = nas.start_with_members(&alice, &both, &network, &[]).await;
+    let engine_bobs = bobs
+        .start_with_members(&bob, &both, &network, &[nas.key.id()])
+        .await;
+    bobs.write("bob.txt", b"by bob");
+    engine_bobs.scan(FOLDER).await.unwrap();
+    eventually("the nas has bob's file", || nas.read("bob.txt").is_some()).await;
+    engine_bobs.shutdown().await;
+
+    let engine_phone = phone
+        .start_partial(&alice, &both, &network, &[nas.key.id()])
+        .await;
+    eventually("the phone lists bob's file", || {
+        engine_phone
+            .files(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "bob.txt")
+    })
+    .await;
+    assert!(phone.read("bob.txt").is_none(), "a placeholder only");
+    engine_phone.shutdown().await;
+
+    // Bob removed on the phone alone.
+    let engine_phone = phone
+        .start_partial(&alice, &[alice.id()], &network, &[nas.key.id()])
+        .await;
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(nas.read("bob.txt").is_some(), "still on the nas");
+    assert!(engine_nas
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .any(|f| f.path == "bob.txt"));
+
+    engine_phone.shutdown().await;
+    engine_nas.shutdown().await;
 }

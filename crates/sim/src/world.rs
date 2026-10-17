@@ -76,12 +76,14 @@ struct World {
     network: Network,
     user: UserKey,
     devices: Vec<Device>,
+    /// The device revoked, if one was (ADR 0040): left out of the comparisons.
+    revoked: Option<usize>,
 }
 
 /// Runs `ops` on `devices` devices in a directory under `base`, then heals the network, lets
 /// the engines settle and checks that:
 ///
-/// - every device has the same files, and the same index;
+/// - every device not revoked has the same files, and the same index;
 /// - no content is lost: what a device had and the user did not remove is still on it, live or
 ///   kept (ADR 0027, ADR 0029);
 /// - no engine failed.
@@ -126,6 +128,7 @@ impl World {
             network: Network::new(),
             user: UserKey::from_seed([1; 32]),
             devices,
+            revoked: None,
         }
     }
 
@@ -337,6 +340,20 @@ impl World {
                 let n = usize::from(device) % count;
                 self.send_only(n, on)?;
             }
+            Op::Revoke { by, device } => {
+                if self.revoked.is_none() {
+                    let by = usize::from(by) % count;
+                    let mut n = usize::from(device) % count;
+                    if n == by {
+                        n = (n + 1) % count;
+                    }
+                    let id = self.devices[n].key.id();
+                    self.engine(by)?
+                        .revoke_device(&self.user, id)
+                        .map_err(|e| format!("{} could not revoke: {e}", self.devices[by].name))?;
+                    self.revoked = Some(n);
+                }
+            }
             Op::Member { device, add } => {
                 let n = usize::from(device) % count;
                 let other = UserKey::from_seed([2; 32]).id();
@@ -463,6 +480,10 @@ impl World {
     fn disagreement(&self) -> Option<String> {
         let mut first: Option<(&str, BTreeMap<String, Hash>, Vec<String>)> = None;
         for (n, device) in self.devices.iter().enumerate() {
+            // A revoked device syncs with no one (ADR 0040).
+            if self.revoked == Some(n) {
+                continue;
+            }
             let engine = self.engine(n).ok()?;
             let status = engine.status(FOLDER).ok()?;
             if status.pending > 0 {

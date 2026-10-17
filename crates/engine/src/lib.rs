@@ -81,6 +81,7 @@ mod space;
 mod state;
 #[doc(hidden)]
 pub mod synth;
+mod takeover;
 mod tracked;
 
 /// Entry points for the fuzz targets in `fuzz/` (ADR 0031), built only by `cargo fuzz`.

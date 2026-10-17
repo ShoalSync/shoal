@@ -101,9 +101,13 @@ A misbehaving member may still disrupt a folder they belong to. The remedy is re
   `CertificateResponse { certificate }` or `Error`. A replica keeps the certificates of the
   authors of the versions it stores and answers for any of them.
 - **Pending versions.** A version whose author has no known certificate is held, not applied
-  or relayed, and requested again later.
+  or relayed, and requested again later. (As built: the certificate is asked of the peer that
+  sent the version before the batch is applied; a peer that answers it cannot vouch makes the
+  refusal final, while an unanswered request leaves the peer's index unacknowledged, so the
+  versions come again next session.)
 - **Removed members.** When a user is removed from a folder, versions later received from
-  that user's devices are refused. Versions already applied stay.
+  that user's devices are refused. Versions already applied stay. (Amended by ADR 0040: their
+  current versions are taken over, so validity does not depend on arrival order.)
 - **Rollout.** Replicas record whether each author is vouched for from the release that adds
   the certificate stream, and enforce the rule from the release after it. That gives every
   peer time to serve certificates.
