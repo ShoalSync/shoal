@@ -442,6 +442,12 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   The time is clamped to a folder's retention, many withdrawals are held for the user (`tidefell
   folder withdrawals`), a device is revoked once, and concurrent revocations keep the earliest
   loss. The simulation's `Revoke` sometimes gives a time.
+- A direct path counts as local when its address is on a network this device's interfaces are
+  on, not only when it is private: a home's global IPv6 prefix is local, for the transfer
+  counts and for not limiting local transfers (ADR 0032). The interfaces' networks are read when
+  a node starts and again when a path is judged and the last reading is a minute old, so an idle
+  device does not wake for it; one-address networks, as overlays give, and carrier-grade NAT do
+  not count. Found by infra's always-on test, whose VMs have global IPv6 addresses.
 
 ### Phase 2 work breakdown
 

@@ -50,6 +50,10 @@ ignore = "0.4"
 iroh = "1.2"
 iroh-mdns-address-lookup = "0.6"
 iroh-metrics = "1.0"
+# The interfaces' networks, to tell an on-link address such as a home's global IPv6 prefix; the
+# version iroh uses.
+netwatch = "0.19"
+ipnet = "2"
 libc = "0.2"
 notify = "8.2"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }

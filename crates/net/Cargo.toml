@@ -19,6 +19,8 @@ blake3.workspace = true
 iroh = { workspace = true, features = ["unstable-net-report"] }
 iroh-mdns-address-lookup.workspace = true
 iroh-metrics.workspace = true
+ipnet.workspace = true
+netwatch.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true

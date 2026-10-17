@@ -4132,9 +4132,11 @@ name = "tidefell-net"
 version = "0.20.0"
 dependencies = [
  "blake3",
+ "ipnet",
  "iroh",
  "iroh-mdns-address-lookup",
  "iroh-metrics",
+ "netwatch",
  "postcard",
  "serde",
  "thiserror 2.0.21",

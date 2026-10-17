@@ -432,6 +432,8 @@ impl Node {
         let records: Records = Arc::default();
         let limiter = Arc::new(RateLimiter::new(config.limits));
         let (sync, blobs) = protocols(&backend, &peers, &records, &limiter);
+        // Read once now, so the first paths are judged with this device's networks.
+        crate::limits::refresh_on_link();
         let router = Router::builder(endpoint.clone())
             .accept(ALPN_SYNC_V1, sync)
             .accept(ALPN_BLOBS_V1, blobs)

@@ -1,11 +1,12 @@
 //! Upload and download rate limits (ADR 0029): one bucket each way for the whole device.
 
 use std::net::IpAddr;
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::time::Duration;
 
-use crate::locks::Locked;
+use crate::locks::{Locked, ReadWrite};
 use crate::transport::Conn;
+use ipnet::IpNet;
 use iroh::TransportAddr;
 use tokio::time::Instant;
 
@@ -202,9 +203,66 @@ fn is_local(conn: &Conn) -> bool {
     conn.path().is_some_and(|p| p.local)
 }
 
-/// Whether `addr` is an address on the local network.
+/// Whether `addr` is an address on the local network: a private one, or one on a network this
+/// device's interfaces are on, as a home's global IPv6 prefix is.
 pub(crate) fn is_local_addr(addr: &TransportAddr) -> bool {
-    matches!(addr, TransportAddr::Ip(a) if is_lan(a.ip()))
+    let TransportAddr::Ip(a) = addr else {
+        return false;
+    };
+    if is_lan(a.ip()) {
+        return true;
+    }
+    refresh_on_link();
+    on_link(a.ip(), &ON_LINK.read_locked())
+}
+
+/// The networks this device's interfaces are on, as [`refresh_on_link`] last found them.
+static ON_LINK: RwLock<Vec<IpNet>> = RwLock::new(Vec::new());
+
+/// When the interfaces' networks were last read.
+static READ_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// How long a reading of the interfaces' networks is used before it is read again.
+const ON_LINK_FOR: Duration = Duration::from_secs(60);
+
+/// Reads the interfaces' networks again, in the background, if the last reading is older than
+/// a minute: only when a path is judged, so an idle device does not wake up for it.
+pub(crate) fn refresh_on_link() {
+    {
+        let mut read_at = READ_AT.locked();
+        if read_at.is_some_and(|at| at.elapsed() < ON_LINK_FOR) {
+            return;
+        }
+        *read_at = Some(Instant::now());
+    }
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async {
+        let state = netwatch::interfaces::State::new().await;
+        let networks: Vec<IpNet> = state
+            .interfaces
+            .values()
+            .filter(|i| i.is_up())
+            .flat_map(|i| i.addrs())
+            .map(|net| match net {
+                netwatch::interfaces::IpNet::V4(net) => IpNet::V4(net),
+                netwatch::interfaces::IpNet::V6 { net, .. } => IpNet::V6(net),
+            })
+            .collect();
+        *ON_LINK.write_locked() = networks;
+    });
+}
+
+/// Whether `ip` is on one of `networks`. A network of one address, as overlay networks give an
+/// interface, holds only this device, and carrier-grade NAT addresses can be anywhere.
+fn on_link(ip: IpAddr, networks: &[IpNet]) -> bool {
+    let ip = ip.to_canonical();
+    networks.iter().any(|net| {
+        net.prefix_len() < net.max_prefix_len()
+            && !matches!(net.network(), IpAddr::V4(v4) if v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 64)
+            && net.contains(&ip)
+    })
 }
 
 /// Private, link-local and loopback addresses. Carrier-grade NAT addresses (100.64.0.0/10), as
@@ -282,6 +340,32 @@ mod tests {
         }
         for wan in ["8.8.8.8", "100.64.0.1", "2001:db8::1", "172.32.0.1"] {
             assert!(!is_lan(wan.parse().unwrap()), "{wan}");
+        }
+    }
+
+    #[test]
+    fn addresses_on_an_interfaces_network_are_on_link() {
+        let networks: Vec<IpNet> = [
+            "2001:db8:1::5/64",
+            "203.0.113.7/24",
+            "100.101.102.103/32",
+            "100.64.0.1/10",
+            "2001:db8:9::1/128",
+        ]
+        .iter()
+        .map(|n| n.parse().unwrap())
+        .collect();
+        for near in ["2001:db8:1::9", "203.0.113.200", "::ffff:203.0.113.1"] {
+            assert!(on_link(near.parse().unwrap(), &networks), "{near}");
+        }
+        for far in [
+            "2001:db8:2::9",
+            "203.0.114.1",
+            "100.101.102.104",
+            "100.64.0.2",
+            "2001:db8:9::1",
+        ] {
+            assert!(!on_link(far.parse().unwrap(), &networks), "{far}");
         }
     }
 }
