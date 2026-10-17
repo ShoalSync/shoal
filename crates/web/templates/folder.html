@@ -46,6 +46,18 @@
 </form>
 {% endif %}
 {% endif %}
+{% for w in held_withdrawals %}
+<p class="notice">{{ w.name }} was revoked, and the {{ w.count }} files it changed here after it was lost are too many to withdraw without asking: withdrawing puts back what each change replaced, or moves the file to the recycle bin. Keep them if they are yours, as if made before the loss.</p>
+<ul class="muted">{% for p in w.paths %}<li>{{ p }}</li>{% endfor %}{% if w.more > 0 %}<li>and {{ w.more }} more</li>{% endif %}</ul>
+{% if admin %}
+<form method="post" action="/folders/{{ id }}/withdrawals" class="inline">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="device" value="{{ w.device }}">
+  <button type="submit" name="action" value="withdraw" class="danger">Withdraw them</button>
+  <button type="submit" name="action" value="keep">Keep them</button>
+</form>
+{% endif %}
+{% endfor %}
 {% if paused || device_paused %}<p class="notice">Syncing {% if device_paused %}on this server{% else %}of this folder{% endif %} is paused. Changes here are recorded and sent when it resumes.</p>{% endif %}
 {% if admin %}
 <form method="post" action="/folders/{{ id }}/{% if paused %}resume{% else %}pause{% endif %}" class="inline">

@@ -144,6 +144,10 @@ pub fn router_with_user_key(
         .route("/folders/{id}/resolve", post(conflicts::resolve))
         .route("/folders/{id}/pause", post(handlers::pause_folder))
         .route("/folders/{id}/deletes", post(handlers::decide_deletes))
+        .route(
+            "/folders/{id}/withdrawals",
+            post(handlers::decide_withdrawals),
+        )
         .route("/folders/{id}/rename", post(handlers::rename))
         .route("/folders/{id}/pin", post(handlers::pin))
         .route("/folders/{id}/unpin", post(handlers::unpin))

@@ -1246,9 +1246,39 @@ async fn administrators_revoke_a_lost_device() {
     // Asked first.
     let ask = admin.get(&format!("/status/revoke?device={device}")).await;
     assert!(ask.body.contains("Revoke laptop?"), "{}", ask.body);
-    let csrf = ask.csrf();
+    assert!(ask.body.contains("keeping what it made"), "{}", ask.body);
+    // A time of loss shows what it would withdraw first; one not read, or still to come, is
+    // said so (ADR 0040).
+    let bad = admin
+        .get(&format!(
+            "/status/revoke?device={device}&lost_at=yesterday&offset=%2B00%3A00"
+        ))
+        .await;
+    assert!(bad.body.contains("is not a date and time"), "{}", bad.body);
+    let later = admin
+        .get(&format!(
+            "/status/revoke?device={device}&lost_at=2999-01-01T00%3A00&offset=%2B00%3A00"
+        ))
+        .await;
+    assert!(later.body.contains("has not come yet"), "{}", later.body);
+    let preview = admin
+        .get(&format!(
+            "/status/revoke?device={device}&lost_at=2026-10-01T14%3A30&offset=%2B02%3A00"
+        ))
+        .await;
+    assert!(
+        preview.body.contains("Lost at 2026-10-01 12:30 UTC"),
+        "{}",
+        preview.body
+    );
+    let lost_ms = "1790857800000";
+    assert!(preview.body.contains(lost_ms), "{}", preview.body);
+    let csrf = preview.csrf();
     let done = admin
-        .post("/status/revoke", &[("csrf", &csrf), ("device", &device)])
+        .post(
+            "/status/revoke",
+            &[("csrf", &csrf), ("device", &device), ("lost_ms", lost_ms)],
+        )
         .await;
     assert_eq!(done.status, StatusCode::SEE_OTHER);
     let status = admin.get("/status").await;
@@ -1256,7 +1286,9 @@ async fn administrators_revoke_a_lost_device() {
     assert!(!status
         .body
         .contains(&format!("/status/revoke?device={device}")));
-    assert_eq!(engine.revocations().len(), 1);
+    let revocations = engine.revocations();
+    assert_eq!(revocations.len(), 1);
+    assert_eq!(revocations[0].0.lost_ms, Some(1_790_857_800_000));
     eventually("the laptop is dropped", || {
         engine.connected_peers().is_empty()
     })

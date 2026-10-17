@@ -392,6 +392,7 @@ pub(crate) async fn folder(
         paused: folder.paused,
         device_paused: state.engine.paused(),
         held_deletes: folder.held_deletes,
+        held_withdrawals: held_withdrawals(&state, folder.id),
         low_space: folder.low_space.clone(),
         partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
@@ -809,6 +810,75 @@ pub(crate) async fn unpin(
     Form(form): Form<PinForm>,
 ) -> Response {
     set_pin(&state, &headers, &id, &form, false).await
+}
+
+// ---- Held withdrawals (ADR 0040) ----
+
+/// The revoked devices whose changes after their loss wait for a decision in `folder`.
+fn held_withdrawals(
+    state: &AppState,
+    folder: tidefell_engine::FolderId,
+) -> Vec<pages::HeldWithdrawalRow> {
+    const SHOWN: usize = 10;
+    let revocations = state.engine.revocations();
+    state
+        .engine
+        .held_withdrawals(folder)
+        .into_iter()
+        .map(|(device, paths)| pages::HeldWithdrawalRow {
+            name: revocations
+                .iter()
+                .find(|(r, _)| r.device == device)
+                .and_then(|(_, name)| name.clone())
+                .unwrap_or_else(|| "A revoked device".into()),
+            device: device.to_string(),
+            count: paths.len(),
+            more: paths.len().saturating_sub(SHOWN),
+            paths: paths.into_iter().take(SHOWN).collect(),
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WithdrawalsForm {
+    csrf: String,
+    device: String,
+    /// `withdraw` or `keep`.
+    action: String,
+}
+
+/// Withdraws what a revoked device changed after its loss, or keeps it as if made before.
+/// Administrators only, since what is withdrawn goes from every device.
+pub(crate) async fn decide_withdrawals(
+    State(state): AppStateRef,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    Form(form): Form<WithdrawalsForm>,
+) -> Response {
+    let (_, session) = signed_in!(state, headers);
+    if let Some(response) = admin_only(&session).or_else(|| check_csrf(&session, &form.csrf)) {
+        return response;
+    }
+    let Some(folder) = visible_folder(&state, &session, &id) else {
+        return not_found();
+    };
+    let Ok(device) = form.device.parse::<tidefell_engine::DeviceId>() else {
+        return error(StatusCode::BAD_REQUEST, "Unknown device", &form.device);
+    };
+    let withdraw = match form.action.as_str() {
+        "withdraw" => true,
+        "keep" => false,
+        _ => return error(StatusCode::BAD_REQUEST, "Unknown action", &form.action),
+    };
+    if let Err(e) = state.engine.decide_withdrawals(folder.id, device, withdraw) {
+        return error(
+            StatusCode::BAD_REQUEST,
+            "Could not decide on the withdrawals",
+            &e.to_string(),
+        );
+    }
+    tracing::info!(user = %session.username, folder = %folder.id, %device, action = %form.action, "held withdrawals decided from the web");
+    Redirect::to(&format!("/folders/{}", folder.id)).into_response()
 }
 
 // ---- Held deletes (ADR 0037) ----

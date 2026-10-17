@@ -295,6 +295,55 @@ fn user_of(
 #[derive(serde::Deserialize)]
 pub(crate) struct RevokeQuery {
     device: String,
+    /// When the device was lost, as a form's date and time, and its offset from UTC: given, the
+    /// page shows what revoking with it would withdraw (ADR 0040).
+    #[serde(default)]
+    lost_at: String,
+    #[serde(default)]
+    offset: String,
+}
+
+/// What revoking `device` as lost at `lost_ms` would withdraw here, folder by folder.
+fn loss_preview(
+    state: &AppState,
+    device: tidefell_engine::DeviceId,
+    lost_ms: i64,
+) -> pages::LossPreview {
+    // A page lists this many files of a folder at most.
+    const LISTED: usize = 200;
+    let folders = state.engine.folders();
+    let name = |id| {
+        folders
+            .iter()
+            .find(|f| f.id == id)
+            .map_or_else(|| id.to_string(), crate::handlers::folder_name)
+    };
+    pages::LossPreview {
+        lost_ms,
+        when: time(lost_ms),
+        folders: state
+            .engine
+            .revoke_preview(device, lost_ms)
+            .into_iter()
+            .map(|p| pages::LossFolderRow {
+                name: name(p.folder),
+                moved_to: p.moved.then(|| time(p.lost_ms)),
+                more: p.withdrawn.len().saturating_sub(LISTED),
+                withdrawn: p
+                    .withdrawn
+                    .into_iter()
+                    .take(LISTED)
+                    .map(|w| pages::WithdrawnRow {
+                        path: w.path,
+                        size: size(w.size),
+                        received: w.received_ms.map_or_else(|| "not recorded".into(), time),
+                        put_back: w.put_back,
+                    })
+                    .collect(),
+                unknown: p.unknown,
+            })
+            .collect(),
+    }
 }
 
 /// Which peer `device` names, if this server may revoke it: it holds the user key, and the
@@ -334,12 +383,32 @@ pub(crate) async fn revoke_page(
     let Some((device, name)) = revocable(&state, &query.device) else {
         return Redirect::to("/status").into_response();
     };
+    let offset = match query.offset.as_str() {
+        "" => "+00:00".to_owned(),
+        o => o.to_owned(),
+    };
+    let (preview, error) = match query.lost_at.trim() {
+        "" => (None, None),
+        at => match crate::format::parse_time(at, &offset) {
+            Some(lost_ms) if lost_ms > state.engine.now_ms() => {
+                (None, Some("That time has not come yet.".to_owned()))
+            }
+            Some(lost_ms) => (Some(loss_preview(&state, device, lost_ms)), None),
+            None => (None, Some(format!("{at:?} is not a date and time."))),
+        },
+    };
     render(pages::Revoke {
         username: session.username,
         admin: session.admin,
         csrf: session.csrf,
         name,
         device: device.to_string(),
+        now: time(state.engine.now_ms()),
+        lost_at: query.lost_at,
+        offset,
+        offsets: crate::format::offsets(),
+        error,
+        preview,
     })
 }
 
@@ -347,6 +416,9 @@ pub(crate) async fn revoke_page(
 pub(crate) struct RevokeForm {
     csrf: String,
     device: String,
+    /// The time of loss the page previewed, in milliseconds, if one was given.
+    #[serde(default)]
+    lost_ms: Option<i64>,
 }
 
 /// Revokes one of the user's devices for good (ADR 0040).
@@ -360,8 +432,8 @@ pub(crate) async fn revoke(
         return response;
     }
     if let (Some((device, name)), Some(user)) = (revocable(&state, &form.device), &state.user_key) {
-        // A time of loss is given from the CLI, which can preview it (ADR 0040).
-        match state.engine.revoke_device(user, device, None) {
+        // With a time of loss, what the page previewed is withdrawn (ADR 0040).
+        match state.engine.revoke_device(user, device, form.lost_ms) {
             Ok(()) => {
                 tracing::warn!(%device, %name, by = %session.username, "device revoked from the web peer")
             }

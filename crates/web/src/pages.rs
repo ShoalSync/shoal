@@ -60,6 +60,8 @@ pub(crate) struct Folder {
     pub(crate) device_paused: bool,
     /// Files a scan found deleted at once and held for a decision (ADR 0037).
     pub(crate) held_deletes: usize,
+    /// A revoked device's changes after its loss, too many to withdraw without asking (ADR 0040).
+    pub(crate) held_withdrawals: Vec<HeldWithdrawalRow>,
     /// Why nothing more is downloaded here, if a drive is low on space (ADR 0037).
     pub(crate) low_space: Option<String>,
     /// A partial replica here, which can pin files (ADR 0029); their total size.
@@ -73,6 +75,15 @@ pub(crate) struct Folder {
     pub(crate) problems: Vec<ProblemRow>,
     pub(crate) notice: Option<String>,
     pub(crate) files: Vec<FileRow>,
+}
+
+pub(crate) struct HeldWithdrawalRow {
+    pub(crate) name: String,
+    pub(crate) device: String,
+    pub(crate) count: usize,
+    /// The first few of the files, and how many more there are.
+    pub(crate) paths: Vec<String>,
+    pub(crate) more: usize,
 }
 
 pub(crate) struct ProblemRow {
@@ -115,6 +126,42 @@ pub(crate) struct Revoke {
     pub(crate) csrf: String,
     pub(crate) name: String,
     pub(crate) device: String,
+    /// The time now, in UTC, to write the time of loss against.
+    pub(crate) now: String,
+    /// The time of loss as written, and the offset from UTC it was written in.
+    pub(crate) lost_at: String,
+    pub(crate) offset: String,
+    pub(crate) offsets: Vec<String>,
+    /// Why the time could not be read.
+    pub(crate) error: Option<String>,
+    /// What revoking with that time would do here, and the time in milliseconds to revoke with.
+    pub(crate) preview: Option<LossPreview>,
+}
+
+/// What a time of loss would withdraw on this server (ADR 0040).
+pub(crate) struct LossPreview {
+    pub(crate) lost_ms: i64,
+    pub(crate) when: String,
+    pub(crate) folders: Vec<LossFolderRow>,
+}
+
+pub(crate) struct LossFolderRow {
+    pub(crate) name: String,
+    /// The time as the folder applies it, if it moved to what its recycle bin keeps.
+    pub(crate) moved_to: Option<String>,
+    pub(crate) withdrawn: Vec<WithdrawnRow>,
+    /// How many more files there are than are listed.
+    pub(crate) more: usize,
+    /// Changes whose arrival this server cannot place: left to the other devices.
+    pub(crate) unknown: usize,
+}
+
+pub(crate) struct WithdrawnRow {
+    pub(crate) path: String,
+    pub(crate) size: String,
+    pub(crate) received: String,
+    /// What it replaced is put back; otherwise it goes to the recycle bin.
+    pub(crate) put_back: bool,
 }
 
 pub(crate) struct CrashNotice {

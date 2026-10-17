@@ -448,6 +448,9 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   a node starts and again when a path is judged and the last reading is a minute old, so an idle
   device does not wake for it; one-address networks, as overlays give, and carrier-grade NAT do
   not count. Found by infra's always-on test, whose VMs have global IPv6 addresses.
+- The web peer's revoke page takes a time of loss, as a date and time with an offset from UTC,
+  shows what it would withdraw on that server, and revokes with it. Its folder page shows
+  withdrawals held for a decision; administrators withdraw or keep them.
 
 ### Phase 2 work breakdown
 

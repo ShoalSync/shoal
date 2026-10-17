@@ -184,8 +184,10 @@ Its changes from then on are then removed, not kept.
     withdrawals wait for an exchange since it was learnt.
   - The revoke command (`--lost-at`) shows the list, from `GET /v1/devices/{device}/revoke-preview`,
     and held withdrawals are listed and decided with `tidefell folder withdrawals` and
-    `/v1/folders/{id}/withdrawals`. The web peer and the app show them in a later release; the
-    web peer revokes without a time meanwhile.
+    `/v1/folders/{id}/withdrawals`. The web peer's revoke page takes a date and time with an
+    offset from UTC, shows the same list, and revokes with the time it showed; its folder page
+    shows held withdrawals, and administrators withdraw or keep them there. The app shows them in
+    a later release.
 
 Takeover is recommended over the alternatives:
 

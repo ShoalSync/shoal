@@ -2,16 +2,68 @@
 {% block title %}Revoke a device · Tidefell{% endblock %}
 {% block nav %}{% include "nav.html" %}{% endblock %}
 {% block content %}
-<section class="narrow">
+<section>
   <h1>Revoke {{ name }}?</h1>
   <p class="muted mono">{{ device }}</p>
   <p>For a lost or stolen device. Every one of your devices that hears of it refuses it from then
     on, and it syncs with no one once it hears of it itself. This cannot be undone: if the device
-    is found, pair it again. Files it already made stay.</p>
+    is found, pair it again.</p>
+
+  <h2>When was it lost?</h2>
+  <p>Give the time if you know it. Whatever it changed after then is withdrawn: what each change
+    replaced is put back where a device still has it, and otherwise the file goes to the recycle
+    bin. Without a time, the files it made all stay. It is now {{ now }}.</p>
+  <form method="get" action="/status/revoke">
+    <input type="hidden" name="device" value="{{ device }}">
+    <label>Date and time <input type="datetime-local" name="lost_at" value="{{ lost_at }}"></label>
+    <label>Offset from UTC
+      <select name="offset">
+        {% for o in offsets %}<option value="{{ o }}"{% if *o == offset %} selected{% endif %}>UTC{{ o }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Show what would be withdrawn</button>
+  </form>
+  {% if let Some(error) = error %}<p class="notice">{{ error }}</p>{% endif %}
+
+  {% if let Some(p) = preview %}
+  <h2>Lost at {{ p.when }}</h2>
+  <p class="muted">What this server would withdraw. Each of your devices judges by when it
+    received each change, by its own clock, so others may withdraw a little more or less.</p>
+  {% for f in p.folders %}
+  <h3>{{ f.name }}</h3>
+  {% if let Some(to) = f.moved_to %}<p class="notice">The time moves to {{ to }} here: no further
+    back than this folder's recycle bin keeps.</p>{% endif %}
+  {% if f.withdrawn.is_empty() %}<p class="muted">Nothing here.</p>{% else %}
+  <table>
+    <thead><tr><th>File</th><th>Size</th><th>Received</th><th>Then</th></tr></thead>
+    <tbody>
+    {% for w in f.withdrawn %}
+      <tr>
+        <td>{{ w.path }}</td>
+        <td>{{ w.size }}</td>
+        <td>{{ w.received }}</td>
+        <td>{% if w.put_back %}put back as it was{% else %}to the recycle bin{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if f.more > 0 %}<p class="muted">And {{ f.more }} more.</p>{% endif %}
+  {% endif %}
+  {% if f.unknown > 0 %}<p class="muted">{{ f.unknown }} change(s) came at a time this server
+    did not record; it leaves them to your other devices.</p>{% endif %}
+  {% endfor %}
+  {% if p.folders.is_empty() %}<p class="muted">It changed nothing in the folders here.</p>{% endif %}
+  {% endif %}
+
   <form method="post" action="/status/revoke">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="device" value="{{ device }}">
-    <button type="submit" class="danger">Revoke {{ name }}</button>
+    {% if let Some(p) = preview %}
+    <input type="hidden" name="lost_ms" value="{{ p.lost_ms }}">
+    <button type="submit" class="danger">Revoke {{ name }} as lost at {{ p.when }}</button>
+    {% else %}
+    <button type="submit" class="danger">Revoke {{ name }}, keeping what it made</button>
+    {% endif %}
     <a href="/status">Cancel</a>
   </form>
 </section>
