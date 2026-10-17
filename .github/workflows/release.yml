@@ -41,8 +41,9 @@ jobs:
           ref: ${{ env.TAG }}
           fetch-depth: 0
       - name: The tag is on main
+        # The checkout fetched every branch (fetch-depth 0), without keeping credentials to
+        # fetch again.
         run: |
-          git fetch --quiet origin main
           if ! git merge-base --is-ancestor "$TAG" origin/main; then
             echo "::error::tag $TAG is not on main"
             exit 1
