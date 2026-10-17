@@ -1370,6 +1370,75 @@ mod tests {
     use crate::config::ReplicaMode;
 
     #[test]
+    fn receipt_times_are_kept_with_versions_made_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+            confirm_deletes: Default::default(),
+        };
+        let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
+        let other = tidefell_identity::DeviceKey::from_seed([6; 32]);
+        let mut state =
+            FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, mine.id()).unwrap();
+        let file = |n: u8| tidefell_proto::sync::EntryKind::File {
+            content: tidefell_proto::ContentHash([n; 32]),
+            size: 1,
+            executable: false,
+        };
+        // Made here: no time.
+        state
+            .meta
+            .local_change(
+                mine.signing_key(),
+                tidefell_proto::EntryId([1; 16]),
+                "mine",
+                file(1),
+                10,
+            )
+            .unwrap();
+        // Made elsewhere: received at 2000, by this device's clock.
+        let theirs = |n: u8| {
+            let mut folder =
+                tidefell_meta::Folder::new(FolderId([3; 32]), other.id(), 1, Retention::Days(30));
+            folder
+                .local_change(
+                    other.signing_key(),
+                    tidefell_proto::EntryId([n; 16]),
+                    &format!("theirs{n}"),
+                    file(n),
+                    5,
+                )
+                .unwrap()
+        };
+        let verify = |v| tidefell_meta::verify_remote(FolderId([3; 32]), v).unwrap();
+        state.meta.apply_verified(verify(theirs(2)), 2000).unwrap();
+        // Received again while rebuilding: not when it first came, so no time.
+        state.meta.set_record_receipts(false);
+        state.meta.apply_verified(verify(theirs(3)), 3000).unwrap();
+        state.meta.set_record_receipts(true);
+        state.save().unwrap();
+        state.committer.as_ref().unwrap().flush().unwrap();
+
+        let reader = state.manifests.reader().unwrap();
+        let sequences = [1, 2, 3];
+        assert_eq!(
+            reader.received(&sequences).unwrap(),
+            vec![None, Some(2000), None]
+        );
+        assert!(reader.receipts_since().unwrap().is_some());
+        // 0.19 reads a row as a signed version and stops there.
+        let rows = reader.versions(&sequences).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1].verify().unwrap().author, other.id());
+    }
+
+    #[test]
     fn loads_version_1_state() {
         let tmp = tempfile::tempdir().unwrap();
         let config = FolderConfig {

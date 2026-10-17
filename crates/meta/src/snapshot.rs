@@ -157,6 +157,7 @@ impl Folder {
             folding: crate::Folding::None,
             pending: crate::journal::Pending::default(),
             changes: std::cell::RefCell::default(),
+            record_receipts: true,
         })
     }
 

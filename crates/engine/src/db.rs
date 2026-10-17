@@ -175,6 +175,10 @@ fn builder() -> redb::Builder {
 
 /// The header key saying the chunk index was filled from the manifests.
 const CHUNKS_BUILT: &str = "chunks built";
+/// When this database began recording when versions were received (ADR 0040): a version
+/// stored before then has no time, and one after without a time was made here or received
+/// while rebuilding.
+const RECEIPTS_SINCE: &str = "receipts since";
 
 /// The chunk index's rows for `manifest`: each chunk's hash, then the content's.
 pub(crate) fn chunk_rows(manifest: &Manifest) -> impl Iterator<Item = [u8; 64]> + '_ {
@@ -242,6 +246,48 @@ impl Reader {
         Ok(out)
     }
 
+    /// When each of the committed versions with `sequences` was received, this device's time,
+    /// in that order: none for a version made here, received before this was recorded, or
+    /// received while rebuilding, or not there (ADR 0040). Read only when needed, never kept in
+    /// memory (ADR 0035).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "for ADR 0040's time of loss, in the release after 0.20"
+        )
+    )]
+    pub(crate) fn received(&self, sequences: &[u64]) -> Result<Vec<Option<i64>>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(VERSIONS).map_err(|x| e(x.into()))?;
+        let mut out = Vec::with_capacity(sequences.len());
+        for sequence in sequences {
+            let time = table
+                .get(*sequence)
+                .map_err(|x| e(x.into()))?
+                .and_then(|value| received_in(value.value()));
+            out.push(time);
+        }
+        Ok(out)
+    }
+
+    /// When this database began recording when versions were received (ADR 0040).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "for ADR 0040's time of loss, in the release after 0.20"
+        )
+    )]
+    pub(crate) fn receipts_since(&self) -> Result<Option<i64>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
+        let since = table.get(RECEIPTS_SINCE).map_err(|x| e(x.into()))?;
+        Ok(since.and_then(|v| postcard::from_bytes(v.value()).ok()))
+    }
+
     /// The committed versions with `sequences`, signed, in that order; one not there is left out.
     pub(crate) fn versions(&self, sequences: &[u64]) -> Result<Vec<Signed<EntryVersion>>> {
         let e = |x: redb::Error| err(&self.path)(x);
@@ -272,6 +318,19 @@ impl Reader {
 
 fn corrupt(path: &Path) -> impl Fn(postcard::Error) -> Error + '_ {
     move |_| Error::CorruptState(path.to_path_buf())
+}
+
+/// When a versions row says its version was received: the time after the signed version.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "for ADR 0040's time of loss, in the release after 0.20"
+    )
+)]
+fn received_in(row: &[u8]) -> Option<i64> {
+    let (_, rest) = postcard::take_from_bytes::<Signed<EntryVersion>>(row).ok()?;
+    postcard::from_bytes(rest).ok()
 }
 
 #[expect(
@@ -531,12 +590,28 @@ impl FolderDb {
             table
                 .insert("rebuild", encode(&changes.rebuild).as_slice())
                 .map_err(|x| e(x.into()))?;
+            if table
+                .get(RECEIPTS_SINCE)
+                .map_err(|x| e(x.into()))?
+                .is_none()
+            {
+                table
+                    .insert(RECEIPTS_SINCE, encode(&changes.at_ms).as_slice())
+                    .map_err(|x| e(x.into()))?;
+            }
         }
         if !journal.stored.is_empty() {
+            let received: BTreeMap<u64, i64> = journal.received.iter().copied().collect();
             let mut table = tx.open_table(VERSIONS).map_err(|x| e(x.into()))?;
             for (sequence, signed) in &journal.stored {
+                // When it was received follows the version, where readers from before it, such
+                // as 0.19, stop reading.
+                let mut row = encode(signed);
+                if let Some(at) = received.get(sequence) {
+                    row.extend(encode(at));
+                }
                 table
-                    .insert(*sequence, encode(signed).as_slice())
+                    .insert(*sequence, row.as_slice())
                     .map_err(|x| e(x.into()))?;
             }
         }

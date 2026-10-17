@@ -186,6 +186,9 @@ pub struct Folder {
     /// What stored versions did to their entries since [`Folder::take_changes`] was last
     /// called, for the activity log (ADR 0030). Not persisted.
     pub(crate) changes: std::cell::RefCell<Vec<Change>>,
+    /// Whether to record when versions made elsewhere are received (ADR 0040): not while a
+    /// folder is rebuilt, when versions arrive again long after they were first received.
+    pub(crate) record_receipts: bool,
 }
 
 /// A remote version whose signature, folder, path and counters were checked, ready for
@@ -276,7 +279,13 @@ impl Folder {
             recycle: RecycleBin::new(retention),
             pending: crate::journal::Pending::default(),
             changes: std::cell::RefCell::default(),
+            record_receipts: true,
         }
+    }
+
+    /// Records, or stops recording, when versions made elsewhere are received (ADR 0040).
+    pub fn set_record_receipts(&mut self, record: bool) {
+        self.record_receipts = record;
     }
 
     /// The folder.
@@ -559,11 +568,17 @@ impl Folder {
     }
 
     /// Stores a remote version checked by [`verify_remote`], as [`Folder::apply_remote`] does.
+    /// When it was received is recorded with it, if it was made elsewhere (ADR 0040).
     pub fn apply_verified(&mut self, verified: Verified, received_ms: i64) -> Result<Applied> {
         if verified.version.folder != self.id {
             return Err(Error::WrongFolder);
         }
-        Ok(self.store(verified.version, verified.signed, received_ms))
+        let elsewhere = verified.version.author != self.device;
+        let applied = self.store(verified.version, verified.signed, received_ms);
+        if applied != Applied::Stale && elsewhere && self.record_receipts {
+            self.pending.received(self.sequence, received_ms);
+        }
+        Ok(applied)
     }
 
     /// Restores a deleted entry from the recycle bin as a new local change.

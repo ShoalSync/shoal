@@ -41,6 +41,9 @@ pub struct Journal {
     pub dropped: Vec<u64>,
     /// Recycle-bin items by entry: set, or removed (`None`).
     pub recycle: Vec<(EntryId, Option<Recycled>)>,
+    /// When versions in `stored` made elsewhere were received, by sequence, this device's
+    /// time (ADR 0040). A version without one was made here, or received while rebuilding.
+    pub received: Vec<(u64, i64)>,
 }
 
 impl Journal {
@@ -59,6 +62,8 @@ pub(crate) struct Pending {
     dropped: Vec<u64>,
     /// Recycle-bin entries set or removed.
     recycle: BTreeSet<EntryId>,
+    /// When versions stored were received, by sequence.
+    received: Vec<(u64, i64)>,
 }
 
 impl Pending {
@@ -72,6 +77,10 @@ impl Pending {
 
     pub(crate) fn recycled(&mut self, entry: EntryId) {
         self.recycle.insert(entry);
+    }
+
+    pub(crate) fn received(&mut self, sequence: u64, received_ms: i64) {
+        self.received.push((sequence, received_ms));
     }
 }
 
@@ -130,10 +139,17 @@ impl Folder {
             .into_iter()
             .map(|entry| (entry, self.recycle.get(&entry).cloned()))
             .collect();
+        // Only for versions saved now: one stored and superseded in between is not.
+        let received = pending
+            .received
+            .into_iter()
+            .filter(|(s, _)| stored.binary_search_by_key(s, |(s, _)| *s).is_ok())
+            .collect();
         Journal {
             stored,
             dropped,
             recycle,
+            received,
         }
     }
 
@@ -161,6 +177,7 @@ impl Folder {
                 .iter()
                 .map(|item| (item.version.entry, Some(item.clone())))
                 .collect(),
+            received: Vec::new(),
         }
     }
 

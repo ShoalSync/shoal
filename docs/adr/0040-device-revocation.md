@@ -114,7 +114,11 @@ Its changes from then on are then removed, not kept.
   of a clock far from its peers' (ADR 0030). Changes the device made before the loss but sent
   only afterwards, as when it was offline, are withdrawn too: nothing tells them from the thief's.
 - Recording receipt times costs one time per stored version made elsewhere, kept with the version
-  in the folder's database.
+  in the folder's database. Recording starts in 0.20, ahead of the rest, so the release that
+  judges by it has times to judge by: each versions row has the time after the signed version,
+  where 0.19 stops reading, and the database notes when it began recording. Versions received
+  again while a folder is rebuilt (ADR 0034) get no time, as they were not received then. A
+  version with no time, from before recording began, is judged as received before the loss.
 - **Guards against a revocation meant to do harm.** Only the user key signs revocations, and a
   phone never holds it, so a stolen phone cannot revoke anything. A stolen user key is out of
   scope, but whoever holds one must not be able to empty every folder with one revocation:

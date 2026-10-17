@@ -153,6 +153,10 @@ impl Backend for EngineBackend {
         {
             let mut state = handle.lock();
             let now = self.0.now_ms();
+            // A folder being rebuilt receives its versions again, long after they first came:
+            // their times then are not when they were received (ADR 0040).
+            let rebuilding = state.rebuilding();
+            state.meta.set_record_receipts(!rebuilding);
             for version in verified {
                 let entry = Some(version.version().entry);
                 let open = |state: &crate::state::FolderState| {

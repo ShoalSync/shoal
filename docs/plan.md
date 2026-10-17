@@ -380,6 +380,11 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   for it, is a member of the folder: a removed member's copies stop counting, so the files are
   "only here" again and a partial replica keeps them. A copy confirmed before 0.20 counts once
   its device has been met again, as its certificate was not kept before.
+- ADR 0040's receipt times are recorded from 0.20, ahead of the time of loss that uses them:
+  each version made elsewhere is stored with when this device received it, by its own clock,
+  after the signed version in its row (0.19 reads past it), except while a folder is rebuilt.
+  The database notes when recording began. Times are read from disk when needed, not kept in
+  memory.
 - ADR 0040's first part, revoking a device's connections, is implemented: `tidefell device
   revoke` (and `POST /v1/devices/{device}/revoke`) on the device holding the user key signs a
   revocation; `sync/1`'s `Hello` carries every revocation the sender knows (appended after
