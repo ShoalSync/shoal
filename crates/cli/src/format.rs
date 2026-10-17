@@ -249,7 +249,7 @@ pub(crate) fn zip_entries(zip: &[u8]) -> Vec<(String, u64)> {
     (0..archive.len())
         .filter_map(|i| {
             let file = archive.by_index(i).ok()?;
-            Some((file.name().to_owned(), file.size()))
+            Some((file.name().ok()?.into_owned(), file.size()))
         })
         .collect()
 }

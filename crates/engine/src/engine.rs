@@ -161,7 +161,8 @@ pub(crate) struct Inner {
     events: broadcast::Sender<Event>,
     /// Serialises changes to the folder set and their persistence.
     runtime_lock: Mutex<()>,
-    /// Known devices' certificates, and authors not vouched for (ADR 0024).
+    /// Known devices' certificates, and authors not vouched for (ADR 0024). Taken after a
+    /// folder's lock, never before one, and never while waiting for one.
     pub(crate) vouching: Mutex<crate::vouch::Vouching>,
     /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
     watch: bool,
@@ -283,6 +284,15 @@ impl Inner {
     /// Writes runtime folders, peers, pause and pins. Callers hold `runtime_lock`, and no
     /// folder's lock.
     pub(crate) fn save_runtime(&self) -> Result<()> {
+        // Copied out and let go before any folder is locked: a folder's lock is taken before
+        // this one everywhere else, so holding this one while waiting for a folder's deadlocks.
+        let (certificates, revocations) = {
+            let vouching = self.vouching.lock().unwrap();
+            (
+                vouching.certificates().cloned().collect(),
+                vouching.revocations().cloned().collect(),
+            )
+        };
         let folders = self.folders.read().unwrap();
         let unopened = self.unopened.lock().unwrap();
         let mut pins: BTreeMap<FolderId, Vec<String>> = self.other_pins.lock().unwrap().clone();
@@ -290,8 +300,6 @@ impl Inner {
             pins.insert(*id, handle.lock().pins.iter().cloned().collect());
         }
         let (paused, paused_folders) = self.paused.read().unwrap().clone();
-        // Locked once: two guards of it in one statement would wait on each other.
-        let vouching = self.vouching.lock().unwrap();
         let runtime = Runtime {
             folders: folders
                 .values()
@@ -314,8 +322,8 @@ impl Inner {
             paused,
             paused_folders: paused_folders.into_iter().collect(),
             pins: pins.into_iter().collect(),
-            certificates: vouching.certificates().cloned().collect(),
-            revocations: vouching.revocations().cloned().collect(),
+            certificates,
+            revocations,
         };
         runtime.save(&self.data_dir)
     }

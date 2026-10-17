@@ -25,7 +25,7 @@ fn unzip(bytes: &[u8]) -> Vec<(String, String)> {
             let mut file = zip.by_index(i).unwrap();
             let mut text = String::new();
             file.read_to_string(&mut text).unwrap();
-            (file.name().to_owned(), text)
+            (file.name().unwrap().into_owned(), text)
         })
         .collect()
 }
