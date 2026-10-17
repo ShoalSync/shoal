@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-chunker"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "fastcdc",
@@ -3272,7 +3272,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-engine"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "aho-corasick",
  "blake3",
@@ -3305,7 +3305,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fetch"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "thiserror 2.0.21",
  "tidefell-proto",
@@ -3325,7 +3325,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-identity"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -3337,7 +3337,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-meta"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -3350,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-net"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "blake3",
  "iroh",
@@ -3367,7 +3367,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-proto"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "ed25519-dalek",
  "postcard",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-store"
-version = "0.19.0"
+version = "0.20.0"
 dependencies = [
  "thiserror 2.0.21",
  "tidefell-chunker",

@@ -418,6 +418,15 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   (ADR 0039). The Android pin takes up the app's logging through the engine (`AppLog`), so its
   messages are in the log files and diagnostics bundles. The database and the protocol are
   unchanged.
+- `v0.20.0` completes Phase 5c steps 5 and 6 as far as they ship before enforcement: releases
+  built on their own runner and signed with Sigstore; author certificates fetched and kept
+  (sync/1 messages 6 and 7); device revocation of connections (`tidefell device revoke`, the web
+  peer's Status page, revocations in `Hello`); receipt times recorded for ADR 0040's time of
+  loss; confirmed copies from current members only; an owner-only data directory, slower
+  password guessing, bounded uploads; relay access tokens and hardened systemd units. Runtime
+  settings are format 7; the folder database format is unchanged (inodes and receipt times
+  follow each row, where 0.19 reads past them). Author enforcement, takeover, the time of loss
+  and its guards follow in 0.21.
 
 ### Phase 2 work breakdown
 
