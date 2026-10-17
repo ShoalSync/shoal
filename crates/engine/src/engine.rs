@@ -77,6 +77,8 @@ pub(crate) struct FolderHandle {
     open: Mutex<HashMap<String, usize>>,
     /// Scans, exchanges and problems, for status displays (ADR 0030).
     pub(crate) activity: Mutex<crate::activity::Activity>,
+    /// When a peer's whole index last came, by the monotonic clock (ADR 0040).
+    pub(crate) exchanged_at: Mutex<Option<std::time::Instant>>,
     /// Asks the scanner for a full scan now, as when a folder being rebuilt gets entries to
     /// match its files to (ADR 0034).
     pub(crate) rescan: Notify,
@@ -167,6 +169,8 @@ pub(crate) struct Inner {
     /// Folders with versions of a revoked device this replica could not take over, waiting for
     /// an index exchange before they are withdrawn (ADR 0040).
     pub(crate) takeover_waiting: Mutex<BTreeSet<FolderId>>,
+    /// Withdrawals waiting for the user, too many to make unasked (ADR 0040).
+    pub(crate) held_withdrawals: Mutex<crate::takeover::HeldWithdrawals>,
     /// Watch folders for changes instead of only scanning them on an interval (ADR 0029).
     watch: bool,
     /// Set once a task panics: the engine has stopped working (ADR 0030).
@@ -470,6 +474,7 @@ fn open_folder(
         unavailable: Mutex::new(unavailable),
         open: Mutex::new(HashMap::new()),
         activity: Mutex::default(),
+        exchanged_at: Mutex::default(),
         rescan: Notify::new(),
         summary: Mutex::new(None),
     })
@@ -766,6 +771,7 @@ impl Engine {
                 crate::clock::Clock::default().now_ms(),
             )),
             takeover_waiting: Mutex::default(),
+            held_withdrawals: Mutex::default(),
             watch: config.watch,
             failure: watch::channel(None).0,
             paused: RwLock::new((runtime.paused, runtime.paused_folders.into_iter().collect())),
@@ -1089,14 +1095,153 @@ impl Engine {
     /// Revokes `device`, one of `user`'s devices, for good (ADR 0040): every peer that hears of
     /// it, from this device or from any other that has, refuses it from then on. Not this
     /// device itself.
-    pub fn revoke_device(&self, user: &UserKey, device: DeviceId) -> Result<()> {
+    pub fn revoke_device(
+        &self,
+        user: &UserKey,
+        device: DeviceId,
+        lost_ms: Option<i64>,
+    ) -> Result<()> {
         if device == self.id() {
             return Err(Error::RevokeSelf);
         }
-        let revocation = user.revoke(device, self.inner.now_ms(), None);
+        // Revoked by this user already: another user's revocation of the same device ID, as a
+        // folder's member could sign, revokes nothing and does not stand in the way.
+        let revoked = self
+            .inner
+            .vouching
+            .lock()
+            .unwrap()
+            .revoked_by(user.id(), device);
+        if revoked {
+            return Err(Error::AlreadyRevoked);
+        }
+        let revocation = user.revoke(device, self.inner.now_ms(), lost_ms);
         if self.inner.learn_revocations(vec![revocation]) {
             self.inner.schedule_takeover(None);
         }
+        Ok(())
+    }
+
+    /// Milliseconds since the Unix epoch, by this device's clock as the engine keeps it.
+    pub fn now_ms(&self) -> i64 {
+        self.inner.now_ms()
+    }
+
+    /// What revoking `device` as lost at `lost_ms` would withdraw here, folder by folder
+    /// (ADR 0040): the files whose current version, or open conflict copy, it made and this
+    /// device received at or after the time of loss, as each folder clamps it. Every replica
+    /// judges by its own record; this is this device's.
+    pub fn revoke_preview(&self, device: DeviceId, lost_ms: i64) -> Vec<crate::views::LossPreview> {
+        let now = self.inner.now_ms();
+        let handles: Vec<_> = self
+            .inner
+            .folders
+            .read()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect();
+        let mut out = Vec::new();
+        for handle in handles {
+            let state = handle.lock();
+            let retention = state.meta.recycle_bin().retention();
+            let lost = crate::loss::effective_lost(lost_ms, now, retention);
+            let mut made: Vec<(String, u64, u64, tidefell_proto::EntryId)> = Vec::new();
+            for current in state.meta.entries() {
+                let versions = std::iter::once((
+                    current.author(),
+                    current.path.to_owned(),
+                    current.kind.clone(),
+                    current.sequence(),
+                    current.entry,
+                ))
+                .chain(state.meta.open_conflicts(&current.entry).map(|c| {
+                    (
+                        c.version.author,
+                        c.version.path.clone(),
+                        c.version.kind.clone(),
+                        c.sequence,
+                        c.version.entry,
+                    )
+                }));
+                for (author, path, kind, sequence, entry) in versions {
+                    if author == device {
+                        if let tidefell_proto::sync::EntryKind::File { size, .. } = kind {
+                            made.push((path, size, sequence, entry));
+                        }
+                    }
+                }
+            }
+            if made.is_empty() {
+                continue;
+            }
+            let sequences: Vec<u64> = made.iter().map(|(_, _, s, _)| *s).collect();
+            let (received, since) = match state.manifests.reader() {
+                Some(reader) => (
+                    reader.received(&sequences).unwrap_or_default(),
+                    reader.receipts_since().unwrap_or_default(),
+                ),
+                None => (Vec::new(), None),
+            };
+            let rebuild = state.last_rebuild();
+            let mut preview = crate::views::LossPreview {
+                folder: state.config.id,
+                lost_ms: lost,
+                moved: lost != lost_ms,
+                withdrawn: Vec::new(),
+                unknown: 0,
+            };
+            for (i, (path, size, _, entry)) in made.into_iter().enumerate() {
+                let at = received.get(i).copied().flatten();
+                match crate::loss::judge(at, lost, since, rebuild) {
+                    crate::loss::Received::After => {
+                        let put_back =
+                            crate::takeover::put_back_from(&state, &entry, device, lost).is_some();
+                        preview.withdrawn.push(crate::views::WithdrawnFile {
+                            path,
+                            size,
+                            received_ms: at,
+                            put_back,
+                        })
+                    }
+                    crate::loss::Received::Unknown => preview.unknown += 1,
+                    crate::loss::Received::Before => {}
+                }
+            }
+            out.push(preview);
+        }
+        out
+    }
+
+    /// Withdrawals of `folder` waiting for the user (ADR 0040): for each revoked device, the
+    /// live files withdrawing what it changed after its loss would remove.
+    pub fn held_withdrawals(&self, folder: FolderId) -> Vec<(DeviceId, Vec<String>)> {
+        self.inner
+            .held_withdrawals
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((f, _), held)| *f == folder && held.withdraw.is_none())
+            .map(|((_, device), held)| (*device, held.paths.clone()))
+            .collect()
+    }
+
+    /// Withdraws what `device` changed in `folder` after its loss (`withdraw`), or keeps it, as
+    /// if it had come before (ADR 0040).
+    pub fn decide_withdrawals(
+        &self,
+        folder: FolderId,
+        device: DeviceId,
+        withdraw: bool,
+    ) -> Result<()> {
+        {
+            let mut held = self.inner.held_withdrawals.lock().unwrap();
+            let entry = held
+                .get_mut(&(folder, device))
+                .ok_or_else(|| Error::Invalid("no withdrawals wait for a decision".into()))?;
+            entry.withdraw = Some(withdraw);
+        }
+        self.inner.schedule_takeover(Some(folder));
         Ok(())
     }
 

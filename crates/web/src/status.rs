@@ -360,7 +360,8 @@ pub(crate) async fn revoke(
         return response;
     }
     if let (Some((device, name)), Some(user)) = (revocable(&state, &form.device), &state.user_key) {
-        match state.engine.revoke_device(user, device) {
+        // A time of loss is given from the CLI, which can preview it (ADR 0040).
+        match state.engine.revoke_device(user, device, None) {
             Ok(()) => {
                 tracing::warn!(%device, %name, by = %session.username, "device revoked from the web peer")
             }

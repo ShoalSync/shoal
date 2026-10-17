@@ -1,0 +1,47 @@
+[
+  {
+    "Write": {
+      "device": 2,
+      "path": 14,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Wait": {
+      "ms": 183
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 155,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Member": {
+      "device": 0,
+      "add": false
+    }
+  },
+  {
+    "Partition": {
+      "sides": 1
+    }
+  },
+  {
+    "Revoke": {
+      "by": 2,
+      "device": 16,
+      "lost_ago_ms": 1618
+    }
+  },
+  {
+    "Clock": {
+      "device": 2,
+      "minutes": -1440
+    }
+  }
+]

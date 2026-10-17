@@ -12,10 +12,10 @@ use serde::Serialize;
 use crate::types::{
     Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, CrashReport,
     DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, HeldDeletes,
-    HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, NewFolder, NewMember,
-    OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest, Problem, Recycled,
-    RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Revocation, Status,
-    SyncOptions, Version, VersionRequest,
+    HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
+    NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest,
+    Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
+    Revocation, RevokeRequest, Status, SyncOptions, Version, VersionRequest, WithdrawalsDecision,
 };
 
 /// Client errors.
@@ -646,12 +646,55 @@ impl Client {
         self.call(Method::GET, "/v1/revocations", None::<&()>).await
     }
 
-    /// Revokes one of the user's devices for good (ADR 0040). The daemon must hold the user key.
-    pub async fn revoke_device(&self, device: &str) -> Result<(), Error> {
+    /// Revokes one of the user's devices for good (ADR 0040), as lost at `lost_ms` if given.
+    /// The daemon must hold the user key.
+    pub async fn revoke_device(&self, device: &str, lost_ms: Option<i64>) -> Result<(), Error> {
         self.call(
             Method::POST,
             &format!("/v1/devices/{device}/revoke"),
+            Some(&RevokeRequest { lost_ms }),
+        )
+        .await
+    }
+
+    /// What revoking `device` as lost at `lost_ms` would withdraw on this device.
+    pub async fn revoke_preview(
+        &self,
+        device: &str,
+        lost_ms: i64,
+    ) -> Result<Vec<LossPreview>, Error> {
+        self.call(
+            Method::GET,
+            &format!("/v1/devices/{device}/revoke-preview?lost_ms={lost_ms}"),
             None::<&()>,
+        )
+        .await
+    }
+
+    /// Withdrawals of `folder` waiting for a decision (ADR 0040).
+    pub async fn held_withdrawals(&self, folder: &str) -> Result<Vec<HeldWithdrawals>, Error> {
+        self.call(
+            Method::GET,
+            &format!("/v1/folders/{folder}/withdrawals"),
+            None::<&()>,
+        )
+        .await
+    }
+
+    /// Withdraws, or keeps, what `device` changed in `folder` after its loss.
+    pub async fn decide_withdrawals(
+        &self,
+        folder: &str,
+        device: &str,
+        withdraw: bool,
+    ) -> Result<(), Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/withdrawals"),
+            Some(&WithdrawalsDecision {
+                device: device.to_owned(),
+                withdraw,
+            }),
         )
         .await
     }

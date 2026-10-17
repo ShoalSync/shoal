@@ -34,7 +34,7 @@ const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
 const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
-pub(crate) const MAPS: [&str; 11] = [
+pub(crate) const MAPS: [&str; 12] = [
     "manifests",
     "local",
     "progress",
@@ -46,6 +46,9 @@ pub(crate) const MAPS: [&str; 11] = [
     "kept",
     "history",
     "pins",
+    // Added after the first format: a database from before has no such table, and reads as
+    // having none of these (see `FolderDb::open`).
+    "replaced",
 ];
 
 /// Dropped versions are removed once there are this many at least, and as many as live ones.
@@ -250,13 +253,6 @@ impl Reader {
     /// in that order: none for a version made here, received before this was recorded, or
     /// received while rebuilding, or not there (ADR 0040). Read only when needed, never kept in
     /// memory (ADR 0035).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "for ADR 0040's time of loss, in the release after 0.20"
-        )
-    )]
     pub(crate) fn received(&self, sequences: &[u64]) -> Result<Vec<Option<i64>>> {
         let e = |x: redb::Error| err(&self.path)(x);
         let tx = self.begin()?;
@@ -273,13 +269,6 @@ impl Reader {
     }
 
     /// When this database began recording when versions were received (ADR 0040).
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "for ADR 0040's time of loss, in the release after 0.20"
-        )
-    )]
     pub(crate) fn receipts_since(&self) -> Result<Option<i64>> {
         let e = |x: redb::Error| err(&self.path)(x);
         let tx = self.begin()?;
@@ -321,13 +310,6 @@ fn corrupt(path: &Path) -> impl Fn(postcard::Error) -> Error + '_ {
 }
 
 /// When a versions row says its version was received: the time after the signed version.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "for ADR 0040's time of loss, in the release after 0.20"
-    )
-)]
 fn received_in(row: &[u8]) -> Option<i64> {
     let (_, rest) = postcard::take_from_bytes::<Signed<EntryVersion>>(row).ok()?;
     postcard::from_bytes(rest).ok()
@@ -520,12 +502,16 @@ impl FolderDb {
         // Manifests stay on disk, read one at a time (ADR 0035).
         for name in MAPS.into_iter().filter(|name| *name != "manifests") {
             let mut records = Vec::new();
-            for row in tx
-                .open_table(TableDefinition::<&[u8], &[u8]>::new(name))
-                .map_err(|x| e(x.into()))?
-                .iter()
-                .map_err(|x| e(x.into()))?
-            {
+            let table = match tx.open_table(TableDefinition::<&[u8], &[u8]>::new(name)) {
+                Ok(table) => table,
+                // A table added since the database was made: none of its records yet.
+                Err(redb::TableError::TableDoesNotExist(_)) => {
+                    maps.insert(name, records);
+                    continue;
+                }
+                Err(x) => return Err(e(x.into())),
+            };
+            for row in table.iter().map_err(|x| e(x.into()))? {
                 let (key, value) = row.map_err(|x| e(x.into()))?;
                 records.push((key.value().to_vec(), value.value().to_vec()));
             }

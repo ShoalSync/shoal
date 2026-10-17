@@ -435,6 +435,13 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   is deleted only after an exchange since the revocation, by when a peer holding it has taken it
   over; removed members and missing certificates never lead to a delete. The simulation revokes
   a device (`Revoke`) and checks the others still agree.
+- ADR 0040's time of loss (for 0.21): `tidefell device revoke --lost-at` previews and revokes;
+  each replica withdraws the revoked device's changes it received after the time, by its own
+  clock, putting back what each change replaced (history now records which version replaced
+  each kept one) or deleting, after an exchange; changes it cannot place are left to the others.
+  The time is clamped to a folder's retention, many withdrawals are held for the user (`tidefell
+  folder withdrawals`), a device is revoked once, and concurrent revocations keep the earliest
+  loss. The simulation's `Revoke` sometimes gives a time.
 
 ### Phase 2 work breakdown
 

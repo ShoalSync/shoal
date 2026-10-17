@@ -227,8 +227,8 @@ struct Session {
     /// certificates: the peer is not told it is caught up with them, so it sends them again next
     /// time (ADR 0024).
     held: BTreeSet<FolderId>,
-    /// How many revocations this peer has been told of (ADR 0040).
-    revocations_told: usize,
+    /// The revocations this peer has been told of (ADR 0040).
+    revocations_told: Vec<Signed<DeviceRevocation>>,
 }
 
 impl Session {
@@ -340,7 +340,7 @@ pub(crate) async fn run(
         out,
         received,
         held: BTreeSet::new(),
-        revocations_told: backend.revocations().len(),
+        revocations_told: backend.revocations(),
     };
     session.request_index(backend.as_ref(), initial)?;
     // Subscribe before re-checking the offer: a folder added after the handshake computed it but
@@ -595,19 +595,25 @@ fn reoffer(session: &mut Session, backend: &dyn Backend) -> Result<()> {
         return Err(e);
     }
     let offer = offer_for(backend, &session.peer.certificate);
-    // The set of revocations only grows: more of them than were told is something new.
     let revocations = backend.revocations();
-    let told = revocations.len() <= session.revocations_told;
+    // A revocation can be new, or replace one of the same device (ADR 0040).
+    let told = revocations == session.revocations_told;
     if offer == session.offered && told {
         return Ok(());
     }
-    session.revocations_told = revocations.len();
+    session.revocations_told = revocations.clone();
     session.send(Outgoing::Message(SyncMessage::Hello {
         certificate: backend.certificate(),
         folders: offer.iter().copied().collect(),
         clock_ms: Some(backend.now_ms()),
         revocations: Some(revocations),
     }))?;
+    if !told {
+        // Withdrawals wait for a whole index from a peer since the revocation was learnt
+        // (ADR 0040): asked for now, rather than at the folder's next change.
+        let shared: Vec<FolderId> = session.peer.shared.read_locked().iter().copied().collect();
+        session.request_index(backend, shared)?;
+    }
     if offer == session.offered {
         return Ok(());
     }

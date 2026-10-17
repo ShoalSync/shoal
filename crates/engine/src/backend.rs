@@ -188,6 +188,8 @@ impl Backend for EngineBackend {
         }
         let mut changed = false;
         let mut conflicts = Vec::new();
+        let mut touched = std::collections::BTreeSet::new();
+        let takeover;
         // Checking signatures is most of the work, and needs no lock (ADR 0034).
         let verified: Vec<tidefell_meta::Verified> = versions
             .into_iter()
@@ -232,7 +234,11 @@ impl Backend for EngineBackend {
                     }
                 }
                 match state.meta.apply_verified(version, now) {
-                    Ok(applied) => changed |= applied != tidefell_meta::Applied::Stale,
+                    Ok(applied) if applied != tidefell_meta::Applied::Stale => {
+                        changed = true;
+                        touched.extend(entry);
+                    }
+                    Ok(_) => {}
                     Err(e) => debug!(%peer, error = %e, "rejected a version"),
                 }
                 if open(&state) > before {
@@ -243,6 +249,21 @@ impl Backend for EngineBackend {
                     );
                 }
             }
+            // A version that left one by an author no longer vouched for current or an open
+            // conflict copy, as one concurrent with a put-back does: taken over (ADR 0040).
+            let me = self.0.key.id();
+            let mut vouching = self.0.vouching.lock().unwrap();
+            takeover = touched.iter().any(|entry| {
+                let current = state.meta.current(entry).map(|c| c.author());
+                let conflicts = state.meta.open_conflicts(entry).map(|c| c.version.author);
+                current.into_iter().chain(conflicts).any(|author| {
+                    author != me
+                        && vouching
+                            .judge(*folder, author, |user| state.members.contains(user))
+                            .is_err()
+                })
+            });
+            drop(vouching);
             if changed {
                 if let Err(e) = state.save() {
                     warn!(folder = %folder, error = %e, "saving after remote changes failed");
@@ -256,6 +277,9 @@ impl Backend for EngineBackend {
         if changed {
             self.0.emit(Event::FolderChanged(*folder));
             self.0.changed();
+        }
+        if takeover {
+            self.0.schedule_takeover(Some(*folder));
         }
         for path in conflicts {
             debug!(folder = %folder, %path, "conflict");
@@ -283,6 +307,7 @@ impl Backend for EngineBackend {
                 .unwrap()
                 .exchanged
                 .insert(peer, self.0.now_ms());
+            *handle.exchanged_at.lock().unwrap() = Some(std::time::Instant::now());
             // A takeover waiting for an exchange may go ahead (ADR 0040).
             if self.0.takeover_waiting.lock().unwrap().remove(folder) {
                 self.0.schedule_takeover(Some(*folder));

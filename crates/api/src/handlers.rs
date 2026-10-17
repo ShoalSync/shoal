@@ -19,11 +19,12 @@ use tidefell_sdk::types::{
     Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
     CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
     Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, HeldDeletes,
-    HeldDeletesDecision, KnownPeer, Limits, LogLevel, LogSettings, Mode, NewFolder, NewMember,
-    OpenedVersion, Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState,
-    PinRequest, Problem, ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest,
-    RenameRequest, ResolveRequest, RetentionUpdate, Revocation, Status, SyncOptions, Transfer,
-    Version, VersionKind, VersionRequest,
+    HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
+    Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind,
+    PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, Rebuild, RecycleBinSummary,
+    Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Revocation,
+    RevokePreviewQuery, RevokeRequest, Status, SyncOptions, Transfer, Version, VersionKind,
+    VersionRequest, WithdrawalsDecision, WithdrawnFile,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -85,6 +86,9 @@ type AppState = State<Arc<Engine>>;
         crate::pairing::decline,
         crate::pairing::revoke,
         revocations,
+        revoke_preview,
+        held_withdrawals,
+        decide_withdrawals,
         events,
         log_settings,
         set_log_level,
@@ -102,6 +106,11 @@ type AppState = State<Arc<Engine>>;
     components(schemas(
         Status,
         Revocation,
+        RevokeRequest,
+        LossPreview,
+        WithdrawnFile,
+        HeldWithdrawals,
+        WithdrawalsDecision,
         Folder,
         Mode,
         NewFolder,
@@ -200,6 +209,7 @@ impl From<EngineError> for ApiFailure {
             EngineError::Invalid(_) | EngineError::RevokeSelf => {
                 (StatusCode::BAD_REQUEST, ErrorKind::BadRequest)
             }
+            EngineError::AlreadyRevoked => (StatusCode::CONFLICT, ErrorKind::Conflict),
             EngineError::NoSuchFile(_) | EngineError::NotRecycled(_) => {
                 (StatusCode::NOT_FOUND, ErrorKind::NotFound)
             }
@@ -266,6 +276,81 @@ pub(crate) async fn status(State(engine): AppState) -> ApiResult<Json<Status>> {
         metadata_dir: engine.metadata_dir().display().to_string(),
         revoked: engine.revoked(),
     }))
+}
+
+/// What revoking `device` as lost at `lost_ms` would withdraw on this device (ADR 0040).
+#[utoipa::path(get, path = "/v1/devices/{device}/revoke-preview", tag = "device",
+    params(("device" = String, Path, description = "Device ID"), RevokePreviewQuery),
+    responses((status = 200, body = [LossPreview]), (status = 400, body = ApiError)))]
+pub(crate) async fn revoke_preview(
+    State(engine): AppState,
+    Path(device): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<RevokePreviewQuery>,
+) -> ApiResult<Json<Vec<LossPreview>>> {
+    let device: DeviceId = parse("device", &device)?;
+    let engine = engine.clone();
+    let previews =
+        tokio::task::spawn_blocking(move || engine.revoke_preview(device, query.lost_ms))
+            .await
+            .map_err(|e| ApiFailure::internal(e.to_string()))?;
+    Ok(Json(
+        previews
+            .into_iter()
+            .map(|p| LossPreview {
+                folder: p.folder.to_string(),
+                lost_ms: p.lost_ms,
+                moved: p.moved,
+                withdrawn: p
+                    .withdrawn
+                    .into_iter()
+                    .map(|f| WithdrawnFile {
+                        path: f.path,
+                        size: f.size,
+                        received_ms: f.received_ms,
+                        put_back: f.put_back,
+                    })
+                    .collect(),
+                unknown: p.unknown as u64,
+            })
+            .collect(),
+    ))
+}
+
+/// Withdrawals of a revoked device's changes in a folder waiting for a decision (ADR 0040).
+#[utoipa::path(get, path = "/v1/folders/{id}/withdrawals", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = [HeldWithdrawals])))]
+pub(crate) async fn held_withdrawals(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<HeldWithdrawals>>> {
+    let id: FolderId = parse("folder", &id)?;
+    Ok(Json(
+        engine
+            .held_withdrawals(id)
+            .into_iter()
+            .map(|(device, paths)| HeldWithdrawals {
+                device: device.to_string(),
+                paths,
+            })
+            .collect(),
+    ))
+}
+
+/// Withdraws, or keeps, what a revoked device changed in a folder after its loss.
+#[utoipa::path(post, path = "/v1/folders/{id}/withdrawals", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = WithdrawalsDecision,
+    responses((status = 204), (status = 400, body = ApiError)))]
+pub(crate) async fn decide_withdrawals(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(decision): Json<WithdrawalsDecision>,
+) -> ApiResult<StatusCode> {
+    let id: FolderId = parse("folder", &id)?;
+    let device: DeviceId = parse("device", &decision.device)?;
+    engine.decide_withdrawals(id, device, decision.withdraw)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// The devices their users revoked that this device knows of (ADR 0040).

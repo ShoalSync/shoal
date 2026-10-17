@@ -238,6 +238,10 @@ enum DeviceCommand {
     Revoke {
         /// The device's ID.
         device: String,
+        /// When it was lost, such as "2026-10-16 14:30" (UTC) or "2026-10-16T14:30+02:00": what
+        /// your devices received from it since then goes to their recycle bins. Shown first.
+        #[arg(long)]
+        lost_at: Option<String>,
         /// Revoke without asking.
         #[arg(long)]
         yes: bool,
@@ -286,6 +290,19 @@ enum FolderCommand {
         /// What to do with them; without it, they are listed.
         #[arg(value_enum)]
         action: Option<DeletesArg>,
+    },
+    /// List what a revoked device changed after it was lost that waits for a decision, because
+    /// there was so much (ADR 0040), or decide: `withdraw` moves it to the recycle bin, `keep`
+    /// keeps it as if it had come before.
+    Withdrawals {
+        /// Folder ID.
+        id: String,
+        /// What to do with the revoked device's changes; without it, they are listed.
+        #[arg(value_enum)]
+        action: Option<WithdrawalsArg>,
+        /// The revoked device, when deciding.
+        #[arg(long, required_if_eq_any([("action", "withdraw"), ("action", "keep")]))]
+        device: Option<String>,
     },
     /// Let another user's devices sync a folder.
     Share {
@@ -411,6 +428,12 @@ impl From<LocalDeletesArg> for LocalDeletes {
             LocalDeletesArg::ThisDevice => LocalDeletes::ThisDevice,
         }
     }
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum WithdrawalsArg {
+    Withdraw,
+    Keep,
 }
 
 #[derive(Subcommand)]
@@ -807,6 +830,31 @@ async fn run(cli: Cli) -> Result<(), String> {
                     }
                 });
             }
+            FolderCommand::Withdrawals {
+                id, action: None, ..
+            } => {
+                let held = client.held_withdrawals(&id).await.map_err(e)?;
+                print(json, &held, |held| format::held_withdrawals(held));
+            }
+            FolderCommand::Withdrawals {
+                id,
+                action: Some(action),
+                device,
+            } => {
+                let device = device.ok_or("--device is needed")?;
+                let withdraw = matches!(action, WithdrawalsArg::Withdraw);
+                client
+                    .decide_withdrawals(&id, &device, withdraw)
+                    .await
+                    .map_err(e)?;
+                print(json, &(), |_| {
+                    if withdraw {
+                        "withdrawn: moved to the recycle bin on this device and every other".into()
+                    } else {
+                        "kept, as if they had come before the device was lost".into()
+                    }
+                });
+            }
             FolderCommand::Rebuild { id } => {
                 let folder = client.rebuild_folder(&id).await.map_err(e)?;
                 print(json, &folder, format::rebuilding);
@@ -1012,7 +1060,12 @@ async fn run(cli: Cli) -> Result<(), String> {
             }
         },
         Command::Device(command) => match command {
-            DeviceCommand::Revoke { device, yes } => {
+            DeviceCommand::Revoke {
+                device,
+                lost_at,
+                yes,
+            } => {
+                let lost_ms = lost_at.as_deref().map(format::parse_time).transpose()?;
                 let name = client
                     .status()
                     .await
@@ -1023,6 +1076,10 @@ async fn run(cli: Cli) -> Result<(), String> {
                     .and_then(|p| p.name)
                     .map(|n| format!("\"{n}\" ({device})"))
                     .unwrap_or_else(|| device.clone());
+                if let Some(lost_ms) = lost_ms {
+                    let previews = client.revoke_preview(&device, lost_ms).await.map_err(e)?;
+                    eprintln!("{}", format::loss_preview(&name, lost_ms, &previews));
+                }
                 let revoke = yes
                     || confirm(&format!(
                         "Revoke {name} for good? It will sync with none of your devices again; \
@@ -1031,7 +1088,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 if !revoke {
                     return Err("not revoked".into());
                 }
-                client.revoke_device(&device).await.map_err(e)?;
+                client.revoke_device(&device, lost_ms).await.map_err(e)?;
                 print(json, &(), |_| {
                     format!("revoked {name}; your other devices refuse it once they hear of it")
                 });

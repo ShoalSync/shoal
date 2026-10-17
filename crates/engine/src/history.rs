@@ -164,6 +164,7 @@ pub(crate) fn keep(
         file,
     };
     crate::sidecar::write(&aside, &crate::sidecar::history(recorded.entry, &previous));
+    note_replacer(state, recorded.entry, &previous.file);
     state
         .history
         .entry(recorded.entry)
@@ -207,6 +208,27 @@ pub(crate) fn adopt(
     Ok(())
 }
 
+/// Notes which version replaced the content kept as `file`: the entry's current version, its
+/// author and when this device received it (ADR 0040). A time of loss puts back the content its
+/// revoked device's first later change replaced.
+fn note_replacer(state: &mut FolderState, entry: EntryId, file: &str) {
+    let Some(current) = state.meta.current(&entry) else {
+        return;
+    };
+    let (author, sequence) = (current.author(), current.sequence());
+    // Not saved yet, its time is in the folder's journal; saved, in its row.
+    let received = state.meta.pending_receipt(sequence).or_else(|| {
+        state
+            .manifests
+            .reader()
+            .and_then(|r| r.received(&[sequence]).ok())
+            .and_then(|times| times.first().copied().flatten())
+    });
+    state
+        .replaced
+        .insert(file.to_owned(), (author, received, sequence));
+}
+
 /// Removes history past the folder's retention and thins the rest (see [`thin`]). A removed
 /// version whose content something else still needs, such as a conflict copy or a recycle-bin
 /// item, and that is on disk nowhere else, is handed to the kept files instead of deleted.
@@ -228,6 +250,9 @@ pub(crate) fn purge(state: &mut FolderState, now_ms: i64) {
     state.history.retain(|_, v| !v.is_empty());
     if removed.is_empty() {
         return;
+    }
+    for gone in &removed {
+        state.replaced.remove(&gone.file);
     }
     let root = state.config.path.clone();
     let needed = state.referenced_contents();

@@ -129,8 +129,11 @@ A user taken out of a folder's member list.
 - **Cannot** get its changes in through another device (from 0.21): its versions are refused by
   every replica that knows of the revocation, however they arrive. What it made before is taken
   over by the replicas that hold it, so those files stay.
-- **Gap: what it changed before the revocation reached a replica stays** until a time of loss
-  can be given (ADR 0040), which is the next step.
+- **Cannot** keep what it changed after the user lost it, if the user says when (from 0.21,
+  ADR 0040): each replica withdraws what it received from the device since then, by its own
+  clock, putting back what each change replaced or moving it to the recycle bin, after showing
+  the user the list. The time reaches back at most a folder's retention, and many withdrawals
+  wait for the user on each device.
 - **On Android the device key is sealed by the Keystore.** The FFI keeps it in a vault the app
   provides (`set_key_vault`), and the app's vault seals it with an AES key held in the Android
   Keystore, which never leaves it: a copy of the app's storage holds only the sealed key. A plain

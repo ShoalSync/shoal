@@ -387,3 +387,30 @@ pub struct VersionInfo {
     /// For a previous version, when it expires, if the folder's retention is not forever.
     pub expires_ms: Option<i64>,
 }
+
+/// What a revocation with a time of loss would withdraw in one folder, by this device's record
+/// (ADR 0040).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LossPreview {
+    pub folder: FolderId,
+    /// The time of loss as this folder applies it: no earlier than its retention allows.
+    pub lost_ms: i64,
+    /// True if the time given was earlier than that, and moved.
+    pub moved: bool,
+    /// The files that would go to the recycle bin.
+    pub withdrawn: Vec<WithdrawnFile>,
+    /// Versions the device made whose arrival this device cannot place before or after the
+    /// time: left for the other replicas' judgement.
+    pub unknown: usize,
+}
+
+/// A file a revocation would withdraw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithdrawnFile {
+    pub path: String,
+    pub size: u64,
+    /// When this device received the version, if it recorded it.
+    pub received_ms: Option<i64>,
+    /// What it replaced is put back, from this device's history; otherwise the file goes.
+    pub put_back: bool,
+}

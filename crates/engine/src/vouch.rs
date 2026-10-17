@@ -22,10 +22,23 @@ pub(crate) struct Vouching {
     /// When each revoked device's revocation was learnt by this run, this device's time: those
     /// kept from before it count from its start. A replica withdraws what it cannot take over
     /// only after an index exchange since then (ADR 0040).
-    learnt: BTreeMap<DeviceId, i64>,
+    /// The time by this device's clock, for the retention guard, and by the monotonic clock,
+    /// for the exchange a withdrawal waits for: a clock set back must not make it wait forever.
+    learnt: BTreeMap<(UserId, DeviceId), (i64, std::time::Instant)>,
     /// Authors a peer that sent their versions answered it cannot vouch for: those versions
     /// can be taken over. Not kept: asked again after a restart.
     unvouchable: BTreeSet<DeviceId>,
+}
+
+/// Whether revocation `a` is kept over `b`, of the same device: the earlier time of loss, a time
+/// over none, then the earlier revocation, then the lesser signature, so every replica keeps the
+/// same one whatever order they come in.
+fn precedes(a: &Signed<DeviceRevocation>, b: &Signed<DeviceRevocation>) -> bool {
+    let (Ok(x), Ok(y)) = (a.verify_revocation(), b.verify_revocation()) else {
+        return false;
+    };
+    let order = |r: &DeviceRevocation| (r.lost_ms.is_none(), r.lost_ms, r.revoked_ms);
+    (order(&x), a.signature) < (order(&y), b.signature)
 }
 
 /// Most revocations kept: users revoke few devices, and a peer cannot make this device keep
@@ -98,7 +111,14 @@ impl Vouching {
             return false;
         };
         let key = (body.user, body.device);
-        if self.revocations.contains_key(&key) || self.revocations.len() >= MAX_REVOCATIONS {
+        if let Some(held) = self.revocations.get(&key) {
+            // Two revocations of one device, made apart on machines that both hold the user key:
+            // every replica keeps the same one, the earliest time of loss (ADR 0040).
+            let replaces = precedes(&revocation, held);
+            if !replaces {
+                return false;
+            }
+        } else if self.revocations.len() >= MAX_REVOCATIONS {
             return false;
         }
         let known_user = relevant(&body.user)
@@ -111,9 +131,22 @@ impl Vouching {
             return false;
         }
         self.revocations.insert(key, revocation);
-        self.learnt.entry(body.device).or_insert(now_ms);
+        // A replaced revocation counts from now: withdrawals wait for an exchange since.
+        self.learnt.insert(key, (now_ms, std::time::Instant::now()));
         self.generation += 1;
         true
+    }
+
+    /// The revocation of `device` by its user, by the certificate held for it, if revoked.
+    pub(crate) fn revocation_of(&self, device: DeviceId) -> Option<DeviceRevocation> {
+        let user = self
+            .certificates
+            .get(&device)
+            .and_then(|c| c.verify_certificate().ok())?
+            .user;
+        self.revocations
+            .get(&(user, device))
+            .and_then(|r| r.verify_revocation().ok())
     }
 
     /// Whether the device `certificate` is for has been revoked by the user it names.
@@ -139,9 +172,31 @@ impl Vouching {
         self.certificates.contains_key(&device)
     }
 
-    /// When this run learnt that `device` is revoked, if it is.
+    /// When this run learnt that its user revoked `device`, by the certificate held for it, if
+    /// it did: a revocation of the same device ID by another user revokes nothing, and counts
+    /// for nothing here.
     pub(crate) fn revoked_since(&self, device: DeviceId) -> Option<i64> {
-        self.learnt.get(&device).copied()
+        let user = self
+            .certificates
+            .get(&device)
+            .and_then(|c| c.verify_certificate().ok())?
+            .user;
+        self.learnt.get(&(user, device)).map(|(ms, _)| *ms)
+    }
+
+    /// When this run learnt that its user revoked `device`, by the monotonic clock.
+    pub(crate) fn revoked_at(&self, device: DeviceId) -> Option<std::time::Instant> {
+        let user = self
+            .certificates
+            .get(&device)
+            .and_then(|c| c.verify_certificate().ok())?
+            .user;
+        self.learnt.get(&(user, device)).map(|(_, at)| *at)
+    }
+
+    /// Whether `user` has revoked `device`.
+    pub(crate) fn revoked_by(&self, user: UserId, device: DeviceId) -> bool {
+        self.revocations.contains_key(&(user, device))
     }
 
     /// Notes that a peer holding `author`'s versions answered it cannot vouch for it. Returns

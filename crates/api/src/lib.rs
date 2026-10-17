@@ -130,6 +130,14 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         .route("/v1/pairings/{id}", delete(pairing::decline))
         .route("/v1/revocations", get(handlers::revocations))
         .route("/v1/devices/{device}/revoke", post(pairing::revoke))
+        .route(
+            "/v1/devices/{device}/revoke-preview",
+            get(handlers::revoke_preview),
+        )
+        .route(
+            "/v1/folders/{id}/withdrawals",
+            get(handlers::held_withdrawals).post(handlers::decide_withdrawals),
+        )
         .route("/v1/events", get(handlers::events))
         .route(
             "/v1/log",

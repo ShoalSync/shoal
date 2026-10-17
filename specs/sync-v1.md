@@ -43,7 +43,9 @@ DeviceRevocation = user: UserId || device: DeviceId || revoked_ms: i64 || lost_m
 ```
 
 It is sent as `Signed<DeviceRevocation>` with kind `identity/1/device-revocation`, and its signer
-must equal `user`. It revokes a device only if that device's certificate names the same `user`:
+must equal `user`. Of two revocations of one device by one user, every replica keeps the same
+one: the earlier `lost_ms`, a time over none, then the earlier `revoked_ms`, then the lesser
+signature. It revokes a device only if that device's certificate names the same `user`:
 one user cannot revoke another's devices. Replicas keep every revocation they verify by a user
 they have to do with (their own, a member of one of their folders, or the user of a certificate
 they hold), at most 4096, and never drop one. They send them in `Hello` (see Exchange), refuse a

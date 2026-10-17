@@ -96,6 +96,17 @@ impl Folder {
         }
     }
 
+    /// When the version stored at `sequence` was received, if it was received since the journal
+    /// was last taken: what is not saved yet (ADR 0040).
+    pub fn pending_receipt(&self, sequence: u64) -> Option<i64> {
+        self.pending
+            .received
+            .iter()
+            .rev()
+            .find(|(s, _)| *s == sequence)
+            .map(|(_, at)| *at)
+    }
+
     /// What changed since the journal was last taken, which this clears. A version stored and
     /// superseded in between is in neither list.
     pub fn take_journal(&mut self) -> Journal {

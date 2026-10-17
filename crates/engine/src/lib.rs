@@ -66,6 +66,7 @@ mod evict;
 mod history;
 mod ignores;
 mod local;
+mod loss;
 mod manifests;
 mod materialize;
 pub mod pairing;
@@ -156,8 +157,8 @@ pub use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer,
-    FolderState, Operation, PathProblem, PeerInfo, PeerState, ProblemKind, RebuildInfo,
-    RecycleSummary, RecycledInfo, VersionInfo, VersionKind,
+    FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
+    RebuildInfo, RecycleSummary, RecycledInfo, VersionInfo, VersionKind, WithdrawnFile,
 };
 
 /// Engine errors.
@@ -213,6 +214,9 @@ pub enum Error {
     /// A device cannot revoke itself (ADR 0040): revoke it from another device of the user.
     #[error("a device cannot revoke itself; revoke it from another of your devices")]
     RevokeSelf,
+    /// A device is revoked once (ADR 0040): a time of loss is given when revoking it.
+    #[error("that device is already revoked; a time of loss can only be given when revoking it")]
+    AlreadyRevoked,
     /// A file on disk changed since the last scan, so it cannot be removed yet.
     #[error("{0} has changes that are not recorded yet; try again after the next scan")]
     LocalChanges(String),

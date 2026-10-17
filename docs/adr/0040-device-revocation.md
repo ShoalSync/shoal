@@ -87,7 +87,15 @@ Three facts shape it:
   revocation: revocations come before anything else, so by then a peer holding the content has
   taken it over, and that live version wins over the delete. The file stays wherever it can be
   had; content no replica holds could not be had anyway. The simulation found files stuck
-  waiting for content only the revoked device had.
+  waiting for content only the revoked device had. A replica holds a version only as that
+  version: its file on disk where the version is, or its content kept to be written. Content
+  passing through the block store of a send-only replica, or on disk as another file or where
+  a send-only replica left a file another device then moved, is not held: a version taken over
+  from it would have no file behind it that the replica's scans follow, and the simulation
+  found a delete of the real file then losing to it. A replica looks again whenever versions
+  it applies leave one by an author no longer vouched for current or an open conflict copy, as
+  one concurrent with a put-back does, and once a rebuild or a change made meanwhile has
+  passed.
 - (Amended, as built.) **Removed members and missing certificates never lead to a delete.**
   Member lists are each replica's own, and a certificate missing here may be held elsewhere:
   their versions are taken over only where the content is held, and otherwise left alone. An
@@ -151,6 +159,33 @@ Its changes from then on are then removed, not kept.
     nothing in that folder and holds them, as it holds such deletes. The status, the web peer and
     the app say a revocation is waiting and list what it would remove; the user withdraws them
     or keeps them, which takes them over instead. Takeovers are never held: they remove nothing.
+- (Amended 2026-10-17, as built.)
+  - **The version put back** is the content the revoked device's first change received after the
+    loss replaced on this replica: history records which version replaced each kept version, its
+    author and when it was received, so a valid change made after the loss and then changed by
+    the thief is what goes back. Its chunks are read from history into the block store, so the
+    replica can write it and serve it. A replica without that history deletes instead, after the
+    exchange; a put-back elsewhere is live and wins over the delete.
+  - **No time recorded** counts as before the loss only if the replica recorded times from before
+    the loss and was not rebuilt since. Otherwise the replica cannot tell: it waits for a peer's
+    whole index since it learnt of the revocation, which brings any withdrawal a replica that
+    could judge made, and then takes over what is still the device's where it holds it, never
+    deleting it, so replicas that cannot judge, as for a loss before 0.20 recorded times, still
+    agree.
+  - **The time reaches back from when each replica learnt of the revocation,** by its own clock,
+    not from the `revoked_ms` the revocation states: whoever holds the user key chooses that, and
+    could date it to reach back without limit.
+  - **One user's revocation of a device ID does nothing for another's device of that ID,** and
+    does not stop that user revoking it: revocations, and when each was learnt, are kept by user
+    and device.
+  - **A device is revoked once.** The revoke command refuses a device already revoked, so a time
+    of loss is given when revoking. Two revocations of one device made apart, on two machines with
+    the user key, are settled the same everywhere: the earlier time of loss is kept, and its
+    withdrawals wait for an exchange since it was learnt.
+  - The revoke command (`--lost-at`) shows the list, from `GET /v1/devices/{device}/revoke-preview`,
+    and held withdrawals are listed and decided with `tidefell folder withdrawals` and
+    `/v1/folders/{id}/withdrawals`. The web peer and the app show them in a later release; the
+    web peer revokes without a time meanwhile.
 
 Takeover is recommended over the alternatives:
 

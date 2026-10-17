@@ -58,6 +58,128 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// Days since 1970-01-01 of a civil date, the inverse of [`civil_from_days`].
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let mp = if m > 2 { m - 3 } else { m + 9 };
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Milliseconds since the Unix epoch of a time written `YYYY-MM-DD HH:MM[:SS]`, with `T` for the
+/// space if wanted, in UTC unless it ends in `Z` or an offset such as `+02:00`.
+pub(crate) fn parse_time(text: &str) -> Result<i64, String> {
+    let bad = || {
+        format!("{text:?} is not a time such as \"2026-10-16 14:30\" (UTC) or \"2026-10-16T14:30+02:00\"")
+    };
+    let text = text.trim();
+    let (date, rest) = text.split_once([' ', 'T']).ok_or_else(bad)?;
+    let mut date = date.split('-').map(|p| p.parse::<i64>());
+    let (Some(Ok(y)), Some(Ok(m)), Some(Ok(d)), None) =
+        (date.next(), date.next(), date.next(), date.next())
+    else {
+        return Err(bad());
+    };
+    let (clock, offset_s) = if let Some(clock) = rest.strip_suffix('Z') {
+        (clock, 0)
+    } else if let Some(at) = rest.rfind(['+', '-']) {
+        let (clock, offset) = rest.split_at(at);
+        let sign = if offset.starts_with('-') { -1 } else { 1 };
+        let digits: String = offset[1..].chars().filter(char::is_ascii_digit).collect();
+        if digits.len() != 4 {
+            return Err(bad());
+        }
+        let hours: i64 = digits[..2].parse().map_err(|_| bad())?;
+        let minutes: i64 = digits[2..].parse().map_err(|_| bad())?;
+        (clock, sign * (hours * 3600 + minutes * 60))
+    } else {
+        (rest, 0)
+    };
+    let mut clock = clock.split(':').map(|p| p.parse::<i64>());
+    let (Some(Ok(h)), Some(Ok(min))) = (clock.next(), clock.next()) else {
+        return Err(bad());
+    };
+    let s = match clock.next() {
+        None => 0,
+        Some(Ok(s)) => s,
+        Some(Err(_)) => return Err(bad()),
+    };
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || min > 59 || s > 59 {
+        return Err(bad());
+    }
+    let secs = days_from_civil(y, m, d) * 86_400 + h * 3600 + min * 60 + s - offset_s;
+    Ok(secs * 1000)
+}
+
+pub(crate) fn loss_preview(
+    device: &str,
+    lost_ms: i64,
+    previews: &[tidefell_sdk::types::LossPreview],
+) -> String {
+    let mut out = format!(
+        "Revoking {device} as lost at {} UTC would, on this device:",
+        time(lost_ms)
+    );
+    let mut any = false;
+    for p in previews {
+        if p.moved {
+            out.push_str(&format!(
+                "\n  folder {}: the time moves to {} UTC, as far back as its recycle bin keeps",
+                p.folder,
+                time(p.lost_ms)
+            ));
+        }
+        for f in &p.withdrawn {
+            any = true;
+            let at = f.received_ms.map_or("time not recorded".into(), |ms| {
+                format!("received {}", time(ms))
+            });
+            let what = if f.put_back {
+                "put back what it replaced in"
+            } else {
+                "move to the recycle bin"
+            };
+            out.push_str(&format!(
+                "\n  {what} {} ({} bytes, {at}), in folder {}",
+                f.path, f.size, p.folder
+            ));
+        }
+        if p.unknown > 0 {
+            out.push_str(&format!(
+                "\n  folder {}: leave {} version(s) it cannot place before or after the time to the other devices",
+                p.folder, p.unknown
+            ));
+        }
+    }
+    if !any {
+        out.push_str("\n  withdraw nothing: it received nothing from the device since then");
+    }
+    out.push_str(
+        "\nEach of your devices judges by when it received each change, so others may differ.",
+    );
+    out
+}
+
+pub(crate) fn held_withdrawals(held: &[tidefell_sdk::types::HeldWithdrawals]) -> String {
+    if held.is_empty() {
+        return "no withdrawals wait for a decision".into();
+    }
+    held.iter()
+        .map(|h| {
+            format!(
+                "revoked device {} changed {} file(s) after it was lost: {}",
+                h.device,
+                h.paths.len(),
+                h.paths.join(", ")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
     let mut out = format!(
         "device:  {}\nuser:    {}\nname:    {}\nversion: {}\nlocal discovery: {}",
@@ -776,6 +898,36 @@ pub(crate) fn revocations(list: &[tidefell_sdk::types::Revocation]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn times_of_loss_are_read_in_utc_unless_offset() {
+        assert_eq!(parse_time("1970-01-01 00:00").unwrap(), 0);
+        assert_eq!(parse_time("2026-10-16 14:30").unwrap(), 1_792_161_000_000);
+        assert_eq!(
+            parse_time("2026-10-16T14:30:05Z").unwrap(),
+            1_792_161_005_000
+        );
+        assert_eq!(
+            parse_time("2026-10-16T16:30+02:00").unwrap(),
+            1_792_161_000_000
+        );
+        assert_eq!(
+            parse_time("2026-10-16 09:30-0500").unwrap(),
+            1_792_161_000_000
+        );
+        assert_eq!(
+            time(parse_time("2024-02-29 23:59").unwrap()),
+            "2024-02-29 23:59"
+        );
+        for bad in [
+            "yesterday",
+            "2026-13-01 00:00",
+            "2026-10-16",
+            "2026-10-16 25:00",
+        ] {
+            assert!(parse_time(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn only_here_notes() {

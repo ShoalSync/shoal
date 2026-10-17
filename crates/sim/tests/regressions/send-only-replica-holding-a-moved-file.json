@@ -1,0 +1,242 @@
+[
+  {
+    "SendOnly": {
+      "device": 2,
+      "on": false
+    }
+  },
+  {
+    "LoseMetadata": {
+      "device": 2
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 185,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Disk": {
+      "device": 2,
+      "full": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 109,
+      "to": 195
+    }
+  },
+  {
+    "Partition": {
+      "sides": 6
+    }
+  },
+  {
+    "Wait": {
+      "ms": 161
+    }
+  },
+  "Heal",
+  {
+    "Wait": {
+      "ms": 83
+    }
+  },
+  {
+    "Rename": {
+      "device": 1,
+      "file": 129,
+      "to": 42
+    }
+  },
+  {
+    "Restart": {
+      "device": 1
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 147,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 7,
+      "size": "Large",
+      "scan": false
+    }
+  },
+  {
+    "SendOnly": {
+      "device": 0,
+      "on": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 0
+    }
+  },
+  {
+    "Rename": {
+      "device": 1,
+      "file": 37,
+      "to": 38
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 2,
+      "dir": 190
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 76,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Wait": {
+      "ms": 175
+    }
+  },
+  {
+    "Wait": {
+      "ms": 142
+    }
+  },
+  {
+    "Wait": {
+      "ms": 49
+    }
+  },
+  {
+    "Revoke": {
+      "by": 0,
+      "device": 25,
+      "lost_ago_ms": null
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 245,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 131,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 75,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 246,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Wait": {
+      "ms": 89
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Partition": {
+      "sides": 6
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 76,
+      "to": 248
+    }
+  },
+  {
+    "Wait": {
+      "ms": 308
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 170,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Restart": {
+      "device": 1
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 2,
+      "dir": 170
+    }
+  },
+  {
+    "Delete": {
+      "device": 0,
+      "file": 51
+    }
+  },
+  {
+    "Wait": {
+      "ms": 262
+    }
+  }
+]
+

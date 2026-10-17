@@ -53,6 +53,20 @@ it from then on, and it syncs with no one once it hears of it itself. A revocati
 a device that is found again pairs again. `tidefell device revocations` lists those this device
 knows of. Files the device already made stay.
 
+If you know when it was lost, say so, and what your devices received from it since goes:
+
+```sh
+tidefell device revoke <device ID> --lost-at "2026-10-16 14:30"
+```
+
+The time is UTC unless it ends with an offset, such as `2026-10-16T16:30+02:00`. The command
+lists what this device would withdraw before asking: a file the device changed is put back as it
+was before that change, and one it made goes to the recycle bin. Each of your devices judges by
+when it received each change, by its own clock, so give a time a little before the loss. A
+revocation is made once: the time cannot be added later. When there are many withdrawals in a
+folder, each device waits for you: `tidefell folder withdrawals <folder ID>` lists them, and
+`withdraw` or `keep` decides.
+
 ## More devices: certificate files
 
 Without pairing, certify a device by hand. On the new device, print its ID. This creates its device key:

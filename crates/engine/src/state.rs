@@ -476,6 +476,10 @@ pub(crate) struct FolderState {
     /// Previous versions of entries that the engine replaced on this device (ADR 0029), newest
     /// first after each purge.
     pub(crate) history: Tracked<EntryId, Vec<Previous>>,
+    /// For each history file, the version that replaced its content: its author, when this
+    /// device received it if that was known then, and its sequence, to read the time from its
+    /// row later otherwise (ADR 0040).
+    pub(crate) replaced: Tracked<String, (DeviceId, Option<i64>, u64)>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
     /// and everything below them. Kept in the runtime settings, not the folder's database, so a
     /// rebuild keeps them (ADR 0034); a folder's metadata holds them only from before that.
@@ -566,6 +570,7 @@ impl FolderState {
             set_aside: Tracked::default(),
             kept: Tracked::default(),
             history: Tracked::default(),
+            replaced: Tracked::default(),
             pins: BTreeSet::new(),
             old_pins: TrackedSet::default(),
             held_deletes: Vec::new(),
@@ -775,6 +780,7 @@ impl FolderState {
         self.set_aside = Tracked::decode(take("set_aside")).map_err(corrupt)?;
         self.kept = Tracked::decode(take("kept")).map_err(corrupt)?;
         self.history = Tracked::decode(take("history")).map_err(corrupt)?;
+        self.replaced = Tracked::decode(take("replaced")).map_err(corrupt)?;
         let mut old_pins: TrackedSet<String> = TrackedSet::decode(take("pins")).map_err(corrupt)?;
         self.pins = old_pins.iter().cloned().collect();
         for path in &self.pins {
@@ -874,6 +880,7 @@ impl FolderState {
             ("set_aside", self.set_aside.all()),
             ("kept", self.kept.all()),
             ("history", self.history.all()),
+            ("replaced", self.replaced.all()),
             ("pins", self.old_pins.all()),
         ]
     }
@@ -890,6 +897,7 @@ impl FolderState {
             ("set_aside", self.set_aside.take_changed()),
             ("kept", self.kept.take_changed()),
             ("history", self.history.take_changed()),
+            ("replaced", self.replaced.take_changed()),
             ("pins", self.old_pins.take_changed()),
         ]
     }
@@ -954,25 +962,56 @@ impl FolderState {
         let mut caught_up = Vec::new();
         for (path, local) in self.local.iter() {
             let current = self.meta.current(&local.entry).is_some_and(|v| {
-                matches!(v.kind, EntryKind::File { content, executable, .. }
-                    if *content == local.content && *executable == local.executable)
+                self.corresponds(path, local.entry, local.content, local.executable, v.kind)
             });
-            let here = self
-                .meta
-                .disk_path(&local.entry)
-                .is_some_and(|p| self.same_place(path, p));
-            if current && here {
+            if current {
                 let vector = self.meta.current_vector(&local.entry);
                 if !local.base().dominates(&vector) {
+                    let inode = local.inode;
                     let mut local = local.to_file();
                     local.base.merge(&vector);
-                    caught_up.push((path.clone(), local));
+                    caught_up.push((path.clone(), local, inode));
                 }
             }
         }
-        for (path, local) in caught_up {
+        // The same file, still known by its inode: without it a scan tells a file replaced by
+        // one of the same size and time from it only by reading it.
+        for (path, local, inode) in caught_up {
             self.record_local(path.to_string(), local);
+            self.local.set_inode(&path, inode);
         }
+    }
+
+    /// True if the file recorded at `path`, as `entry` with `content`, is `kind` where `entry`
+    /// is on disk: the file a version of that kind is, which [`catch_up_bases`] brings its
+    /// base up to.
+    ///
+    /// [`catch_up_bases`]: Self::catch_up_bases
+    fn corresponds(
+        &self,
+        path: &str,
+        entry: EntryId,
+        content: ContentHash,
+        executable: bool,
+        kind: &EntryKind,
+    ) -> bool {
+        matches!(kind, EntryKind::File { content: c, executable: x, .. }
+            if *c == content && *x == executable)
+            && self
+                .meta
+                .disk_path(&entry)
+                .is_some_and(|p| self.same_place(path, p))
+    }
+
+    /// True if a file on disk is `entry` as `kind`: one [`catch_up_bases`] would bring up to a
+    /// version of that kind. The same content elsewhere, under another entry or a path this
+    /// replica has not moved it to, is not that version.
+    ///
+    /// [`catch_up_bases`]: Self::catch_up_bases
+    pub(crate) fn on_disk_as(&self, entry: &EntryId, kind: &EntryKind) -> bool {
+        self.local.with_entry(entry).any(|(path, local)| {
+            self.corresponds(path, *entry, local.content, local.executable, kind)
+        })
     }
 
     /// Marks the folder removed and returns its state directory for deletion.
@@ -1368,6 +1407,59 @@ mod tests {
 
     use super::*;
     use crate::config::ReplicaMode;
+
+    /// A file whose base is brought up to a version made elsewhere, as a takeover does, is still
+    /// known by its inode: a scan then tells it from a file of the same size and time put in
+    /// its place, such as one renamed over it.
+    #[test]
+    fn catching_up_a_base_keeps_the_inode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = FolderConfig {
+            id: FolderId([3; 32]),
+            path: tmp.path().join("folder"),
+            mode: ReplicaMode::Full,
+            members: vec![UserId([4; 32])],
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(10),
+            sync: Default::default(),
+            confirm_deletes: Default::default(),
+        };
+        let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
+        let mut state =
+            FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, mine.id()).unwrap();
+        let entry = EntryId([1; 16]);
+        let content = ContentHash([7; 32]);
+        state
+            .meta
+            .local_change(
+                mine.signing_key(),
+                entry,
+                "a.txt",
+                EntryKind::File {
+                    content,
+                    size: 3,
+                    executable: false,
+                },
+                10,
+            )
+            .unwrap();
+        state.record_local(
+            "a.txt".to_owned(),
+            LocalFile {
+                entry,
+                content,
+                size: 3,
+                mtime_ns: 1,
+                executable: false,
+                base: VersionVector::default(),
+            },
+        );
+        state.local.set_inode("a.txt", 42);
+        state.catch_up_bases();
+        let local = state.local.get("a.txt").unwrap();
+        assert!(local.base().dominates(&state.meta.current_vector(&entry)));
+        assert_eq!(local.inode, 42);
+    }
 
     #[test]
     fn receipt_times_are_kept_with_versions_made_elsewhere() {

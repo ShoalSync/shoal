@@ -298,26 +298,17 @@ fn tidy_unneeded(state: &mut FolderState) {
 /// to write. Placeholders, files dropped from this device and every file of a send-only replica
 /// are not written, so their chunks are not kept.
 fn store_only(state: &FolderState) -> HashSet<ContentHash> {
-    let on_disk =
-        |c: &ContentHash| state.local.paths_with(c).next().is_some() || state.kept.contains_key(c);
-    let partial = matches!(state.config.mode, ReplicaMode::Partial { .. });
-    let send_only = state.config.sync.direction == Direction::SendOnly;
     let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
     let mut out = HashSet::new();
     let mut add = |kind: &EntryKind| {
         if let EntryKind::File { content, .. } = kind {
-            if !on_disk(content) {
+            if !on_disk(state, content) {
                 out.insert(*content);
             }
         }
     };
     for version in state.meta.entries() {
-        let path = state.meta.disk_path(&version.entry).unwrap_or(version.path);
-        let writes = !send_only
-            && !state.dropped.contains(&version.entry)
-            && !state.ignores.is_ignored(path, false)
-            && (!partial || materialised.contains(&version.entry));
-        if writes {
+        if writes(state, &version.entry, version.path, &materialised) {
             add(version.kind);
         }
         for conflict in state.meta.conflicts(&version.entry) {
@@ -328,6 +319,44 @@ fn store_only(state: &FolderState) -> HashSet<ContentHash> {
         add(&item.version.kind);
     }
     out
+}
+
+/// True if `content` is in a file on disk, or set aside to be written.
+fn on_disk(state: &FolderState, content: &ContentHash) -> bool {
+    state.local.paths_with(content).next().is_some() || state.kept.contains_key(content)
+}
+
+/// True if this replica writes the live version of `entry`, at `path` unless it is on disk
+/// elsewhere, so the version's chunks are kept until it is. `materialised` holds the entries
+/// on disk here.
+fn writes(
+    state: &FolderState,
+    entry: &EntryId,
+    path: &str,
+    materialised: &HashSet<EntryId>,
+) -> bool {
+    let path = state.meta.disk_path(entry).unwrap_or(path);
+    state.config.sync.direction != Direction::SendOnly
+        && !state.dropped.contains(entry)
+        && !state.ignores.is_ignored(path, false)
+        && (!matches!(state.config.mode, ReplicaMode::Partial { .. })
+            || materialised.contains(entry))
+}
+
+/// True if this replica keeps `kind`, the live version of `entry`: on disk as that version, or
+/// in the block store until it is written. Content of a version it does not write, such as
+/// every file of a send-only replica, only passes through the block store, and the same content
+/// on disk as something else is not that version (see [`FolderState::on_disk_as`]).
+pub(crate) fn keeps(state: &FolderState, entry: &EntryId, kind: &EntryKind) -> bool {
+    if state.on_disk_as(entry, kind) {
+        return true;
+    }
+    let Some(current) = state.meta.current(entry) else {
+        return false;
+    };
+    let materialised = state.local.values().any(|l| l.entry == *entry);
+    let materialised: HashSet<EntryId> = materialised.then_some(*entry).into_iter().collect();
+    writes(state, entry, current.path, &materialised)
 }
 
 /// Removes from the block store every chunk nothing needs there: chunks of content on disk, and

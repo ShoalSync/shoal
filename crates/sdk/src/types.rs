@@ -619,6 +619,70 @@ pub struct Revocation {
     pub revoked_ms: i64,
 }
 
+/// Revokes a device (ADR 0040), optionally as lost at a time.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct RevokeRequest {
+    /// When the device was lost, milliseconds since the Unix epoch: what each device received
+    /// from it since is withdrawn.
+    #[serde(default)]
+    pub lost_ms: Option<i64>,
+}
+
+/// The time of loss `GET /v1/devices/{device}/revoke-preview` previews.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::IntoParams)]
+pub struct RevokePreviewQuery {
+    /// When the device was lost, milliseconds since the Unix epoch.
+    pub lost_ms: i64,
+}
+
+/// What revoking a device as lost at a time would withdraw on this device, folder by folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct LossPreview {
+    /// Folder ID.
+    pub folder: String,
+    /// The time of loss as the folder applies it: no earlier than its retention allows.
+    pub lost_ms: i64,
+    /// The time given was earlier, and was moved to `lost_ms`.
+    pub moved: bool,
+    /// Files that would go to the recycle bin.
+    pub withdrawn: Vec<WithdrawnFile>,
+    /// Versions whose arrival this device cannot place before or after the time.
+    pub unknown: u64,
+}
+
+/// A file a revocation would withdraw.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WithdrawnFile {
+    /// Its path.
+    pub path: String,
+    /// Its size in bytes.
+    pub size: u64,
+    /// When this device received the version, if it recorded it.
+    #[serde(default)]
+    pub received_ms: Option<i64>,
+    /// What it replaced is put back, from this device's history; otherwise the file goes.
+    #[serde(default)]
+    pub put_back: bool,
+}
+
+/// Withdrawals of a revoked device's changes waiting for a decision (ADR 0040).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct HeldWithdrawals {
+    /// The revoked device.
+    pub device: String,
+    /// The live files withdrawing its changes would remove.
+    pub paths: Vec<String>,
+}
+
+/// The decision on held withdrawals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct WithdrawalsDecision {
+    /// The revoked device.
+    pub device: String,
+    /// True to withdraw its changes, false to keep them.
+    pub withdraw: bool,
+}
+
 /// A change, streamed from `GET /v1/events` as server-sent events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]

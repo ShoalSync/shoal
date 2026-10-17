@@ -10,7 +10,9 @@ use axum::Json;
 use tidefell_engine::pairing::{parse_code, PendingPairing};
 use tidefell_engine::Engine;
 use tidefell_identity::UserKey;
-use tidefell_sdk::types::{ApiError, ApprovePairing, ErrorKind, PairRequest, Pairing};
+use tidefell_sdk::types::{
+    ApiError, ApprovePairing, ErrorKind, PairRequest, Pairing, RevokeRequest,
+};
 
 use crate::handlers::ApiFailure;
 
@@ -129,11 +131,13 @@ pub(crate) async fn decline(
 /// it from then on. Needs the user key, like approving a pairing.
 #[utoipa::path(post, path = "/v1/devices/{device}/revoke", tag = "pairing",
     params(("device" = String, Path, description = "Device ID")),
+    request_body = RevokeRequest,
     responses((status = 204), (status = 400, body = ApiError), (status = 409, body = ApiError)))]
 pub(crate) async fn revoke(
     State(engine): State<Arc<Engine>>,
     State(pairings): State<Arc<Pairings>>,
     Path(device): Path<String>,
+    Json(request): Json<RevokeRequest>,
 ) -> Result<StatusCode, ApiFailure> {
     let Some(user) = pairings.user_key.as_ref() else {
         return Err(failure(
@@ -145,6 +149,6 @@ pub(crate) async fn revoke(
     let device: tidefell_engine::DeviceId = device
         .parse()
         .map_err(|_| ApiFailure::bad_request(format!("invalid device ID {device:?}")))?;
-    engine.revoke_device(user, device)?;
+    engine.revoke_device(user, device, request.lost_ms)?;
     Ok(StatusCode::NO_CONTENT)
 }

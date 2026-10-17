@@ -579,7 +579,7 @@ pub(crate) async fn fetch_one(
 /// last wrote: another device renamed it (ADR 0033).
 fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Result<()> {
     let mut state = handle.lock();
-    let Some(local) = state.local.get(from).map(|l| l.to_file()) else {
+    let Some((local, inode)) = state.local.get(from).map(|l| (l.to_file(), l.inode)) else {
         return Ok(());
     };
     let (src, dst) = (root.join(from), root.join(to));
@@ -592,6 +592,8 @@ fn respell_file(handle: &FolderHandle, root: &Path, from: &str, to: &str) -> Res
     crate::rename_durably(&src, &dst).map_err(io_err(&src))?;
     state.local.remove(from);
     state.record_local(to.to_owned(), local);
+    // A rename keeps the file, and its inode.
+    state.local.set_inode(to, inode);
     if let Some(used) = state.used.remove(from) {
         state.used.insert(to.to_owned(), used);
     }

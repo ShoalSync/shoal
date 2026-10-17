@@ -340,7 +340,11 @@ impl World {
                 let n = usize::from(device) % count;
                 self.send_only(n, on)?;
             }
-            Op::Revoke { by, device } => {
+            Op::Revoke {
+                by,
+                device,
+                lost_ago_ms,
+            } => {
                 if self.revoked.is_none() {
                     let by = usize::from(by) % count;
                     let mut n = usize::from(device) % count;
@@ -348,8 +352,10 @@ impl World {
                         n = (n + 1) % count;
                     }
                     let id = self.devices[n].key.id();
-                    self.engine(by)?
-                        .revoke_device(&self.user, id)
+                    let engine = self.engine(by)?;
+                    let lost = lost_ago_ms.map(|ago| engine.now_ms() - i64::from(ago));
+                    engine
+                        .revoke_device(&self.user, id, lost)
                         .map_err(|e| format!("{} could not revoke: {e}", self.devices[by].name))?;
                     self.revoked = Some(n);
                 }

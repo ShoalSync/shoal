@@ -524,6 +524,15 @@ impl Pairing {
     }
 }
 
+/// A revoked device's changes after its loss, waiting for a decision (ADR 0040).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct HeldWithdrawals {
+    /// The revoked device.
+    pub device: String,
+    /// The files withdrawing its changes would remove.
+    pub paths: Vec<String>,
+}
+
 /// This device.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DeviceStatus {
@@ -1256,6 +1265,32 @@ impl Node {
     /// permission refused, without waiting for the files to change (ADR 0037).
     pub fn retry_problems(&self, folder: String) -> Result<()> {
         Ok(self.engine()?.retry(parse("folder ID", &folder)?)?)
+    }
+
+    /// What revoked devices changed in `folder` after they were lost, waiting for a decision
+    /// because there was so much (ADR 0040): for each, the device and the files withdrawing it
+    /// would remove.
+    pub fn held_withdrawals(&self, folder: String) -> Result<Vec<HeldWithdrawals>> {
+        let folder = parse("folder ID", &folder)?;
+        Ok(self
+            .engine()?
+            .held_withdrawals(folder)
+            .into_iter()
+            .map(|(device, paths)| HeldWithdrawals {
+                device: device.to_string(),
+                paths,
+            })
+            .collect())
+    }
+
+    /// Withdraws what `device` changed in `folder` after it was lost (`withdraw`), moving it
+    /// to the recycle bin, or keeps it as if it had come before.
+    pub fn decide_withdrawals(&self, folder: String, device: String, withdraw: bool) -> Result<()> {
+        let folder = parse("folder ID", &folder)?;
+        let device = parse("device ID", &device)?;
+        Ok(self
+            .engine()?
+            .decide_withdrawals(folder, device, withdraw)?)
     }
 
     /// The files a scan found deleted and held, because there were so many (ADR 0037).
