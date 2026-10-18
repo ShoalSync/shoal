@@ -421,6 +421,11 @@ impl Engine {
             }
             if changed {
                 state.set_members(members);
+                // A user dropped from an encrypted folder's members takes the key with them:
+                // the next generation is made and granted to those who remain (ADR 0023).
+                if crate::encrypted::grant_pending(&self.inner, &mut state) > 0 {
+                    state.save()?;
+                }
             }
             changed
         };
@@ -454,6 +459,14 @@ impl Engine {
             m.retain(|u| *u != user);
             m.len() != before
         })
+    }
+
+    /// The generation of the folder key this device seals new content with, or `None` for a
+    /// folder that is not encrypted or whose key has not reached this device yet (ADR 0023).
+    pub fn folder_key_generation(&self, folder: FolderId) -> Result<Option<u64>> {
+        let handle = self.inner.folder(&folder)?;
+        let state = handle.lock();
+        Ok(crate::encrypted::newest_key(&state).map(|key| key.generation()))
     }
 
     /// A summary of `folder`.

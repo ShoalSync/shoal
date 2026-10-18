@@ -18,10 +18,11 @@ use tidefell_proto::sync2::{
     ChunkList, EncryptionKey, Item, KeyGrant, SealedPayload, SealedVersion, MAX_INLINE_CHUNKS,
 };
 use tidefell_proto::{Causality, ChunkHash, ChunkId, DeviceId, KeyId, Signed};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::engine::{FolderHandle, Inner};
 use crate::state::FolderState;
+use crate::vouch::Unvouched;
 use crate::{Error, Result};
 
 /// The folder key `id`, if this device holds it.
@@ -299,12 +300,66 @@ fn encryption_keys(state: &FolderState) -> BTreeMap<DeviceId, EncryptionKey> {
     newest
 }
 
+/// Makes the next generation of the folder key if a key of the newest generation this device
+/// holds was granted to a device that is revoked, or whose user is no longer a member
+/// (`specs/sync-v2.md`). Once the new key is granted only to the devices that remain, no grant
+/// of the newest generation leaks, so a removal rotates once, or twice if two devices make it at
+/// the same moment. Returns true if it made a key.
+pub(crate) fn rotate_if_needed(inner: &Inner, state: &mut FolderState) -> bool {
+    let Some(newest) = newest_key(state) else {
+        return false;
+    };
+    let generation = newest.generation();
+    let newest_ids: Vec<KeyId> = state
+        .keys
+        .iter()
+        .filter(|(_, (g, _))| *g == generation)
+        .map(|(id, _)| *id)
+        .collect();
+    let (folder, me) = (state.config.id, inner.key.id());
+    let members = state.members.clone();
+    let leaked = {
+        let mut vouching = inner.vouching.lock().unwrap();
+        state.items.values().any(|item| {
+            let Item::Grant(signed) = item else {
+                return false;
+            };
+            signed.verify().is_ok_and(|grant| {
+                newest_ids.contains(&grant.key)
+                    && grant.recipient != me
+                    // A device not known here is not judged gone: only one shown revoked or of
+                    // a user no longer a member is.
+                    && matches!(
+                        vouching.judge(folder, grant.recipient, |user| members.contains(user)),
+                        Err((Unvouched::Revoked | Unvouched::NotAMember, _))
+                    )
+            })
+        })
+    };
+    if !leaked {
+        return false;
+    }
+    match FolderKey::generate(generation + 1) {
+        Ok(key) => {
+            hold(state, &key);
+            info!(%folder, generation = generation + 1, "rotated the folder key");
+            true
+        }
+        Err(e) => {
+            warn!(%folder, error = %e, "making the next folder key failed");
+            false
+        }
+    }
+}
+
 /// Grants every key this device holds to each device vouched for that published an encryption
-/// key and holds no grant of it to that key (`specs/sync-v2.md`). Returns how many it made.
+/// key and holds no grant of it to that key (`specs/sync-v2.md`), after rotating if a removal or
+/// revocation calls for it. Returns how many grants it made.
 pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
     if state.config.encryption.is_none() || state.keys.is_empty() {
         return 0;
     }
+    let rotated = rotate_if_needed(inner, state);
     let folder = state.config.id;
     let members = state.members.clone();
     let me = inner.key.id();
@@ -363,7 +418,8 @@ pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
     if made > 0 {
         debug!(%folder, grants = made, "granted folder keys");
     }
-    made
+    // A key made and granted to no one yet is still saved: the caller saves when this is not 0.
+    made + usize::from(rotated)
 }
 
 /// A page of the folder's index for sync/2: its versions, as sealed, and its other items,

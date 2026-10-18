@@ -236,3 +236,88 @@ async fn a_device_of_a_user_not_a_member_gets_no_key() {
     engine_c.shutdown().await;
     engine_a.shutdown().await;
 }
+
+fn generation(engine: &Engine) -> Option<u64> {
+    engine.folder_key_generation(FOLDER).unwrap()
+}
+
+/// Revoking a device that holds the folder key rotates it (ADR 0023): the devices that remain
+/// make and share the next generation and seal what comes after with it; the revoked device
+/// never gets it.
+#[tokio::test(flavor = "multi_thread")]
+async fn revoking_a_device_rotates_the_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([7; 32]);
+    let a = Member::new(dir.path(), "a", 70);
+    let b = Member::new(dir.path(), "b", 71);
+    let c = Member::new(dir.path(), "c", 72);
+    let (id_a, id_b, id_c) = (a.key.id(), b.key.id(), c.key.id());
+    let engine_a = a.start(&user, &network, &[id_b, id_c]).await;
+    let engine_b = b.start(&user, &network, &[id_a, id_c]).await;
+    let engine_c = c.start(&user, &network, &[id_a, id_b]).await;
+    a.write("before.txt", b"everyone reads this");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("c has a's file", || {
+        c.read("before.txt").as_deref() == Some(b"everyone reads this".as_slice())
+    })
+    .await;
+    assert_eq!(generation(&engine_a), Some(1));
+
+    engine_a.revoke_device(&user, id_c, None).unwrap();
+    eventually("a and b hold the next generation", || {
+        generation(&engine_a) == Some(2) && generation(&engine_b) == Some(2)
+    })
+    .await;
+    a.write("after.txt", b"not for c");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("b has the file written after", || {
+        b.read("after.txt").as_deref() == Some(b"not for c".as_slice())
+    })
+    .await;
+    // One rotation, or two at once: never a third generation.
+    assert_eq!(generation(&engine_a), Some(2));
+    assert_eq!(generation(&engine_c), Some(1));
+    assert!(c.read("after.txt").is_none());
+
+    engine_c.shutdown().await;
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+}
+
+/// Removing a user from the members, here by editing the folder's configuration, rotates the
+/// key on the device that removes them, and the removed user's devices are not granted the new
+/// one (ADR 0023).
+#[tokio::test(flavor = "multi_thread")]
+async fn removing_a_member_rotates_the_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let owner = UserKey::from_seed([8; 32]);
+    let guest = UserKey::from_seed([9; 32]);
+    let members = [owner.id(), guest.id()];
+    let a = Member::new(dir.path(), "a", 80);
+    let g = Member::new(dir.path(), "g", 81);
+    let (id_a, id_g) = (a.key.id(), g.key.id());
+    let engine_a = a.start_with(&owner, &members, &[], &network, &[id_g]).await;
+    let engine_g = g.start_with(&guest, &members, &[], &network, &[id_a]).await;
+    a.write("shared.txt", b"for both");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the guest has the shared file", || {
+        g.read("shared.txt").as_deref() == Some(b"for both".as_slice())
+    })
+    .await;
+
+    engine_a.shutdown().await;
+    let engine_a = a
+        .start_with(&owner, &[owner.id()], &[], &network, &[id_g])
+        .await;
+    assert_eq!(generation(&engine_a), Some(2));
+    a.write("later.txt", b"owner only");
+    engine_a.scan(FOLDER).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(generation(&engine_g), Some(1));
+    assert!(g.read("later.txt").is_none());
+
+    engine_g.shutdown().await;
+    engine_a.shutdown().await;
+}
