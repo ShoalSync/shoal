@@ -480,6 +480,14 @@ pub(crate) struct FolderState {
     /// device received it if that was known then, and its sequence, to read the time from its
     /// row later otherwise (ADR 0040).
     pub(crate) replaced: Tracked<String, (DeviceId, Option<i64>, u64)>,
+    /// An encrypted folder's keys this device holds, by key ID: generation and key (ADR 0023).
+    pub(crate) keys: Tracked<tidefell_proto::KeyId, (u64, [u8; 32])>,
+    /// An encrypted folder's index items besides the versions in `meta`, by sequence:
+    /// encryption keys, grants, and sealed versions this device cannot open yet.
+    pub(crate) items: Tracked<u64, tidefell_proto::sync2::Item>,
+    /// Which chunk each of an encrypted folder's chunk IDs is, and under which key.
+    pub(crate) chunk_ids:
+        Tracked<tidefell_proto::ChunkId, (tidefell_proto::ChunkHash, tidefell_proto::KeyId)>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
     /// and everything below them. Kept in the runtime settings, not the folder's database, so a
     /// rebuild keeps them (ADR 0034); a folder's metadata holds them only from before that.
@@ -571,6 +579,9 @@ impl FolderState {
             kept: Tracked::default(),
             history: Tracked::default(),
             replaced: Tracked::default(),
+            keys: Tracked::default(),
+            items: Tracked::default(),
+            chunk_ids: Tracked::default(),
             pins: BTreeSet::new(),
             old_pins: TrackedSet::default(),
             held_deletes: Vec::new(),
@@ -640,7 +651,7 @@ impl FolderState {
 
     /// Creates the folder's database and writes all of the folder to it.
     fn create_db(&mut self) -> Result<FolderDb> {
-        let mut db = FolderDb::create(&self.db_path)?;
+        let mut db = FolderDb::create(&self.db_path, self.config.encryption.is_some())?;
         let (manifests, chunks) = self.manifests.all();
         let mut maps = self.all_maps();
         maps.push(("manifests", manifests));
@@ -781,6 +792,27 @@ impl FolderState {
         self.kept = Tracked::decode(take("kept")).map_err(corrupt)?;
         self.history = Tracked::decode(take("history")).map_err(corrupt)?;
         self.replaced = Tracked::decode(take("replaced")).map_err(corrupt)?;
+        self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
+        self.items = Tracked::decode(take("items")).map_err(corrupt)?;
+        self.chunk_ids = Tracked::decode(take("chunk_ids")).map_err(corrupt)?;
+        // A folder is encrypted or not from its creation (ADR 0023): a database that disagrees
+        // with the configuration belongs to another folder of the same ID.
+        if db.encrypted() != self.config.encryption.is_some() {
+            return Err(Error::Invalid(format!(
+                "folder {}: its metadata is {} but it is configured {}",
+                self.config.id,
+                if db.encrypted() {
+                    "encrypted"
+                } else {
+                    "plaintext"
+                },
+                if db.encrypted() {
+                    "plaintext"
+                } else {
+                    "encrypted"
+                },
+            )));
+        }
         let mut old_pins: TrackedSet<String> = TrackedSet::decode(take("pins")).map_err(corrupt)?;
         self.pins = old_pins.iter().cloned().collect();
         for path in &self.pins {
@@ -881,6 +913,9 @@ impl FolderState {
             ("kept", self.kept.all()),
             ("history", self.history.all()),
             ("replaced", self.replaced.all()),
+            ("keys", self.keys.all()),
+            ("items", self.items.all()),
+            ("chunk_ids", self.chunk_ids.all()),
             ("pins", self.old_pins.all()),
         ]
     }
@@ -898,6 +933,9 @@ impl FolderState {
             ("kept", self.kept.take_changed()),
             ("history", self.history.take_changed()),
             ("replaced", self.replaced.take_changed()),
+            ("keys", self.keys.take_changed()),
+            ("items", self.items.take_changed()),
+            ("chunk_ids", self.chunk_ids.take_changed()),
             ("pins", self.old_pins.take_changed()),
         ]
     }
@@ -1328,6 +1366,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let mine = DeviceKey::from_seed([5; 32]);
         let other = DeviceKey::from_seed([6; 32]);
@@ -1423,6 +1462,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
         let mut state =
@@ -1473,6 +1513,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
         let other = tidefell_identity::DeviceKey::from_seed([6; 32]);
@@ -1544,6 +1585,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1608,6 +1650,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let metadata = tmp.path().join("metadata");
         let mut state =
@@ -1661,6 +1704,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let device = DeviceId([8; 32]);
         let mut state = FolderState::open(tmp.path(), &metadata, config.clone(), device).unwrap();
@@ -1708,6 +1752,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1782,6 +1827,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let key = DeviceKey::from_seed([5; 32]);
         let file = |n: u8| EntryKind::File {
@@ -1885,6 +1931,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();
@@ -1963,6 +2010,7 @@ mod tests {
             scan_interval: Duration::from_secs(10),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let dir = tmp.path().join("folders").join(config.id.to_string());
         fs::create_dir_all(&dir).unwrap();

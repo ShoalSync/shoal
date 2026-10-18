@@ -51,6 +51,7 @@ impl Replica {
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
+                encryption: None,
             }],
             min_free_space: None,
         };
@@ -512,6 +513,7 @@ async fn metrics_count_a_sync() {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         })
         .unwrap();
     let with = samples(&engine_b.metrics());

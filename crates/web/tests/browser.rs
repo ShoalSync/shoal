@@ -221,6 +221,7 @@ async fn web_peer_end_to_end() {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         })
         .unwrap();
     std::fs::write(root.join("report.pdf"), b"%PDF quarterly numbers").unwrap();
@@ -467,6 +468,7 @@ async fn serve_folder(
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         })
         .unwrap();
     for (path, contents) in files {
@@ -984,6 +986,7 @@ async fn laptop(tmp: &std::path::Path) -> Engine {
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
+                encryption: None,
             }],
             min_free_space: None,
         },

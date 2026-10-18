@@ -60,6 +60,9 @@ pub enum Error {
     /// A snapshot is in a format this version cannot read.
     #[error("unsupported snapshot format")]
     UnsupportedFormat,
+    /// A local change could not be sealed for an encrypted folder (ADR 0023).
+    #[error("cannot seal the change: {0}")]
+    Sealing(String),
 }
 
 /// Result alias for this crate.

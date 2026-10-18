@@ -37,6 +37,7 @@ fn folder(dir: &Path, user: &UserKey) -> FolderConfig {
         scan_interval: Duration::from_secs(3600),
         sync: Default::default(),
         confirm_deletes: Default::default(),
+        encryption: None,
     }
 }
 

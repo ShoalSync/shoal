@@ -131,6 +131,9 @@ impl FolderHandle {
 /// State shared by the engine's tasks and its network backend.
 pub(crate) struct Inner {
     pub(crate) key: DeviceKey,
+    /// The device's key for opening grants of encrypted folders' keys, derived from `key`
+    /// (ADR 0023).
+    pub(crate) encryption: tidefell_crypto::EncryptionSecret,
     pub(crate) certificate: Signed<DeviceCertificate>,
     /// The user this device belongs to, from its certificate.
     pub(crate) user: UserId,
@@ -193,6 +196,12 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    /// Whether `folder` is an encrypted folder (ADR 0023).
+    pub(crate) fn is_encrypted(&self, folder: &FolderId) -> bool {
+        self.folder(folder)
+            .is_ok_and(|h| h.lock().config.encryption.is_some())
+    }
+
     /// Milliseconds since the Unix epoch, as this device tells it.
     pub(crate) fn now_ms(&self) -> i64 {
         self.clock.now_ms()
@@ -307,6 +316,21 @@ impl Inner {
             pins.insert(*id, handle.lock().pins.iter().cloned().collect());
         }
         let (paused, paused_folders) = self.paused.read().unwrap().clone();
+        let configs: Vec<FolderConfig> = folders
+            .values()
+            .filter(|h| !h.configured)
+            .map(|h| h.lock().config.clone())
+            .chain(
+                unopened
+                    .values()
+                    .filter(|(_, configured, _)| !configured)
+                    .map(|(config, _, _)| config.clone()),
+            )
+            .collect();
+        let encrypted = configs
+            .iter()
+            .filter_map(|c| Some((c.id, c.encryption.as_ref()?.storage_peers.clone())))
+            .collect();
         let runtime = Runtime {
             folders: folders
                 .values()
@@ -331,6 +355,7 @@ impl Inner {
             pins: pins.into_iter().collect(),
             certificates,
             revocations,
+            encrypted,
         };
         runtime.save(&self.data_dir)
     }
@@ -697,10 +722,12 @@ impl Engine {
         // folder that cannot be opened does not stop the others (ADR 0034).
         let mut folders = BTreeMap::new();
         let mut unopened = BTreeMap::new();
-        let runtime_folders = runtime
+        let runtime_folders: Vec<(FolderConfig, bool)> = runtime
             .folders
-            .into_iter()
-            .map(|f| (FolderConfig::from(f), false));
+            .iter()
+            .cloned()
+            .map(|f| (runtime.folder_config(f), false))
+            .collect();
         for (folder, configured) in config
             .folders
             .iter()
@@ -744,6 +771,7 @@ impl Engine {
         }
 
         let inner = Arc::new(Inner {
+            encryption: crate::encrypted::secret(&key),
             key: key.clone(),
             certificate,
             user,
@@ -786,9 +814,11 @@ impl Engine {
         }
 
         let backend = Arc::new(EngineBackend(inner.clone()));
+        // Encrypted folders over sync/2 and blobs/2 (ADR 0023), from the same backend.
+        let encrypted: Arc<dyn tidefell_net::EncryptedBackend> = backend.clone();
         let node = Arc::new(match network {
             Network::Iroh => {
-                Node::spawn(
+                Node::spawn_with(
                     NodeConfig {
                         secret_key: key.seed(),
                         relay: config.relay.clone(),
@@ -798,12 +828,13 @@ impl Engine {
                         bind: config.bind,
                     },
                     backend,
+                    Some(encrypted),
                 )
                 .await?
             }
             #[cfg(feature = "simulation")]
             Network::Memory(network) => {
-                Node::spawn_simulated(&network, device, config.limits, backend, None)
+                Node::spawn_simulated(&network, device, config.limits, backend, Some(encrypted))
             }
         });
         info!(device = %device, "engine started");
@@ -817,6 +848,7 @@ impl Engine {
                 warn!(folder = %id, error = %e, "taking over versions failed");
             }
             inner.watch_commits(handle);
+            crate::encrypted::prepare(&inner, handle);
             spawn_scanner(&inner, *id, handle);
         }
 
@@ -872,15 +904,22 @@ impl Engine {
             let (inner, node) = (inner.clone(), node.clone());
             tasks.spawn(supervised(inner.clone(), "dial", async move {
                 loop {
+                    // A device with encrypted folders also keeps a sync/2 session with each
+                    // peer (ADR 0023); one without opens none.
+                    let encrypted = inner.folder_ids().iter().any(|id| inner.is_encrypted(id));
                     for peer in inner.peers() {
-                        if node.peer(&peer.device).is_some() {
-                            continue;
-                        }
                         let Some(addr) = endpoint_addr(&peer) else {
                             continue;
                         };
-                        if let Err(e) = node.connect(addr).await {
-                            debug!(peer = %peer.device, error = %e, "dial failed");
+                        if node.peer(&peer.device).is_none() {
+                            if let Err(e) = node.connect(addr.clone()).await {
+                                debug!(peer = %peer.device, error = %e, "dial failed");
+                            }
+                        }
+                        if encrypted && node.encrypted_peer(&peer.device).is_none() {
+                            if let Err(e) = node.connect_encrypted(addr).await {
+                                debug!(peer = %peer.device, error = %e, "sync/2 dial failed");
+                            }
                         }
                     }
                     tokio::time::sleep(inner.retry_interval()).await;
@@ -1391,6 +1430,7 @@ async fn reopen_folder(inner: &Arc<Inner>, id: FolderId, open: crate::state::Ope
     let handle = Arc::new(handle);
     inner.folders.write().unwrap().insert(id, handle.clone());
     inner.watch_commits(&handle);
+    crate::encrypted::prepare(inner, &handle);
     spawn_scanner(inner, id, &handle);
     inner.emit(Event::FolderChanged(id));
     // Sessions exchange the folder's index again, from the start.
@@ -1479,6 +1519,11 @@ async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> 
     let handle = inner.folder(&id)?;
     // Checked before fetching, so an unavailable folder does not download what it cannot write.
     handle.available()?;
+    // An encrypted folder's content travels over blobs/2, which this engine does not fetch over
+    // yet: its metadata syncs, and its files wait (ADR 0023).
+    if handle.lock().config.encryption.is_some() {
+        return Ok(());
+    }
     materialize::materialize(inner, node, id, &handle).await
 }
 

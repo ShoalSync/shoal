@@ -89,6 +89,17 @@ pub struct FolderConfig {
     pub sync: SyncOptions,
     /// When a scan's deletes wait for confirmation instead of reaching every device (ADR 0037).
     pub confirm_deletes: ConfirmDeletes,
+    /// For an encrypted folder, its encryption settings (ADR 0023); `None` for a plaintext one.
+    /// Chosen when the folder is created and fixed after that.
+    pub encryption: Option<Encryption>,
+}
+
+/// An encrypted folder's settings on this device (ADR 0023). Its keys are in its metadata.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Encryption {
+    /// The storage peers this device syncs the folder with: devices that hold it without
+    /// reading it, whose users are not members.
+    pub storage_peers: Vec<tidefell_proto::DeviceId>,
 }
 
 /// When one scan's deletes are held for confirmation (ADR 0037): a drive unmounted under a
@@ -152,6 +163,8 @@ pub struct NewFolder {
     pub scan_interval: Duration,
     /// How the folder syncs on this device.
     pub sync: SyncOptions,
+    /// For an encrypted folder, its settings (ADR 0023).
+    pub encryption: Option<Encryption>,
 }
 
 /// A peer to dial: its device ID and, without address lookup, where to reach it.

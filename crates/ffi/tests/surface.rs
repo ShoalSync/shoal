@@ -73,6 +73,7 @@ async fn pair_join_open_and_save() {
                     scan_interval: Duration::from_secs(1),
                     sync: Default::default(),
                     confirm_deletes: Default::default(),
+                    encryption: None,
                 }],
                 min_free_space: None,
             },

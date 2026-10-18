@@ -2,9 +2,11 @@
 
 use std::sync::Arc;
 
-use tidefell_net::{Backend, IndexPage};
+use tidefell_net::{Backend, EncryptedBackend, IndexPage, ItemPage};
+use tidefell_proto::blobs2::BlobId;
 use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::sync::EntryVersion;
+use tidefell_proto::sync2::Item;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
 use tracing::{debug, warn};
@@ -24,21 +26,23 @@ impl Backend for EngineBackend {
     }
 
     /// Paused folders are not offered, so peers exchange nothing for them (ADR 0029).
+    /// Encrypted folders are sync/2's (ADR 0023).
     fn folders(&self) -> Vec<FolderId> {
         self.0
             .folder_ids()
             .into_iter()
-            .filter(|id| !self.0.is_paused(id))
+            .filter(|id| !self.0.is_paused(id) && !self.0.is_encrypted(id))
             .collect()
     }
 
-    /// Nothing of a paused folder is served, content included.
+    /// Nothing of a paused folder is served, content included, nor anything of an encrypted
+    /// one over sync/1 and blobs/1.
     fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool {
         !self.0.is_paused(folder)
-            && self
-                .0
-                .folder(folder)
-                .is_ok_and(|h| h.lock().members.contains(&peer.user))
+            && self.0.folder(folder).is_ok_and(|h| {
+                let state = h.lock();
+                state.config.encryption.is_none() && state.members.contains(&peer.user)
+            })
     }
 
     /// Only for a device whose user is a member of the folder: a certificate is served to those
@@ -366,5 +370,96 @@ impl Backend for EngineBackend {
 
     fn changes(&self) -> watch::Receiver<u64> {
         self.0.changes.subscribe()
+    }
+}
+
+/// Encrypted folders (ADR 0023), over sync/2 and blobs/2. Content transfer comes later: no
+/// blobs are served yet.
+impl EncryptedBackend for EngineBackend {
+    fn folders(&self) -> Vec<FolderId> {
+        self.0
+            .folder_ids()
+            .into_iter()
+            .filter(|id| !self.0.is_paused(id) && self.0.is_encrypted(id))
+            .collect()
+    }
+
+    /// A device of a member user, or a storage peer this device lists for the folder.
+    fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool {
+        !self.0.is_paused(folder)
+            && self.0.folder(folder).is_ok_and(|h| {
+                let state = h.lock();
+                state.config.encryption.as_ref().is_some_and(|e| {
+                    state.members.contains(&peer.user) || e.storage_peers.contains(&peer.device)
+                })
+            })
+    }
+
+    fn is_storage_peer(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool {
+        self.0
+            .folder(folder)
+            .is_ok_and(|h| !h.lock().members.contains(&peer.user))
+    }
+
+    fn unknown_authors(&self, items: &[Item]) -> Vec<DeviceId> {
+        crate::encrypted::unknown_authors(&self.0, items)
+    }
+
+    fn cannot_vouch(&self, folder: &FolderId, author: DeviceId) {
+        Backend::cannot_vouch(self, folder, author);
+    }
+
+    fn index_since(
+        &self,
+        folder: &FolderId,
+        epoch: u64,
+        since: u64,
+        limit: usize,
+    ) -> Option<ItemPage> {
+        let handle = self.0.folder(folder).ok()?;
+        let state = handle.lock();
+        state.config.encryption.as_ref()?;
+        crate::encrypted::index_since(&state, epoch, since, limit)
+    }
+
+    fn apply_items(&self, folder: &FolderId, peer: DeviceId, items: Vec<Item>) {
+        let Ok(handle) = self.0.folder(folder) else {
+            return;
+        };
+        if handle.lock().save_failed().is_some() {
+            return;
+        }
+        let applied = crate::encrypted::apply(&self.0, &handle, peer, items);
+        if applied.changed {
+            let mut state = handle.lock();
+            crate::encrypted::grant_pending(&self.0, &mut state);
+            if let Err(e) = state.save() {
+                warn!(folder = %folder, error = %e, "saving after remote changes failed");
+            }
+            drop(state);
+            self.0.emit(Event::FolderChanged(*folder));
+            self.0.changed();
+        }
+    }
+
+    fn peer_progress(&self, folder: &FolderId, peer: DeviceId) -> (u64, u64) {
+        Backend::peer_progress(self, folder, peer)
+    }
+
+    fn set_peer_progress(&self, folder: &FolderId, peer: DeviceId, epoch: u64, up_to: u64) {
+        Backend::set_peer_progress(self, folder, peer, epoch, up_to);
+    }
+
+    fn blob(&self, _folder: &FolderId, _id: &BlobId) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn holds(&self, folder: &FolderId, ids: &[BlobId]) -> Option<Vec<bool>> {
+        self.0.folder(folder).ok()?;
+        Some(vec![false; ids.len()])
+    }
+
+    fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {
+        Backend::is_full_replica(self, folder)
     }
 }

@@ -119,6 +119,7 @@ impl Replica {
                 scan_interval: Duration::from_secs(3600),
                 sync,
                 confirm_deletes: Default::default(),
+                encryption: None,
             }],
             min_free_space: None,
         };

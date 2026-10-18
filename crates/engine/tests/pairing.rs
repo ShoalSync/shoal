@@ -53,6 +53,7 @@ async fn a_new_device_pairs_then_syncs() {
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
+                encryption: None,
             }],
             min_free_space: None,
         },
@@ -145,6 +146,7 @@ async fn a_new_device_pairs_then_syncs() {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         })
         .unwrap();
 

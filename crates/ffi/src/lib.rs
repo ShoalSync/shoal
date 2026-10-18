@@ -1835,6 +1835,7 @@ impl Node {
             retention: Retention::from_days(retention_days),
             scan_interval: Duration::from_secs(30),
             sync: sync.into(),
+            encryption: None,
         })?;
         Ok(folder_record(folder))
     }

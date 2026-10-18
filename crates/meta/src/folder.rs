@@ -333,6 +333,13 @@ impl Folder {
         self.sequence
     }
 
+    /// Assigns the next index sequence to an item kept beside the folder's versions, such as an
+    /// encrypted folder's keys and grants (ADR 0023), so one index serves both.
+    pub fn next_sequence(&mut self) -> u64 {
+        self.sequence += 1;
+        self.sequence
+    }
+
     /// The current (winning) version of `entry`.
     pub fn current(&self, entry: &EntryId) -> Option<Current<'_>> {
         self.entries.get(entry).map(|e| self.view(&e.current))

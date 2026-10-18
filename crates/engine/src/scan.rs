@@ -523,16 +523,18 @@ pub(crate) fn scan(
             let base = base_of(&state, &c.rel, entry);
             let open = state.meta.open_conflicts(&entry).count();
             let path = recorded_path(&state, entry, &path);
+            let kind = EntryKind::File {
+                content,
+                size: c.stat.size,
+                executable: c.stat.executable,
+            };
+            let signer = crate::encrypted::signer(inner, &mut state, &kind, Some(&c.rel))?;
             let (_, vector) = state.meta.local_change_from(
-                inner.key.signing_key(),
+                &signer,
                 entry,
                 &base,
                 &path,
-                EntryKind::File {
-                    content,
-                    size: c.stat.size,
-                    executable: c.stat.executable,
-                },
+                kind,
                 (c.stat.mtime_ns / 1_000_000) as i64,
             )?;
             if state.meta.open_conflicts(&entry).count() > open {
@@ -673,8 +675,9 @@ pub(crate) fn scan(
                     .current(&local.entry)
                     .map_or_else(|| recorded(&rel).into_owned(), |v| v.path.to_owned()),
             };
+            let signer = crate::encrypted::signer(inner, &mut state, &EntryKind::Tombstone, None)?;
             state.meta.local_change_from(
-                inner.key.signing_key(),
+                &signer,
                 local.entry,
                 &base,
                 &path,

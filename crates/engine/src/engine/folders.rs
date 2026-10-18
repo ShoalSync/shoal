@@ -237,6 +237,7 @@ impl Engine {
             .unwrap()
             .insert(id, handle.clone());
         self.inner.watch_commits(&handle);
+        crate::encrypted::prepare(&self.inner, &handle);
         self.inner.save_runtime()?;
         spawn_scanner(&self.inner, id, &handle);
         info!(folder = %id, "folder added");
@@ -267,7 +268,9 @@ impl Engine {
             scan_interval: new.scan_interval,
             sync: new.sync,
             confirm_deletes: Default::default(),
+            encryption: new.encryption.clone(),
         })?;
+
         self.folders()
             .into_iter()
             .find(|f| f.id == id)

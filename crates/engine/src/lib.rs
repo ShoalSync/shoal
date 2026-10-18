@@ -61,6 +61,7 @@ pub fn create_data_dir(path: &std::path::Path) -> Result<()> {
     std::fs::create_dir_all(path).map_err(io_err(path))
 }
 pub mod diagnostics;
+mod encrypted;
 mod engine;
 mod evict;
 mod history;
@@ -143,8 +144,8 @@ pub fn with_allocator_settings() {
 }
 
 pub use config::{
-    ConfirmDeletes, Direction, EngineConfig, FolderConfig, LocalDeletes, NewFolder, PeerAddr,
-    ReplicaMode, SyncOptions,
+    ConfirmDeletes, Direction, Encryption, EngineConfig, FolderConfig, LocalDeletes, NewFolder,
+    PeerAddr, ReplicaMode, SyncOptions,
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use probe::{Filesystem, NameLength};

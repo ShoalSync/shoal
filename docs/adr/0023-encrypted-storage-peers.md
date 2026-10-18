@@ -196,8 +196,14 @@ fixes the folder database (ADR 0034):
   holds supersedes it, judged by vector without opening it; once opened it is applied like any
   version and leaves this set.
 - **Keys.** A member keeps the folder keys it holds in the folder's database, which already sits
-  beside the plaintext. The device's X25519 secret is kept with its identity key, so a folder
-  rebuilt from peers (ADR 0034) gets its keys back from the grants the member made to itself.
+  beside the plaintext. The device's X25519 secret is derived from its identity key, so it is
+  kept as safely as that key (in the Android Keystore, ADR 0038), and a folder rebuilt from peers
+  (ADR 0034) gets its keys back from the grants made to the device.
+- **First keys.** A member device that opens an encrypted folder holding no key makes one of
+  generation 1, rather than waiting for a grant: a folder set up on several devices at once, or
+  in a configuration file, has no device that "creates" it. Several first keys are what two
+  rotations at once make, so the rules for them hold: each is granted to every member, and new
+  content uses the one with the lower key ID.
 - **Order of work.** Storage and the index first; then local changes sealed and remote versions
   opened; then keys, grants and rotation; then blobs/2; then creating and joining from the CLI
   and API. Each extends the simulation. Step 5 is done when two members sync an encrypted folder

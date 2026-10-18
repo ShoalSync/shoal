@@ -425,6 +425,7 @@ pub(crate) async fn add_folder(
         retention: Retention::from_days(new.retention_days),
         scan_interval: Duration::from_secs(new.scan_interval_secs.unwrap_or(10).max(1)),
         sync: convert::engine_sync_options(new.sync),
+        encryption: None,
     })?;
     Ok((StatusCode::CREATED, Json(convert::folder(folder))))
 }

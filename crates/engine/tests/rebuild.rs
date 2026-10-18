@@ -55,6 +55,7 @@ impl Replica {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         };
         let config = EngineConfig {
             data_dir: self.dir.join("data"),

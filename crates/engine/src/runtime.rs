@@ -7,9 +7,10 @@
 //! included: they are this device's choices, kept apart from folder metadata so a rebuilt
 //! folder keeps them.
 //!
-//! Format (version 5): the bytes `tidefell-engine-runtime 5\n` followed by the postcard
-//! encoding of [`Runtime`]. Version 4 had no pins, version 3 no pause, version 2 no folder sync
-//! options, and version 1 no peer relays either; all are still read.
+//! Format (version 8): the bytes `tidefell-engine-runtime 8\n` followed by the postcard
+//! encoding of [`Runtime`]. Version 7 had no encrypted folders, 6 no revocations, 5 no
+//! certificates, 4 no pins, version 3 no pause, version 2 no folder sync options, and version 1
+//! no peer relays either; all are still read.
 
 use std::fs;
 use std::io::Write;
@@ -28,7 +29,8 @@ use crate::config::{
 };
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 7\n";
+const HEADER: &[u8] = b"tidefell-engine-runtime 8\n";
+const HEADER_V7: &[u8] = b"tidefell-engine-runtime 7\n";
 const HEADER_V6: &[u8] = b"tidefell-engine-runtime 6\n";
 const HEADER_V5: &[u8] = b"tidefell-engine-runtime 5\n";
 const HEADER_V4: &[u8] = b"tidefell-engine-runtime 4\n";
@@ -53,6 +55,53 @@ pub(crate) struct Runtime {
     pub(crate) certificates: Vec<Signed<DeviceCertificate>>,
     /// Device revocations this device knows (ADR 0040). Format 7.
     pub(crate) revocations: Vec<Signed<DeviceRevocation>>,
+    /// Which of `folders` are encrypted, with their storage peers (ADR 0023). Format 8.
+    pub(crate) encrypted: Vec<(FolderId, Vec<DeviceId>)>,
+}
+
+impl Runtime {
+    /// The configuration of `folder`, one of [`Runtime::folders`].
+    pub(crate) fn folder_config(&self, folder: StoredFolder) -> FolderConfig {
+        let encryption =
+            self.encrypted
+                .iter()
+                .find(|(id, _)| *id == folder.id)
+                .map(|(_, storage_peers)| crate::config::Encryption {
+                    storage_peers: storage_peers.clone(),
+                });
+        FolderConfig {
+            encryption,
+            ..folder.into()
+        }
+    }
+}
+
+/// [`Runtime`] in format 7, before encrypted folders.
+#[derive(Deserialize)]
+#[cfg_attr(test, derive(Serialize))]
+struct RuntimeV7 {
+    folders: Vec<StoredFolder>,
+    peers: Vec<StoredPeer>,
+    paused: bool,
+    paused_folders: Vec<FolderId>,
+    pins: Vec<(FolderId, Vec<String>)>,
+    certificates: Vec<Signed<DeviceCertificate>>,
+    revocations: Vec<Signed<DeviceRevocation>>,
+}
+
+impl From<RuntimeV7> for Runtime {
+    fn from(v7: RuntimeV7) -> Self {
+        Self {
+            folders: v7.folders,
+            peers: v7.peers,
+            paused: v7.paused,
+            paused_folders: v7.paused_folders,
+            pins: v7.pins,
+            certificates: v7.certificates,
+            revocations: v7.revocations,
+            encrypted: Vec::new(),
+        }
+    }
 }
 
 /// [`Runtime`] in format 6, before revocations.
@@ -77,6 +126,7 @@ impl From<RuntimeV6> for Runtime {
             pins: v6.pins,
             certificates: v6.certificates,
             revocations: Vec::new(),
+            encrypted: Vec::new(),
         }
     }
 }
@@ -102,6 +152,7 @@ impl From<RuntimeV5> for Runtime {
             pins: v5.pins,
             certificates: Vec::new(),
             revocations: Vec::new(),
+            encrypted: Vec::new(),
         }
     }
 }
@@ -126,6 +177,7 @@ impl From<RuntimeV4> for Runtime {
             pins: Vec::new(),
             certificates: Vec::new(),
             revocations: Vec::new(),
+            encrypted: Vec::new(),
         }
     }
 }
@@ -290,6 +342,8 @@ impl From<StoredFolder> for FolderConfig {
             },
             // Only the configuration file sets another (ADR 0037).
             confirm_deletes: ConfirmDeletes::default(),
+            // Set from the runtime's list of encrypted folders.
+            encryption: None,
         }
     }
 }
@@ -332,6 +386,8 @@ impl Runtime {
         match fs::read(&path) {
             Ok(bytes) => if let Some(body) = bytes.strip_prefix(HEADER) {
                 postcard::from_bytes(body).ok()
+            } else if let Some(body) = bytes.strip_prefix(HEADER_V7) {
+                postcard::from_bytes::<RuntimeV7>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V6) {
                 postcard::from_bytes::<RuntimeV6>(body).ok().map(Into::into)
             } else if let Some(body) = bytes.strip_prefix(HEADER_V5) {
@@ -371,6 +427,45 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encrypted_folders_round_trip_and_version_7_reads_without_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = StoredFolderV2 {
+            id: FolderId([1; 32]),
+            path: "/docs".into(),
+            partial_budget: None,
+            members: vec![UserId([2; 32])],
+            retention: Retention::Days(30),
+            scan_interval_secs: 60,
+        };
+        let v7 = RuntimeV7 {
+            folders: vec![folder.clone().into()],
+            peers: Vec::new(),
+            paused: false,
+            paused_folders: Vec::new(),
+            pins: Vec::new(),
+            certificates: Vec::new(),
+            revocations: Vec::new(),
+        };
+        let mut bytes = HEADER_V7.to_vec();
+        bytes.extend(postcard::to_stdvec(&v7).unwrap());
+        fs::write(path(tmp.path()), bytes).unwrap();
+        let mut runtime = Runtime::load(tmp.path()).unwrap();
+        let config = runtime.folder_config(runtime.folders[0].clone());
+        assert_eq!(config.encryption, None);
+
+        runtime.encrypted = vec![(FolderId([1; 32]), vec![DeviceId([9; 32])])];
+        runtime.save(tmp.path()).unwrap();
+        let reloaded = Runtime::load(tmp.path()).unwrap();
+        let config = reloaded.folder_config(reloaded.folders[0].clone());
+        assert_eq!(
+            config.encryption,
+            Some(crate::config::Encryption {
+                storage_peers: vec![DeviceId([9; 32])],
+            })
+        );
+    }
 
     #[test]
     fn reads_version_1_and_writes_the_current_version() {

@@ -134,6 +134,38 @@ pub(crate) fn read_chunk(
     None
 }
 
+/// Chunk `hash` of the folder, from the block store or a file on disk, read with the folder's
+/// lock held: for sealing a local change, whose chunks were just read (ADR 0023).
+/// `also`, a folder-relative path, is a file that holds the chunk though the records do not say
+/// so yet, as a file the scan is recording.
+pub(crate) fn read_chunk_here(
+    inner: &Inner,
+    state: &FolderState,
+    hash: &ChunkHash,
+    also: Option<(&str, &ContentHash)>,
+) -> Option<Vec<u8>> {
+    if let Ok(Some(data)) = inner.store.lock().unwrap().get(hash) {
+        return Some(data);
+    }
+    let mut sources = sources(state, hash);
+    if let Some((rel, content)) = also {
+        if let Some((offset, len)) = state
+            .manifests
+            .get(content)
+            .and_then(|m| position(&m, hash))
+        {
+            sources.push(Source {
+                path: state.config.path.join(rel),
+                offset,
+                len,
+            });
+        }
+    }
+    sources
+        .iter()
+        .find_map(|source| read_verified(source, hash))
+}
+
 /// True if chunk `hash` is in the block store or, by the folder's records, in a file on disk.
 /// Files are not read, so a file changed since the last scan still counts until a read fails;
 /// then it does not until it is fetched or the next full scan (see [`forget_unreadable`]).

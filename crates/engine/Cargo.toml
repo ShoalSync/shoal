@@ -20,6 +20,7 @@ simulation = ["tidefell-net/simulation"]
 dynamic-library = ["mimalloc/local_dynamic_tls"]
 
 [dependencies]
+ed25519-dalek.workspace = true
 getrandom.workspace = true
 hashbrown.workspace = true
 ignore.workspace = true
@@ -31,6 +32,7 @@ serde.workspace = true
 thiserror.workspace = true
 tidefell-chunker.workspace = true
 tidefell-fetch.workspace = true
+tidefell-crypto.workspace = true
 tidefell-identity.workspace = true
 tidefell-meta.workspace = true
 tidefell-net.workspace = true

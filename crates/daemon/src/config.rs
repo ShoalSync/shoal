@@ -405,6 +405,7 @@ impl Config {
                         ));
                     }
                 },
+                encryption: None,
             });
         }
         self.mounts()?;

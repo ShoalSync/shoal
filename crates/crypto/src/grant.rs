@@ -34,6 +34,15 @@ impl EncryptionSecret {
         self.0.to_bytes()
     }
 
+    /// The key a device derives from its identity key's seed: kept as safe as that key, and
+    /// the same after its state is lost, so a member can be granted its folders' keys again.
+    pub fn for_device(device_seed: &[u8; 32]) -> Self {
+        Self::from_bytes(blake3::derive_key(
+            "tidefell 2026-10-18 device encryption key",
+            device_seed,
+        ))
+    }
+
     /// The key HPKE derives from `ikm`: for golden vectors.
     pub fn from_ikm(ikm: &[u8]) -> Self {
         Self(hpke::derive_key_pair(ikm))
@@ -142,5 +151,14 @@ mod tests {
         );
         let stored = EncryptionSecret::from_bytes(secret.to_bytes());
         assert_eq!(stored.public(), secret.public());
+        // Derived from a device's seed: the same every time, different per device.
+        assert_eq!(
+            EncryptionSecret::for_device(&[1; 32]).public(),
+            EncryptionSecret::for_device(&[1; 32]).public()
+        );
+        assert_ne!(
+            EncryptionSecret::for_device(&[1; 32]).public(),
+            EncryptionSecret::for_device(&[2; 32]).public()
+        );
     }
 }

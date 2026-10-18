@@ -15,6 +15,7 @@ use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinitio
 use serde::{Deserialize, Serialize};
 use tidefell_meta::{Header, Journal, Recycled, Retention, Wire};
 use tidefell_proto::sync::EntryVersion;
+use tidefell_proto::sync2::SealedVersion;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 
 use crate::tracked::Changed;
@@ -34,7 +35,7 @@ const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
 const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
-pub(crate) const MAPS: [&str; 12] = [
+pub(crate) const MAPS: [&str; 15] = [
     "manifests",
     "local",
     "progress",
@@ -49,7 +50,16 @@ pub(crate) const MAPS: [&str; 12] = [
     // Added after the first format: a database from before has no such table, and reads as
     // having none of these (see `FolderDb::open`).
     "replaced",
+    // An encrypted folder's (ADR 0023): the folder keys held, the index's items besides
+    // versions, and which chunk each chunk ID is.
+    "keys",
+    "items",
+    "chunk_ids",
 ];
+
+/// In the header table, present in an encrypted folder's database: its versions rows hold
+/// sealed versions (ADR 0023).
+const ENCRYPTED: &str = "encrypted";
 
 /// Dropped versions are removed once there are this many at least, and as many as live ones.
 const CLEAN_AT_LEAST: u64 = 4096;
@@ -132,6 +142,8 @@ pub(crate) struct FolderDb {
     next_drop: u64,
     /// Whether it was checked when opened.
     checked: bool,
+    /// An encrypted folder's database, whose rows hold sealed versions.
+    encrypted: bool,
 }
 
 impl std::fmt::Debug for FolderDb {
@@ -200,6 +212,7 @@ pub(crate) fn chunk_rows(manifest: &Manifest) -> impl Iterator<Item = [u8; 64]> 
 pub(crate) struct Reader {
     db: Arc<RwLock<Database>>,
     path: PathBuf,
+    encrypted: bool,
 }
 
 impl std::fmt::Debug for Reader {
@@ -263,7 +276,7 @@ impl Reader {
             let time = table
                 .get(*sequence)
                 .map_err(|x| e(x.into()))?
-                .and_then(|value| received_in(value.value()));
+                .and_then(|value| received_in(value.value(), self.encrypted));
             out.push(time);
         }
         Ok(out)
@@ -276,6 +289,21 @@ impl Reader {
         let table = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
         let since = table.get(RECEIPTS_SINCE).map_err(|x| e(x.into()))?;
         Ok(since.and_then(|v| postcard::from_bytes(v.value()).ok()))
+    }
+
+    /// The committed sealed versions with `sequences`, as signed, in that order; one not there
+    /// is left out. An encrypted folder's only (ADR 0023).
+    pub(crate) fn sealed_versions(&self, sequences: &[u64]) -> Result<Vec<Signed<SealedVersion>>> {
+        let e = |x: redb::Error| err(&self.path)(x);
+        let tx = self.begin()?;
+        let table = tx.open_table(VERSIONS).map_err(|x| e(x.into()))?;
+        let mut out = Vec::with_capacity(sequences.len());
+        for sequence in sequences {
+            if let Some(value) = table.get(*sequence).map_err(|x| e(x.into()))? {
+                out.push(postcard::from_bytes(value.value()).map_err(corrupt(&self.path))?);
+            }
+        }
+        Ok(out)
     }
 
     /// The committed versions with `sequences`, signed, in that order; one not there is left out.
@@ -310,10 +338,26 @@ fn corrupt(path: &Path) -> impl Fn(postcard::Error) -> Error + '_ {
     move |_| Error::CorruptState(path.to_path_buf())
 }
 
-/// When a versions row says its version was received: the time after the signed version.
-fn received_in(row: &[u8]) -> Option<i64> {
-    let (_, rest) = postcard::take_from_bytes::<Signed<EntryVersion>>(row).ok()?;
+/// When a versions row says its version was received: the time after the signed version, and
+/// after what was decrypted from it in an encrypted folder's.
+fn received_in(row: &[u8], encrypted: bool) -> Option<i64> {
+    let (_, mut rest) = postcard::take_from_bytes::<Signed<EntryVersion>>(row).ok()?;
+    if encrypted {
+        rest = postcard::take_from_bytes::<EntryVersion>(rest).ok()?.1;
+    }
     postcard::from_bytes(rest).ok()
+}
+
+/// A versions row's signed version, and what was decrypted from it in an encrypted folder's.
+fn row_version(row: &[u8], encrypted: bool) -> Option<(Wire, Option<EntryVersion>)> {
+    if encrypted {
+        let (signed, rest) = postcard::take_from_bytes::<Signed<SealedVersion>>(row).ok()?;
+        let (version, _) = postcard::take_from_bytes::<EntryVersion>(rest).ok()?;
+        Some((Wire::Sealed(signed), Some(version)))
+    } else {
+        let (signed, _) = postcard::take_from_bytes::<Signed<EntryVersion>>(row).ok()?;
+        Some((Wire::Plain(signed), None))
+    }
 }
 
 #[expect(
@@ -331,7 +375,7 @@ impl FolderDb {
     }
 
     /// Creates a database at `path`, holding nothing yet.
-    pub(crate) fn create(path: &Path) -> Result<Self> {
+    pub(crate) fn create(path: &Path, encrypted: bool) -> Result<Self> {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).map_err(crate::io_err(dir))?;
         }
@@ -350,6 +394,12 @@ impl FolderDb {
                 .map_err(e)?
                 .insert(CHUNKS_BUILT, [].as_slice())
                 .map_err(|x| err(&path)(x.into()))?;
+            if encrypted {
+                tx.open_table(HEADER)
+                    .map_err(e)?
+                    .insert(ENCRYPTED, [].as_slice())
+                    .map_err(|x| err(&path)(x.into()))?;
+            }
             for name in MAPS {
                 tx.open_table(TableDefinition::<&[u8], &[u8]>::new(name))
                     .map_err(e)?;
@@ -363,6 +413,7 @@ impl FolderDb {
             dropped: 0,
             next_drop: 0,
             checked: true,
+            encrypted,
         })
     }
 
@@ -390,7 +441,9 @@ impl FolderDb {
             dropped: 0,
             next_drop: 0,
             checked,
+            encrypted: false,
         };
+        folder.encrypted = folder.is_encrypted()?;
         folder.build_chunk_index()?;
         let (loaded, dropped, next_drop) = folder.read()?;
         folder.live = loaded.versions.len() as u64;
@@ -403,6 +456,23 @@ impl FolderDb {
     /// and is checked soon after.
     pub(crate) fn checked(&self) -> bool {
         self.checked
+    }
+
+    /// Whether this is an encrypted folder's database (ADR 0023).
+    pub(crate) fn encrypted(&self) -> bool {
+        self.encrypted
+    }
+
+    fn is_encrypted(&self) -> Result<bool> {
+        let e = |e: redb::Error| err(&self.path)(e);
+        let tx = self
+            .db
+            .read()
+            .unwrap()
+            .begin_read()
+            .map_err(|x| e(x.into()))?;
+        let table = tx.open_table(HEADER).map_err(|x| e(x.into()))?;
+        Ok(table.get(ENCRYPTED).map_err(|x| e(x.into()))?.is_some())
     }
 
     /// Everything in the database, as [`FolderDb::open`] reads it, for checking saves in
@@ -485,9 +555,9 @@ impl FolderDb {
             if gone.contains(&sequence) {
                 continue;
             }
-            let signed: Signed<EntryVersion> =
-                postcard::from_bytes(value.value()).map_err(corrupt(path))?;
-            versions.push((sequence, Wire::Plain(signed), None));
+            let (signed, decrypted) = row_version(value.value(), self.encrypted)
+                .ok_or_else(|| Error::CorruptState(path.clone()))?;
+            versions.push((sequence, signed, decrypted));
         }
         let mut recycled = Vec::new();
         for row in tx
@@ -712,6 +782,7 @@ impl FolderDb {
         Reader {
             db: self.db.clone(),
             path: self.path.clone(),
+            encrypted: self.encrypted,
         }
     }
 
@@ -777,7 +848,7 @@ mod tests {
     fn a_large_database_is_checked_after_it_opens() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f.redb");
-        let mut db = FolderDb::create(&path).unwrap();
+        let mut db = FolderDb::create(&path, false).unwrap();
         db.commit(&Changes {
             header: header(0),
             journal: Journal::default(),
@@ -804,7 +875,7 @@ mod tests {
     #[test]
     fn a_sound_database_passes_its_check() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb"), false).unwrap();
         db.commit(&Changes {
             header: header(0),
             journal: Journal::default(),
@@ -853,7 +924,7 @@ mod tests {
     fn a_damaged_file_is_corrupt_state() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("f.redb");
-        let mut db = FolderDb::create(&path).unwrap();
+        let mut db = FolderDb::create(&path, false).unwrap();
         db.commit(&Changes {
             header: header(0),
             journal: Journal::default(),
@@ -885,7 +956,7 @@ mod tests {
     #[test]
     fn what_was_committed_is_read_back() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb"), false).unwrap();
         let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let version = |n: u8| EntryVersion {
@@ -944,7 +1015,7 @@ mod tests {
     #[test]
     fn dropped_versions_are_removed_in_one_pass() {
         let dir = tempfile::tempdir().unwrap();
-        let mut db = FolderDb::create(&dir.path().join("f.redb")).unwrap();
+        let mut db = FolderDb::create(&dir.path().join("f.redb"), false).unwrap();
         let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let signed = |n: u64| {

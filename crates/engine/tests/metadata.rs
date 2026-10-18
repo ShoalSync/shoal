@@ -33,6 +33,7 @@ fn config(dir: &Path, metadata_dir: Option<PathBuf>, user: &UserKey) -> EngineCo
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         }],
         min_free_space: None,
     }

@@ -64,6 +64,7 @@ impl Device {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
+            encryption: None,
         }
     }
 
@@ -326,6 +327,7 @@ async fn created_folders_get_defaults() {
         retention: Retention::from_days(0),
         scan_interval: Duration::from_secs(3600),
         sync: Default::default(),
+        encryption: None,
     };
 
     // A new folder gets a fresh ID and this device's user as its only member.

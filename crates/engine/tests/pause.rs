@@ -51,6 +51,7 @@ impl Replica {
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
+                encryption: None,
             }],
             min_free_space: None,
         };
@@ -204,6 +205,7 @@ async fn a_folder_joined_again_starts_unpaused() {
         scan_interval: Duration::from_secs(3600),
         sync: Default::default(),
         confirm_deletes: Default::default(),
+        encryption: None,
     };
     engine.add_folder(config.clone()).unwrap();
     engine.pause(Some(other)).unwrap();

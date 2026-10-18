@@ -495,6 +495,9 @@ fn take_over_once(
                     }
                     (target.kind, target.modified_ms)
                 }
+                // In an encrypted folder a member first fetches what it would withdraw, storage
+                // peers included (ADR 0023): until that is built, nothing is withdrawn there.
+                Action::Withdraw if state.config.encryption.is_some() => continue,
                 Action::Withdraw => (EntryKind::Tombstone, inner.now_ms()),
                 Action::PutBack => {
                     if let Some(previous) = kept {
@@ -508,8 +511,15 @@ fn take_over_once(
                     continue;
                 }
             };
+            let signer = match crate::encrypted::signer(inner, &mut state, &kind, None) {
+                Ok(signer) => signer,
+                Err(e) => {
+                    warn!(%folder, path = %target.path, error = %e, "taking over a version failed");
+                    continue;
+                }
+            };
             match state.meta.local_change_from(
-                inner.key.signing_key(),
+                &signer,
                 target.entry,
                 &target.base,
                 &target.path,
@@ -583,18 +593,15 @@ fn put_back_one(inner: &Inner, handle: &FolderHandle, put_back: PutBack) -> Resu
         return Ok(false);
     }
     state.add_manifest(manifest);
-    state.meta.local_change_from(
-        inner.key.signing_key(),
-        entry,
-        &base,
-        &path,
-        EntryKind::File {
-            content: previous.content,
-            size: previous.size,
-            executable: previous.executable,
-        },
-        previous.modified_ms,
-    )?;
+    let kind = EntryKind::File {
+        content: previous.content,
+        size: previous.size,
+        executable: previous.executable,
+    };
+    let signer = crate::encrypted::signer(inner, &mut state, &kind, None)?;
+    state
+        .meta
+        .local_change_from(&signer, entry, &base, &path, kind, previous.modified_ms)?;
     state.save()?;
     info!(folder = %state.config.id, path = %path, "put back the version from before the loss");
     drop(state);
