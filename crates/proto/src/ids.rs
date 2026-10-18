@@ -116,6 +116,21 @@ id!(
     /// BLAKE3 hash of a file's full content.
     ContentHash, 32
 );
+id!(
+    /// Names an encrypted folder's key without revealing it: derived from the key
+    /// (`specs/encryption-v1.md`).
+    KeyId, 16
+);
+id!(
+    /// An encrypted folder's chunk: the BLAKE3 hash of its plaintext keyed by the folder key, so
+    /// only members can compute it (`specs/encryption-v1.md`).
+    ChunkId, 32
+);
+id!(
+    /// BLAKE3 hash of a list blob, a plaintext list of an encrypted file's chunk IDs
+    /// (`specs/encryption-v1.md`).
+    ListId, 32
+);
 
 #[cfg(test)]
 mod tests {

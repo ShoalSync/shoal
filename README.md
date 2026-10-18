@@ -32,6 +32,7 @@ BLAKE3 hashes.
 | `store` | Block store, availability bitmaps, eviction, on-disk layout | AGPL-3.0-only |
 | `meta` | File tree, versions, vector clocks, tombstones, recycle bin | AGPL-3.0-only |
 | `identity` | Users, devices, folder membership, signing, key formats | AGPL-3.0-only |
+| `crypto` | Encrypted folders: folder keys, sealed chunks and metadata, HPKE key grants | AGPL-3.0-only |
 | `net` | iroh endpoint, relay config, address lookup, sync/1 protocol | AGPL-3.0-only |
 | `fetch` | Multi-peer scheduler, rarest-first, retry | AGPL-3.0-only |
 | `engine` | Replica policies; wires the crates above into the daemon core | AGPL-3.0-only |

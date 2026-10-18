@@ -26,7 +26,9 @@ pub mod signed;
 pub mod sync;
 pub mod version;
 
-pub use ids::{ChunkHash, ContentHash, DeviceId, EntryId, FolderId, PublicKey, UserId};
+pub use ids::{
+    ChunkHash, ChunkId, ContentHash, DeviceId, EntryId, FolderId, KeyId, ListId, PublicKey, UserId,
+};
 pub use manifest::{ChunkRef, Manifest};
 pub use signed::{Signed, SignedKind};
 pub use version::{Causality, VersionVector, MAX_COUNTER, MAX_HOLES};

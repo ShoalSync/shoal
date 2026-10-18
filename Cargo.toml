@@ -25,6 +25,7 @@ tidefell-chunker = { path = "crates/chunker" }
 tidefell-store = { path = "crates/store" }
 tidefell-meta = { path = "crates/meta" }
 tidefell-identity = { path = "crates/identity" }
+tidefell-crypto = { path = "crates/crypto" }
 tidefell-net = { path = "crates/net" }
 tidefell-fetch = { path = "crates/fetch" }
 tidefell-engine = { path = "crates/engine" }
@@ -40,6 +41,12 @@ askama = "0.16"
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 ed25519-dalek = "3"
+# Encrypted folders (ADR 0023): X25519 for key grants, XChaCha20-Poly1305 and ChaCha20-Poly1305,
+# and HKDF-SHA256 for HPKE.
+x25519-dalek = { version = "3", features = ["static_secrets"] }
+chacha20poly1305 = "0.11"
+hkdf = "0.13"
+sha2 = "0.11"
 fastcdc = "5"
 fuser = "0.18"
 getrandom = "0.4"
