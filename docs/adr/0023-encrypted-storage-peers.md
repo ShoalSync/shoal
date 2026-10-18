@@ -213,6 +213,47 @@ fixes the folder database (ADR 0034):
   and API. Each extends the simulation. Step 5 is done when two members sync an encrypted folder
   directly, with no storage peer.
 
+## On storage peers (2026-10-18)
+
+How `tidefelld` stores folders it cannot read, decided before the engine is changed:
+
+- **A stored folder is a folder of its own kind.** The operator's `[storage]` section lists each
+  stored folder by ID, with its member users, a byte quota and a retention period (30 days by
+  default). A stored folder has a database (ADR 0034) and a chunk store, and no directory of
+  files: nothing is scanned, written, mounted, served on the web, taken over or withdrawn, and it
+  never makes, publishes or asks for a key. It offers the folder over sync/2 and blobs/2 only, to
+  devices its member list vouches for.
+- **Versions kept as they came.** It keeps each signed `SealedVersion` whose author it vouches
+  for, unopened, in the folder database, with the encryption keys and grants signed by vouched
+  devices, all under one sequence as members keep them, so one index serves them. Versions are
+  read from the database when served or judged, not held in memory (ADR 0035): a storage peer can
+  hold far more than a member keeps open.
+- **The newest by vector.** Of an entry's versions it serves those no other kept version
+  supersedes by vector, concurrent ones included; resolving them is the members' work. A version
+  superseded by one it keeps stays in the database for the retention period, then is dropped,
+  and with it any chunk nothing else kept lists. Deletes are versions too, so a deleted file's
+  last content is kept as long. Serving superseded versions back, as history, is left for later;
+  keeping them now makes that possible.
+- **Chunks by ID, as sealed.** It stores chunks by chunk ID as the sealed bytes it fetched, and
+  serves them unchanged. It cannot check them; members check every chunk they fetch, by its AEAD
+  tag, and fetch it elsewhere if it fails. It fetches the chunks a kept version lists from the
+  peers that offered the version, asking which hold them first (blobs/2 `AvailabilityRequest`),
+  and answers availability itself for what it has, which is how members count it as a copy.
+- **Quota.** A stored folder's size is the sealed bytes of its distinct chunks. While it is over
+  its quota, it fetches no chunks for that folder and says so in its status; it still keeps
+  versions, which are small. It collects superseded versions past retention first; it never
+  drops a current version or its chunks to make room, so members see the copy as incomplete
+  rather than silently lose it.
+- **Status and commands.** `tidefell status` on a storage peer lists its stored folders with their
+  size, quota, versions and missing chunks; `tidefell storage` lists and shows them. Stored folders
+  are changed in the configuration file and take effect on restart: an operator stores folders
+  for others, so the configuration file is the record.
+- **Order of work.** Stored folders in the engine first: configuration, versions in the database
+  with the newest-by-vector rule and retention; then the chunk store, fetching, availability, quota and
+  collection; then the daemon's `[storage]` and the commands. The simulation gains a storage-peer
+  device with the first of these, and the infra role and its VM test (step 7) check that a
+  storage peer's disk holds no plaintext.
+
 ## Consequences
 
 - Specs come first: sync/2, blobs/2 and the key formats, each with vectors, are reviewed
