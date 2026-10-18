@@ -154,7 +154,12 @@ pub(crate) fn signer(
                 let also = file.map(|f| (f, content));
                 ids.push(chunk_id(inner, state, &key, &chunk.hash, also)?);
             }
-            (ids, manifest.chunks.iter().map(|c| c.len).collect())
+            let lens: Vec<u32> = manifest.chunks.iter().map(|c| c.len).collect();
+            state.sealed_chunks.insert(
+                (*content, key.id()),
+                ids.iter().copied().zip(lens.iter().copied()).collect(),
+            );
+            (ids, lens)
         }
         _ => (Vec::new(), Vec::new()),
     };
@@ -301,9 +306,21 @@ pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
         return 0;
     }
     let folder = state.config.id;
+    let members = state.members.clone();
+    let me = inner.key.id();
+    let mut vouching = inner.vouching.lock().unwrap();
+    // A grant counts only while its signer is vouched for: the recipient drops one from a
+    // revoked device, so another holder of the key grants it again.
     let granted: Vec<(KeyId, DeviceId, [u8; 32])> = state
         .items
         .values()
+        .filter(|item| {
+            let signer = signer_of(item);
+            signer == me
+                || vouching
+                    .judge(folder, signer, |user| members.contains(user))
+                    .is_ok()
+        })
         .filter_map(|item| match item {
             Item::Grant(g) => g
                 .verify()
@@ -313,18 +330,17 @@ pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
         })
         .collect();
     let recipients: Vec<EncryptionKey> = {
-        let members = state.members.clone();
-        let mut vouching = inner.vouching.lock().unwrap();
         encryption_keys(state)
             .into_values()
             .filter(|key| {
-                key.device == inner.key.id()
+                key.device == me
                     || vouching
                         .judge(folder, key.device, |user| members.contains(user))
                         .is_ok()
             })
             .collect()
     };
+    drop(vouching);
     let keys: Vec<FolderKey> = state
         .keys
         .iter()
@@ -528,10 +544,7 @@ fn apply_version(state: &mut FolderState, signed: Signed<SealedVersion>, now: i6
         return false;
     }
     match open(state, &sealed, signed.clone()) {
-        Some(Ok(verified)) => state
-            .meta
-            .apply_verified(verified, now)
-            .is_ok_and(|a| a != tidefell_meta::Applied::Stale),
+        Some(Ok((verified, content))) => apply_opened(state, verified, content, now),
         // Opened, and wrong: dropped as a version that fails its checks.
         Some(Err(e)) => {
             debug!(folder = %state.config.id, error = %e, "dropped a sealed version");
@@ -547,7 +560,7 @@ fn open(
     state: &FolderState,
     sealed: &SealedVersion,
     signed: Signed<SealedVersion>,
-) -> Option<std::result::Result<Verified, String>> {
+) -> Option<std::result::Result<(Verified, Option<SealedContent>), String>> {
     let key = key(state, &sealed.key)?;
     let ChunkList::Inline(ids) = &sealed.chunks else {
         return None;
@@ -562,11 +575,43 @@ fn open(
             )
             .map_err(|e| e.to_string())?;
         let payload = SealedPayload::decode(&payload).map_err(|e| e.to_string())?;
+        let lens = payload.chunk_lens.clone();
         let version = payload
             .into_version(sealed, ids.len())
             .map_err(|e| e.to_string())?;
-        Verified::sealed(state.config.id, version, signed).map_err(|e| e.to_string())
+        let content = match version.kind {
+            EntryKind::File { content, .. } => {
+                Some((content, (key.id(), ids.iter().copied().zip(lens).collect())))
+            }
+            _ => None,
+        };
+        let verified =
+            Verified::sealed(state.config.id, version, signed).map_err(|e| e.to_string())?;
+        Ok((verified, content))
     })())
+}
+
+/// A file's content as a sealed version names it: its hash, and its chunks' key, IDs and
+/// lengths.
+type SealedContent = (tidefell_proto::ContentHash, (KeyId, Vec<(ChunkId, u32)>));
+
+/// Applies an opened version and records how its content is sealed. Returns true if it changed
+/// anything.
+fn apply_opened(
+    state: &mut FolderState,
+    verified: Verified,
+    content: Option<SealedContent>,
+    now: i64,
+) -> bool {
+    if let Some((content, (key, chunks))) = content {
+        if !state.sealed_chunks.contains_key(&(content, key)) {
+            state.sealed_chunks.insert((content, key), chunks);
+        }
+    }
+    state
+        .meta
+        .apply_verified(verified, now)
+        .is_ok_and(|a| a != tidefell_meta::Applied::Stale)
 }
 
 /// Keeps a sealed version this device cannot open yet, unless a version it holds supersedes it
@@ -636,12 +681,9 @@ fn open_waiting(state: &mut FolderState, now: i64) -> bool {
             continue;
         };
         match open(state, &sealed, signed) {
-            Some(Ok(verified)) => {
+            Some(Ok((verified, content))) => {
                 state.items.remove(&sequence);
-                changed |= state
-                    .meta
-                    .apply_verified(verified, now)
-                    .is_ok_and(|a| a != tidefell_meta::Applied::Stale);
+                changed |= apply_opened(state, verified, content, now);
             }
             Some(Err(_)) => {
                 state.items.remove(&sequence);
@@ -669,4 +711,192 @@ pub(crate) fn unknown_authors(inner: &Inner, items: &[Item]) -> Vec<DeviceId> {
 /// The device's secret for opening grants, derived from its identity key.
 pub(crate) fn secret(key: &tidefell_identity::DeviceKey) -> EncryptionSecret {
     EncryptionSecret::for_device(&key.seed())
+}
+
+/// Chunk `id` of the folder, sealed as its key seals it, to serve: read from the block store or
+/// a file and sealed again, which gives the same bytes every time (`specs/encryption-v1.md`).
+pub(crate) fn serve_chunk(inner: &Inner, handle: &FolderHandle, id: &ChunkId) -> Option<Vec<u8>> {
+    let (hash, key_id, folder) = {
+        let mut state = handle.lock();
+        let (hash, key_id) = locate(inner, &mut state, id)?;
+        (hash, key_id, state.config.id)
+    };
+    let data = crate::content::read_chunk(inner, handle, &hash)?;
+    let key = key(&handle.lock(), &key_id)?;
+    let (sealed_id, sealed) = key.seal_chunk(&folder, &data).ok()?;
+    (sealed_id == *id).then_some(sealed)
+}
+
+/// Which of the chunks `ids` this device holds, in order.
+pub(crate) fn holds(inner: &Inner, state: &mut FolderState, ids: &[ChunkId]) -> Vec<bool> {
+    ids.iter()
+        .map(|id| {
+            locate(inner, state, id)
+                .is_some_and(|(hash, _)| crate::content::has_chunk(inner, state, &hash))
+        })
+        .collect()
+}
+
+/// Which chunk `id` is, and its key: as recorded, or found from the content that lists it, if
+/// this device holds that content, as after its records were rebuilt (ADR 0034). The chunk is
+/// read and checked against the ID before it is recorded.
+fn locate(inner: &Inner, state: &mut FolderState, id: &ChunkId) -> Option<(ChunkHash, KeyId)> {
+    if let Some(found) = state.chunk_ids.get(id) {
+        return Some(*found);
+    }
+    let (content, key_id, index) =
+        state
+            .sealed_chunks
+            .iter()
+            .find_map(|((content, key), list)| {
+                list.iter()
+                    .position(|(listed, _)| listed == id)
+                    .map(|index| (*content, *key, index))
+            })?;
+    let hash = state.manifests.get(&content)?.chunks.get(index)?.hash;
+    let data = crate::content::read_chunk_here(inner, state, &hash, None)?;
+    if key(state, &key_id)?.chunk_id(&data) != *id {
+        return None;
+    }
+    state.chunk_ids.insert(*id, (hash, key_id));
+    Some((hash, key_id))
+}
+
+/// Fetches the chunks of `content` this device lacks from the peers it syncs the folder with,
+/// storage peers included, opens and checks each, and keeps it by its plaintext hash. Returns the
+/// content's manifest once every chunk is here, which is then written like any other.
+pub(crate) async fn fetch_content(
+    inner: &std::sync::Arc<Inner>,
+    node: &std::sync::Arc<tidefell_net::Node>,
+    handle: &FolderHandle,
+    folder: tidefell_proto::FolderId,
+    content: tidefell_proto::ContentHash,
+) -> std::result::Result<tidefell_proto::Manifest, String> {
+    // The content as each key held seals it: tried in turn, as peers hold the chunks of the
+    // versions they have.
+    let candidates: Vec<(FolderKey, Vec<(ChunkId, u32)>)> = {
+        let state = handle.lock();
+        state
+            .sealed_chunks
+            .iter()
+            .filter(|((c, _), _)| *c == content)
+            .filter_map(|((_, key_id), list)| Some((key(&state, key_id)?, list.clone())))
+            .collect()
+    };
+    if candidates.is_empty() {
+        return Err("no version here says how this content is sealed, with a key held".into());
+    }
+    let mut last = String::new();
+    for (key, list) in candidates {
+        match fetch_sealed(inner, node, handle, folder, content, &key, &list).await {
+            Ok(manifest) => return Ok(manifest),
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+/// [`fetch_content`] for the content as `key` seals it, in chunks `list`.
+async fn fetch_sealed(
+    inner: &std::sync::Arc<Inner>,
+    node: &std::sync::Arc<tidefell_net::Node>,
+    handle: &FolderHandle,
+    folder: tidefell_proto::FolderId,
+    content: tidefell_proto::ContentHash,
+    key: &FolderKey,
+    list: &[(ChunkId, u32)],
+) -> std::result::Result<tidefell_proto::Manifest, String> {
+    use tidefell_net::{BlobKind, BlobResult};
+    use tidefell_proto::blobs2::BlobId;
+
+    let mut hashes: Vec<Option<ChunkHash>> = {
+        let state = handle.lock();
+        list.iter()
+            .map(|(id, _)| {
+                state
+                    .chunk_ids
+                    .get(id)
+                    .map(|(hash, _)| *hash)
+                    .filter(|hash| crate::content::has_chunk(inner, &state, hash))
+            })
+            .collect()
+    };
+    let mut answered = false;
+    let peers: Vec<DeviceId> = node
+        .encrypted_peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&folder))
+        .map(|p| p.device())
+        .collect();
+    for peer in peers {
+        let missing: Vec<usize> = (0..list.len()).filter(|i| hashes[*i].is_none()).collect();
+        if missing.is_empty() {
+            break;
+        }
+        let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
+            continue;
+        };
+        for batch in missing.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST) {
+            let wanted: Vec<(BlobId, BlobKind)> = batch
+                .iter()
+                .map(|i| (BlobId::from(list[*i].0), BlobKind::SealedChunk))
+                .collect();
+            let Ok(results) = node.fetch_blobs(endpoint, folder, &wanted).await else {
+                break;
+            };
+            answered = true;
+            for result in results {
+                let BlobResult::Found(id, sealed) = result else {
+                    continue;
+                };
+                let chunk_id = ChunkId(id.0);
+                // A chunk that does not open, or is not what it was asked for, is as missing.
+                let Ok(plaintext) = key.open_chunk(&folder, &chunk_id, &sealed) else {
+                    continue;
+                };
+                let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
+                if inner
+                    .store
+                    .lock()
+                    .unwrap()
+                    .put_verified(hash, &plaintext)
+                    .is_err()
+                {
+                    continue;
+                }
+                handle.lock().chunk_ids.insert(chunk_id, (hash, key.id()));
+                for (i, (listed, _)) in list.iter().enumerate() {
+                    if *listed == chunk_id {
+                        hashes[i] = Some(hash);
+                    }
+                }
+            }
+        }
+    }
+    if hashes.iter().any(Option::is_none) {
+        if answered {
+            inner.unobtainable.lock().unwrap().insert((folder, content));
+        }
+        return Err("some of its chunks are not available from any connected device".into());
+    }
+    let manifest = tidefell_proto::Manifest {
+        content,
+        chunks: list
+            .iter()
+            .zip(hashes)
+            .filter_map(|((_, len), hash)| {
+                Some(tidefell_proto::ChunkRef {
+                    hash: hash?,
+                    len: *len,
+                })
+            })
+            .collect(),
+    };
+    inner
+        .unobtainable
+        .lock()
+        .unwrap()
+        .remove(&(folder, content));
+    handle.lock().add_manifest(manifest.clone());
+    Ok(manifest)
 }

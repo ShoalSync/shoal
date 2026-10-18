@@ -783,6 +783,18 @@ async fn write_file(
         source: std::io::Error::other("file vanished after writing"),
     })?;
     let mut state = handle.lock();
+    // The fetch ran without the lock: if the entry changed or moved meanwhile, as when another
+    // entry takes or gives up the path its conflict copy name came from, the next pass writes
+    // what is current. Placed regardless, the file would stay at a path the entry has left.
+    let moved = state
+        .meta
+        .disk_path(&write.entry)
+        .is_none_or(|p| !state.same_place(&write.path, p));
+    if moved || state.meta.current_vector(&write.entry) != write.base {
+        let _ = fs::remove_file(&tmp);
+        debug!(path = %write.path, "changed while fetched; written at the next pass");
+        return Ok(false);
+    }
     // Never replace a file the user changed since the engine last saw it.
     let replaceable = match state.local.get(&write.path) {
         Some(local) => unchanged(&target, local.size, local.mtime_ns, local.inode),
@@ -962,6 +974,26 @@ async fn fetch_content(
             *write.unavailable.lock().unwrap() = Some(reason);
         }
     };
+    // An encrypted folder's content comes sealed over blobs/2 (ADR 0023).
+    if handle.lock().config.encryption.is_some() {
+        if let Some(manifest) = cached_manifest(handle, write.content, write.size) {
+            if manifest
+                .chunks
+                .iter()
+                .all(|c| crate::content::has_chunk(inner, &handle.lock(), &c.hash))
+            {
+                return Ok(Some(manifest));
+            }
+        }
+        return match crate::encrypted::fetch_content(inner, node, handle, id, write.content).await {
+            Ok(manifest) => Ok(Some(manifest)),
+            Err(e) => {
+                debug!(path = %write.path, error = %e, "content not available yet");
+                *write.unavailable.lock().unwrap() = Some(e);
+                Ok(None)
+            }
+        };
+    }
     // A small file is one chunk named by its content hash, so it is fetched without asking for
     // its manifest first (ADR 0032). The manifest is recorded before the fetch, so this device
     // serves the chunk and compaction keeps it like any other.

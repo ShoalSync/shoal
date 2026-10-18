@@ -35,7 +35,7 @@ const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
 const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
-pub(crate) const MAPS: [&str; 15] = [
+pub(crate) const MAPS: [&str; 16] = [
     "manifests",
     "local",
     "progress",
@@ -55,6 +55,7 @@ pub(crate) const MAPS: [&str; 15] = [
     "keys",
     "items",
     "chunk_ids",
+    "sealed_chunks",
 ];
 
 /// In the header table, present in an encrypted folder's database: its versions rows hold

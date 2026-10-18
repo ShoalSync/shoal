@@ -1,0 +1,24 @@
+[
+  "Encrypted",
+  {
+    "Wait": {
+      "ms": 37
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 179,
+      "size": "Large",
+      "scan": true
+    }
+  },
+  {
+    "Revoke": {
+      "by": 0,
+      "device": 103,
+      "lost_ago_ms": 1663
+    }
+  }
+]
+

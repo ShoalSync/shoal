@@ -1,0 +1,252 @@
+[
+  "Encrypted",
+  {
+    "Wait": {
+      "ms": 100
+    }
+  },
+  {
+    "SendOnly": {
+      "device": 2,
+      "on": true
+    }
+  },
+  {
+    "Partition": {
+      "sides": 5
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 75,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Revoke": {
+      "by": 2,
+      "device": 70,
+      "lost_ago_ms": 413
+    }
+  },
+  {
+    "Delete": {
+      "device": 0,
+      "file": 62
+    }
+  },
+  {
+    "Clock": {
+      "device": 1,
+      "minutes": -7
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 0,
+      "dir": 246
+    }
+  },
+  {
+    "Wait": {
+      "ms": 296
+    }
+  },
+  {
+    "Scan": {
+      "device": 0
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Delete": {
+      "device": 2,
+      "file": 63
+    }
+  },
+  {
+    "Delete": {
+      "device": 0,
+      "file": 152
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 97,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 85,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Wait": {
+      "ms": 205
+    }
+  },
+  {
+    "Disk": {
+      "device": 0,
+      "full": false
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 248,
+      "size": "Large",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 110,
+      "to": 157
+    }
+  },
+  {
+    "Wait": {
+      "ms": 163
+    }
+  },
+  {
+    "SendOnly": {
+      "device": 1,
+      "on": false
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 4,
+      "to": 156
+    }
+  },
+  {
+    "Wait": {
+      "ms": 61
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 186,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 149,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Delete": {
+      "device": 2,
+      "file": 216
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 167,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Restart": {
+      "device": 0
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 92,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 158,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 110,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 243,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 193,
+      "to": 34
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 91,
+      "to": 10
+    }
+  },
+  "Heal",
+  {
+    "SendOnly": {
+      "device": 0,
+      "on": false
+    }
+  }
+]

@@ -60,6 +60,9 @@ pub(crate) struct FolderHandle {
     state: Mutex<FolderState>,
     /// Serialises scanning and materialising, so neither sees the other's half-finished work.
     pub(crate) fs_lock: tokio::sync::Mutex<()>,
+    /// Set when the engine shuts down, under `fs_lock`: work that takes the lock after that
+    /// does nothing, so no file is written for a state no longer kept.
+    pub(crate) closed: std::sync::atomic::AtomicBool,
     /// What the folder's status shows that takes a pass over every entry, and the revision of
     /// the state it was made from: made again only after a change.
     /// The folder's summary, with the folder's revision and the certificates' generation it
@@ -118,6 +121,13 @@ impl FolderHandle {
     /// Takes the file lock, once the folder's root is available.
     pub(crate) async fn disk(&self) -> Result<tokio::sync::MutexGuard<'_, ()>> {
         let guard = self.fs_lock.lock().await;
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
+            let id = self.lock().config.id;
+            return Err(Error::FolderUnavailable(
+                id,
+                "the engine has shut down".into(),
+            ));
+        }
         self.available()?;
         Ok(guard)
     }
@@ -134,6 +144,9 @@ pub(crate) struct Inner {
     /// The device's key for opening grants of encrypted folders' keys, derived from `key`
     /// (ADR 0023).
     pub(crate) encryption: tidefell_crypto::EncryptionSecret,
+    /// Encrypted folders' contents that a fetch found no peer has whole, though one answered:
+    /// a revoked device's version of one may be withdrawn (ADR 0023).
+    pub(crate) unobtainable: Mutex<HashSet<(FolderId, tidefell_proto::ContentHash)>>,
     pub(crate) certificate: Signed<DeviceCertificate>,
     /// The user this device belongs to, from its certificate.
     pub(crate) user: UserId,
@@ -400,6 +413,17 @@ impl Inner {
                 warn!(error = %e, "saving learnt revocations failed");
             }
         }
+        // A revoked device's grants stop counting, so keys it granted are granted again by the
+        // devices that hold them (ADR 0023).
+        let handles: Vec<_> = self.folders.read().unwrap().values().cloned().collect();
+        for handle in handles {
+            let mut state = handle.lock();
+            if crate::encrypted::grant_pending(self, &mut state) > 0 {
+                if let Err(e) = state.save() {
+                    warn!(folder = %state.config.id, error = %e, "saving new key grants failed");
+                }
+            }
+        }
         self.changes.send_modify(|n| *n += 1);
         true
     }
@@ -493,6 +517,7 @@ fn open_folder(
     Ok(FolderHandle {
         state: Mutex::new(state),
         fs_lock: tokio::sync::Mutex::new(()),
+        closed: std::sync::atomic::AtomicBool::new(false),
         configured,
         scanner: Mutex::new(None),
         watch_error: Mutex::new(None),
@@ -772,6 +797,7 @@ impl Engine {
 
         let inner = Arc::new(Inner {
             encryption: crate::encrypted::secret(&key),
+            unobtainable: Mutex::default(),
             key: key.clone(),
             certificate,
             user,
@@ -1340,6 +1366,13 @@ impl Engine {
             if let Some(scanner) = handle.scanner.lock().unwrap().take() {
                 scanner.abort();
             }
+            // An aborted task stops only where it yields, and a write that finds this lock free
+            // takes it without yielding and goes on to place its file. Taking the lock here waits
+            // for such a write; after it, none starts.
+            let _guard = handle.fs_lock.lock().await;
+            handle
+                .closed
+                .store(true, std::sync::atomic::Ordering::Release);
             if let Err(e) = handle.lock().close() {
                 warn!(folder = %id, error = %e, "saving state on shutdown failed");
             }
@@ -1519,11 +1552,6 @@ async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> 
     let handle = inner.folder(&id)?;
     // Checked before fetching, so an unavailable folder does not download what it cannot write.
     handle.available()?;
-    // An encrypted folder's content travels over blobs/2, which this engine does not fetch over
-    // yet: its metadata syncs, and its files wait (ADR 0023).
-    if handle.lock().config.encryption.is_some() {
-        return Ok(());
-    }
     materialize::materialize(inner, node, id, &handle).await
 }
 

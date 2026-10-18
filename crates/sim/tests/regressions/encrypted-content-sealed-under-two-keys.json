@@ -1,0 +1,31 @@
+[
+  "Encrypted",
+  {
+    "Write": {
+      "device": 0,
+      "path": 35,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "LoseMetadata": {
+      "device": 0
+    }
+  },
+  {
+    "Delete": {
+      "device": 1,
+      "file": 157
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 255,
+      "size": "Small",
+      "scan": true
+    }
+  }
+]
+

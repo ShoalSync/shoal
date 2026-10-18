@@ -78,6 +78,8 @@ struct World {
     devices: Vec<Device>,
     /// The device revoked, if one was (ADR 0040): left out of the comparisons.
     revoked: Option<usize>,
+    /// The folder is an encrypted one (ADR 0023).
+    encrypted: bool,
 }
 
 /// Runs `ops` on `devices` devices in a directory under `base`, then heals the network, lets
@@ -90,6 +92,7 @@ struct World {
 pub async fn run(ops: &[Op], devices: u8, base: &Path) -> Result<(), Failure> {
     let dir = tempfile::tempdir_in(base).map_err(|e| fail(None, e.to_string()))?;
     let mut world = World::new(dir.path(), devices);
+    world.encrypted = ops.first() == Some(&Op::Encrypted);
     let result = world.run(ops).await;
     world.stop().await;
     // Traces name each run by its directory, so a failure says which run's trace is its own.
@@ -129,6 +132,7 @@ impl World {
             user: UserKey::from_seed([1; 32]),
             devices,
             revoked: None,
+            encrypted: false,
         }
     }
 
@@ -173,7 +177,7 @@ impl World {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
-            encryption: None,
+            encryption: self.encrypted.then(Default::default),
         };
         if engine.status(FOLDER).is_err() {
             engine
@@ -300,6 +304,7 @@ impl World {
                 self.network.partition(sides);
             }
             Op::Heal => self.network.heal(),
+            Op::Encrypted => {}
             Op::Restart { device } => {
                 let n = usize::from(device) % count;
                 if let Some(engine) = self.devices[n].engine.take() {

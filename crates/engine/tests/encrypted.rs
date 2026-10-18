@@ -90,6 +90,10 @@ impl Member {
         fs::create_dir_all(abs.parent().unwrap()).unwrap();
         fs::write(abs, data).unwrap();
     }
+
+    fn read(&self, path: &str) -> Option<Vec<u8>> {
+        fs::read(self.root.join(path)).ok()
+    }
 }
 
 async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
@@ -126,17 +130,33 @@ async fn members_sync_an_encrypted_folders_metadata() {
     let engine_b = b.start(&user, &network, &[id_a]).await;
     engine_a.scan(FOLDER).await.unwrap();
 
-    // b opens what a sealed once a grant reaches it, and a b's.
-    eventually("b sees a's file", || {
-        paths(&engine_b) == vec!["notes/plan.txt"]
+    // b opens what a sealed once a grant reaches it, fetches its sealed chunks and writes it;
+    // and a b's.
+    eventually("b has a's file", || {
+        b.read("notes/plan.txt").as_deref() == Some(b"sealed on a".as_slice())
     })
     .await;
-    b.write("from-b.txt", b"sealed on b");
+    let big: Vec<u8> = (0..3 * 1024 * 1024u32)
+        .map(|i| (i * 7 % 251) as u8)
+        .collect();
+    b.write("from-b.bin", &big);
     engine_b.scan(FOLDER).await.unwrap();
-    eventually("a sees b's file", || {
-        paths(&engine_a) == vec!["from-b.txt", "notes/plan.txt"]
+    eventually("a has b's file of several chunks", || {
+        a.read("from-b.bin").as_deref() == Some(big.as_slice())
     })
     .await;
+    assert_eq!(paths(&engine_a), vec!["from-b.bin", "notes/plan.txt"]);
+
+    // An edit and a delete go the same way.
+    a.write("notes/plan.txt", b"edited on a");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches b", || {
+        b.read("notes/plan.txt").as_deref() == Some(b"edited on a".as_slice())
+    })
+    .await;
+    fs::remove_file(b.root.join("from-b.bin")).unwrap();
+    engine_b.scan(FOLDER).await.unwrap();
+    eventually("the delete reaches a", || a.read("from-b.bin").is_none()).await;
     // Never over sync/1: a sync/1 session, if any, shares nothing of the encrypted folder.
     assert!(engine_a
         .connected_peers()

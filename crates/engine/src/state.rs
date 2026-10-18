@@ -488,6 +488,11 @@ pub(crate) struct FolderState {
     /// Which chunk each of an encrypted folder's chunk IDs is, and under which key.
     pub(crate) chunk_ids:
         Tracked<tidefell_proto::ChunkId, (tidefell_proto::ChunkHash, tidefell_proto::KeyId)>,
+    /// An encrypted folder's contents as its versions name them, by content and the key their
+    /// chunks are sealed with (one content can be sealed under several): each chunk's ID and
+    /// length, from which the manifest is made once fetched.
+    pub(crate) sealed_chunks:
+        Tracked<(ContentHash, tidefell_proto::KeyId), Vec<(tidefell_proto::ChunkId, u32)>>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
     /// and everything below them. Kept in the runtime settings, not the folder's database, so a
     /// rebuild keeps them (ADR 0034); a folder's metadata holds them only from before that.
@@ -582,6 +587,7 @@ impl FolderState {
             keys: Tracked::default(),
             items: Tracked::default(),
             chunk_ids: Tracked::default(),
+            sealed_chunks: Tracked::default(),
             pins: BTreeSet::new(),
             old_pins: TrackedSet::default(),
             held_deletes: Vec::new(),
@@ -795,6 +801,7 @@ impl FolderState {
         self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
         self.items = Tracked::decode(take("items")).map_err(corrupt)?;
         self.chunk_ids = Tracked::decode(take("chunk_ids")).map_err(corrupt)?;
+        self.sealed_chunks = Tracked::decode(take("sealed_chunks")).map_err(corrupt)?;
         // A folder is encrypted or not from its creation (ADR 0023): a database that disagrees
         // with the configuration belongs to another folder of the same ID.
         if db.encrypted() != self.config.encryption.is_some() {
@@ -916,6 +923,7 @@ impl FolderState {
             ("keys", self.keys.all()),
             ("items", self.items.all()),
             ("chunk_ids", self.chunk_ids.all()),
+            ("sealed_chunks", self.sealed_chunks.all()),
             ("pins", self.old_pins.all()),
         ]
     }
@@ -936,6 +944,7 @@ impl FolderState {
             ("keys", self.keys.take_changed()),
             ("items", self.items.take_changed()),
             ("chunk_ids", self.chunk_ids.take_changed()),
+            ("sealed_chunks", self.sealed_chunks.take_changed()),
             ("pins", self.old_pins.take_changed()),
         ]
     }

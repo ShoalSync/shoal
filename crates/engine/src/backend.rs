@@ -373,8 +373,7 @@ impl Backend for EngineBackend {
     }
 }
 
-/// Encrypted folders (ADR 0023), over sync/2 and blobs/2. Content transfer comes later: no
-/// blobs are served yet.
+/// Encrypted folders (ADR 0023), over sync/2 and blobs/2.
 impl EncryptedBackend for EngineBackend {
     fn folders(&self) -> Vec<FolderId> {
         self.0
@@ -450,13 +449,19 @@ impl EncryptedBackend for EngineBackend {
         Backend::set_peer_progress(self, folder, peer, epoch, up_to);
     }
 
-    fn blob(&self, _folder: &FolderId, _id: &BlobId) -> Option<Vec<u8>> {
-        None
+    /// Sealed chunks only: files of more than 4096 chunks, which need list blobs, are not
+    /// sealed yet.
+    fn blob(&self, folder: &FolderId, id: &BlobId) -> Option<Vec<u8>> {
+        let handle = self.0.folder(folder).ok()?;
+        crate::encrypted::serve_chunk(&self.0, &handle, &tidefell_proto::ChunkId(id.0))
     }
 
     fn holds(&self, folder: &FolderId, ids: &[BlobId]) -> Option<Vec<bool>> {
-        self.0.folder(folder).ok()?;
-        Some(vec![false; ids.len()])
+        let handle = self.0.folder(folder).ok()?;
+        let mut state = handle.lock();
+        let ids: Vec<tidefell_proto::ChunkId> =
+            ids.iter().map(|id| tidefell_proto::ChunkId(id.0)).collect();
+        Some(crate::encrypted::holds(&self.0, &mut state, &ids))
     }
 
     fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {

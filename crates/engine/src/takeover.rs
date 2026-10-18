@@ -334,6 +334,23 @@ fn decide(inner: &Inner, state: &FolderState, exchanged: Option<std::time::Insta
                     plan.waiting = true;
                     continue;
                 }
+                // In an encrypted folder, content held only by a storage peer is taken over by
+                // no one, so a member first tries to fetch it: withdrawn only once a peer has
+                // answered and none had it all (ADR 0023).
+                if state.config.encryption.is_some() {
+                    let unobtainable = match &target.kind {
+                        EntryKind::File { content, .. } => inner
+                            .unobtainable
+                            .lock()
+                            .unwrap()
+                            .contains(&(state.config.id, *content)),
+                        _ => true,
+                    };
+                    if !unobtainable {
+                        plan.waiting = true;
+                        continue;
+                    }
+                }
                 Action::Withdraw
             }
             _ => continue,
@@ -495,9 +512,6 @@ fn take_over_once(
                     }
                     (target.kind, target.modified_ms)
                 }
-                // In an encrypted folder a member first fetches what it would withdraw, storage
-                // peers included (ADR 0023): until that is built, nothing is withdrawn there.
-                Action::Withdraw if state.config.encryption.is_some() => continue,
                 Action::Withdraw => (EntryKind::Tombstone, inner.now_ms()),
                 Action::PutBack => {
                     if let Some(previous) = kept {

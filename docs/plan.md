@@ -852,3 +852,17 @@ storage does not contain a usable device key; and a release's notes include its 
 
 The simulation (ADR 0036) gains encrypted folders in step 5 and a storage-peer device in step 6,
 so each step is checked by it as well as by its own tests.
+
+Open items in step 5, each to land before the release:
+
+- Lookups that scan every chunk ID or item per chunk or item (sealing, grant dedupe, waiting
+  versions) get indexes.
+- Unopened sealed versions are kept in the database and read on demand, not held in memory
+  (ADR 0035), and superseded ones are pruned rather than served.
+- Chunk IDs are computed in the scanner's hash pass, not read under the folder lock when sealing.
+- Confirmed copies for encrypted folders, counting a storage peer's only when another member holds
+  the key.
+- List blobs for files of more than 4096 chunks.
+- The non-member test observes that the device received the sealed versions it cannot open.
+- Rotation on member removal and revocation (5c): until then new versions can be sealed under a
+  key a revoked device made or holds. And CLI, API and FFI support (5e).

@@ -1,0 +1,112 @@
+[
+  "Encrypted",
+  {
+    "Write": {
+      "device": 2,
+      "path": 169,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 0,
+      "dir": 129
+    }
+  },
+  {
+    "Delete": {
+      "device": 1,
+      "file": 236
+    }
+  },
+  {
+    "Restart": {
+      "device": 2
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 131,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 125,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 214,
+      "size": "Small",
+      "scan": false
+    }
+  },
+  {
+    "Member": {
+      "device": 2,
+      "add": false
+    }
+  },
+  {
+    "Partition": {
+      "sides": 1
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 32,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Revoke": {
+      "by": 0,
+      "device": 232,
+      "lost_ago_ms": null
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 55,
+      "to": 84
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 50,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 151,
+      "to": 139
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 241,
+      "to": 187
+    }
+  }
+]

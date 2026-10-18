@@ -31,6 +31,9 @@ pub enum Op {
     Partition { sides: u8 },
     /// Joins the network again.
     Heal,
+    /// The folder is an encrypted one (ADR 0023). Only first, where a seed's steps start with it,
+    /// so a shortened run keeps it; anywhere else it does nothing.
+    Encrypted,
     /// Stops a device's engine and starts it again.
     Restart { device: u8 },
     /// Lets the engines work for a while.
@@ -194,6 +197,10 @@ pub fn generate(seed: u64, devices: u8, steps: usize) -> Vec<Op> {
             },
         };
         ops.push(op);
+    }
+    // Half the seeds run an encrypted folder, so both kinds are always tried.
+    if seed % 2 == 1 {
+        ops.insert(0, Op::Encrypted);
     }
     ops
 }
