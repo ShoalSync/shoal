@@ -283,6 +283,8 @@ pub(crate) fn stored_info(
         versions: versions.saturating_sub(superseded),
         superseded,
         quota_bytes: stored.quota_bytes,
+        bytes: state.sealed_store.as_ref().map_or(0, |s| s.bytes()),
+        missing_chunks: crate::stored::missing(state),
     }
 }
 

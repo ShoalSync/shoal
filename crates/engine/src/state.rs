@@ -490,6 +490,8 @@ pub(crate) struct FolderState {
     pub(crate) superseded: Tracked<u64, i64>,
     /// On a storage peer, the kept sealed versions no other supersedes, by entry, with their
     /// vectors: built from `items` when first needed, not stored.
+    /// On a storage peer, the folder's sealed chunks (ADR 0023).
+    pub(crate) sealed_store: Option<crate::stored::SealedStore>,
     pub(crate) stored_heads: Option<
         std::collections::HashMap<
             tidefell_proto::EntryId,
@@ -604,6 +606,7 @@ impl FolderState {
             keys: Tracked::default(),
             items: Tracked::default(),
             superseded: Tracked::default(),
+            sealed_store: None,
             stored_heads: None,
             chunk_ids: Tracked::default(),
             sealed_chunks: Tracked::default(),
@@ -670,7 +673,9 @@ impl FolderState {
             lines,
         ));
         // Files kept by earlier versions have no sidecar yet (ADR 0034).
-        if !state.config.is_stored() {
+        if state.config.is_stored() {
+            state.sealed_store = Some(crate::stored::SealedStore::open(&state.config.path)?);
+        } else {
             state.refresh_sidecars();
         }
         Ok(state)

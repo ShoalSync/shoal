@@ -236,9 +236,10 @@ How `tidefelld` stores folders it cannot read, decided before the engine is chan
   keeping them now makes that possible.
 - **Chunks by ID, as sealed.** It stores chunks by chunk ID as the sealed bytes it fetched, and
   serves them unchanged. It cannot check them; members check every chunk they fetch, by its AEAD
-  tag, and fetch it elsewhere if it fails. It fetches the chunks a kept version lists from the
-  peers that offered the version, asking which hold them first (blobs/2 `AvailabilityRequest`),
-  and answers availability itself for what it has, which is how members count it as a copy.
+  tag, and fetch it elsewhere if it fails. It fetches the chunks its kept versions list from the
+  peers sharing the folder, the current versions' first; a fetch says which chunks a peer lacks,
+  so it asks for no availability first. It answers availability itself for what it has, which is
+  how members count it as a copy.
 - **Quota.** A stored folder's size is the sealed bytes of its distinct chunks. While it is over
   its quota, it fetches no chunks for that folder and says so in its status; it still keeps
   versions, which are small. It collects superseded versions past retention first; it never

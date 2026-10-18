@@ -332,6 +332,7 @@ async fn storage_peer(
     members: &[UserId],
     network: &Network,
     peers: &[DeviceId],
+    quota_bytes: u64,
 ) -> (DeviceKey, Engine) {
     let key = DeviceKey::from_seed([seed; 32]);
     let data = dir.join("storage").join("data");
@@ -363,9 +364,7 @@ async fn storage_peer(
             confirm_deletes: Default::default(),
             encryption: Some(Encryption {
                 storage_peers: Vec::new(),
-                stored: Some(tidefell_engine::Stored {
-                    quota_bytes: 1 << 30,
-                }),
+                stored: Some(tidefell_engine::Stored { quota_bytes }),
             }),
         }],
         min_free_space: None,
@@ -388,10 +387,10 @@ fn stored(engine: &Engine) -> tidefell_engine::StoredInfo {
         .unwrap()
 }
 
-/// Two members that never meet sync an encrypted folder's index through a storage peer (ADR
-/// 0023): the second gets the folder key granted by the first, relayed, and opens the first's
-/// versions, while the storage peer holds them sealed, keeps no key, and serves only the newest
-/// of each entry.
+/// Two members that never meet sync an encrypted folder through a storage peer (ADR 0023): the
+/// second gets the folder key granted by the first, relayed, opens the first's versions and
+/// fetches their content from it, while the storage peer holds them sealed, keeps no key and no
+/// plaintext, and serves only the newest version of each entry.
 #[tokio::test(flavor = "multi_thread")]
 async fn members_meet_through_a_storage_peer() {
     let dir = tempfile::tempdir().unwrap();
@@ -409,6 +408,7 @@ async fn members_meet_through_a_storage_peer() {
         &[user.id()],
         &network,
         &[id_a, id_b],
+        1 << 30,
     )
     .await;
     // a and b each know only the storage peer.
@@ -440,11 +440,14 @@ async fn members_meet_through_a_storage_peer() {
             &[storage_key],
         )
         .await;
-    eventually("b opens a's version, relayed", || {
-        paths(&engine_b) == vec!["notes.txt"]
+    eventually("b gets a's file through the storage peer", || {
+        b.read("notes.txt").as_deref() == Some(b"first".as_slice())
     })
     .await;
     assert_eq!(generation(&engine_b), Some(1));
+    let s = stored(&engine_s);
+    assert!(s.bytes > 0);
+    assert_eq!(s.missing_chunks, 0);
 
     // An edit supersedes the version the storage peer had: it keeps that one, unserved.
     a.write("notes.txt", b"second");
@@ -454,6 +457,21 @@ async fn members_meet_through_a_storage_peer() {
         s.versions == 1 && s.superseded == 1
     })
     .await;
+    eventually("b gets the edit", || {
+        b.read("notes.txt").as_deref() == Some(b"second".as_slice())
+    })
+    .await;
+    // Nowhere on the storage peer's disk is the plaintext of either version.
+    for file in walk(&dir.path().join("storage")) {
+        let bytes = fs::read(&file).unwrap();
+        for plain in [b"first".as_slice(), b"second".as_slice()] {
+            assert!(
+                !bytes.windows(plain.len()).any(|w| w == plain),
+                "{} holds plaintext",
+                file.display()
+            );
+        }
+    }
 
     // What it stores outlasts a restart.
     engine_s.shutdown().await;
@@ -464,16 +482,86 @@ async fn members_meet_through_a_storage_peer() {
         &[user.id()],
         &network,
         &[id_a, id_b],
+        1 << 30,
     )
     .await;
     let s = stored(&engine_s);
     assert_eq!((s.versions, s.superseded), (1, 1));
-    // Past the folder's retention, the superseded version goes; the current one stays.
+    // Past the folder's retention, the superseded version goes, and the chunks only it listed;
+    // the current one stays whole.
+    let before = stored(&engine_s).bytes;
     engine_s.purge(engine_s.now_ms() + 31 * 24 * 60 * 60 * 1000);
     let s = stored(&engine_s);
-    assert_eq!((s.versions, s.superseded), (1, 0));
+    assert_eq!((s.versions, s.superseded, s.missing_chunks), (1, 0, 0));
+    assert!(s.bytes < before);
 
     engine_b.shutdown().await;
+    engine_a.shutdown().await;
+    engine_s.shutdown().await;
+}
+
+/// Every file under `dir`.
+fn walk(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            files.extend(walk(&path));
+        } else {
+            files.push(path);
+        }
+    }
+    files
+}
+
+/// A storage peer stops fetching once its quota is reached, and says what it lacks, rather
+/// than drop what it holds (ADR 0023).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_storage_peer_stops_at_its_quota() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([12; 32]);
+    let operator = UserKey::from_seed([13; 32]);
+    let a = Member::new(dir.path(), "a", 110);
+    let storage_key = DeviceKey::from_seed([111; 32]).id();
+    // Room for less than one chunk: the first fills it.
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        111,
+        &operator,
+        &[user.id()],
+        &network,
+        &[a.key.id()],
+        1,
+    )
+    .await;
+    let engine_a = a
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    a.write("one.txt", b"the first file");
+    a.write("two.txt", b"the second file");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually(
+        "the storage peer keeps both versions and fills its quota",
+        || {
+            let s = stored(&engine_s);
+            s.versions == 2 && s.bytes > 0
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let s = stored(&engine_s);
+    assert_eq!(
+        s.missing_chunks, 1,
+        "one file's chunk waits for room: {s:?}"
+    );
+
     engine_a.shutdown().await;
     engine_s.shutdown().await;
 }

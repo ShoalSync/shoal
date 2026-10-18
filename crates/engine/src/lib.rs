@@ -81,6 +81,7 @@ mod setaside;
 mod sidecar;
 mod space;
 mod state;
+mod stored;
 #[doc(hidden)]
 pub mod synth;
 mod takeover;

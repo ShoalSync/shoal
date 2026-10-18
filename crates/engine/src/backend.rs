@@ -456,7 +456,12 @@ impl EncryptedBackend for EngineBackend {
     /// sealed yet.
     fn blob(&self, folder: &FolderId, id: &BlobId) -> Option<Vec<u8>> {
         let handle = self.0.folder(folder).ok()?;
-        crate::encrypted::serve_chunk(&self.0, &handle, &tidefell_proto::ChunkId(id.0))
+        let id = tidefell_proto::ChunkId(id.0);
+        // A storage peer serves a chunk as it stored it, sealed (ADR 0023).
+        if let Some(store) = handle.lock().sealed_store.as_ref() {
+            return store.get(&id);
+        }
+        crate::encrypted::serve_chunk(&self.0, &handle, &id)
     }
 
     fn holds(&self, folder: &FolderId, ids: &[BlobId]) -> Option<Vec<bool>> {
@@ -464,6 +469,9 @@ impl EncryptedBackend for EngineBackend {
         let mut state = handle.lock();
         let ids: Vec<tidefell_proto::ChunkId> =
             ids.iter().map(|id| tidefell_proto::ChunkId(id.0)).collect();
+        if let Some(store) = state.sealed_store.as_ref() {
+            return Some(ids.iter().map(|id| store.has(id)).collect());
+        }
         Some(crate::encrypted::holds(&self.0, &mut state, &ids))
     }
 

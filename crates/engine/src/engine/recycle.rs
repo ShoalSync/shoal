@@ -131,8 +131,9 @@ pub(super) fn purge(inner: &Inner, now_ms: i64) {
         let (purged, chunks) = state.purge(now_ms);
         // A storage peer's superseded versions, past retention (ADR 0023).
         let superseded = crate::encrypted::purge_superseded(&mut state, now_ms);
-        if superseded > 0 {
-            info!(folder = %id, versions = superseded, "dropped superseded versions");
+        let collected = crate::stored::collect(&mut state);
+        if superseded > 0 || collected > 0 {
+            info!(folder = %id, versions = superseded, chunks = collected, "dropped superseded versions");
         }
         if !purged.is_empty() || !chunks.is_empty() || !set_aside.is_empty() || superseded > 0 {
             info!(

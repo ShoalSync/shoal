@@ -1575,9 +1575,9 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
 /// while fetching from peers.
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
-    // A stored folder writes no files; what it stores, it fetches in its own way (ADR 0023).
+    // A stored folder writes no files: it fetches the sealed chunks it keeps (ADR 0023).
     if handle.lock().config.is_stored() {
-        return Ok(());
+        return crate::stored::fetch(inner, node, &handle).await;
     }
     // Checked before fetching, so an unavailable folder does not download what it cannot write.
     handle.available()?;

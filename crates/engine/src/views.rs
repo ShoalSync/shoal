@@ -95,6 +95,10 @@ pub struct StoredInfo {
     pub superseded: usize,
     /// The most it keeps of the folder's chunks, in bytes.
     pub quota_bytes: u64,
+    /// The sealed bytes of the chunks it holds.
+    pub bytes: u64,
+    /// Chunks of its current versions it does not hold yet.
+    pub missing_chunks: usize,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
