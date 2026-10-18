@@ -148,10 +148,10 @@ amendments fit it to them; where they differ from the decision above, they win.
   a storage peer: such versions are taken over where held and never withdrawn. Members that meet
   only through storage peers withdraw little on a time of loss, but keep the work made before
   it; revocation still stops everything the device makes afterwards.
-- **Conflict resolution compares the signed sealed version.** Rule 4 of sync/1 (the greater
-  encoding wins) compares the encoding of the signed `SealedVersion`, which every replica has,
-  not of the decrypted `EntryVersion`, whose sealing uses a random nonce. The other rules use
-  the decrypted fields, so only members resolve conflicts, as decided above.
+- **Conflict resolution needs the decrypted version.** Rule 4 of sync/1 (the greater encoding
+  wins) compares decrypted `EntryVersion`s, which every member computes alike; two sealed versions
+  that decrypt alike are ordered by their conflict copy IDs (see "On member devices"). The other
+  rules also use the decrypted fields, so only members resolve conflicts, as decided above.
 - **Members check what they decrypt.** A member checks that a decrypted `EntryVersion` agrees
   with its sealed version (folder, entry, version vector, author) and satisfies sync/1's path
   rules, and drops it otherwise: a storage peer cannot check these, and the author's device
@@ -171,6 +171,37 @@ amendments fit it to them; where they differ from the decision above, they win.
   (ADR 0034). Storage peers store only sealed versions.
 - **The simulation runs encrypted folders.** The simulation (ADR 0036) gains encrypted folders
   and a storage-peer device in the same steps as the code that implements them.
+
+## On member devices (2026-10-18)
+
+How a member device stores an encrypted folder, decided before the engine is changed, since it
+fixes the folder database (ADR 0034):
+
+- **Plaintext inside, sealed at the edge.** A member keeps chunks as today, by the BLAKE3 hash of
+  their plaintext, and keeps per folder which chunk ID, under which key, each one is. It seals a
+  chunk when it serves it, which gives the same bytes every time, and opens and checks one when
+  it fetches it, then stores it by its plaintext hash. Manifests, assembly, materialising,
+  eviction and confirmed copies work on plaintext as before.
+- **One folder model.** The folder's versions (`meta`) are the decrypted `EntryVersion`s, as for a
+  plaintext folder. What each was received as is either a signed `EntryVersion` or a signed
+  `SealedVersion`; that form is what the database keeps beside the decrypted version, what is
+  served, and what a conflict copy's ID hashes.
+- **Rule 4 in practice.** Two concurrent versions that tie on rules 1 to 3 are ordered by the
+  encoding of their decrypted `EntryVersion`, which every member computes alike, and only if
+  those are equal too, by their conflict copy IDs, which hash their signed `SealedVersion` bodies
+  and are kept in memory anyway (ADR 0029), so no sealed bytes are (ADR 0035).
+- **Items besides versions.** Encryption keys, grants, and sealed versions a member cannot open
+  yet are kept in the folder database too, under sequences from the same counter as versions,
+  so one index serves them all. A sealed version not yet openable is dropped once a version it
+  holds supersedes it, judged by vector without opening it; once opened it is applied like any
+  version and leaves this set.
+- **Keys.** A member keeps the folder keys it holds in the folder's database, which already sits
+  beside the plaintext. The device's X25519 secret is kept with its identity key, so a folder
+  rebuilt from peers (ADR 0034) gets its keys back from the grants the member made to itself.
+- **Order of work.** Storage and the index first; then local changes sealed and remote versions
+  opened; then keys, grants and rotation; then blobs/2; then creating and joining from the CLI
+  and API. Each extends the simulation. Step 5 is done when two members sync an encrypted folder
+  directly, with no storage peer.
 
 ## Consequences
 

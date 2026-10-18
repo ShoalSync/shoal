@@ -127,8 +127,11 @@ they decrypt from it, so that they serve exactly the signed bytes.
 
 ### Conflicts
 
-Members resolve conflicts as sync/1 does, with one change: rule 4 compares the encodings of the
-signed `SealedVersion` bodies, which every replica has, not of decrypted versions. A version a
+Members resolve conflicts as sync/1 does, with one change to rule 4: of two versions that tie on
+rules 1 to 3, the greater encoding of the decrypted `EntryVersion` wins, as in sync/1, and if
+those are equal, the greater conflict copy ID: the first 16 bytes of
+BLAKE3(`"tidefell conflict copy\n"` || the signed `SealedVersion` body), compared as bytes, which
+differs between any two sealed versions (ADR 0029 names a kept conflict copy by it). A version a
 member cannot open yet takes no part in choosing the winner; once it is granted the key, it
 resolves the entry again. A storage peer does not resolve conflicts. It keeps every version no
 other version it holds supersedes.
