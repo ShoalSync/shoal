@@ -616,6 +616,7 @@ async fn encrypted_folders_through_the_api() {
         Some(FolderEncryption {
             storage_peers: vec![store.clone()],
             key_generation: Some(1),
+            stored: None,
         })
     );
 

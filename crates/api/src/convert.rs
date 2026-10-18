@@ -70,6 +70,13 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         encryption: f.encryption.map(|e| api::FolderEncryption {
             storage_peers: e.storage_peers.iter().map(ToString::to_string).collect(),
             key_generation: e.key_generation,
+            stored: e.stored.map(|s| api::StoredFolder {
+                versions: s.versions as u64,
+                superseded: s.superseded as u64,
+                bytes: s.bytes,
+                quota_bytes: s.quota_bytes,
+                missing_chunks: s.missing_chunks as u64,
+            }),
         }),
         rebuild: f.rebuild.map(|r| api::Rebuild {
             started_ms: r.started_ms,

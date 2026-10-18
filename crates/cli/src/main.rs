@@ -86,6 +86,9 @@ enum Command {
     /// Manage folders.
     #[command(subcommand)]
     Folder(FolderCommand),
+    /// On a storage peer, list the encrypted folders it stores for others, with how much of
+    /// each it holds (ADR 0023). Stored folders are set in the configuration file.
+    Storage,
     /// List the live files in a folder.
     Files {
         /// Folder ID.
@@ -810,6 +813,16 @@ async fn run(cli: Cli) -> Result<(), String> {
             }
             .map_err(e)?;
             print(json, &settings, |l| l.level.clone());
+        }
+        Command::Storage => {
+            let stored: Vec<tidefell_sdk::types::Folder> = client
+                .folders()
+                .await
+                .map_err(e)?
+                .into_iter()
+                .filter(|f| f.encryption.as_ref().is_some_and(|e| e.stored.is_some()))
+                .collect();
+            print(json, &stored, |f| format::stored(f));
         }
         Command::Folder(command) => match command {
             FolderCommand::List => print(json, &client.folders().await.map_err(e)?, |f| {

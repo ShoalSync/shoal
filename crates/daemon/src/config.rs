@@ -60,6 +60,41 @@ pub struct Config {
     /// `<report_url>/new` pre-filled; without one they are shown to copy.
     #[serde(default)]
     pub report_url: Option<String>,
+    /// Makes this device a storage peer: it stores encrypted folders for their members without
+    /// reading them (ADR 0023).
+    #[serde(default)]
+    pub storage: Option<Storage>,
+}
+
+/// A storage peer's stored folders (ADR 0023).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Storage {
+    /// The encrypted folders this device stores. Each is kept under
+    /// `<data_dir>/stored/<folder id>`, sealed: this device holds no key and cannot read it.
+    #[serde(default)]
+    pub folders: Vec<StoredFolder>,
+}
+
+/// An encrypted folder a storage peer stores for its members.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StoredFolder {
+    /// Folder ID (64 hex digits), as the members' devices have it.
+    pub id: String,
+    /// User IDs (64 hex digits) whose devices may sync the folder with this one. Versions are
+    /// kept only from their devices, vouched for as members' devices are.
+    pub members: Vec<String>,
+    /// The most to keep of the folder's sealed chunks, in bytes. Over it, nothing more is
+    /// fetched, and nothing current is dropped.
+    pub quota_bytes: u64,
+    /// Days to keep versions that later ones replaced, deletes included; 0 keeps them forever.
+    #[serde(default = "default_stored_retention")]
+    pub retention_days: u32,
+}
+
+fn default_stored_retention() -> u32 {
+    30
 }
 
 /// Prometheus metrics (ADR 0030).
@@ -436,6 +471,38 @@ impl Config {
                     .transpose()?,
             });
         }
+        for f in self.storage.iter().flat_map(|s| &s.folders) {
+            let id = hex_id::<FolderId>("stored folder id", &f.id)?;
+            if folders.iter().any(|g| g.id == id) {
+                return Err(format!(
+                    "folder {} is configured twice; a device either syncs a folder or stores it",
+                    f.id
+                ));
+            }
+            if f.members.is_empty() {
+                return Err(format!("stored folder {} has no members", f.id));
+            }
+            folders.push(FolderConfig {
+                id,
+                path: self.data_dir.join("stored").join(&f.id),
+                mode: ReplicaMode::Full,
+                members: f
+                    .members
+                    .iter()
+                    .map(|m| hex_id::<UserId>("member", m))
+                    .collect::<Result<_, _>>()?,
+                retention: Retention::from_days(f.retention_days),
+                scan_interval: Duration::from_secs(3600),
+                sync: SyncOptions::default(),
+                confirm_deletes: tidefell_engine::ConfirmDeletes::default(),
+                encryption: Some(tidefell_engine::Encryption {
+                    storage_peers: Vec::new(),
+                    stored: Some(tidefell_engine::Stored {
+                        quota_bytes: f.quota_bytes,
+                    }),
+                }),
+            });
+        }
         self.mounts()?;
         Ok(EngineConfig {
             data_dir: self.data_dir.clone(),
@@ -534,6 +601,29 @@ mod tests {
             "scan_interval_secs = 10\n[folders.encryption]\nstorage_peers = [\"nope\"]\n",
         );
         assert!(parse(&bad).unwrap().to_engine().is_err());
+    }
+
+    #[test]
+    fn reads_a_storage_peer() {
+        let (id, member) = ("e".repeat(64), "f".repeat(64));
+        let text = format!(
+            "{EXAMPLE}\n[[storage.folders]]\nid = \"{id}\"\nmembers = [\"{member}\"]\nquota_bytes = 1000\n"
+        );
+        let config = parse(&text).unwrap();
+        let engine = config.to_engine().unwrap();
+        let stored = engine.folders.iter().find(|f| f.is_stored()).unwrap();
+        assert_eq!(stored.id, FolderId([0xee; 32]));
+        assert_eq!(stored.members, vec![UserId([0xff; 32])]);
+        assert_eq!(stored.retention, Retention::Days(30));
+        assert_eq!(stored.path, config.data_dir.join("stored").join(&id));
+        assert_eq!(
+            stored.encryption.as_ref().and_then(|e| e.stored),
+            Some(tidefell_engine::Stored { quota_bytes: 1000 })
+        );
+        // A device syncs a folder or stores it, not both.
+        let synced = "c".repeat(64);
+        let twice = text.replace(&id, &synced);
+        assert!(parse(&twice).unwrap().to_engine().is_err());
     }
 
     #[test]

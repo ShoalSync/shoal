@@ -498,9 +498,13 @@ pub(crate) fn retention(f: &Folder) -> String {
         .map_or("forever".to_string(), |d| format!("for {d} days"))
 }
 
-/// How a folder is encrypted, if it is: its key generation and storage peers (ADR 0023).
+/// How a folder is encrypted, if it is: its key generation and storage peers, or on a storage
+/// peer, what it stores (ADR 0023).
 pub(crate) fn encryption(f: &Folder) -> Option<String> {
     f.encryption.as_ref().map(|e| {
+        if let Some(s) = &e.stored {
+            return stored_line(s);
+        }
         let key = e.key_generation.map_or_else(
             || "waiting for its key from another member device".to_string(),
             |g| format!("key generation {g}"),
@@ -510,6 +514,44 @@ pub(crate) fn encryption(f: &Folder) -> Option<String> {
             n => format!("encrypted, {key}, held by {n} storage peer(s)"),
         }
     })
+}
+
+/// What a storage peer stores of a folder, in a line.
+fn stored_line(s: &tidefell_sdk::types::StoredFolder) -> String {
+    let missing = match s.missing_chunks {
+        0 => String::new(),
+        n => format!(", {n} chunk(s) still to fetch"),
+    };
+    let full = if s.bytes >= s.quota_bytes {
+        ", quota reached: fetching no more"
+    } else {
+        ""
+    };
+    format!(
+        "stored, sealed: {} version(s), {} replaced kept; {} of {}{missing}{full}",
+        s.versions,
+        s.superseded,
+        size(s.bytes),
+        size(s.quota_bytes)
+    )
+}
+
+/// The folders a storage peer stores.
+pub(crate) fn stored(folders: &[Folder]) -> String {
+    if folders.is_empty() {
+        return "no stored folders; a storage peer lists them under [storage] in its configuration"
+            .into();
+    }
+    let mut out = String::new();
+    for f in folders {
+        let _ = writeln!(out, "{}", f.id);
+        let _ = writeln!(out, "    for {} member user(s)", f.members.len());
+        if let Some(line) = encryption(f) {
+            let _ = writeln!(out, "    {line}");
+        }
+        let _ = writeln!(out, "    keeps replaced versions {}", retention(f));
+    }
+    out.trim_end().to_string()
 }
 
 fn conflict_note(f: &Folder) -> Option<String> {
@@ -993,6 +1035,30 @@ mod tests {
         );
         folder.mode = Mode::Partial;
         assert!(only_here(&folder).unwrap().ends_with("until one does)"));
+
+        // On a storage peer, a stored folder says what it holds, not that it waits for a key.
+        folder.encryption = Some(tidefell_sdk::types::FolderEncryption {
+            storage_peers: Vec::new(),
+            key_generation: None,
+            stored: Some(tidefell_sdk::types::StoredFolder {
+                versions: 3,
+                superseded: 1,
+                bytes: 1_000_000,
+                quota_bytes: 1_000_000,
+                missing_chunks: 2,
+            }),
+        });
+        let line = encryption(&folder).unwrap();
+        assert!(
+            line.starts_with("stored, sealed: 3 version(s), 1 replaced kept;"),
+            "{line}"
+        );
+        assert!(line.contains("2 chunk(s) still to fetch"), "{line}");
+        assert!(line.ends_with("quota reached: fetching no more"), "{line}");
+        assert!(
+            stored(std::slice::from_ref(&folder)).contains("keeps replaced versions for 30 days")
+        );
+        assert!(stored(&[]).starts_with("no stored folders"));
     }
 
     #[test]

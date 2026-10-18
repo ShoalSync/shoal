@@ -62,3 +62,12 @@ scan_interval_secs = 10
 [web]
 bind = "127.0.0.1:8080"
 secure_cookies = true
+
+# Optional: make this device a storage peer, which stores encrypted folders for other users
+# without being able to read them (ADR 0023). Their devices list this device's ID as a storage
+# peer of the folder.
+# [[storage.folders]]
+# id = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+# members = ["ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"]
+# quota_bytes = 100000000000
+# retention_days = 30

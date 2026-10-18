@@ -24,7 +24,7 @@ use tidefell_sdk::types::{
     Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem,
     ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest,
     ResolveRequest, RetentionUpdate, Revocation, RevokePreviewQuery, RevokeRequest, Status,
-    SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
+    StoredFolder, SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
     WithdrawnFile,
 };
 use tokio_stream::wrappers::BroadcastStream;
@@ -125,6 +125,7 @@ type AppState = State<Arc<Engine>>;
         NewEncryption,
         NewStoragePeer,
         FolderEncryption,
+        StoredFolder,
         File,
         FetchRequest,
         Fetched,

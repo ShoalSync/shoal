@@ -409,6 +409,24 @@ pub struct FolderEncryption {
     /// reached this device.
     #[serde(default)]
     pub key_generation: Option<u64>,
+    /// On a storage peer, what it stores of the folder (ADR 0023).
+    #[serde(default)]
+    pub stored: Option<StoredFolder>,
+}
+
+/// What a storage peer stores of a folder it cannot read (ADR 0023).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StoredFolder {
+    /// Sealed versions it serves: those no other kept version replaces.
+    pub versions: u64,
+    /// Replaced versions it keeps for the folder's retention.
+    pub superseded: u64,
+    /// The sealed bytes of the chunks it holds.
+    pub bytes: u64,
+    /// The most it keeps of the folder's chunks, in bytes.
+    pub quota_bytes: u64,
+    /// Chunks of its current versions it does not hold yet.
+    pub missing_chunks: u64,
 }
 
 /// A summary of one device's recycle bin for a folder.
