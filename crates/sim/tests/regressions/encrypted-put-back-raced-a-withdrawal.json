@@ -1,0 +1,275 @@
+[
+  "Encrypted",
+  {
+    "Write": {
+      "device": 1,
+      "path": 67,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 29,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 2
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 63,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Wait": {
+      "ms": 197
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 129,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Wait": {
+      "ms": 83
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 97,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 1,
+      "file": 83,
+      "to": 253
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 172,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 41,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 18,
+      "size": "Small",
+      "scan": false
+    }
+  },
+  {
+    "Delete": {
+      "device": 0,
+      "file": 85
+    }
+  },
+  {
+    "Rename": {
+      "device": 1,
+      "file": 223,
+      "to": 136
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 70,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 180,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Wait": {
+      "ms": 85
+    }
+  },
+  {
+    "Delete": {
+      "device": 0,
+      "file": 112
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 235,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 0
+    }
+  },
+  {
+    "Scan": {
+      "device": 0
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 126,
+      "to": 202
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 205,
+      "size": "Large",
+      "scan": false
+    }
+  },
+  {
+    "LoseMetadata": {
+      "device": 0
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 5,
+      "to": 17
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 2,
+      "dir": 177
+    }
+  },
+  {
+    "Rename": {
+      "device": 2,
+      "file": 232,
+      "to": 180
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 147,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 0,
+      "file": 39,
+      "to": 136
+    }
+  },
+  {
+    "DeleteDir": {
+      "device": 0,
+      "dir": 161
+    }
+  },
+  {
+    "Member": {
+      "device": 0,
+      "add": true
+    }
+  },
+  {
+    "Partition": {
+      "sides": 2
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 9,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 176,
+      "size": "Large",
+      "scan": false
+    }
+  },
+  {
+    "Revoke": {
+      "by": 1,
+      "device": 230,
+      "lost_ago_ms": 1353
+    }
+  },
+  {
+    "Wait": {
+      "ms": 260
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 224,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 38,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Rename": {
+      "device": 1,
+      "file": 126,
+      "to": 198
+    }
+  }
+]

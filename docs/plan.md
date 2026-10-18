@@ -865,6 +865,3 @@ Open items in step 5, each to land before the release:
 - List blobs for files of more than 4096 chunks.
 - The non-member test observes that the device received the sealed versions it cannot open.
 - CLI, API and FFI support (5e), including the folder's key generation.
-- Release seeds 20011 (failing on main too) and 20121, rare: after a revocation with a time of
-  loss in an encrypted folder, the revoked device's version is withdrawn on one replica and
-  neither withdrawn nor taken over on another.

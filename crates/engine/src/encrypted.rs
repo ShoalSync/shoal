@@ -493,6 +493,9 @@ pub(crate) struct Applied {
     pub(crate) changed: bool,
     /// A key arrived: versions waiting for it can be opened, and keys granted on.
     pub(crate) keys: bool,
+    /// An entry these touched has a current version or open conflict copy by an author no
+    /// longer vouched for, as one concurrent with a put-back does: a takeover is due (ADR 0040).
+    pub(crate) takeover: bool,
 }
 
 /// Applies items `peer` sent: versions opened with a key held and applied, or kept for later;
@@ -505,6 +508,7 @@ pub(crate) fn apply(
     items: Vec<Item>,
 ) -> Applied {
     let mut applied = Applied::default();
+    let mut touched = Vec::new();
     let mut state = handle.lock();
     let folder = state.config.id;
     let now = inner.now_ms();
@@ -530,7 +534,7 @@ pub(crate) fn apply(
         }
         match item {
             Item::Version(signed) => {
-                applied.changed |= apply_version(&mut state, signed, now);
+                applied.changed |= apply_version(&mut state, signed, now, &mut touched);
             }
             Item::EncryptionKey(signed) => {
                 let Ok(key) = signed.verify_own() else {
@@ -575,9 +579,23 @@ pub(crate) fn apply(
         // When these arrived is not when they are opened, and what sent them is not known
         // here: no arrival time is recorded, so a time of loss never withdraws them (ADR 0040).
         state.meta.set_record_receipts(false);
-        applied.changed |= open_waiting(&mut state, now);
+        applied.changed |= open_waiting(&mut state, now, &mut touched);
     }
     state.meta.set_record_receipts(!rebuilding);
+    let me = inner.key.id();
+    let members = state.members.clone();
+    let mut vouching = inner.vouching.lock().unwrap();
+    applied.takeover = touched.iter().any(|entry| {
+        let current = state.meta.current(entry).map(|c| c.author());
+        let conflicts = state.meta.open_conflicts(entry).map(|c| c.version.author);
+        current.into_iter().chain(conflicts).any(|author| {
+            author != me
+                && vouching
+                    .judge(folder, author, |user| members.contains(user))
+                    .is_err()
+        })
+    });
+    drop(vouching);
     applied
 }
 
@@ -592,10 +610,16 @@ pub(crate) fn is_storage_peer(inner: &Inner, state: &FolderState, peer: DeviceId
 
 /// Opens and applies a sealed version if a key is held, or keeps it to open later. Returns true
 /// if anything changed.
-fn apply_version(state: &mut FolderState, signed: Signed<SealedVersion>, now: i64) -> bool {
+fn apply_version(
+    state: &mut FolderState,
+    signed: Signed<SealedVersion>,
+    now: i64,
+    touched: &mut Vec<tidefell_proto::EntryId>,
+) -> bool {
     let Ok(sealed) = signed.verify_authored() else {
         return false;
     };
+    touched.push(sealed.entry);
     if sealed.folder != state.config.id || !sealed.version.within_ceiling() {
         return false;
     }
@@ -721,7 +745,11 @@ fn open_own_grant(inner: &Inner, state: &mut FolderState, grant: &KeyGrant) -> b
 
 /// Opens the sealed versions that were waiting for a key now held. Returns true if any was
 /// applied.
-fn open_waiting(state: &mut FolderState, now: i64) -> bool {
+fn open_waiting(
+    state: &mut FolderState,
+    now: i64,
+    touched: &mut Vec<tidefell_proto::EntryId>,
+) -> bool {
     let waiting: Vec<(u64, Signed<SealedVersion>)> = state
         .items
         .iter()
@@ -738,6 +766,7 @@ fn open_waiting(state: &mut FolderState, now: i64) -> bool {
         };
         match open(state, &sealed, signed) {
             Some(Ok((verified, content))) => {
+                touched.push(sealed.entry);
                 state.items.remove(&sequence);
                 changed |= apply_opened(state, verified, content, now);
             }

@@ -439,6 +439,9 @@ impl EncryptedBackend for EngineBackend {
             self.0.emit(Event::FolderChanged(*folder));
             self.0.changed();
         }
+        if applied.takeover {
+            self.0.schedule_takeover(Some(*folder));
+        }
     }
 
     fn peer_progress(&self, folder: &FolderId, peer: DeviceId) -> (u64, u64) {
