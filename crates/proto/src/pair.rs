@@ -1,4 +1,4 @@
-//! The `tidefell/pair/1` protocol and pairing codes. See `specs/pair-v1.md` and ADR 0015.
+//! The `tidefell/pair/2` protocol and pairing codes. See `specs/pair-v2.md` and ADR 0015.
 //!
 //! Variant order is part of the wire format. Append new variants only in a new protocol version.
 
@@ -77,9 +77,19 @@ pub struct FolderOffer {
     pub members: Vec<UserId>,
     /// Recycle-bin retention in days; 0 keeps deleted files forever.
     pub retention_days: u32,
+    /// For an encrypted folder, what the new device joins it with (ADR 0023).
+    pub encryption: Option<OfferedEncryption>,
 }
 
-/// A message on a `tidefell/pair/1` stream.
+/// How an offered folder is encrypted: the new device joins it as encrypted, with these storage
+/// peers, and gets its keys by grant once it has joined.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfferedEncryption {
+    /// The approver's storage peers for the folder: devices that hold it without reading it.
+    pub storage_peers: Vec<DeviceId>,
+}
+
+/// A message on a `tidefell/pair/2` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PairMessage {
     /// Approver → new device, first: proof that the approver has seen the code.

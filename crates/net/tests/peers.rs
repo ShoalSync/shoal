@@ -600,6 +600,7 @@ async fn pairing_issues_a_certificate_once() {
         name: "Photos".into(),
         members: vec![alice.id()],
         retention_days: 30,
+        encryption: None,
     };
     session
         .complete(

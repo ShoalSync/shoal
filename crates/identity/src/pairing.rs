@@ -1,5 +1,5 @@
-//! Pairing secrets, proofs and confirmation codes for `tidefell/pair/1` (see
-//! `specs/pair-v1.md`).
+//! Pairing secrets, proofs and confirmation codes for `tidefell/pair/2` (see
+//! `specs/pair-v2.md`).
 
 use tidefell_proto::DeviceId;
 

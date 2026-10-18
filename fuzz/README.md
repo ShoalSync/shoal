@@ -1,6 +1,6 @@
 # Fuzz targets
 
-Targets for what arrives from outside (ADR 0031): sync/1, blobs/1 and pair/1 frames, signed
+Targets for what arrives from outside (ADR 0031): sync/1, blobs/1 and pair/2 frames, signed
 versions and device certificates, path validation, pairing codes, metadata snapshots and engine
 state files. They build with the nightly toolchain pinned in `rust-toolchain.toml`.
 

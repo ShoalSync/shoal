@@ -9,7 +9,9 @@ use proptest::prelude::*;
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
 use tidefell_proto::frame;
 use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
+use tidefell_proto::pair::{
+    FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode,
+};
 use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
     ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, SignedKind,
@@ -236,13 +238,19 @@ fn pair_message() -> impl Strategy<Value = PairMessage> {
         text(),
         prop::collection::vec(bytes32(), 0..3),
         any::<u32>(),
+        prop::option::of(prop::collection::vec(bytes32(), 0..3)),
     )
-        .prop_map(|(id, name, members, retention_days)| FolderOffer {
-            id: FolderId(id),
-            name,
-            members: members.into_iter().map(UserId).collect(),
-            retention_days,
-        });
+        .prop_map(
+            |(id, name, members, retention_days, storage_peers)| FolderOffer {
+                id: FolderId(id),
+                name,
+                members: members.into_iter().map(UserId).collect(),
+                retention_days,
+                encryption: storage_peers.map(|peers| OfferedEncryption {
+                    storage_peers: peers.into_iter().map(DeviceId).collect(),
+                }),
+            },
+        );
     prop_oneof![
         (certificate(), bytes32())
             .prop_map(|(approver, proof)| PairMessage::Request { approver, proof }),

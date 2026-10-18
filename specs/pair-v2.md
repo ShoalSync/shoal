@@ -1,10 +1,15 @@
-# Pairing protocol, version 1
+# Pairing protocol, version 2
 
-ALPN: `tidefell/pair/1`
+ALPN: `tidefell/pair/2`
 
 Status: draft. Messages are implemented in `crates/proto` (`pair` module) and the key
 derivations in `crates/identity` (`pairing` module); golden encodings are in
-[`vectors/pair-v1.json`](vectors/pair-v1.json). See ADR 0015.
+[`vectors/pair-v2.json`](vectors/pair-v2.json). See ADR 0015.
+
+Version 2 replaces version 1, before 1.0 and so without keeping it (ADR 0026): a folder offer
+says whether the folder is encrypted and who its storage peers are (ADR 0023), so the new
+device joins it as such. The derivation context `"tidefell pair/1 secret"` is unchanged: it is
+a label, not the protocol's version.
 
 ## Purpose
 
@@ -44,7 +49,7 @@ The confirmation code is shown as six decimal digits, zero-padded.
 
 ## Transport and encoding
 
-The approver dials `device` with ALPN `tidefell/pair/1` and opens one bidirectional stream.
+The approver dials `device` with ALPN `tidefell/pair/2` and opens one bidirectional stream.
 iroh's TLS authenticates the new device's key, so the approver knows it reached the device in the
 code; the proof shows the new device that the approver saw the code. Framing is the same as
 `tidefell/sync/1`: varint length prefix, postcard body.
@@ -59,7 +64,11 @@ code; the proof shows the new device that the approver saw the code. Framing is 
 | 3 | `Reject` | `code: PairErrorCode` |
 
 `FolderOffer` is `id: FolderId`, `name: String`, `members: Vec<UserId>`,
-`retention_days: u32` (0 keeps deleted files forever).
+`retention_days: u32` (0 keeps deleted files forever), `encryption: Option<OfferedEncryption>`.
+
+`OfferedEncryption` is `storage_peers: Vec<DeviceId>`: present for an encrypted folder, which the
+new device joins as encrypted and syncs over `sync/2` and `blobs/2`, with the approver's storage
+peers for it. The new device gets the folder's keys by grant once it has joined (`sync-v2.md`).
 
 `PairErrorCode` variants: `0 BadProof`, `1 Expired`, `2 Declined`, `3 BadCertificate`,
 `4 ProtocolViolation`.

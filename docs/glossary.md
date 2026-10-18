@@ -51,7 +51,7 @@ the same pull request that introduces it.
 | **Web account** | A username and password on one web peer, linked to a user. It sees exactly the folders that user is a member of. |
 | **Control socket** | `<data_dir>/control.sock`, where a daemon serves its REST API to local tools such as `tidefell`. |
 | **Signed envelope** | A wire message wrapped with the signer's public key and an Ed25519 signature. |
-| **Pairing** | Adding a new device to a user over the network with `pair/1`: a device holding the user key certifies the new device after the person confirms a code on both. |
+| **Pairing** | Adding a new device to a user over the network with `pair/2`: a device holding the user key certifies the new device after the person confirms a code on both. |
 | **Pairing code** | What a new device shows to be paired: its device ID, a one-time secret and its addresses. Shown as a QR code or text. Expires after ten minutes or one use. |
 | **Approver** | The device that holds the user key and certifies a new device during pairing. |
 | **Confirmation code** | Six digits derived from the pairing secret and both device IDs, shown on both devices during pairing so the person can check they match. |

@@ -1,4 +1,4 @@
-//! `tidefell/pair/1`: adding a new device to a user. See `specs/pair-v1.md` and ADR 0015.
+//! `tidefell/pair/2`: adding a new device to a user. See `specs/pair-v2.md` and ADR 0015.
 //!
 //! The new device runs a [`PairingServer`], a pairing-only endpoint that shows a
 //! [`PairingCode`]. A device holding the user key calls [`crate::Node::pair`] with the code, shows
@@ -14,7 +14,7 @@ use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use tidefell_identity::pairing;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
-use tidefell_proto::{DeviceId, PublicKey, Signed, ALPN_PAIR_V1};
+use tidefell_proto::{DeviceId, PublicKey, Signed, ALPN_PAIR_V2};
 use tokio::sync::mpsc;
 use tracing::debug;
 
@@ -104,7 +104,7 @@ impl PairingServer {
     /// Binds a pairing-only endpoint with the device key in `config` and creates a code valid
     /// for `ttl`. `name` is the name this device suggests for itself.
     pub async fn start(config: NodeConfig, name: String, ttl: Duration) -> Result<Self> {
-        let endpoint = bind_endpoint(&config, vec![ALPN_PAIR_V1.to_vec()]).await?;
+        let endpoint = bind_endpoint(&config, vec![ALPN_PAIR_V2.to_vec()]).await?;
         if config.relay != RelayConfig::Disabled {
             // Include the relay in the code when one is reachable.
             let _ = tokio::time::timeout(RELAY_TIMEOUT, endpoint.online()).await;
@@ -133,7 +133,7 @@ impl PairingServer {
             events: tx,
         };
         let router = Router::builder(endpoint.clone())
-            .accept(ALPN_PAIR_V1, protocol)
+            .accept(ALPN_PAIR_V2, protocol)
             .spawn();
         Ok(Self {
             endpoint,
@@ -349,7 +349,7 @@ impl ApproverSession {
             addr = addr.with_ip_addr(*ip);
         }
         let conn = endpoint
-            .connect(addr, ALPN_PAIR_V1)
+            .connect(addr, ALPN_PAIR_V2)
             .await
             .map_err(|e| Error::Connect(e.to_string()))?;
         let (mut send, mut recv) = conn

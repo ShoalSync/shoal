@@ -95,6 +95,11 @@ impl PendingPairing {
                             tidefell_meta::Retention::Forever => 0,
                             tidefell_meta::Retention::Days(d) => d,
                         },
+                        encryption: state.config.encryption.as_ref().map(|e| {
+                            tidefell_proto::pair::OfferedEncryption {
+                                storage_peers: e.storage_peers.clone(),
+                            }
+                        }),
                     })
             })
             .collect();

@@ -41,8 +41,8 @@ pub const ALPN_SYNC_V1: &[u8] = b"tidefell/sync/1";
 /// ALPN for the version 1 blob transfer protocol. See `specs/blobs-v1.md`.
 pub const ALPN_BLOBS_V1: &[u8] = b"tidefell/blobs/1";
 
-/// ALPN for the version 1 pairing protocol. See `specs/pair-v1.md`.
-pub const ALPN_PAIR_V1: &[u8] = b"tidefell/pair/1";
+/// ALPN for the version 2 pairing protocol. See `specs/pair-v2.md`.
+pub const ALPN_PAIR_V2: &[u8] = b"tidefell/pair/2";
 
 /// ALPN for encrypted folders' metadata exchange (`specs/sync-v2.md`), alongside sync/1.
 pub const ALPN_SYNC_V2: &[u8] = b"tidefell/sync/2";

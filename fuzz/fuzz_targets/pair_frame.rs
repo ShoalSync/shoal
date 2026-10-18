@@ -1,4 +1,4 @@
-//! pair/1 frames.
+//! pair/2 frames.
 
 #![no_main]
 

@@ -11,7 +11,9 @@ use serde_json::{json, Value};
 use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
 use tidefell_proto::frame::Message;
 use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
+use tidefell_proto::pair::{
+    FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode,
+};
 use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
 use tidefell_proto::{
     frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, UserId,
@@ -282,7 +284,7 @@ fn blobs_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
         .collect()
 }
 
-fn pair_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
+fn pair_v2_vectors() -> Vec<(&'static str, Vec<u8>)> {
     let messages = [
         (
             "request",
@@ -303,12 +305,24 @@ fn pair_v1_vectors() -> Vec<(&'static str, Vec<u8>)> {
                 certificate: certificate(),
                 relay: Some("https://relay.tidefell.org./".into()),
                 addrs: vec!["192.168.1.20:7777".parse().unwrap()],
-                folders: vec![FolderOffer {
-                    id: FolderId([0x22; 32]),
-                    name: "Photos".into(),
-                    members: vec![UserId(user_key().verifying_key().to_bytes())],
-                    retention_days: 30,
-                }],
+                folders: vec![
+                    FolderOffer {
+                        id: FolderId([0x22; 32]),
+                        name: "Photos".into(),
+                        members: vec![UserId(user_key().verifying_key().to_bytes())],
+                        retention_days: 30,
+                        encryption: None,
+                    },
+                    FolderOffer {
+                        id: FolderId([0x23; 32]),
+                        name: "Papers".into(),
+                        members: vec![UserId(user_key().verifying_key().to_bytes())],
+                        retention_days: 0,
+                        encryption: Some(OfferedEncryption {
+                            storage_peers: vec![DeviceId([0x44; 32])],
+                        }),
+                    },
+                ],
             },
         ),
         (
@@ -380,8 +394,8 @@ fn blobs_v1_golden_vectors() {
 }
 
 #[test]
-fn pair_v1_golden_vectors() {
-    check_vectors("pair-v1.json", "tidefell/pair/1", pair_v1_vectors());
+fn pair_v2_golden_vectors() {
+    check_vectors("pair-v2.json", "tidefell/pair/2", pair_v2_vectors());
 }
 
 #[test]
@@ -454,7 +468,7 @@ fn alpn_constants_match_specs() {
     for (alpn, file) in [
         (tidefell_proto::ALPN_SYNC_V1, "sync-v1.md"),
         (tidefell_proto::ALPN_BLOBS_V1, "blobs-v1.md"),
-        (tidefell_proto::ALPN_PAIR_V1, "pair-v1.md"),
+        (tidefell_proto::ALPN_PAIR_V2, "pair-v2.md"),
     ] {
         let spec = std::fs::read_to_string(specs_dir().join(file)).unwrap();
         let alpn = std::str::from_utf8(alpn).unwrap();

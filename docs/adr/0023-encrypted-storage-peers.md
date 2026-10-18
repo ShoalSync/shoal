@@ -204,6 +204,10 @@ fixes the folder database (ADR 0034):
   in a configuration file, has no device that "creates" it. Several first keys are what two
   rotations at once make, so the rules for them hold: each is granted to every member, and new
   content uses the one with the lower key ID.
+- **Pairing offers say so.** A new device paired by an approver is offered the approver's
+  folders (ADR 0015); for an encrypted one, the offer says it is encrypted and lists its storage
+  peers, so the new device joins it as encrypted (`tidefell/pair/2`, which replaces `pair/1`
+  before 1.0).
 - **Order of work.** Storage and the index first; then local changes sealed and remote versions
   opened; then keys, grants and rotation; then blobs/2; then creating and joining from the CLI
   and API. Each extends the simulation. Step 5 is done when two members sync an encrypted folder

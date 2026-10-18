@@ -25,7 +25,7 @@
 - [Protocols](reference/protocols.md)
   - [sync/1](reference/sync-v1.md)
   - [blobs/1](reference/blobs-v1.md)
-  - [pair/1](reference/pair-v1.md)
+  - [pair/2](reference/pair-v2.md)
 
 # Security
 
