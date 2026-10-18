@@ -124,8 +124,8 @@ fn listed(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
             let Ok(sealed) = SealedVersion::decode(&signed.body) else {
                 continue;
             };
-            // List blobs are not kept yet; files of more than 4096 chunks are not stored whole.
-            let ChunkList::Inline(ids) = sealed.chunks else {
+            // A version listing its chunks in list blobs counts once they are fetched.
+            let Some(ids) = crate::encrypted::chunk_ids_of(state, &sealed) else {
                 continue;
             };
             for id in ids {
@@ -259,8 +259,31 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
         return 0;
     }
     let keep: BTreeSet<ChunkId> = listed(state, false).into_iter().collect();
+    // And the list blobs no kept version names.
+    let lists: BTreeSet<tidefell_proto::ListId> = state
+        .items
+        .values()
+        .filter_map(|item| match item {
+            Item::Version(signed) => SealedVersion::decode(&signed.body).ok(),
+            _ => None,
+        })
+        .flat_map(|sealed| match sealed.chunks {
+            ChunkList::Lists(lists) => lists,
+            ChunkList::Inline(_) => Vec::new(),
+        })
+        .collect();
+    let gone: Vec<tidefell_proto::ListId> = state
+        .list_blobs
+        .keys()
+        .filter(|id| !lists.contains(id))
+        .copied()
+        .collect();
+    for id in &gone {
+        state.list_blobs.remove(id);
+    }
     state
         .sealed_store
         .as_mut()
         .map_or(0, |store| store.retain(&keep))
+        + gone.len()
 }

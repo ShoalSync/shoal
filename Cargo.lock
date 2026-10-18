@@ -4242,6 +4242,7 @@ dependencies = [
 name = "tidefell-proto"
 version = "0.21.0"
 dependencies = [
+ "blake3",
  "ed25519-dalek",
  "postcard",
  "proptest",

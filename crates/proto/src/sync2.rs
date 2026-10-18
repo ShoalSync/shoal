@@ -93,6 +93,40 @@ impl SignedKind for SealedVersion {
     }
 }
 
+/// A list blob with its list ID.
+pub type ListBlob = (ListId, Vec<u8>);
+
+/// A file's chunk IDs as a version lists them (`specs/encryption-v1.md`, "Chunk lists"): inline
+/// up to [`MAX_INLINE_CHUNKS`], otherwise in list blobs of [`MAX_INLINE_CHUNKS`] each, the last
+/// holding the rest, returned with their bytes. `None` for a file of more chunks than
+/// [`LIST_BLOBS`] lists hold.
+pub fn chunk_list(ids: &[ChunkId]) -> Option<(ChunkList, Vec<ListBlob>)> {
+    if ids.len() <= MAX_INLINE_CHUNKS {
+        return Some((ChunkList::Inline(ids.to_vec()), Vec::new()));
+    }
+    let blobs: Vec<ListBlob> = ids
+        .chunks(MAX_INLINE_CHUNKS)
+        .map(|list| {
+            let bytes = postcard::to_stdvec(list).unwrap_or_default();
+            (ListId(*blake3::hash(&bytes).as_bytes()), bytes)
+        })
+        .collect();
+    if !LIST_BLOBS.contains(&blobs.len()) {
+        return None;
+    }
+    let lists = blobs.iter().map(|(id, _)| *id).collect();
+    Some((ChunkList::Lists(lists), blobs))
+}
+
+/// The chunk IDs in list blob `bytes`, if it is the blob `id` names and well formed.
+pub fn read_list_blob(id: &ListId, bytes: &[u8]) -> Option<Vec<ChunkId>> {
+    if blake3::hash(bytes).as_bytes() != &id.0 {
+        return None;
+    }
+    let ids: Vec<ChunkId> = postcard::from_bytes(bytes).ok()?;
+    (!ids.is_empty() && ids.len() <= MAX_INLINE_CHUNKS).then_some(ids)
+}
+
 impl SealedVersion {
     /// Checks what anyone can check without the key: the bounds of `specs/sync-v2.md`.
     pub fn check_bounds(&self) -> Result<(), Error> {
@@ -285,4 +319,39 @@ pub enum SyncMessage {
     Error {
         code: ErrorCode,
     },
+}
+
+#[cfg(test)]
+mod list_tests {
+    use super::*;
+
+    #[test]
+    fn files_of_more_than_4096_chunks_list_them_in_list_blobs() {
+        let ids: Vec<ChunkId> = (0..5000u32)
+            .map(|n| {
+                let mut id = [0; 32];
+                id[..4].copy_from_slice(&n.to_le_bytes());
+                ChunkId(id)
+            })
+            .collect();
+        let (inline, none) = chunk_list(&ids[..4096]).unwrap();
+        assert!(matches!(inline, ChunkList::Inline(ref v) if v.len() == 4096));
+        assert!(none.is_empty());
+        let (list, blobs) = chunk_list(&ids).unwrap();
+        let ChunkList::Lists(lists) = list else {
+            panic!("not lists")
+        };
+        assert_eq!(lists.len(), 2);
+        let read: Vec<ChunkId> = blobs
+            .iter()
+            .flat_map(|(id, bytes)| read_list_blob(id, bytes).unwrap())
+            .collect();
+        assert_eq!(read, ids);
+        // Every list but the last holds exactly 4096, and a blob must match its ID.
+        assert_eq!(read_list_blob(&lists[0], &blobs[0].1).unwrap().len(), 4096);
+        assert!(read_list_blob(&lists[1], &blobs[0].1).is_none());
+        assert!(blobs
+            .iter()
+            .all(|(_, b)| b.len() <= crate::blobs2::MAX_LIST_BLOB));
+    }
 }

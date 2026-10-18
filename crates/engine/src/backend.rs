@@ -456,6 +456,10 @@ impl EncryptedBackend for EngineBackend {
     /// sealed yet.
     fn blob(&self, folder: &FolderId, id: &BlobId) -> Option<Vec<u8>> {
         let handle = self.0.folder(folder).ok()?;
+        // A list blob, of a version this device holds (ADR 0023).
+        if let Some(list) = handle.lock().list_blobs.get(&tidefell_proto::ListId(id.0)) {
+            return Some(list.clone());
+        }
         let id = tidefell_proto::ChunkId(id.0);
         // A storage peer serves a chunk as it stored it, sealed (ADR 0023).
         if let Some(store) = handle.lock().sealed_store.as_ref() {
@@ -469,10 +473,15 @@ impl EncryptedBackend for EngineBackend {
         let mut state = handle.lock();
         let ids: Vec<tidefell_proto::ChunkId> =
             ids.iter().map(|id| tidefell_proto::ChunkId(id.0)).collect();
-        if let Some(store) = state.sealed_store.as_ref() {
-            return Some(ids.iter().map(|id| store.has(id)).collect());
-        }
-        Some(crate::encrypted::holds(&self.0, &mut state, &ids))
+        let lists: Vec<bool> = ids
+            .iter()
+            .map(|id| state.list_blobs.contains_key(&tidefell_proto::ListId(id.0)))
+            .collect();
+        let chunks = match state.sealed_store.as_ref() {
+            Some(store) => ids.iter().map(|id| store.has(id)).collect(),
+            None => crate::encrypted::holds(&self.0, &mut state, &ids),
+        };
+        Some(lists.into_iter().zip(chunks).map(|(l, c)| l || c).collect())
     }
 
     fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {

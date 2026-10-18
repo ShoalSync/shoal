@@ -35,7 +35,7 @@ const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
 const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
-pub(crate) const MAPS: [&str; 17] = [
+pub(crate) const MAPS: [&str; 18] = [
     "manifests",
     "local",
     "progress",
@@ -58,6 +58,8 @@ pub(crate) const MAPS: [&str; 17] = [
     "sealed_chunks",
     // A stored folder's (ADR 0023): when each superseded sealed version was superseded.
     "superseded",
+    // An encrypted folder's list blobs, by list ID: of its own versions, and fetched (ADR 0023).
+    "list_blobs",
 ];
 
 /// In the header table, present in an encrypted folder's database: its versions rows hold

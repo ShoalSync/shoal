@@ -490,6 +490,9 @@ pub(crate) struct FolderState {
     pub(crate) superseded: Tracked<u64, i64>,
     /// On a storage peer, the kept sealed versions no other supersedes, by entry, with their
     /// vectors: built from `items` when first needed, not stored.
+    /// An encrypted folder's list blobs, by list ID: those its own versions list, and those
+    /// fetched to open or store others' (ADR 0023).
+    pub(crate) list_blobs: Tracked<tidefell_proto::ListId, Vec<u8>>,
     /// On a storage peer, the folder's sealed chunks (ADR 0023).
     pub(crate) sealed_store: Option<crate::stored::SealedStore>,
     pub(crate) stored_heads: Option<
@@ -606,6 +609,7 @@ impl FolderState {
             keys: Tracked::default(),
             items: Tracked::default(),
             superseded: Tracked::default(),
+            list_blobs: Tracked::default(),
             sealed_store: None,
             stored_heads: None,
             chunk_ids: Tracked::default(),
@@ -827,6 +831,7 @@ impl FolderState {
         self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
         self.items = Tracked::decode(take("items")).map_err(corrupt)?;
         self.superseded = Tracked::decode(take("superseded")).map_err(corrupt)?;
+        self.list_blobs = Tracked::decode(take("list_blobs")).map_err(corrupt)?;
         self.chunk_ids = Tracked::decode(take("chunk_ids")).map_err(corrupt)?;
         self.sealed_chunks = Tracked::decode(take("sealed_chunks")).map_err(corrupt)?;
         // A folder is encrypted or not from its creation (ADR 0023): a database that disagrees
@@ -950,6 +955,7 @@ impl FolderState {
             ("keys", self.keys.all()),
             ("items", self.items.all()),
             ("superseded", self.superseded.all()),
+            ("list_blobs", self.list_blobs.all()),
             ("chunk_ids", self.chunk_ids.all()),
             ("sealed_chunks", self.sealed_chunks.all()),
             ("pins", self.old_pins.all()),
@@ -972,6 +978,7 @@ impl FolderState {
             ("keys", self.keys.take_changed()),
             ("items", self.items.take_changed()),
             ("superseded", self.superseded.take_changed()),
+            ("list_blobs", self.list_blobs.take_changed()),
             ("chunk_ids", self.chunk_ids.take_changed()),
             ("sealed_chunks", self.sealed_chunks.take_changed()),
             ("pins", self.old_pins.take_changed()),

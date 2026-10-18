@@ -1577,7 +1577,12 @@ async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> 
     let handle = inner.folder(&id)?;
     // A stored folder writes no files: it fetches the sealed chunks it keeps (ADR 0023).
     if handle.lock().config.is_stored() {
+        crate::encrypted::fetch_lists(inner, node, &handle).await;
         return crate::stored::fetch(inner, node, &handle).await;
+    }
+    // Versions of large files wait for the list blobs naming their chunks.
+    if handle.lock().config.encryption.is_some() {
+        crate::encrypted::fetch_lists(inner, node, &handle).await;
     }
     // Checked before fetching, so an unavailable folder does not download what it cannot write.
     handle.available()?;

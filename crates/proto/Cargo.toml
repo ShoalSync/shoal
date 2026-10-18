@@ -13,6 +13,7 @@ workspace = true
 # Dependency boundary: this crate is permissively licensed (MIT OR Apache-2.0)
 # and must never depend on an AGPL-licensed crate.
 [dependencies]
+blake3.workspace = true
 ed25519-dalek.workspace = true
 postcard.workspace = true
 serde.workspace = true

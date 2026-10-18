@@ -565,3 +565,98 @@ async fn a_storage_peer_stops_at_its_quota() {
     engine_a.shutdown().await;
     engine_s.shutdown().await;
 }
+
+/// A file of more than 4096 chunks lists them in list blobs (ADR 0023): a member seals it so,
+/// the storage peer fetches its list blobs and then its chunks, and a member that meets the
+/// author only through the storage peer opens it and gets it whole. About a gigabyte of data,
+/// so run by hand: `cargo test --release --features simulation --test encrypted -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "writes and syncs over a gigabyte"]
+async fn a_file_of_more_than_4096_chunks_syncs_through_list_blobs() {
+    use std::io::Write as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([14; 32]);
+    let operator = UserKey::from_seed([15; 32]);
+    let a = Member::new(dir.path(), "a", 120);
+    let b = Member::new(dir.path(), "b", 121);
+    let (id_a, id_b) = (a.key.id(), b.key.id());
+    let storage_key = DeviceKey::from_seed([122; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        122,
+        &operator,
+        &[user.id()],
+        &network,
+        &[id_a, id_b],
+        u64::MAX,
+    )
+    .await;
+    let engine_a = a
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    // Random bytes chunk at 256 KiB on average: 1.1 GiB is well over 4096 chunks.
+    let big = a.root.join("big.bin");
+    fs::create_dir_all(&a.root).unwrap();
+    let mut file = std::io::BufWriter::new(fs::File::create(&big).unwrap());
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut block = vec![0u8; 1 << 20];
+    for _ in 0..1100 {
+        for word in block.chunks_mut(8) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            word.copy_from_slice(&state.to_le_bytes());
+        }
+        file.write_all(&block).unwrap();
+    }
+    file.flush().unwrap();
+    drop(file);
+    let want = blake3::hash(&fs::read(&big).unwrap());
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually_for("the storage peer stores all of it", 600, || {
+        let s = stored(&engine_s);
+        s.versions == 1 && s.missing_chunks == 0 && s.bytes > 1 << 30
+    })
+    .await;
+
+    let engine_b = b
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    eventually_for(
+        "b gets the whole file through the storage peer",
+        600,
+        || {
+            b.read("big.bin")
+                .is_some_and(|bytes| blake3::hash(&bytes) == want)
+        },
+    )
+    .await;
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+    engine_s.shutdown().await;
+}
+
+async fn eventually_for(what: &str, seconds: u64, mut check: impl FnMut() -> bool) {
+    for _ in 0..seconds * 10 {
+        if check() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("timed out waiting for {what}");
+}

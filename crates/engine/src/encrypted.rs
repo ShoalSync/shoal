@@ -15,7 +15,7 @@ use tidefell_meta::{Seal, Verified, Wire};
 use tidefell_net::ItemPage;
 use tidefell_proto::sync::{EntryKind, EntryVersion};
 use tidefell_proto::sync2::{
-    ChunkList, EncryptionKey, Item, KeyGrant, SealedPayload, SealedVersion, MAX_INLINE_CHUNKS,
+    ChunkList, EncryptionKey, Item, KeyGrant, SealedPayload, SealedVersion,
 };
 use tidefell_proto::{Causality, ChunkHash, ChunkId, DeviceId, KeyId, Signed};
 use tracing::{debug, info, warn};
@@ -76,7 +76,9 @@ impl Seal for Signer {
 pub(crate) struct Sealer {
     signing: SigningKey,
     key: FolderKey,
-    chunks: Vec<ChunkId>,
+    /// The content's chunk IDs as the version lists them: inline, or in list blobs, which
+    /// [`signer`] recorded so this device can serve them.
+    chunks: ChunkList,
     lens: Vec<u32>,
 }
 
@@ -86,15 +88,8 @@ impl Sealer {
         let (chunks, lens) = if file {
             (self.chunks.clone(), self.lens.clone())
         } else {
-            (Vec::new(), Vec::new())
+            (ChunkList::Inline(Vec::new()), Vec::new())
         };
-        if chunks.len() > MAX_INLINE_CHUNKS {
-            // List blobs come with content transfer (ADR 0023): until then, a change to a file
-            // this large is refused rather than sent without its chunks.
-            return Err(tidefell_meta::Error::Sealing(
-                "a file of more than 4096 chunks needs list blobs".into(),
-            ));
-        }
         let payload = SealedPayload {
             path: version.path.clone(),
             kind: version.kind.clone(),
@@ -116,7 +111,7 @@ impl Sealer {
             author: version.author,
             generation: self.key.generation(),
             key: self.key.id(),
-            chunks: ChunkList::Inline(chunks),
+            chunks,
             sealed,
             version: version.version.clone(),
         };
@@ -160,9 +155,16 @@ pub(crate) fn signer(
                 (*content, key.id()),
                 ids.iter().copied().zip(lens.iter().copied()).collect(),
             );
-            (ids, lens)
+            // A file of more than 4096 chunks lists them in list blobs (encryption-v1.md).
+            let (list, blobs) = tidefell_proto::sync2::chunk_list(&ids).ok_or_else(|| {
+                Error::Invalid(format!("content {content} has too many chunks to list"))
+            })?;
+            for (id, bytes) in blobs {
+                state.list_blobs.insert(id, bytes);
+            }
+            (list, lens)
         }
-        _ => (Vec::new(), Vec::new()),
+        _ => (ChunkList::Inline(Vec::new()), Vec::new()),
     };
     Ok(Signer::Sealed(Box::new(Sealer {
         signing,
@@ -758,9 +760,8 @@ fn open(
     signed: Signed<SealedVersion>,
 ) -> Option<std::result::Result<(Verified, Option<SealedContent>), String>> {
     let key = key(state, &sealed.key)?;
-    let ChunkList::Inline(ids) = &sealed.chunks else {
-        return None;
-    };
+    // A version listing its chunks in list blobs opens once they are all here.
+    let ids = &chunk_ids_of(state, sealed)?;
     Some((|| {
         let payload = key
             .open_payload(
@@ -785,6 +786,116 @@ fn open(
             Verified::sealed(state.config.id, version, signed).map_err(|e| e.to_string())?;
         Ok((verified, content))
     })())
+}
+
+/// The chunk IDs `sealed` lists, inline or in list blobs; `None` while a list blob it names is
+/// not here.
+pub(crate) fn chunk_ids_of(state: &FolderState, sealed: &SealedVersion) -> Option<Vec<ChunkId>> {
+    match &sealed.chunks {
+        ChunkList::Inline(ids) => Some(ids.clone()),
+        ChunkList::Lists(lists) => {
+            let mut ids = Vec::new();
+            for list in lists {
+                let bytes = state.list_blobs.get(list)?;
+                ids.extend(tidefell_proto::sync2::read_list_blob(list, bytes)?);
+            }
+            Some(ids)
+        }
+    }
+}
+
+/// Fetches the list blobs that kept sealed versions name and this device lacks, from the peers
+/// sharing the folder, and opens the versions that waited for them. Returns true if it fetched
+/// any.
+pub(crate) async fn fetch_lists(
+    inner: &std::sync::Arc<Inner>,
+    node: &std::sync::Arc<tidefell_net::Node>,
+    handle: &FolderHandle,
+) -> bool {
+    use tidefell_net::{BlobKind, BlobResult};
+    use tidefell_proto::blobs2::BlobId;
+    use tidefell_proto::SignedKind as _;
+
+    let (folder, mut wanted) = {
+        let state = handle.lock();
+        let mut wanted: Vec<tidefell_proto::ListId> = Vec::new();
+        for item in state.items.values() {
+            let Item::Version(signed) = item else {
+                continue;
+            };
+            let Ok(sealed) = SealedVersion::decode(&signed.body) else {
+                continue;
+            };
+            if let ChunkList::Lists(lists) = sealed.chunks {
+                for list in lists {
+                    if !state.list_blobs.contains_key(&list) && !wanted.contains(&list) {
+                        wanted.push(list);
+                    }
+                }
+            }
+        }
+        (state.config.id, wanted)
+    };
+    if wanted.is_empty() {
+        return false;
+    }
+    let peers: Vec<DeviceId> = node
+        .encrypted_peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&folder))
+        .map(|p| p.device())
+        .collect();
+    let mut fetched = false;
+    for peer in peers {
+        if wanted.is_empty() {
+            break;
+        }
+        let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
+            continue;
+        };
+        for batch in wanted
+            .clone()
+            .chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST)
+        {
+            let request: Vec<(BlobId, BlobKind)> = batch
+                .iter()
+                .map(|id| (BlobId::from(*id), BlobKind::List))
+                .collect();
+            let Ok(results) = node.fetch_blobs(endpoint, folder, &request).await else {
+                break;
+            };
+            let mut state = handle.lock();
+            for result in results {
+                // The network layer checked it against its ID.
+                let BlobResult::Found(id, bytes) = result else {
+                    continue;
+                };
+                let list = tidefell_proto::ListId(id.0);
+                if batch.contains(&list) {
+                    state.list_blobs.insert(list, bytes);
+                    wanted.retain(|w| *w != list);
+                    fetched = true;
+                }
+            }
+        }
+    }
+    if fetched {
+        let mut state = handle.lock();
+        let now = inner.now_ms();
+        let mut touched = Vec::new();
+        if !state.config.is_stored() {
+            state.meta.set_record_receipts(false);
+            open_waiting(&mut state, now, &mut touched);
+            let rebuilding = state.rebuilding();
+            state.meta.set_record_receipts(!rebuilding);
+        }
+        if let Err(e) = state.save() {
+            warn!(%folder, error = %e, "saving fetched list blobs failed");
+        }
+        drop(state);
+        inner.changed();
+    }
+    fetched
 }
 
 /// A file's content as a sealed version names it: its hash, and its chunks' key, IDs and
