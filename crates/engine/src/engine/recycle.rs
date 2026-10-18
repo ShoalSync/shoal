@@ -129,7 +129,12 @@ pub(super) fn purge(inner: &Inner, now_ms: i64) {
         let mut state = handle.lock();
         let set_aside = setaside::purge(&mut state, now_ms);
         let (purged, chunks) = state.purge(now_ms);
-        if !purged.is_empty() || !chunks.is_empty() || !set_aside.is_empty() {
+        // A storage peer's superseded versions, past retention (ADR 0023).
+        let superseded = crate::encrypted::purge_superseded(&mut state, now_ms);
+        if superseded > 0 {
+            info!(folder = %id, versions = superseded, "dropped superseded versions");
+        }
+        if !purged.is_empty() || !chunks.is_empty() || !set_aside.is_empty() || superseded > 0 {
             info!(
                 folder = %id,
                 items = purged.len() + set_aside.len(),

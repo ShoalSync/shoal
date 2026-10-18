@@ -484,6 +484,18 @@ pub(crate) struct FolderState {
     pub(crate) keys: Tracked<tidefell_proto::KeyId, (u64, [u8; 32])>,
     /// An encrypted folder's index items besides the versions in `meta`, by sequence:
     /// encryption keys, grants, and sealed versions this device cannot open yet.
+    /// On a storage peer, the sealed versions among `items` that another kept version
+    /// supersedes by vector, with when that was seen: no longer served, and dropped once the
+    /// folder's retention has passed (ADR 0023).
+    pub(crate) superseded: Tracked<u64, i64>,
+    /// On a storage peer, the kept sealed versions no other supersedes, by entry, with their
+    /// vectors: built from `items` when first needed, not stored.
+    pub(crate) stored_heads: Option<
+        std::collections::HashMap<
+            tidefell_proto::EntryId,
+            Vec<(u64, tidefell_proto::VersionVector)>,
+        >,
+    >,
     pub(crate) items: Tracked<u64, tidefell_proto::sync2::Item>,
     /// Which chunk each of an encrypted folder's chunk IDs is, and under which key.
     pub(crate) chunk_ids:
@@ -565,7 +577,12 @@ impl FolderState {
         let path = db_path(metadata_dir, config.id);
         let members = FolderMembers::new(config.id, config.members.iter().copied());
 
-        let ignores = Ignores::load(&config.path);
+        // A stored folder has no files, so nothing to ignore (ADR 0023).
+        let ignores = if config.is_stored() {
+            Ignores::defaults(&config.path)
+        } else {
+            Ignores::load(&config.path)
+        };
         let retention = config.retention;
         let mut state = Self {
             meta: Folder::new(config.id, device, 1, retention),
@@ -586,6 +603,8 @@ impl FolderState {
             replaced: Tracked::default(),
             keys: Tracked::default(),
             items: Tracked::default(),
+            superseded: Tracked::default(),
+            stored_heads: None,
             chunk_ids: Tracked::default(),
             sealed_chunks: Tracked::default(),
             pins: BTreeSet::new(),
@@ -651,7 +670,9 @@ impl FolderState {
             lines,
         ));
         // Files kept by earlier versions have no sidecar yet (ADR 0034).
-        state.refresh_sidecars();
+        if !state.config.is_stored() {
+            state.refresh_sidecars();
+        }
         Ok(state)
     }
 
@@ -800,6 +821,7 @@ impl FolderState {
         self.replaced = Tracked::decode(take("replaced")).map_err(corrupt)?;
         self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
         self.items = Tracked::decode(take("items")).map_err(corrupt)?;
+        self.superseded = Tracked::decode(take("superseded")).map_err(corrupt)?;
         self.chunk_ids = Tracked::decode(take("chunk_ids")).map_err(corrupt)?;
         self.sealed_chunks = Tracked::decode(take("sealed_chunks")).map_err(corrupt)?;
         // A folder is encrypted or not from its creation (ADR 0023): a database that disagrees
@@ -922,6 +944,7 @@ impl FolderState {
             ("replaced", self.replaced.all()),
             ("keys", self.keys.all()),
             ("items", self.items.all()),
+            ("superseded", self.superseded.all()),
             ("chunk_ids", self.chunk_ids.all()),
             ("sealed_chunks", self.sealed_chunks.all()),
             ("pins", self.old_pins.all()),
@@ -943,6 +966,7 @@ impl FolderState {
             ("replaced", self.replaced.take_changed()),
             ("keys", self.keys.take_changed()),
             ("items", self.items.take_changed()),
+            ("superseded", self.superseded.take_changed()),
             ("chunk_ids", self.chunk_ids.take_changed()),
             ("sealed_chunks", self.sealed_chunks.take_changed()),
             ("pins", self.old_pins.take_changed()),

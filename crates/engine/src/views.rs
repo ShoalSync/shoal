@@ -82,6 +82,19 @@ pub struct EncryptionInfo {
     /// The generation of the folder key new content is sealed with, or `None` until a key has
     /// reached this device.
     pub key_generation: Option<u64>,
+    /// On a storage peer, what it stores of the folder.
+    pub stored: Option<StoredInfo>,
+}
+
+/// What a storage peer stores of a folder it cannot read (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredInfo {
+    /// Sealed versions it serves: those no other kept version supersedes.
+    pub versions: usize,
+    /// Superseded versions it keeps for the folder's retention.
+    pub superseded: usize,
+    /// The most it keeps of the folder's chunks, in bytes.
+    pub quota_bytes: u64,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and

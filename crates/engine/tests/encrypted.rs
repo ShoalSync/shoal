@@ -73,6 +73,7 @@ impl Member {
                 confirm_deletes: Default::default(),
                 encryption: Some(Encryption {
                     storage_peers: storage_peers.to_vec(),
+                    stored: None,
                 }),
             }],
             min_free_space: None,
@@ -320,4 +321,159 @@ async fn removing_a_member_rotates_the_key() {
 
     engine_g.shutdown().await;
     engine_a.shutdown().await;
+}
+
+/// Starts a storage peer of `operator`'s for the folder, stored for `members` (ADR 0023): no
+/// files, no keys, only sealed versions and items.
+async fn storage_peer(
+    dir: &Path,
+    seed: u8,
+    operator: &UserKey,
+    members: &[UserId],
+    network: &Network,
+    peers: &[DeviceId],
+) -> (DeviceKey, Engine) {
+    let key = DeviceKey::from_seed([seed; 32]);
+    let data = dir.join("storage").join("data");
+    let config = EngineConfig {
+        data_dir: data.clone(),
+        metadata_dir: None,
+        relay: RelayConfig::Disabled,
+        address_lookup: false,
+        local_discovery: false,
+        watch: false,
+        limits: Default::default(),
+        bind: None,
+        peers: peers
+            .iter()
+            .map(|device| PeerAddr {
+                device: *device,
+                addrs: Vec::new(),
+                relay: None,
+            })
+            .collect(),
+        folders: vec![FolderConfig {
+            id: FOLDER,
+            path: data.join("stored").join(FOLDER.to_string()),
+            mode: ReplicaMode::Full,
+            members: members.to_vec(),
+            retention: Retention::Days(30),
+            scan_interval: Duration::from_secs(3600),
+            sync: Default::default(),
+            confirm_deletes: Default::default(),
+            encryption: Some(Encryption {
+                storage_peers: Vec::new(),
+                stored: Some(tidefell_engine::Stored {
+                    quota_bytes: 1 << 30,
+                }),
+            }),
+        }],
+        min_free_space: None,
+    };
+    let certificate = operator.certify(key.id(), "storage", 0);
+    let engine = Engine::start_simulated(config, key.clone(), certificate, network)
+        .await
+        .unwrap();
+    engine.set_retry_interval(Duration::from_millis(50));
+    (key, engine)
+}
+
+fn stored(engine: &Engine) -> tidefell_engine::StoredInfo {
+    engine
+        .folders()
+        .into_iter()
+        .find(|f| f.id == FOLDER)
+        .and_then(|f| f.encryption)
+        .and_then(|e| e.stored)
+        .unwrap()
+}
+
+/// Two members that never meet sync an encrypted folder's index through a storage peer (ADR
+/// 0023): the second gets the folder key granted by the first, relayed, and opens the first's
+/// versions, while the storage peer holds them sealed, keeps no key, and serves only the newest
+/// of each entry.
+#[tokio::test(flavor = "multi_thread")]
+async fn members_meet_through_a_storage_peer() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([10; 32]);
+    let operator = UserKey::from_seed([11; 32]);
+    let a = Member::new(dir.path(), "a", 100);
+    let b = Member::new(dir.path(), "b", 101);
+    let (id_a, id_b) = (a.key.id(), b.key.id());
+    let storage_key = DeviceKey::from_seed([102; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        102,
+        &operator,
+        &[user.id()],
+        &network,
+        &[id_a, id_b],
+    )
+    .await;
+    // a and b each know only the storage peer.
+    let engine_a = a
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    a.write("notes.txt", b"first");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the storage peer keeps a's version", || {
+        stored(&engine_s).versions == 1
+    })
+    .await;
+    // Nothing of the folder is on the storage peer's disk as files, and it holds no key.
+    assert_eq!(engine_s.folder_key_generation(FOLDER).unwrap(), None);
+    assert!(engine_s.files(FOLDER).unwrap().is_empty());
+
+    let engine_b = b
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    eventually("b opens a's version, relayed", || {
+        paths(&engine_b) == vec!["notes.txt"]
+    })
+    .await;
+    assert_eq!(generation(&engine_b), Some(1));
+
+    // An edit supersedes the version the storage peer had: it keeps that one, unserved.
+    a.write("notes.txt", b"second");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the storage peer supersedes the first version", || {
+        let s = stored(&engine_s);
+        s.versions == 1 && s.superseded == 1
+    })
+    .await;
+
+    // What it stores outlasts a restart.
+    engine_s.shutdown().await;
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        102,
+        &operator,
+        &[user.id()],
+        &network,
+        &[id_a, id_b],
+    )
+    .await;
+    let s = stored(&engine_s);
+    assert_eq!((s.versions, s.superseded), (1, 1));
+    // Past the folder's retention, the superseded version goes; the current one stays.
+    engine_s.purge(engine_s.now_ms() + 31 * 24 * 60 * 60 * 1000);
+    let s = stored(&engine_s);
+    assert_eq!((s.versions, s.superseded), (1, 0));
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+    engine_s.shutdown().await;
 }

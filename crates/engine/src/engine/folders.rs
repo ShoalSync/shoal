@@ -141,6 +141,9 @@ impl Engine {
                         storage_peers: e.storage_peers.clone(),
                         key_generation: crate::encrypted::newest_key(&state)
                             .map(|key| key.generation()),
+                        stored: e
+                            .stored
+                            .map(|stored| crate::encrypted::stored_info(&state, stored)),
                     }),
                     rebuild: state.last_rebuild().map(|r| RebuildInfo {
                         started_ms: r.started_ms,

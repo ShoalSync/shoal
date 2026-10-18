@@ -68,6 +68,7 @@ impl Runtime {
                 .find(|(id, _)| *id == folder.id)
                 .map(|(_, storage_peers)| crate::config::Encryption {
                     storage_peers: storage_peers.clone(),
+                    stored: None,
                 });
         FolderConfig {
             encryption,
@@ -463,6 +464,7 @@ mod tests {
             config.encryption,
             Some(crate::config::Encryption {
                 storage_peers: vec![DeviceId([9; 32])],
+                stored: None,
             })
         );
     }

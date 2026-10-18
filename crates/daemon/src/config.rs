@@ -430,6 +430,7 @@ impl Config {
                                 .iter()
                                 .map(|d| hex_id::<DeviceId>("storage peer", d))
                                 .collect::<Result<_, _>>()?,
+                            stored: None,
                         })
                     })
                     .transpose()?,

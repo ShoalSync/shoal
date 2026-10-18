@@ -80,6 +80,10 @@ struct World {
     revoked: Option<usize>,
     /// The folder is an encrypted one (ADR 0023).
     encrypted: bool,
+    /// For an encrypted folder, a storage peer of another user's that stores it for the
+    /// devices' user (ADR 0023): left out of the comparisons, and never holds a key.
+    storage: Option<Engine>,
+    storage_key: DeviceKey,
 }
 
 /// Runs `ops` on `devices` devices in a directory under `base`, then heals the network, lets
@@ -88,12 +92,23 @@ struct World {
 /// - every device not revoked has the same files, and the same index;
 /// - no content is lost: what a device had and the user did not remove is still on it, live or
 ///   kept (ADR 0027, ADR 0029);
-/// - no engine failed.
+/// - no engine failed;
+/// - in an encrypted folder, the storage peer never got a key.
 pub async fn run(ops: &[Op], devices: u8, base: &Path) -> Result<(), Failure> {
     let dir = tempfile::tempdir_in(base).map_err(|e| fail(None, e.to_string()))?;
     let mut world = World::new(dir.path(), devices);
     world.encrypted = ops.first() == Some(&Op::Encrypted);
-    let result = world.run(ops).await;
+    let result = match world.encrypted {
+        true => world
+            .start_storage(dir.path())
+            .await
+            .map_err(|e| fail(None, e)),
+        false => Ok(()),
+    };
+    let result = match result {
+        Ok(()) => world.run(ops).await,
+        Err(e) => Err(e),
+    };
     world.stop().await;
     // Traces name each run by its directory, so a failure says which run's trace is its own.
     if std::env::var_os("TIDEFELL_SIM_TRACE").is_some() {
@@ -133,11 +148,68 @@ impl World {
             devices,
             revoked: None,
             encrypted: false,
+            storage: None,
+            storage_key: DeviceKey::from_seed([30; 32]),
         }
     }
 
+    /// Starts the storage peer: its operator's user is not a member, and it stores the folder
+    /// for the devices' user.
+    async fn start_storage(&mut self, dir: &Path) -> Result<(), String> {
+        let data = dir.join("storage").join("data");
+        let config = EngineConfig {
+            data_dir: data.clone(),
+            metadata_dir: None,
+            relay: RelayConfig::Disabled,
+            address_lookup: false,
+            local_discovery: false,
+            watch: false,
+            limits: Default::default(),
+            bind: None,
+            peers: self
+                .devices
+                .iter()
+                .map(|d| PeerAddr {
+                    device: d.key.id(),
+                    addrs: Vec::new(),
+                    relay: None,
+                })
+                .collect(),
+            folders: vec![FolderConfig {
+                id: FOLDER,
+                path: data.join("stored"),
+                mode: ReplicaMode::Full,
+                members: vec![self.user.id()],
+                retention: Retention::Days(30),
+                scan_interval: Duration::from_secs(3600),
+                sync: Default::default(),
+                confirm_deletes: Default::default(),
+                encryption: Some(tidefell_engine::Encryption {
+                    storage_peers: Vec::new(),
+                    stored: Some(tidefell_engine::Stored {
+                        quota_bytes: u64::MAX,
+                    }),
+                }),
+            }],
+            min_free_space: Some(0),
+        };
+        let operator = UserKey::from_seed([3; 32]);
+        let certificate = operator.certify(self.storage_key.id(), "storage", 0);
+        let engine =
+            Engine::start_simulated(config, self.storage_key.clone(), certificate, &self.network)
+                .await
+                .map_err(|e| format!("the storage peer did not start: {e}"))?;
+        engine.set_retry_interval(Duration::from_millis(50));
+        self.storage = Some(engine);
+        Ok(())
+    }
+
     async fn start(&mut self, n: usize) -> Result<(), String> {
-        let ids: Vec<DeviceId> = self.devices.iter().map(|d| d.key.id()).collect();
+        let mut ids: Vec<DeviceId> = self.devices.iter().map(|d| d.key.id()).collect();
+        let storage = self.storage_key.id();
+        if self.encrypted {
+            ids.push(storage);
+        }
         let device = &mut self.devices[n];
         let config = EngineConfig {
             data_dir: device.data.clone(),
@@ -177,7 +249,10 @@ impl World {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
-            encryption: self.encrypted.then(Default::default),
+            encryption: self.encrypted.then(|| tidefell_engine::Encryption {
+                storage_peers: vec![storage],
+                stored: None,
+            }),
         };
         if engine.status(FOLDER).is_err() {
             engine
@@ -197,6 +272,9 @@ impl World {
                 engine.shutdown().await;
             }
         }
+        if let Some(engine) = self.storage.take() {
+            engine.shutdown().await;
+        }
     }
 
     async fn run(&mut self, ops: &[Op]) -> Result<(), Failure> {
@@ -211,7 +289,19 @@ impl World {
             self.observe(step).map_err(|e| fail(Some(step), e))?;
         }
         self.settle().await.map_err(|e| fail(None, e))?;
-        self.check_kept().map_err(|e| fail(None, e))
+        self.check_kept().map_err(|e| fail(None, e))?;
+        if let Some(storage) = &self.storage {
+            match storage.folder_key_generation(FOLDER) {
+                Ok(None) => {}
+                held => {
+                    return Err(fail(
+                        None,
+                        format!("the storage peer holds a key: {held:?}"),
+                    ))
+                }
+            }
+        }
+        Ok(())
     }
 
     fn engine(&self, n: usize) -> Result<&Engine, String> {
@@ -300,7 +390,12 @@ impl World {
                     .devices
                     .iter()
                     .enumerate()
-                    .map(|(n, d)| (d.key.id(), u32::from(sides >> n & 1)));
+                    .map(|(n, d)| (d.key.id(), u32::from(sides >> n & 1)))
+                    // The storage peer takes the next bit, so members can meet only through it.
+                    .chain(std::iter::once((
+                        self.storage_key.id(),
+                        u32::from(sides >> count & 1),
+                    )));
                 self.network.partition(sides);
             }
             Op::Heal => self.network.heal(),
@@ -408,6 +503,9 @@ impl World {
             for (path, content) in tree(&device.root) {
                 device.seen.entry(content).or_insert((path, step));
             }
+        }
+        if let Some(failure) = self.storage.as_ref().and_then(Engine::failure) {
+            return Err(format!("the storage peer failed: {failure}"));
         }
         Ok(())
     }

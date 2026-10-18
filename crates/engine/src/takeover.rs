@@ -417,6 +417,10 @@ fn decide(inner: &Inner, state: &FolderState, exchanged: Option<std::time::Insta
 /// authors no longer vouched for, and withdraws what a revocation's time of loss calls for (see
 /// the module's documentation). Returns how many versions it made.
 pub(crate) fn take_over(inner: &Inner, handle: &FolderHandle) -> Result<usize> {
+    // A storage peer never takes over or withdraws: members do (ADR 0023).
+    if handle.lock().config.is_stored() {
+        return Ok(0);
+    }
     let mut made = 0;
     loop {
         let exchanged = *handle.exchanged_at.lock().unwrap();

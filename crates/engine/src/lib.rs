@@ -145,7 +145,7 @@ pub fn with_allocator_settings() {
 
 pub use config::{
     ConfirmDeletes, Direction, Encryption, EngineConfig, FolderConfig, LocalDeletes, NewFolder,
-    PeerAddr, ReplicaMode, SyncOptions,
+    PeerAddr, ReplicaMode, Stored, SyncOptions,
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use probe::{Filesystem, NameLength};
@@ -159,7 +159,7 @@ pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, EncryptionInfo, Event, FileInfo, FolderInfo,
     FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
-    RebuildInfo, RecycleSummary, RecycledInfo, VersionInfo, VersionKind, WithdrawnFile,
+    RebuildInfo, RecycleSummary, RecycledInfo, StoredInfo, VersionInfo, VersionKind, WithdrawnFile,
 };
 
 /// Engine errors.

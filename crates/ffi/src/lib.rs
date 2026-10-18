@@ -1897,6 +1897,7 @@ impl Node {
                             .iter()
                             .map(|d| parse("storage peer device ID", d))
                             .collect::<Result<_>>()?,
+                        stored: None,
                     })
                 })
                 .transpose()?,

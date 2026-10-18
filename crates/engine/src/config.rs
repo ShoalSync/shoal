@@ -100,6 +100,17 @@ pub struct Encryption {
     /// The storage peers this device syncs the folder with: devices that hold it without
     /// reading it, whose users are not members.
     pub storage_peers: Vec<tidefell_proto::DeviceId>,
+    /// Set on a storage peer: this device stores the folder for its members without reading
+    /// it, and `path` is where it keeps what it stores, not a directory of files (ADR 0023).
+    pub stored: Option<Stored>,
+}
+
+/// A folder this device stores for its members without reading it (ADR 0023, "On storage
+/// peers").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stored {
+    /// The most this device keeps of the folder's chunks, sealed, in bytes.
+    pub quota_bytes: u64,
 }
 
 /// When one scan's deletes are held for confirmation (ADR 0037): a drive unmounted under a
@@ -141,6 +152,12 @@ impl FolderConfig {
     /// keeps every chunk.
     pub fn holds_everything(&self) -> bool {
         self.mode == ReplicaMode::Full && self.sync == SyncOptions::default()
+    }
+
+    /// True on a storage peer for a folder it stores without reading it (ADR 0023): no files,
+    /// keys or takeover, only sealed versions and chunks.
+    pub fn is_stored(&self) -> bool {
+        self.encryption.as_ref().is_some_and(|e| e.stored.is_some())
     }
 }
 

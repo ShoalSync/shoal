@@ -97,6 +97,10 @@ impl FolderHandle {
     pub(crate) fn available(&self) -> Result<()> {
         let (id, root) = {
             let state = self.lock();
+            // A stored folder's path is the engine's own, with no marker.
+            if state.config.is_stored() {
+                return Ok(());
+            }
             (state.config.id, state.config.path.clone())
         };
         let reason = root::check(&root, id);
@@ -482,13 +486,21 @@ fn open_folder(
     configured: bool,
     open: crate::state::Open,
 ) -> Result<FolderHandle> {
+    // A stored folder has no directory of files: its path only holds what it stores (ADR 0023).
+    let stored = config.is_stored();
+    if stored {
+        std::fs::create_dir_all(&config.path).map_err(crate::io_err(&config.path))?;
+    }
     // Only a folder being created or joined gets its root created (ADR 0037); an existing
     // folder whose root is missing is unavailable, not empty.
     let new = !FolderState::exists(data_dir, metadata_dir, config.id);
-    if new {
+    if new && !stored {
         root::create(&config.path, config.id, device)?;
     }
     let state = FolderState::open_or_rebuild(data_dir, metadata_dir, config, device, open)?;
+    if stored {
+        return Ok(FolderHandle::new(state, configured, None));
+    }
     if !new {
         if let Err(e) = root::adopt(&state, device) {
             warn!(folder = %state.config.id, error = %e, "marking the folder's root failed");
@@ -514,20 +526,26 @@ fn open_folder(
         None => crate::history::recover(&root),
         Some(reason) => warn!(folder = %id, reason = %reason, "folder unavailable; not syncing it"),
     }
-    Ok(FolderHandle {
-        state: Mutex::new(state),
-        fs_lock: tokio::sync::Mutex::new(()),
-        closed: std::sync::atomic::AtomicBool::new(false),
-        configured,
-        scanner: Mutex::new(None),
-        watch_error: Mutex::new(None),
-        unavailable: Mutex::new(unavailable),
-        open: Mutex::new(HashMap::new()),
-        activity: Mutex::default(),
-        exchanged_at: Mutex::default(),
-        rescan: Notify::new(),
-        summary: Mutex::new(None),
-    })
+    Ok(FolderHandle::new(state, configured, unavailable))
+}
+
+impl FolderHandle {
+    fn new(state: FolderState, configured: bool, unavailable: Option<String>) -> Self {
+        FolderHandle {
+            state: Mutex::new(state),
+            fs_lock: tokio::sync::Mutex::new(()),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            configured,
+            scanner: Mutex::new(None),
+            watch_error: Mutex::new(None),
+            unavailable: Mutex::new(unavailable),
+            open: Mutex::new(HashMap::new()),
+            activity: Mutex::default(),
+            exchanged_at: Mutex::default(),
+            rescan: Notify::new(),
+            summary: Mutex::new(None),
+        }
+    }
 }
 
 /// The network an engine runs on.
@@ -574,6 +592,10 @@ async fn on_panic(
 fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
     let (interval, root) = {
         let state = handle.lock();
+        // A stored folder has no files to scan (ADR 0023).
+        if state.config.is_stored() {
+            return;
+        }
         (state.config.scan_interval, state.config.path.clone())
     };
     let task = {
@@ -1542,6 +1564,9 @@ async fn run_scan(
 
 async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
+    if handle.lock().config.is_stored() {
+        return Ok(());
+    }
     let _guard = handle.disk().await?;
     evict::evict(inner, id, &handle)
 }
@@ -1550,6 +1575,10 @@ async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {
 /// while fetching from peers.
 async fn run_materialize(inner: &Arc<Inner>, node: &Arc<Node>, id: FolderId) -> Result<()> {
     let handle = inner.folder(&id)?;
+    // A stored folder writes no files; what it stores, it fetches in its own way (ADR 0023).
+    if handle.lock().config.is_stored() {
+        return Ok(());
+    }
     // Checked before fetching, so an unavailable folder does not download what it cannot write.
     handle.available()?;
     materialize::materialize(inner, node, id, &handle).await

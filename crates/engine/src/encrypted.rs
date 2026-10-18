@@ -194,9 +194,117 @@ fn chunk_id(
     Ok(id)
 }
 
-fn add_item(state: &mut FolderState, item: Item) {
+fn add_item(state: &mut FolderState, item: Item) -> u64 {
     let sequence = state.meta.next_sequence();
     state.items.insert(sequence, item);
+    sequence
+}
+
+/// On a storage peer, keeps a sealed version whose author it vouches for (ADR 0023, "On
+/// storage peers"): served while no kept version of its entry supersedes it by vector. One it
+/// supersedes stops being served and waits out the folder's retention; one that arrives
+/// superseded is kept the same way. Returns true if it was kept.
+fn keep_stored(
+    state: &mut FolderState,
+    sealed: &SealedVersion,
+    signed: Signed<SealedVersion>,
+    now: i64,
+) -> bool {
+    let mut heads = state
+        .stored_heads
+        .take()
+        .unwrap_or_else(|| stored_heads(state));
+    let entry = heads.entry(sealed.entry).or_default();
+    let compared: Vec<Causality> = entry
+        .iter()
+        .map(|(_, vector)| sealed.version.compare(vector))
+        .collect();
+    // The same vector is the same version: kept already.
+    let kept = if compared.contains(&Causality::Equal) {
+        false
+    } else {
+        let sequence = add_item(state, Item::Version(signed));
+        if compared.contains(&Causality::Before) {
+            state.superseded.insert(sequence, now);
+        } else {
+            let mut index = 0;
+            entry.retain(|(old, _)| {
+                let superseded = compared.get(index) == Some(&Causality::After);
+                index += 1;
+                if superseded {
+                    state.superseded.insert(*old, now);
+                }
+                !superseded
+            });
+            entry.push((sequence, sealed.version.clone()));
+        }
+        true
+    };
+    state.stored_heads = Some(heads);
+    kept
+}
+
+/// The kept sealed versions no other supersedes, by entry, read from `items`: their bodies
+/// were verified when kept.
+fn stored_heads(
+    state: &FolderState,
+) -> std::collections::HashMap<tidefell_proto::EntryId, Vec<(u64, tidefell_proto::VersionVector)>> {
+    use tidefell_proto::SignedKind as _;
+    let mut heads: std::collections::HashMap<_, Vec<_>> = std::collections::HashMap::new();
+    for (sequence, item) in state.items.iter() {
+        let Item::Version(signed) = item else {
+            continue;
+        };
+        if state.superseded.contains_key(sequence) {
+            continue;
+        }
+        if let Ok(sealed) = SealedVersion::decode(&signed.body) {
+            heads
+                .entry(sealed.entry)
+                .or_default()
+                .push((*sequence, sealed.version));
+        }
+    }
+    heads
+}
+
+/// What a storage peer stores of a folder.
+pub(crate) fn stored_info(
+    state: &FolderState,
+    stored: crate::config::Stored,
+) -> crate::views::StoredInfo {
+    let superseded = state.superseded.len();
+    let versions = state
+        .items
+        .values()
+        .filter(|item| matches!(item, Item::Version(_)))
+        .count();
+    crate::views::StoredInfo {
+        versions: versions.saturating_sub(superseded),
+        superseded,
+        quota_bytes: stored.quota_bytes,
+    }
+}
+
+/// Drops, on a storage peer, the superseded sealed versions whose time in the folder's
+/// retention is over (ADR 0023). Returns how many it dropped.
+pub(crate) fn purge_superseded(state: &mut FolderState, now: i64) -> usize {
+    const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+    let Some(days) = state.config.retention.days() else {
+        return 0;
+    };
+    let keep_ms = i64::from(days).saturating_mul(DAY_MS);
+    let due: Vec<u64> = state
+        .superseded
+        .iter()
+        .filter(|(_, at)| at.saturating_add(keep_ms) <= now)
+        .map(|(sequence, _)| *sequence)
+        .collect();
+    for sequence in &due {
+        state.superseded.remove(sequence);
+        state.items.remove(sequence);
+    }
+    due.len()
 }
 
 fn signer_of(item: &Item) -> DeviceId {
@@ -216,7 +324,8 @@ fn signer_of(item: &Item) -> DeviceId {
 /// granted to every member, and new content uses the one with the lower key ID (ADR 0023).
 pub(crate) fn prepare(inner: &Inner, handle: &FolderHandle) {
     let mut state = handle.lock();
-    if state.config.encryption.is_none() {
+    // A storage peer neither makes nor asks for keys (ADR 0023).
+    if state.config.encryption.is_none() || state.config.is_stored() {
         return;
     }
     if state.keys.is_empty() {
@@ -356,7 +465,7 @@ pub(crate) fn rotate_if_needed(inner: &Inner, state: &mut FolderState) -> bool {
 /// key and holds no grant of it to that key (`specs/sync-v2.md`), after rotating if a removal or
 /// revocation calls for it. Returns how many grants it made.
 pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
-    if state.config.encryption.is_none() || state.keys.is_empty() {
+    if state.config.encryption.is_none() || state.config.is_stored() || state.keys.is_empty() {
         return 0;
     }
     let rotated = rotate_if_needed(inner, state);
@@ -448,6 +557,8 @@ pub(crate) fn index_since(
             state
                 .items
                 .range(since.saturating_add(1)..)
+                // A storage peer serves only what no kept version supersedes (ADR 0023).
+                .filter(|(s, _)| !state.superseded.contains_key(s))
                 .take(limit)
                 .map(|(s, _)| (*s, Source::Item)),
         )
@@ -622,6 +733,9 @@ fn apply_version(
     touched.push(sealed.entry);
     if sealed.folder != state.config.id || !sealed.version.within_ceiling() {
         return false;
+    }
+    if state.config.is_stored() {
+        return keep_stored(state, &sealed, signed, now);
     }
     match open(state, &sealed, signed.clone()) {
         Some(Ok((verified, content))) => apply_opened(state, verified, content, now),

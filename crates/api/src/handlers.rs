@@ -440,6 +440,7 @@ pub(crate) async fn add_folder(
                         .iter()
                         .map(|d| parse::<DeviceId>("storage peer", d))
                         .collect::<ApiResult<_>>()?,
+                    stored: None,
                 })
             })
             .transpose()?,
