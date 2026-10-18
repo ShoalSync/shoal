@@ -25,6 +25,7 @@ mod locks;
 mod memory;
 mod node;
 mod pair;
+mod session;
 mod sync;
 mod traffic;
 mod transport;
