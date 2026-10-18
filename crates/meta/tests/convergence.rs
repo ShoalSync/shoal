@@ -4,12 +4,13 @@
 //! with the order; what it holds is checked instead.
 
 use std::collections::BTreeMap;
+use tidefell_meta::Wire;
 
 use ed25519_dalek::SigningKey;
 use proptest::prelude::*;
 use tidefell_meta::{copy_id, Folder, Retention};
 use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
+use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 const NOW: i64 = 1_000;
@@ -43,7 +44,7 @@ fn step() -> impl Strategy<Value = Step> {
     ]
 }
 
-fn every_version(folder: &Folder) -> Vec<Signed<EntryVersion>> {
+fn every_version(folder: &Folder) -> Vec<Wire> {
     folder
         .index_since(folder.epoch(), 0, usize::MAX)
         .0
@@ -53,7 +54,7 @@ fn every_version(folder: &Folder) -> Vec<Signed<EntryVersion>> {
 }
 
 /// Runs a history and returns every version it made.
-fn run(steps: &[Step]) -> Vec<Signed<EntryVersion>> {
+fn run(steps: &[Step]) -> Vec<Wire> {
     let mut replicas = [replica(1), replica(2), replica(3)];
     let mut made = Vec::new();
     for step in steps {
@@ -116,10 +117,10 @@ fn state(folder: &Folder) -> State {
 /// entry's last live version while the entry stays deleted, and versions that lost a decision,
 /// kept under the ID derived from their signed form, while they are neither the winner nor an
 /// open conflict.
-fn check_recycle_bin(folder: &Folder, made: &[Signed<EntryVersion>]) -> Result<(), TestCaseError> {
+fn check_recycle_bin(folder: &Folder, made: &[Wire]) -> Result<(), TestCaseError> {
     let made: Vec<(EntryId, EntryVersion)> = made
         .iter()
-        .map(|s| (copy_id(s), s.verify().unwrap()))
+        .map(|s| (copy_id(s), s.plain().unwrap().verify().unwrap()))
         .collect();
     for item in folder.recycle_bin().iter() {
         match item.conflict_of {
@@ -159,11 +160,7 @@ fn check_recycle_bin(folder: &Folder, made: &[Signed<EntryVersion>]) -> Result<(
     Ok(())
 }
 
-fn apply_all(
-    n: u8,
-    versions: &[Signed<EntryVersion>],
-    made: &[Signed<EntryVersion>],
-) -> Result<State, TestCaseError> {
+fn apply_all(n: u8, versions: &[Wire], made: &[Wire]) -> Result<State, TestCaseError> {
     let mut folder = replica(n);
     for v in versions {
         folder.apply_remote(v.clone(), NOW).unwrap();

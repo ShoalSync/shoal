@@ -1,4 +1,5 @@
 use ed25519_dalek::SigningKey;
+use tidefell_meta::Wire;
 use tidefell_meta::{Applied, Error, Folder, Retention};
 use tidefell_proto::sync::{EntryKind, EntryVersion};
 use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
@@ -81,7 +82,7 @@ fn concurrent_edits_converge_in_any_order() {
     let from_b = b.local_change(&key(2), E, "f", file(2), 200).unwrap();
     let from_c = c.local_change(&key(3), E, "f", file(3), 300).unwrap();
 
-    let orders: [&[&Signed<EntryVersion>]; 3] = [
+    let orders: [&[&Wire]; 3] = [
         &[&base, &from_b, &from_c],
         &[&from_c, &base, &from_b],
         &[&from_b, &from_c, &base],
@@ -374,12 +375,7 @@ fn snapshot_round_trip() {
 }
 
 /// A version from `author` with an explicit vector, as a restored or cloned device might sign.
-fn version_with(
-    author: u8,
-    kind: EntryKind,
-    modified_ms: i64,
-    vector: &[(u8, u64)],
-) -> Signed<EntryVersion> {
+fn version_with(author: u8, kind: EntryKind, modified_ms: i64, vector: &[(u8, u64)]) -> Wire {
     let version = EntryVersion {
         folder: FOLDER,
         entry: E,
@@ -389,7 +385,7 @@ fn version_with(
         author: device(author),
         version: vector.iter().map(|&(d, c)| (device(d), c)).collect(),
     };
-    Signed::sign(&version, &key(author))
+    Wire::Plain(Signed::sign(&version, &key(author)))
 }
 
 #[test]
@@ -595,13 +591,7 @@ fn index_pages_resume_where_they_stopped() {
 
 /// A and B edit apart; B's version wins. Returns the three replicas, each holding both, with
 /// A's version as the open conflict.
-fn conflicted() -> (
-    Folder,
-    Folder,
-    Folder,
-    Signed<EntryVersion>,
-    Signed<EntryVersion>,
-) {
+fn conflicted() -> (Folder, Folder, Folder, Wire, Wire) {
     let mut a = replica(1);
     let mut b = replica(2);
     let mut c = replica(3);
@@ -653,7 +643,7 @@ fn resolving_keeps_the_other_version_in_the_recycle_bin() {
 fn editing_the_losing_version_does_not_resolve() {
     // A still has its own version on disk and edits it: that supersedes only A's version.
     let (mut a, mut b, _, va, _) = conflicted();
-    let own = va.verify_authored().unwrap().version;
+    let own = va.plain().unwrap().verify_authored().unwrap().version;
     let (edit, _) = a
         .local_change_from(&key(1), E, &own, "notes.txt", file(4), 5)
         .unwrap();

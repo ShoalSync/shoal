@@ -1171,7 +1171,7 @@ impl FolderState {
         let saved: Vec<(u64, tidefell_proto::EntryId)> = loaded
             .versions
             .iter()
-            .map(|(s, v)| (*s, tidefell_meta::copy_id(v)))
+            .map(|(s, v, _)| (*s, tidefell_meta::copy_id(v)))
             .collect();
         assert_eq!(
             saved,
@@ -1508,7 +1508,9 @@ mod tests {
                 )
                 .unwrap()
         };
-        let verify = |v| tidefell_meta::verify_remote(FolderId([3; 32]), v).unwrap();
+        let verify = |v: tidefell_meta::Wire| {
+            tidefell_meta::verify_remote(FolderId([3; 32]), v.plain().unwrap().clone()).unwrap()
+        };
         state.meta.apply_verified(verify(theirs(2)), 2000).unwrap();
         // Received again while rebuilding: not when it first came, so no time.
         state.meta.set_record_receipts(false);

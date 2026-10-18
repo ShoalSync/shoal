@@ -171,7 +171,7 @@ impl Backend for TestBackend {
             up_to,
             versions: versions
                 .into_iter()
-                .filter_map(|s| s.signed.cloned())
+                .filter_map(|s| s.signed.and_then(tidefell_meta::Wire::plain).cloned())
                 .collect(),
         })
     }

@@ -15,6 +15,7 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, Signed};
 
 use crate::folder::{Entry, StoredVersion};
 use crate::recycle::{RecycleBin, Recycled, Retention};
+use crate::Wire;
 use crate::{Error, Folder, Result};
 
 /// Header identifying the snapshot format.
@@ -74,13 +75,14 @@ impl Folder {
         let mut versions = Vec::new();
         for entry in self.entries.values() {
             // Only versions not yet saved elsewhere are held signed (ADR 0035); a snapshot is
-            // made of a folder that has them all, such as one read from a snapshot.
-            if let Some(signed) = &entry.current.signed {
-                versions.push((true, entry.current.sequence, (**signed).clone()));
+            // made of a folder that has them all, such as one read from a snapshot. Snapshots
+            // are of plaintext folders only, an encrypted folder being newer than them.
+            if let Some(signed) = entry.current.signed.as_deref().and_then(Wire::plain) {
+                versions.push((true, entry.current.sequence, signed.clone()));
             }
             for c in entry.conflicts.iter() {
-                if let Some(signed) = &c.signed {
-                    versions.push((false, c.sequence, (**signed).clone()));
+                if let Some(signed) = c.signed.as_deref().and_then(Wire::plain) {
+                    versions.push((false, c.sequence, signed.clone()));
                 }
             }
         }
@@ -119,7 +121,7 @@ impl Folder {
                 return Err(Error::WrongFolder);
             }
             let entry = version.entry;
-            let stored = StoredVersion::new(version, signed, sequence);
+            let stored = StoredVersion::new(version, Wire::Plain(signed), sequence);
             if is_current {
                 currents.insert(entry, stored);
             } else {

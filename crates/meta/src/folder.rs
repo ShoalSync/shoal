@@ -2,7 +2,6 @@
 
 use std::sync::OnceLock;
 
-use ed25519_dalek::SigningKey;
 use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion};
 use tidefell_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
 
@@ -10,6 +9,7 @@ use crate::compact::{Current, Devices, Slim};
 use crate::layout::{Folding, Layout};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
+use crate::wire::{Seal, Wire};
 use crate::{Error, Result};
 
 /// A version held by this replica, with its local index sequence.
@@ -21,14 +21,14 @@ pub struct StoredVersion {
     pub id: EntryId,
     /// The version exactly as signed by its author, until it is saved: the database keeps it
     /// after that, for forwarding to other peers, rather than memory (ADR 0035).
-    pub signed: Option<Box<Signed<EntryVersion>>>,
+    pub signed: Option<Box<Wire>>,
     /// Local index sequence assigned when this replica stored the version.
     pub sequence: u64,
 }
 
 impl StoredVersion {
     /// A version as received or made, to save.
-    pub(crate) fn new(version: EntryVersion, signed: Signed<EntryVersion>, sequence: u64) -> Self {
+    pub(crate) fn new(version: EntryVersion, signed: Wire, sequence: u64) -> Self {
         Self {
             version,
             id: copy_id(&signed),
@@ -110,7 +110,7 @@ pub struct Indexed<'a> {
     /// [`copy_id`] of the version as signed.
     pub id: EntryId,
     /// The version as signed, until it is saved; the database keeps it after that.
-    pub signed: Option<&'a Signed<EntryVersion>>,
+    pub signed: Option<&'a Wire>,
 }
 
 /// An entry's versions in full, while a version is stored.
@@ -128,10 +128,10 @@ impl Full {
 /// The entry ID under which the version `signed` is kept once it loses a conflict: in the
 /// recycle bin, and as its own file when both are kept or it is restored (ADR 0029). Derived
 /// from the version, so every replica, and every device that keeps both, uses the same ID.
-pub fn copy_id(signed: &Signed<EntryVersion>) -> EntryId {
+pub fn copy_id(signed: &Wire) -> EntryId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"tidefell conflict copy\n");
-    hasher.update(&signed.body);
+    hasher.update(signed.body());
     let mut id = [0; 16];
     id.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
     EntryId(id)
@@ -197,13 +197,35 @@ pub struct Folder {
 #[derive(Debug, Clone)]
 pub struct Verified {
     version: EntryVersion,
-    signed: Signed<EntryVersion>,
+    signed: Wire,
 }
 
 impl Verified {
     /// The checked version.
     pub fn version(&self) -> &EntryVersion {
         &self.version
+    }
+
+    /// An encrypted folder's version: `version`, opened from `signed` and checked against it by
+    /// the caller, which holds the key (`specs/sync-v2.md`). Its signature must already be
+    /// verified; its folder, path, counters and clear fields are checked here.
+    pub fn sealed(
+        folder: FolderId,
+        version: EntryVersion,
+        signed: Signed<tidefell_proto::sync2::SealedVersion>,
+    ) -> Result<Self> {
+        if version.folder != folder {
+            return Err(Error::WrongFolder);
+        }
+        if !is_valid_path(&version.path) {
+            return Err(Error::InvalidPath(version.path));
+        }
+        if !version.version.within_ceiling() {
+            return Err(Error::CounterCeiling);
+        }
+        let signed = Wire::Sealed(signed);
+        signed.check(&version)?;
+        Ok(Self { version, signed })
     }
 }
 
@@ -220,7 +242,10 @@ pub fn verify_remote(folder: FolderId, signed: Signed<EntryVersion>) -> Result<V
     if !version.version.within_ceiling() {
         return Err(Error::CounterCeiling);
     }
-    Ok(Verified { version, signed })
+    Ok(Verified {
+        version,
+        signed: Wire::Plain(signed),
+    })
 }
 
 /// What a stored version did to its entry.
@@ -458,12 +483,12 @@ impl Folder {
     /// is known.
     pub fn local_change(
         &mut self,
-        key: &SigningKey,
+        key: &(impl Seal + ?Sized),
         entry: EntryId,
         path: &str,
         kind: EntryKind,
         modified_ms: i64,
-    ) -> Result<Signed<EntryVersion>> {
+    ) -> Result<Wire> {
         let base = self.current_vector(&entry);
         self.local_change_from(key, entry, &base, path, kind, modified_ms)
             .map(|(signed, _)| signed)
@@ -512,14 +537,14 @@ impl Folder {
     /// the change describes.
     pub fn local_change_from(
         &mut self,
-        key: &SigningKey,
+        key: &(impl Seal + ?Sized),
         entry: EntryId,
         base: &VersionVector,
         path: &str,
         kind: EntryKind,
         modified_ms: i64,
-    ) -> Result<(Signed<EntryVersion>, VersionVector)> {
-        if key.verifying_key().to_bytes() != *self.device.as_bytes() {
+    ) -> Result<(Wire, VersionVector)> {
+        if key.device() != self.device {
             return Err(Error::WrongDevice);
         }
         if !is_valid_path(path) {
@@ -547,7 +572,7 @@ impl Folder {
             author: self.device,
             version,
         };
-        let signed = Signed::sign(&new, key);
+        let signed = key.seal(&new)?;
         let vector = new.version.clone();
         self.store(new, signed.clone(), modified_ms);
         Ok((signed, vector))
@@ -558,11 +583,11 @@ impl Folder {
     /// tombstone's modification time, which comes from the deleting device's clock: retention
     /// belongs to each device (ADR 0021), and a device with a wrong clock must not make every
     /// other device purge its deletes early or late.
-    pub fn apply_remote(
-        &mut self,
-        signed: Signed<EntryVersion>,
-        received_ms: i64,
-    ) -> Result<Applied> {
+    /// A sealed version must be opened first: see [`Verified::sealed`].
+    pub fn apply_remote(&mut self, signed: impl Into<Wire>, received_ms: i64) -> Result<Applied> {
+        let Wire::Plain(signed) = signed.into() else {
+            return Err(Error::Snapshot(postcard::Error::DeserializeBadEncoding));
+        };
         let verified = verify_remote(self.id, signed)?;
         self.apply_verified(verified, received_ms)
     }
@@ -584,10 +609,10 @@ impl Folder {
     /// Restores a deleted entry from the recycle bin as a new local change.
     pub fn restore(
         &mut self,
-        key: &SigningKey,
+        key: &(impl Seal + ?Sized),
         entry: EntryId,
         now_ms: i64,
-    ) -> Result<Signed<EntryVersion>> {
+    ) -> Result<Wire> {
         let deleted = matches!(
             self.current(&entry).map(|v| v.kind),
             Some(EntryKind::Tombstone)
@@ -656,11 +681,11 @@ impl Folder {
     /// `<stem> (<device>, <date>)<extension>` beside the file it was a version of.
     pub fn restore_copy(
         &mut self,
-        key: &SigningKey,
+        key: &(impl Seal + ?Sized),
         id: EntryId,
         path: &str,
         now_ms: i64,
-    ) -> Result<Signed<EntryVersion>> {
+    ) -> Result<Wire> {
         let item = match self.recycle.get(&id) {
             Some(item) if item.conflict_of.is_some() && !self.entries.contains_key(&id) => {
                 item.clone()
@@ -703,12 +728,7 @@ impl Folder {
 
     /// Adds a verified version, recorded on this device at `recorded_ms`, keeping only versions
     /// no other version supersedes.
-    fn store(
-        &mut self,
-        version: EntryVersion,
-        signed: Signed<EntryVersion>,
-        recorded_ms: i64,
-    ) -> Applied {
+    fn store(&mut self, version: EntryVersion, signed: Wire, recorded_ms: i64) -> Applied {
         let entry_id = version.entry;
         self.layout.take();
         self.unfolded.take();
@@ -749,11 +769,13 @@ impl Folder {
                 vector
             };
             let live = !matches!(version.kind, EntryKind::Tombstone);
-            // Known if a stored version is later, or is this very version. Equal vectors with
+            // Known if a stored version is later, or is this very version: the same signed form,
+            // which for a plaintext version is the same as the same version, and tells apart two
+            // sealed versions that decrypt alike (`specs/sync-v2.md`). Equal vectors with
             // different content are concurrent (ADR 0024).
+            let id = copy_id(&signed);
             let known = existing.all().any(|s| {
-                s.version == version
-                    || s.version.version.compare(&version.version) == Causality::After
+                s.id == id || s.version.version.compare(&version.version) == Causality::After
             });
             if known {
                 return Applied::Stale;
@@ -804,7 +826,7 @@ impl Folder {
         self.sequence += 1;
         self.pending.stored(entry_id, self.sequence);
         survivors.push(StoredVersion::new(version, signed, self.sequence));
-        let win = winner(survivors.iter().map(|s| &s.version));
+        let win = winner(survivors.iter().map(|s| (&s.version, &s.id)));
         let current = survivors.swap_remove(win);
         survivors.sort_by_key(|s| s.sequence);
 

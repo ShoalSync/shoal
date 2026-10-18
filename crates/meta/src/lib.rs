@@ -13,6 +13,7 @@ mod layout;
 mod recycle;
 mod resolve;
 mod snapshot;
+mod wire;
 
 pub use compact::Current;
 pub use folder::{
@@ -21,6 +22,7 @@ pub use folder::{
 pub use journal::{Header, Journal};
 pub use layout::{Folding, Layout};
 pub use recycle::{RecycleBin, Recycled, Retention};
+pub use wire::{Seal, Wire};
 
 /// Metadata errors.
 #[derive(Debug, thiserror::Error)]

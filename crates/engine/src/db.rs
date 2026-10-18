@@ -13,7 +13,7 @@ use std::sync::{Arc, RwLock};
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
-use tidefell_meta::{Header, Journal, Recycled, Retention};
+use tidefell_meta::{Header, Journal, Recycled, Retention, Wire};
 use tidefell_proto::sync::EntryVersion;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 
@@ -106,8 +106,9 @@ pub(crate) struct Loaded {
     pub(crate) header: Header,
     /// The folder's last rebuild, if it had one.
     pub(crate) rebuild: Option<Rebuild>,
-    /// The versions still kept, in sequence order.
-    pub(crate) versions: Vec<(u64, Signed<EntryVersion>)>,
+    /// The versions still kept, in sequence order, each with what was decrypted from it if it
+    /// is sealed.
+    pub(crate) versions: Vec<(u64, Wire, Option<EntryVersion>)>,
     pub(crate) recycled: Vec<Recycled>,
     /// By table name, encoded keys and values.
     pub(crate) maps: BTreeMap<&'static str, Records>,
@@ -486,7 +487,7 @@ impl FolderDb {
             }
             let signed: Signed<EntryVersion> =
                 postcard::from_bytes(value.value()).map_err(corrupt(path))?;
-            versions.push((sequence, signed));
+            versions.push((sequence, Wire::Plain(signed), None));
         }
         let mut recycled = Vec::new();
         for row in tx
@@ -588,11 +589,24 @@ impl FolderDb {
         }
         if !journal.stored.is_empty() {
             let received: BTreeMap<u64, i64> = journal.received.iter().copied().collect();
+            let decrypted: BTreeMap<u64, &EntryVersion> =
+                journal.decrypted.iter().map(|(s, v)| (*s, v)).collect();
             let mut table = tx.open_table(VERSIONS).map_err(|x| e(x.into()))?;
             for (sequence, signed) in &journal.stored {
                 // When it was received follows the version, where readers from before it, such
-                // as 0.19, stop reading.
-                let mut row = encode(signed);
+                // as 0.19, stop reading. A sealed version is followed by what was decrypted
+                // from it, before that (ADR 0023).
+                let mut row = match signed {
+                    Wire::Plain(signed) => encode(signed),
+                    Wire::Sealed(signed) => {
+                        let mut row = encode(signed);
+                        let version = decrypted
+                            .get(sequence)
+                            .ok_or_else(|| Error::CorruptState(self.path.clone()))?;
+                        row.extend(encode(*version));
+                        row
+                    }
+                };
                 if let Some(at) = received.get(sequence) {
                     row.extend(encode(at));
                 }
@@ -887,7 +901,7 @@ mod tests {
         db.commit(&Changes {
             header: header(2),
             journal: Journal {
-                stored: vec![(1, signed(1)), (2, signed(2))],
+                stored: vec![(1, Wire::Plain(signed(1))), (2, Wire::Plain(signed(2)))],
                 ..Journal::default()
             },
             maps: vec![("pins", vec![(b"a".to_vec(), Some(Vec::new()))])],
@@ -902,7 +916,7 @@ mod tests {
         db.commit(&Changes {
             header: header(3),
             journal: Journal {
-                stored: vec![(3, signed(3))],
+                stored: vec![(3, Wire::Plain(signed(3)))],
                 dropped: vec![1],
                 ..Journal::default()
             },
@@ -921,7 +935,7 @@ mod tests {
         drop(db);
         let (db, loaded) = FolderDb::open(&dir.path().join("f.redb"), true).unwrap();
         assert_eq!(loaded.header, header(3));
-        let sequences: Vec<u64> = loaded.versions.iter().map(|(s, _)| *s).collect();
+        let sequences: Vec<u64> = loaded.versions.iter().map(|(s, _, _)| *s).collect();
         assert_eq!(sequences, [2, 3]);
         assert_eq!(loaded.maps["pins"], [(b"b".to_vec(), Vec::new())]);
         assert_eq!((db.live, db.dropped, db.next_drop), (2, 1, 1));
@@ -951,7 +965,7 @@ mod tests {
         db.commit(&Changes {
             header: header(n),
             journal: Journal {
-                stored: (1..=n).map(|s| (s, signed(s))).collect(),
+                stored: (1..=n).map(|s| (s, Wire::Plain(signed(s)))).collect(),
                 ..Journal::default()
             },
             maps: Vec::new(),

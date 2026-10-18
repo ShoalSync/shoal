@@ -9,13 +9,13 @@
 use std::collections::BTreeSet;
 
 use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::{DeviceId, EntryId, FolderId, PublicKey, Signed, SignedKind};
+use tidefell_proto::{DeviceId, EntryId, FolderId, SignedKind};
 
 use crate::compact::Slim;
 use crate::folder::{Conflicts, Entry, StoredVersion};
 use crate::recycle::{RecycleBin, Recycled, Retention};
 use crate::resolve::winner;
-use crate::{Error, Folder, Result};
+use crate::{Error, Folder, Result, Wire};
 
 /// A folder's identity and counters: what it is besides its versions and recycle bin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +36,7 @@ pub struct Header {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Journal {
     /// Versions stored, with their sequences, in sequence order.
-    pub stored: Vec<(u64, Signed<EntryVersion>)>,
+    pub stored: Vec<(u64, Wire)>,
     /// Sequences of versions stored before and no longer kept.
     pub dropped: Vec<u64>,
     /// Recycle-bin items by entry: set, or removed (`None`).
@@ -44,6 +44,9 @@ pub struct Journal {
     /// When versions in `stored` made elsewhere were received, by sequence, this device's
     /// time (ADR 0040). A version without one was made here, or received while rebuilding.
     pub received: Vec<(u64, i64)>,
+    /// What was decrypted from the sealed versions in `stored`, by sequence, to keep beside
+    /// them (ADR 0023): opening them again needs keys.
+    pub decrypted: Vec<(u64, EntryVersion)>,
 }
 
 impl Journal {
@@ -120,25 +123,32 @@ impl Folder {
             .collect();
         // Each new version's signed form moves to the journal: once saved, the database keeps
         // it rather than memory (ADR 0035).
-        let mut stored: Vec<(u64, Signed<EntryVersion>)> = pending
+        let (folder, devices) = (self.id, &self.devices);
+        let mut decrypted = Vec::new();
+        let mut stored: Vec<(u64, Wire)> = pending
             .stored
             .iter()
             .filter(|(_, s)| !dropped_new.contains(s))
             .filter_map(|(entry, sequence)| {
                 let entry = self.entries.get_mut(entry)?;
-                let signed = if entry.current.sequence == *sequence {
-                    &mut entry.current.signed
+                let (signed, version) = if entry.current.sequence == *sequence {
+                    let version = entry.current.version(folder, devices);
+                    (entry.current.signed.take()?, version)
                 } else {
-                    &mut entry
+                    let stored = entry
                         .conflicts
                         .iter_mut()
-                        .find(|v| v.sequence == *sequence)?
-                        .signed
+                        .find(|v| v.sequence == *sequence)?;
+                    (stored.signed.take()?, stored.version.clone())
                 };
-                Some((*sequence, *signed.take()?))
+                if matches!(*signed, Wire::Sealed(_)) {
+                    decrypted.push((*sequence, version));
+                }
+                Some((*sequence, *signed))
             })
             .collect();
         stored.sort_by_key(|(s, _)| *s);
+        decrypted.sort_by_key(|(s, _)| *s);
         let mut dropped: Vec<u64> = pending
             .dropped
             .into_iter()
@@ -161,6 +171,7 @@ impl Folder {
             dropped,
             recycle,
             received,
+            decrypted,
         }
     }
 
@@ -170,16 +181,27 @@ impl Folder {
     /// its versions there already.
     pub fn full_journal(&mut self) -> Journal {
         self.pending = Pending::default();
-        let mut stored: Vec<(u64, Signed<EntryVersion>)> = self
-            .entries
-            .values_mut()
-            .flat_map(|e| {
-                std::iter::once((e.current.sequence, &mut e.current.signed))
-                    .chain(e.conflicts.iter_mut().map(|v| (v.sequence, &mut v.signed)))
-            })
-            .filter_map(|(sequence, signed)| Some((sequence, *signed.take()?)))
-            .collect();
+        let (folder, devices) = (self.id, &self.devices);
+        let mut decrypted = Vec::new();
+        let mut stored: Vec<(u64, Wire)> = Vec::new();
+        for e in self.entries.values_mut() {
+            if let Some(signed) = e.current.signed.take() {
+                if matches!(*signed, Wire::Sealed(_)) {
+                    decrypted.push((e.current.sequence, e.current.version(folder, devices)));
+                }
+                stored.push((e.current.sequence, *signed));
+            }
+            for v in e.conflicts.iter_mut() {
+                if let Some(signed) = v.signed.take() {
+                    if matches!(*signed, Wire::Sealed(_)) {
+                        decrypted.push((v.sequence, v.version.clone()));
+                    }
+                    stored.push((v.sequence, *signed));
+                }
+            }
+        }
         stored.sort_by_key(|(s, _)| *s);
+        decrypted.sort_by_key(|(s, _)| *s);
         Journal {
             stored,
             dropped: Vec::new(),
@@ -189,6 +211,7 @@ impl Folder {
                 .map(|item| (item.version.entry, Some(item.clone())))
                 .collect(),
             received: Vec::new(),
+            decrypted,
         }
     }
 
@@ -208,9 +231,10 @@ impl Folder {
     /// Rebuilds a folder from what a journal stored: its header, the versions it still keeps,
     /// and its recycle bin. Signatures are not checked again, as they were when each version
     /// was received; each version must be for this folder and signed by its author's key.
+    /// A sealed version comes with what was decrypted from it; a plaintext one is decoded.
     pub fn from_records(
         header: Header,
-        versions: impl IntoIterator<Item = (u64, Signed<EntryVersion>)>,
+        versions: impl IntoIterator<Item = (u64, Wire, Option<EntryVersion>)>,
         recycled: impl IntoIterator<Item = Recycled>,
     ) -> Result<Self> {
         let mut folder = Folder::new(
@@ -226,14 +250,18 @@ impl Folder {
         // Each entry's first version is kept compactly at once, so a large folder is never in
         // memory in full (ADR 0035).
         let mut several = Vec::new();
-        for (sequence, signed) in versions {
-            let version = EntryVersion::decode(&signed.body).map_err(Error::Snapshot)?;
+        for (sequence, signed, decrypted) in versions {
+            let version = match (decrypted, &signed) {
+                (Some(version), Wire::Sealed(_)) => version,
+                (None, Wire::Plain(plain)) => {
+                    EntryVersion::decode(&plain.body).map_err(Error::Snapshot)?
+                }
+                _ => return Err(Error::Snapshot(postcard::Error::DeserializeBadEncoding)),
+            };
             if version.folder != header.id {
                 return Err(Error::WrongFolder);
             }
-            if PublicKey::from(version.author) != signed.signer {
-                return Err(tidefell_proto::Error::SignerMismatch.into());
-            }
+            signed.check(&version)?;
             if sequence > header.sequence {
                 return Err(Error::UnsupportedFormat);
             }
@@ -265,7 +293,7 @@ impl Folder {
             };
             let mut versions = entry.conflicts.into_vec();
             versions.push(entry.current.into_stored(folder.id, &folder.devices));
-            let win = winner(versions.iter().map(|v| &v.version));
+            let win = winner(versions.iter().map(|v| (&v.version, &v.id)));
             let current = versions.swap_remove(win);
             versions.sort_by_key(|v| v.sequence);
             let current = Slim::new(current, &mut folder.devices);

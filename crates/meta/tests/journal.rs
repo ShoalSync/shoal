@@ -2,12 +2,13 @@
 //! folder it was, whatever happened in between and whenever it was saved.
 
 use std::collections::BTreeMap;
+use tidefell_meta::Wire;
 
 use ed25519_dalek::SigningKey;
 use proptest::prelude::*;
 use tidefell_meta::{Folder, Header, Journal, Recycled, Retention};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
+use tidefell_proto::sync::EntryKind;
+use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 
@@ -24,7 +25,7 @@ fn device(n: u8) -> DeviceId {
 #[derive(Default)]
 struct Records {
     header: Option<Header>,
-    versions: BTreeMap<u64, Signed<EntryVersion>>,
+    versions: BTreeMap<u64, Wire>,
     recycle: BTreeMap<EntryId, Recycled>,
 }
 
@@ -59,7 +60,7 @@ impl Records {
     fn load(&self) -> Folder {
         Folder::from_records(
             self.header.unwrap(),
-            self.versions.iter().map(|(s, v)| (*s, v.clone())),
+            self.versions.iter().map(|(s, v)| (*s, v.clone(), None)),
             self.recycle.values().cloned(),
         )
         .unwrap()
@@ -93,7 +94,7 @@ fn step() -> impl Strategy<Value = Step> {
 
 /// Every version `folder` holds, signed: from memory until saved, then from `records`, as an
 /// engine reads them from its database (ADR 0035).
-fn every_version(folder: &Folder, records: &Records) -> Vec<Signed<EntryVersion>> {
+fn every_version(folder: &Folder, records: &Records) -> Vec<Wire> {
     folder
         .index_since(folder.epoch(), 0, usize::MAX)
         .0

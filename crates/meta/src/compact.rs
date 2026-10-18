@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, VersionVector};
+use tidefell_proto::{DeviceId, EntryId, FolderId, VersionVector};
 
 use crate::folder::StoredVersion;
 
@@ -51,7 +51,7 @@ pub(crate) struct Slim {
     /// [`crate::copy_id`] of the version as signed.
     pub(crate) id: EntryId,
     /// The version as signed, until it is saved.
-    pub(crate) signed: Option<Box<Signed<EntryVersion>>>,
+    pub(crate) signed: Option<Box<crate::Wire>>,
     pub(crate) sequence: u64,
 }
 
