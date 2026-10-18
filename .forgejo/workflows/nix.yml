@@ -1,7 +1,7 @@
 name: Nix
 
 on:
-  # Branch pushes are covered by their pull request; three runners serve every repo.
+  # Branch pushes are covered by their pull request.
   push:
     branches: [main]
   # Documentation-only pull requests skip the build; the Docs workflow checks them.
@@ -28,6 +28,5 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: DeterminateSystems/nix-installer-action@e50d5f73bfe71c2dd0aa4218de8f4afa59f8f81d # v16
       - name: Check
         run: nix flake check --print-build-logs

@@ -78,3 +78,4 @@
   - [0038: Threat model](adr/0038-threat-model.md)
   - [0039: Android battery](adr/0039-android-battery.md)
   - [0040: Device revocation](adr/0040-device-revocation.md)
+  - [0041: The repositories on Forgejo, consumed from source](adr/0041-forgejo.md)

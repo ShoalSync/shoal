@@ -1,6 +1,6 @@
 # 0014: The ffi AAR is a release asset, not a Maven package
 
-- Status: accepted
+- Status: superseded by 0041
 - Date: 2026-09-23
 
 ## Context

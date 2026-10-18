@@ -20,9 +20,11 @@ Each downstream repository pins exactly one monorepo release.
 
 | Repository | Where the pin lives |
 | --- | --- |
-| `tidefell/android` | `gradle/libs.versions.toml` (`tidefell = "X.Y.Z"`) |
+| `tidefell/android` | `gradle/libs.versions.toml` (`tidefell = "X.Y.Z"`), checked out by `scripts/monorepo.sh` |
 | `tidefell/infra` | `flake.nix` input `tidefell` and `flake.lock` |
-| `tidefell/site` | `TIDEFELL_VERSION` in site build configuration |
+| `tidefell/site` | `flake.nix` input `tidefell` and `flake.lock` |
+
+Each takes the pinned release's source from Forgejo over SSH (ADR 0041).
 
 ## Change order
 

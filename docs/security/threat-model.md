@@ -190,9 +190,14 @@ Dependencies, the build machines and the release process.
   asset shows it arrived whole while the signature shows the release built it
   (`docs/guide/install.md`). The log is public: it reveals that the repository exists and the
   assets' hashes, which is accepted.
-- **Gap: the release runner shares a machine with the pull-request runners,** whose user can
-  become root. A separate machine is the boundary that closes this; until then it is a wall
-  against accidents and cache poisoning, not against a hostile pull request.
+- **Pull-request jobs run as a user of their own,** with no sudo and no access to developers'
+  keys or tokens (ADR 0041). They reach the private monorepo only with a deploy key that can read
+  `tidefell/tidefell` and nothing else, so a hostile pull request can read the source it already
+  has, not push or publish.
+- **Gap: the release runner shares a machine with the pull-request runners.** Separate users
+  are a wall against accidents and cache poisoning; a pull request that escapes its user through
+  the kernel or a shared service is not stopped by it. A separate machine is the boundary that
+  closes this.
 
 ## Encrypted folders
 

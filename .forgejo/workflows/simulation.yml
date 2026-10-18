@@ -32,7 +32,9 @@ jobs:
         run: |
           export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
           mkdir -p "$TIDEFELL_SIM_DIR"
-          # Days since the epoch pick the range, so each night tries seeds not tried before.
+          # Days since the epoch pick the range, so each night tries seeds not tried before;
+          # dividing first is the point.
+          # shellcheck disable=SC2017
           export TIDEFELL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 ))
           echo "seeds $TIDEFELL_SIM_FIRST to $((TIDEFELL_SIM_FIRST + TIDEFELL_SIM_SEEDS - 1))" \
             | tee -a "$GITHUB_STEP_SUMMARY"

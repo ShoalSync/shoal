@@ -1,7 +1,7 @@
 name: CI
 
 on:
-  # Branch pushes are covered by their pull request; three runners serve every repo.
+  # Branch pushes are covered by their pull request.
   push:
     branches: [main]
   # Documentation-only pull requests skip the build; the Docs workflow checks them.
@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.github/actions/cargo-target
+      - uses: ./.forgejo/actions/cargo-target
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.github/actions/cargo-target
+      - uses: ./.forgejo/actions/cargo-target
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.github/actions/cargo-target
+      - uses: ./.forgejo/actions/cargo-target
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -147,7 +147,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.github/actions/cargo-target
+      - uses: ./.forgejo/actions/cargo-target
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: stable
@@ -164,13 +164,14 @@ jobs:
           packages: platform-tools
       - name: Install cargo-ndk and the NDK
         run: |
-          # The runners share ~/.cargo, and its install records can outlive the binary, so
-          # check the binary itself.
+          # Install records can outlive the binary, so check the binary itself.
           if ! cargo ndk --version 2>/dev/null | grep -q " 4.1.2"; then
             cargo install cargo-ndk --locked --version 4.1.2 --force
           fi
-          yes | sdkmanager --licenses > /dev/null
-          sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
+          # Steps run with pipefail, and yes ends on SIGPIPE once sdkmanager stops reading. The
+          # runner slots share one SDK, so one sdkmanager runs at a time.
+          (yes || true) | flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager --licenses > /dev/null
+          flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
       - name: Build
         working-directory: bindings/android
@@ -202,6 +203,6 @@ jobs:
           curl -sfL -o "$RUNNER_TEMP/$name" "https://github.com/rhysd/actionlint/releases/download/v$version/$name"
           echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/$name" | sha256sum --check --quiet
           tar -xzf "$RUNNER_TEMP/$name" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint"
+          "$RUNNER_TEMP/actionlint" -config-file .forgejo/actionlint.yaml .forgejo/workflows/*.yml
       - name: zizmor
-        run: zizmor --offline --min-severity medium .
+        run: zizmor --offline --min-severity medium .forgejo/workflows/*.yml .forgejo/actions/*/action.yml
