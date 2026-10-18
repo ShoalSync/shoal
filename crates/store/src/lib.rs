@@ -96,9 +96,15 @@ impl BlockStore {
             }
             Err(e) => return Err(e.into()),
         }
+        // Half-written chunks from before are cleared. A store opened again while one from
+        // before still finishes a write, as when an engine restarts, may find a file appear as it
+        // clears: what is left is harmless, being overwritten by the next write of that chunk.
         let tmp = root.join("tmp");
         if tmp.exists() {
-            fs::remove_dir_all(&tmp)?;
+            match fs::remove_dir_all(&tmp) {
+                Err(e) if e.kind() == io::ErrorKind::DirectoryNotEmpty => {}
+                other => other?,
+            }
         }
         fs::create_dir_all(&tmp)?;
         fs::create_dir_all(root.join("chunks"))?;
