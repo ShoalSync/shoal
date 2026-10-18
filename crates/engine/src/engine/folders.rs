@@ -10,7 +10,9 @@ use tracing::info;
 use super::recycle::recycle_summary;
 use super::{open_folder, spawn_scanner, Engine};
 use crate::config::{FolderConfig, NewFolder};
-use crate::views::{Event, FolderInfo, FolderPeer, FolderState, PathProblem, RebuildInfo};
+use crate::views::{
+    EncryptionInfo, Event, FolderInfo, FolderPeer, FolderState, PathProblem, RebuildInfo,
+};
 use crate::{copies, Error, Result};
 
 /// A summary of one folder, for status displays and tests.
@@ -135,6 +137,11 @@ impl Engine {
                     problems: activity.problems.len(),
                     held_deletes: state.held_deletes.len(),
                     low_space: low_space(&self.inner, &state),
+                    encryption: state.config.encryption.as_ref().map(|e| EncryptionInfo {
+                        storage_peers: e.storage_peers.clone(),
+                        key_generation: crate::encrypted::newest_key(&state)
+                            .map(|key| key.generation()),
+                    }),
                     rebuild: state.last_rebuild().map(|r| RebuildInfo {
                         started_ms: r.started_ms,
                         reason: r.reason.clone(),
@@ -459,6 +466,56 @@ impl Engine {
             m.retain(|u| *u != user);
             m.len() != before
         })
+    }
+
+    /// Adds `device` to an encrypted folder's storage peers: a device that holds the folder
+    /// without reading it (ADR 0023). Returns false if it is one already.
+    pub fn add_storage_peer(&self, folder: FolderId, device: DeviceId) -> Result<bool> {
+        self.change_storage_peers(folder, |peers| {
+            if peers.contains(&device) {
+                false
+            } else {
+                peers.push(device);
+                true
+            }
+        })
+    }
+
+    /// Removes `device` from an encrypted folder's storage peers. Returns false if it was not
+    /// one.
+    pub fn remove_storage_peer(&self, folder: FolderId, device: DeviceId) -> Result<bool> {
+        self.change_storage_peers(folder, |peers| {
+            let before = peers.len();
+            peers.retain(|d| *d != device);
+            peers.len() != before
+        })
+    }
+
+    fn change_storage_peers(
+        &self,
+        id: FolderId,
+        change: impl FnOnce(&mut Vec<DeviceId>) -> bool,
+    ) -> Result<bool> {
+        let _guard = self.inner.runtime_lock.lock().unwrap();
+        let handle = self.inner.folder(&id)?;
+        if handle.configured {
+            return Err(Error::Configured(id));
+        }
+        let changed = {
+            let mut state = handle.lock();
+            let Some(encryption) = state.config.encryption.as_mut() else {
+                return Err(Error::Invalid(format!("folder {id} is not encrypted")));
+            };
+            change(&mut encryption.storage_peers)
+        };
+        if changed {
+            self.inner.save_runtime()?;
+            self.inner.emit(Event::FolderChanged(id));
+            // Sessions offer the folder to a new storage peer, and stop offering it to one
+            // removed.
+            self.inner.changed();
+        }
+        Ok(changed)
     }
 
     /// The generation of the folder key this device seals new content with, or `None` for a

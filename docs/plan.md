@@ -864,4 +864,5 @@ Open items in step 5, each to land before the release:
   the key.
 - List blobs for files of more than 4096 chunks.
 - The non-member test observes that the device received the sealed versions it cannot open.
-- CLI, API and FFI support (5e), including the folder's key generation.
+- Release seed 21581, rare and failing on main too: a device loses a file its user did not
+  remove, in an encrypted folder.

@@ -476,6 +476,7 @@ bind = "127.0.0.1:{port}"
                 budget_bytes: Some(1_000_000),
                 scan_interval_secs: Some(1),
                 sync: Default::default(),
+                encryption: None,
             })
             .await
             .unwrap();

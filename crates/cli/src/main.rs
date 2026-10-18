@@ -318,6 +318,20 @@ enum FolderCommand {
         /// The user's ID.
         user: String,
     },
+    /// Let a storage peer hold an encrypted folder without reading it (ADR 0023).
+    StoreWith {
+        /// Folder ID.
+        id: String,
+        /// The storage peer's device ID.
+        device: String,
+    },
+    /// Stop syncing an encrypted folder with a storage peer.
+    UnstoreWith {
+        /// Folder ID.
+        id: String,
+        /// The storage peer's device ID.
+        device: String,
+    },
     /// Scan a folder for local changes now.
     Scan {
         /// Folder ID.
@@ -383,6 +397,14 @@ struct FolderOptions {
     /// What deleting a file here, outside Tidefell, does.
     #[arg(long, value_enum, default_value_t = LocalDeletesArg::Everywhere)]
     local_deletes: LocalDeletesArg,
+    /// Encrypt the folder, so storage peers can hold it without reading it (ADR 0023). Every
+    /// device adds or joins the folder this way, from the start.
+    #[arg(long)]
+    encrypted: bool,
+    /// A storage peer of an encrypted folder (repeatable): the device ID of a device that holds
+    /// it without reading it. Implies --encrypted.
+    #[arg(long = "storage-peer", value_name = "DEVICE")]
+    storage_peers: Vec<String>,
 }
 
 /// What `tidefell folder deletes` does with held deletes.
@@ -555,6 +577,11 @@ fn new_folder(
             direction: options.direction.into(),
             local_deletes: options.local_deletes.into(),
         },
+        encryption: (options.encrypted || !options.storage_peers.is_empty()).then_some(
+            tidefell_sdk::types::NewEncryption {
+                storage_peers: options.storage_peers,
+            },
+        ),
     })
 }
 
@@ -866,6 +893,16 @@ async fn run(cli: Cli) -> Result<(), String> {
             FolderCommand::Unshare { id, user } => {
                 let folder = client.remove_member(&id, &user).await.map_err(e)?;
                 print(json, &folder, |_| format!("{user} can no longer sync {id}"));
+            }
+            FolderCommand::StoreWith { id, device } => {
+                let folder = client.add_storage_peer(&id, &device).await.map_err(e)?;
+                print(json, &folder, |_| {
+                    format!("{device} now stores {id}, encrypted")
+                });
+            }
+            FolderCommand::UnstoreWith { id, device } => {
+                let folder = client.remove_storage_peer(&id, &device).await.map_err(e)?;
+                print(json, &folder, |_| format!("{device} no longer stores {id}"));
             }
             FolderCommand::Scan { id } => {
                 client.scan(&id).await.map_err(e)?;

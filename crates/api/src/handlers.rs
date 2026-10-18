@@ -18,13 +18,14 @@ use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
 use tidefell_sdk::types::{
     Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
     CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
-    Event, FetchRequest, Fetched, File, Folder, FolderPeer, FolderState, HeldDeletes,
-    HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
-    Mode, NewFolder, NewMember, OpenedVersion, Operation, PairRequest, Pairing, PathKind,
-    PathProblem, Peer, PeerState, PinRequest, Problem, ProblemKind, Rebuild, RecycleBinSummary,
-    Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate, Revocation,
-    RevokePreviewQuery, RevokeRequest, Status, SyncOptions, Transfer, Version, VersionKind,
-    VersionRequest, WithdrawalsDecision, WithdrawnFile,
+    Event, FetchRequest, Fetched, File, Folder, FolderEncryption, FolderPeer, FolderState,
+    HeldDeletes, HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings,
+    LossPreview, Mode, NewEncryption, NewFolder, NewMember, NewStoragePeer, OpenedVersion,
+    Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem,
+    ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest,
+    ResolveRequest, RetentionUpdate, Revocation, RevokePreviewQuery, RevokeRequest, Status,
+    SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
+    WithdrawnFile,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -56,6 +57,8 @@ type AppState = State<Arc<Engine>>;
         set_sync,
         add_member,
         remove_member,
+        add_storage_peer,
+        remove_storage_peer,
         scan,
         files,
         fetch,
@@ -119,6 +122,9 @@ type AppState = State<Arc<Engine>>;
         HeldDeletes,
         HeldDeletesDecision,
         NewMember,
+        NewEncryption,
+        NewStoragePeer,
+        FolderEncryption,
         File,
         FetchRequest,
         Fetched,
@@ -425,7 +431,18 @@ pub(crate) async fn add_folder(
         retention: Retention::from_days(new.retention_days),
         scan_interval: Duration::from_secs(new.scan_interval_secs.unwrap_or(10).max(1)),
         sync: convert::engine_sync_options(new.sync),
-        encryption: None,
+        encryption: new
+            .encryption
+            .map(|e| {
+                Ok::<_, ApiFailure>(engine::Encryption {
+                    storage_peers: e
+                        .storage_peers
+                        .iter()
+                        .map(|d| parse::<DeviceId>("storage peer", d))
+                        .collect::<ApiResult<_>>()?,
+                })
+            })
+            .transpose()?,
     })?;
     Ok((StatusCode::CREATED, Json(convert::folder(folder))))
 }
@@ -548,6 +565,35 @@ pub(crate) async fn remove_member(
 ) -> ApiResult<Json<Folder>> {
     let id = parse("folder", &id)?;
     engine.remove_member(id, parse("member", &user)?)?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
+/// Adds a storage peer to an encrypted folder: a device that holds it without reading it
+/// (ADR 0023).
+#[utoipa::path(post, path = "/v1/folders/{id}/storage-peers", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = NewStoragePeer,
+    responses((status = 200, body = Folder), (status = 400, body = ApiError), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn add_storage_peer(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(peer): Json<NewStoragePeer>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.add_storage_peer(id, parse("storage peer", &peer.device)?)?;
+    Ok(Json(folder_info(&engine, id)?))
+}
+
+/// Removes a storage peer from an encrypted folder.
+#[utoipa::path(delete, path = "/v1/folders/{id}/storage-peers/{device}", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID"), ("device" = String, Path, description = "Device ID")),
+    responses((status = 200, body = Folder), (status = 400, body = ApiError), (status = 404, body = ApiError), (status = 409, body = ApiError)))]
+pub(crate) async fn remove_storage_peer(
+    State(engine): AppState,
+    Path((id, device)): Path<(String, String)>,
+) -> ApiResult<Json<Folder>> {
+    let id = parse("folder", &id)?;
+    engine.remove_storage_peer(id, parse("storage peer", &device)?)?;
     Ok(Json(folder_info(&engine, id)?))
 }
 

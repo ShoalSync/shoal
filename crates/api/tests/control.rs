@@ -7,7 +7,8 @@ use std::time::Duration;
 use tidefell_engine::{Engine, EngineConfig, RelayConfig};
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_sdk::types::{
-    Direction, ErrorKind, Event, Folder, KnownPeer, Limits, LocalDeletes, NewFolder, SyncOptions,
+    Direction, ErrorKind, Event, Folder, FolderEncryption, KnownPeer, Limits, LocalDeletes,
+    NewEncryption, NewFolder, SyncOptions,
 };
 use tidefell_sdk::{Client, Error};
 
@@ -127,6 +128,7 @@ async fn control_api_end_to_end() {
             budget_bytes: None,
             scan_interval_secs: Some(3600),
             sync: Default::default(),
+            encryption: None,
         })
         .await
         .unwrap();
@@ -320,6 +322,7 @@ async fn control_api_end_to_end() {
         budget_bytes: None,
         scan_interval_secs: None,
         sync: Default::default(),
+        encryption: None,
     };
     assert_eq!(
         api_error(client.add_folder(&duplicate).await),
@@ -545,6 +548,99 @@ async fn logging_through_the_api() {
     client.dismiss_crashes().await.unwrap();
     assert!(client.status().await.unwrap().crash.is_none());
     assert!(client.crashes().await.unwrap()[0].seen);
+
+    server.abort();
+}
+
+/// An encrypted folder through the API (ADR 0023): created with a storage peer, it shows its key
+/// generation and storage peers, which can be changed; a plain folder has none to change.
+#[tokio::test(flavor = "multi_thread")]
+async fn encrypted_folders_through_the_api() {
+    let tmp = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let key = DeviceKey::from_seed([4; 32]);
+    let data_dir = tmp.path().join("data");
+    let engine = Arc::new(
+        Engine::start(
+            EngineConfig {
+                data_dir: data_dir.clone(),
+                metadata_dir: None,
+                relay: RelayConfig::Disabled,
+                address_lookup: false,
+                local_discovery: false,
+                watch: false,
+                limits: Default::default(),
+                bind: Some(SocketAddr::from(([127, 0, 0, 1], 0))),
+                peers: Vec::new(),
+                folders: Vec::new(),
+                min_free_space: None,
+            },
+            key.clone(),
+            user.certify(key.id(), "encrypted-test", 0),
+        )
+        .await
+        .unwrap(),
+    );
+    let socket = Client::socket_path(&data_dir);
+    let server = tokio::spawn({
+        let (engine, socket) = (engine.clone(), socket.clone());
+        async move { tidefell_api::serve_unix(engine, &socket).await }
+    });
+    let client = Client::unix(&socket);
+    eventually("socket is up", async || client.status().await.is_ok()).await;
+
+    let new_folder = |name: &str, encryption| NewFolder {
+        id: None,
+        path: tmp.path().join(name).display().to_string(),
+        members: Vec::new(),
+        retention_days: 7,
+        mode: None,
+        budget_bytes: None,
+        scan_interval_secs: Some(3600),
+        sync: Default::default(),
+        encryption,
+    };
+    let (store, other) = ("d".repeat(64), "e".repeat(64));
+    let created = client
+        .add_folder(&new_folder(
+            "secret",
+            Some(NewEncryption {
+                storage_peers: vec![store.clone()],
+            }),
+        ))
+        .await
+        .unwrap();
+    // The device made the folder's first key when it created it.
+    assert_eq!(
+        created.encryption,
+        Some(FolderEncryption {
+            storage_peers: vec![store.clone()],
+            key_generation: Some(1),
+        })
+    );
+
+    let added = client.add_storage_peer(&created.id, &other).await.unwrap();
+    assert_eq!(
+        added.encryption.unwrap().storage_peers,
+        vec![store.clone(), other.clone()]
+    );
+    let removed = client
+        .remove_storage_peer(&created.id, &store)
+        .await
+        .unwrap();
+    assert_eq!(removed.encryption.unwrap().storage_peers, vec![other]);
+    assert_eq!(
+        api_error(client.add_storage_peer(&created.id, "not a device").await),
+        ErrorKind::BadRequest
+    );
+
+    // A plain folder is not encrypted and takes no storage peers.
+    let plain = client.add_folder(&new_folder("plain", None)).await.unwrap();
+    assert!(plain.encryption.is_none());
+    assert_eq!(
+        api_error(client.add_storage_peer(&plain.id, &store).await),
+        ErrorKind::BadRequest
+    );
 
     server.abort();
 }

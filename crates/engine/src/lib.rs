@@ -157,8 +157,8 @@ pub use tidefell_net::{
 pub use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
-    ActivityEntry, Check, CheckLevel, CopyInfo, Event, FileInfo, FolderInfo, FolderPeer,
-    FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
+    ActivityEntry, Check, CheckLevel, CopyInfo, EncryptionInfo, Event, FileInfo, FolderInfo,
+    FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
     RebuildInfo, RecycleSummary, RecycledInfo, VersionInfo, VersionKind, WithdrawnFile,
 };
 

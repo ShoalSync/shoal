@@ -13,9 +13,10 @@ use crate::types::{
     Activity, ApiError, ApprovePairing, Check, CopiesRequest, Copy, Crash, CrashReport,
     DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, HeldDeletes,
     HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
-    NewFolder, NewMember, OpenedVersion, PairRequest, Pairing, PathProblem, Peer, PinRequest,
-    Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
-    Revocation, RevokeRequest, Status, SyncOptions, Version, VersionRequest, WithdrawalsDecision,
+    NewFolder, NewMember, NewStoragePeer, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
+    PinRequest, Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest,
+    RetentionUpdate, Revocation, RevokeRequest, Status, SyncOptions, Version, VersionRequest,
+    WithdrawalsDecision,
 };
 
 /// Client errors.
@@ -318,6 +319,29 @@ impl Client {
         self.call(
             Method::DELETE,
             &format!("/v1/folders/{folder}/members/{user}"),
+            None::<&()>,
+        )
+        .await
+    }
+
+    /// Adds a storage peer to an encrypted folder (ADR 0023).
+    pub async fn add_storage_peer(&self, folder: &str, device: &str) -> Result<Folder, Error> {
+        let body = NewStoragePeer {
+            device: device.to_string(),
+        };
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/storage-peers"),
+            Some(&body),
+        )
+        .await
+    }
+
+    /// Removes a storage peer from an encrypted folder.
+    pub async fn remove_storage_peer(&self, folder: &str, device: &str) -> Result<Folder, Error> {
+        self.call(
+            Method::DELETE,
+            &format!("/v1/folders/{folder}/storage-peers/{device}"),
             None::<&()>,
         )
         .await

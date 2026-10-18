@@ -67,6 +67,10 @@ pub(crate) fn folder(f: FolderInfo) -> api::Folder {
         problems: f.problems as u64,
         held_deletes: f.held_deletes as u64,
         low_space: f.low_space,
+        encryption: f.encryption.map(|e| api::FolderEncryption {
+            storage_peers: e.storage_peers.iter().map(ToString::to_string).collect(),
+            key_generation: e.key_generation,
+        }),
         rebuild: f.rebuild.map(|r| api::Rebuild {
             started_ms: r.started_ms,
             reason: r.reason,

@@ -52,6 +52,10 @@ scan_interval_secs = 10
 # files deleted here on every other device:
 # direction = "send-only"
 # local_deletes = "this-device"
+# To encrypt the folder, so storage peers can hold it without reading it (ADR 0023). Every
+# replica needs this from the start:
+# [folders.encryption]
+# storage_peers = ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
 
 # Optional web peer: sign in from a browser. Create accounts with
 # `tidefelld web account add --data-dir <data_dir> --username <name>`.

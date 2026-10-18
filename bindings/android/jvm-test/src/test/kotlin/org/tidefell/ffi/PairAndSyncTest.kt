@@ -136,6 +136,7 @@ class PairAndSyncTest {
                     offer.members,
                     offer.retentionDays,
                     SyncOptions(Direction.BOTH, LocalDeletes.EVERYWHERE),
+                    offer.encryption,
                 )
 
                 eventually("the phone lists the photo") { node.files(offer.id).size == 1 }

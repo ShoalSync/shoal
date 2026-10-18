@@ -247,6 +247,9 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if let Some(note) = only_here(f) {
                 let _ = write!(out, "\n    {note}");
             }
+            if let Some(note) = encryption(f) {
+                let _ = write!(out, "\n    {note}");
+            }
             if let Some(note) = pinned(f) {
                 let _ = write!(out, "\n    {note}");
             }
@@ -495,6 +498,20 @@ pub(crate) fn retention(f: &Folder) -> String {
         .map_or("forever".to_string(), |d| format!("for {d} days"))
 }
 
+/// How a folder is encrypted, if it is: its key generation and storage peers (ADR 0023).
+pub(crate) fn encryption(f: &Folder) -> Option<String> {
+    f.encryption.as_ref().map(|e| {
+        let key = e.key_generation.map_or_else(
+            || "waiting for its key from another member device".to_string(),
+            |g| format!("key generation {g}"),
+        );
+        match e.storage_peers.len() {
+            0 => format!("encrypted, {key}"),
+            n => format!("encrypted, {key}, held by {n} storage peer(s)"),
+        }
+    })
+}
+
 fn conflict_note(f: &Folder) -> Option<String> {
     (f.conflicts > 0).then(|| {
         format!(
@@ -552,6 +569,9 @@ pub(crate) fn folders(folders: &[Folder]) -> String {
         let source = if f.configured { ", from config" } else { "" };
         let _ = writeln!(out, "{}  {}", f.id, f.path);
         let _ = writeln!(out, "    {} member(s){source}", f.members.len());
+        if let Some(encryption) = encryption(f) {
+            let _ = writeln!(out, "    {encryption}");
+        }
         if f.sync != SyncOptions::default() {
             let _ = writeln!(out, "    {}", sync(f));
         }
@@ -628,8 +648,13 @@ pub(crate) fn rebuilding(f: &Folder) -> String {
 }
 
 pub(crate) fn created(f: &Folder) -> String {
+    let encrypted = if f.encryption.is_some() {
+        " --encrypted"
+    } else {
+        ""
+    };
     format!(
-        "created folder {}\nat {}\n\nOn your other devices, run:\n  tidefell folder join {} <path>",
+        "created folder {}\nat {}\n\nOn your other devices, run:\n  tidefell folder join {} <path>{encrypted}",
         f.id, f.path, f.id
     )
 }
@@ -958,6 +983,7 @@ mod tests {
             rebuild: None,
             held_deletes: 0,
             low_space: None,
+            encryption: None,
         };
         assert_eq!(only_here(&folder), None);
         folder.only_here = 2;

@@ -80,6 +80,14 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             "/v1/folders/{id}/members/{user}",
             delete(handlers::remove_member),
         )
+        .route(
+            "/v1/folders/{id}/storage-peers",
+            post(handlers::add_storage_peer),
+        )
+        .route(
+            "/v1/folders/{id}/storage-peers/{device}",
+            delete(handlers::remove_storage_peer),
+        )
         .route("/v1/folders/{id}/scan", post(handlers::scan))
         .route("/v1/folders/{id}/files", get(handlers::files))
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))

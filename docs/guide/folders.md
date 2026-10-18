@@ -65,6 +65,30 @@ tidefell folder share <folder id> <their user id>
 They then join the folder on their devices with `tidefell folder join`. `tidefell folder
 unshare` removes a member; their devices stop receiving changes.
 
+## Encrypted folders
+
+An encrypted folder's names and contents are sealed with keys that only its members' devices
+hold, so a device that is not a member, a **storage peer** such as a server at a hosting
+provider, can keep a copy without reading it. Choose this when the folder is created; every
+device then adds or joins it the same way:
+
+```sh
+tidefell folder create ~/Papers --encrypted
+tidefell folder join <folder id> ~/Papers --encrypted     # on your other devices
+```
+
+A device that joins gets the folder's key from a member device that holds it, once the two have
+synced; `tidefell status` shows `waiting for its key` until then, and the key generation after.
+Pairing a new device offers it the folder as encrypted, so the app joins it the right way.
+
+Removing a member, or revoking a device, makes the next generation of the key, which the devices
+that remain share: what is written after that is sealed with it, so the removed member or the
+revoked device cannot read it. What it could already read, it keeps.
+
+`--storage-peer <device id>` names a storage peer when the folder is made; `tidefell folder
+store-with` and `unstore-with` add and remove one later. In the configuration file, a folder is
+encrypted with an `[folders.encryption]` table, which can list `storage_peers`.
+
 ## Day to day
 
 ```sh

@@ -393,6 +393,22 @@ pub struct Folder {
     /// (ADR 0037).
     #[serde(default)]
     pub low_space: Option<String>,
+    /// For an encrypted folder, how it is encrypted on this device (ADR 0023).
+    #[serde(default)]
+    pub encryption: Option<FolderEncryption>,
+}
+
+/// How a folder is encrypted on this device (ADR 0023).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct FolderEncryption {
+    /// Device IDs of the storage peers this device syncs the folder with: devices that hold it
+    /// without reading it.
+    #[serde(default)]
+    pub storage_peers: Vec<String>,
+    /// The generation of the folder key new content is sealed with; absent until a key has
+    /// reached this device.
+    #[serde(default)]
+    pub key_generation: Option<u64>,
 }
 
 /// A summary of one device's recycle bin for a folder.
@@ -456,6 +472,26 @@ pub struct NewFolder {
     /// How the folder syncs on this device; defaults to both directions, with deletes synced.
     #[serde(default)]
     pub sync: SyncOptions,
+    /// Present to make the folder encrypted (ADR 0023). Every replica of a folder must agree:
+    /// join an encrypted folder with this too.
+    #[serde(default)]
+    pub encryption: Option<NewEncryption>,
+}
+
+/// An encrypted folder's settings when it is created or joined.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewEncryption {
+    /// Device IDs of storage peers: devices that hold the folder without reading it, whose
+    /// users are not members.
+    #[serde(default)]
+    pub storage_peers: Vec<String>,
+}
+
+/// A storage peer to add to an encrypted folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct NewStoragePeer {
+    /// Device ID.
+    pub device: String,
 }
 
 /// A file or directory to pin or unpin on a partial replica (ADR 0029).

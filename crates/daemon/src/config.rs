@@ -290,6 +290,21 @@ pub struct Folder {
     /// fetched when opened, and `path` becomes backing storage not to be edited directly.
     #[serde(default)]
     pub mount: Option<PathBuf>,
+    /// Makes the folder encrypted (ADR 0023): names and contents are sealed with keys only its
+    /// members' devices hold, so storage peers can keep it without reading it. Every replica of
+    /// the folder must have it, from the start; an empty table is enough.
+    #[serde(default)]
+    pub encryption: Option<FolderEncryption>,
+}
+
+/// An encrypted folder's settings.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FolderEncryption {
+    /// Device IDs (64 hex digits) of storage peers: devices that hold the folder without
+    /// reading it, whose users are not members.
+    #[serde(default)]
+    pub storage_peers: Vec<String>,
 }
 
 fn default_scan_interval() -> u64 {
@@ -405,7 +420,19 @@ impl Config {
                         ));
                     }
                 },
-                encryption: None,
+                encryption: f
+                    .encryption
+                    .as_ref()
+                    .map(|e| {
+                        Ok::<_, String>(tidefell_engine::Encryption {
+                            storage_peers: e
+                                .storage_peers
+                                .iter()
+                                .map(|d| hex_id::<DeviceId>("storage peer", d))
+                                .collect::<Result<_, _>>()?,
+                        })
+                    })
+                    .transpose()?,
             });
         }
         self.mounts()?;
@@ -484,6 +511,28 @@ mod tests {
         assert_eq!(engine.folders.len(), 1);
         assert_eq!(engine.folders[0].retention, Retention::Days(30));
         assert_eq!(engine.folders[0].sync, SyncOptions::default());
+    }
+
+    #[test]
+    fn reads_an_encrypted_folder() {
+        let peer = "d".repeat(64);
+        let text = EXAMPLE.replace(
+            "scan_interval_secs = 10\n",
+            &format!(
+                "scan_interval_secs = 10\n[folders.encryption]\nstorage_peers = [\"{peer}\"]\n"
+            ),
+        );
+        let engine = parse(&text).unwrap().to_engine().unwrap();
+        let encryption = engine.folders[0].encryption.as_ref().unwrap();
+        assert_eq!(encryption.storage_peers, vec![DeviceId([0xdd; 32])]);
+        // Plain unless asked.
+        let plain = parse(EXAMPLE).unwrap().to_engine().unwrap();
+        assert!(plain.folders[0].encryption.is_none());
+        let bad = EXAMPLE.replace(
+            "scan_interval_secs = 10\n",
+            "scan_interval_secs = 10\n[folders.encryption]\nstorage_peers = [\"nope\"]\n",
+        );
+        assert!(parse(&bad).unwrap().to_engine().is_err());
     }
 
     #[test]

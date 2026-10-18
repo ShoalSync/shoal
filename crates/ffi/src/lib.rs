@@ -386,6 +386,25 @@ pub struct FolderOffer {
     pub members: Vec<String>,
     /// Recycle-bin retention in days; 0 keeps deleted files forever.
     pub retention_days: u32,
+    /// For an encrypted folder, what to join it with: pass it on to [`Node::join_folder`].
+    pub encryption: Option<Encryption>,
+}
+
+/// An encrypted folder's settings when it is created or joined (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Encryption {
+    /// Device IDs of storage peers: devices that hold the folder without reading it.
+    pub storage_peers: Vec<String>,
+}
+
+/// How a folder is encrypted on this device (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FolderEncryption {
+    /// Device IDs of its storage peers.
+    pub storage_peers: Vec<String>,
+    /// The generation of the folder key new content is sealed with; `None` until a key has
+    /// reached this device from another member device.
+    pub key_generation: Option<u64>,
 }
 
 /// Progress of a [`Pairing`].
@@ -501,6 +520,13 @@ impl Pairing {
                                 name: f.name.clone(),
                                 members: f.members.iter().map(ToString::to_string).collect(),
                                 retention_days: f.retention_days,
+                                encryption: f.encryption.as_ref().map(|e| Encryption {
+                                    storage_peers: e
+                                        .storage_peers
+                                        .iter()
+                                        .map(ToString::to_string)
+                                        .collect(),
+                                }),
                             })
                             .collect(),
                     })
@@ -662,6 +688,8 @@ pub struct Folder {
     pub held_deletes: u64,
     /// Why nothing more is downloaded to this folder, if the phone is low on space (ADR 0037).
     pub low_space: Option<String>,
+    /// For an encrypted folder, how (ADR 0023).
+    pub encryption: Option<FolderEncryption>,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
@@ -1088,6 +1116,10 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         unavailable: f.unavailable,
         held_deletes: f.held_deletes as u64,
         low_space: f.low_space,
+        encryption: f.encryption.map(|e| FolderEncryption {
+            storage_peers: e.storage_peers.iter().map(ToString::to_string).collect(),
+            key_generation: e.key_generation,
+        }),
     }
 }
 
@@ -1187,7 +1219,12 @@ impl Node {
 
     /// Joins folder `id` (from a [`FolderOffer`] or another device) at `path`. With
     /// `partial_budget`, other devices' files are placeholders until opened. `members` defaults
-    /// to this device's user.
+    /// to this device's user. An encrypted folder is joined with `encryption`, which an offer
+    /// carries (ADR 0023).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Kotlin calls it with named arguments, each a folder setting"
+    )]
     pub fn join_folder(
         &self,
         id: String,
@@ -1196,6 +1233,7 @@ impl Node {
         members: Vec<String>,
         retention_days: u32,
         sync: SyncOptions,
+        encryption: Option<Encryption>,
     ) -> Result<Folder> {
         let id: FolderId = parse("folder ID", &id)?;
         self.add(
@@ -1205,18 +1243,29 @@ impl Node {
             members,
             retention_days,
             sync,
+            encryption,
         )
     }
 
-    /// Creates a new folder at `path`, shared with this device's user.
+    /// Creates a new folder at `path`, shared with this device's user; encrypted with
+    /// `encryption` (ADR 0023), so storage peers can hold it without reading it.
     pub fn create_folder(
         &self,
         path: String,
         partial_budget: Option<u64>,
         retention_days: u32,
         sync: SyncOptions,
+        encryption: Option<Encryption>,
     ) -> Result<Folder> {
-        self.add(None, path, partial_budget, Vec::new(), retention_days, sync)
+        self.add(
+            None,
+            path,
+            partial_budget,
+            Vec::new(),
+            retention_days,
+            sync,
+            encryption,
+        )
     }
 
     /// Changes how a folder syncs on this device (ADR 0025). Files already dropped from this
@@ -1811,6 +1860,10 @@ impl Node {
 }
 
 impl Node {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the settings join_folder takes, one by one"
+    )]
     fn add(
         &self,
         id: Option<FolderId>,
@@ -1819,6 +1872,7 @@ impl Node {
         members: Vec<String>,
         retention_days: u32,
         sync: SyncOptions,
+        encryption: Option<Encryption>,
     ) -> Result<Folder> {
         let engine = self.engine()?;
         // Adding a folder starts its scanner; foreign threads have no runtime of their own.
@@ -1835,7 +1889,17 @@ impl Node {
             retention: Retention::from_days(retention_days),
             scan_interval: Duration::from_secs(30),
             sync: sync.into(),
-            encryption: None,
+            encryption: encryption
+                .map(|e| {
+                    Ok::<_, TidefellError>(tidefell_engine::Encryption {
+                        storage_peers: e
+                            .storage_peers
+                            .iter()
+                            .map(|d| parse("storage peer device ID", d))
+                            .collect::<Result<_>>()?,
+                    })
+                })
+                .transpose()?,
         })?;
         Ok(folder_record(folder))
     }

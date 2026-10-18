@@ -155,6 +155,7 @@ async fn pair_join_open_and_save() {
                         direction: tidefell_ffi::Direction::Both,
                         local_deletes: tidefell_ffi::LocalDeletes::Everywhere,
                     },
+                    offer.encryption.clone(),
                 )
             })
             .join()

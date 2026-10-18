@@ -70,6 +70,18 @@ pub struct FolderInfo {
     pub low_space: Option<String>,
     /// The folder's last rebuild, if its metadata was ever started over (ADR 0034).
     pub rebuild: Option<RebuildInfo>,
+    /// For an encrypted folder, how (ADR 0023).
+    pub encryption: Option<EncryptionInfo>,
+}
+
+/// How a folder is encrypted on this device (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EncryptionInfo {
+    /// The devices this device syncs the folder with that hold it without reading it.
+    pub storage_peers: Vec<DeviceId>,
+    /// The generation of the folder key new content is sealed with, or `None` until a key has
+    /// reached this device.
+    pub key_generation: Option<u64>,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
