@@ -200,6 +200,21 @@ Folders whose replicas include devices that should not read them, such as a stor
 hosting provider, are decided in ADR 0023 and built in Phase 6. Until then every replica of a
 folder can read it, and a device that holds a folder should be one its member trusts.
 
+Once built, for an encrypted folder:
+
+- **A storage peer, or whoever runs or breaks into it, can** see the folder's ID, its member
+  users and devices, entry IDs, version vectors, which device made each version and when, chunk
+  counts and approximate sizes, and when devices connect. It can refuse to store or serve, serve
+  old versions, or delete what it holds.
+- **It cannot** read paths, names, contents or exact sizes, test whether the folder holds a file
+  it knows, or change anything undetected: versions are signed by their authors and chunks are
+  authenticated, and members check both.
+- **A removed or revoked device keeps** what it could already read. After a member is removed or
+  a device revoked, the folder key rotates, so it cannot read what is written afterwards.
+- **Losing every member device loses the key,** and with it the data held only on storage peers.
+  A phone therefore counts a storage peer's copy as a backup only while another member device
+  holds the key.
+
 ## Keeping this current
 
 - A pull request that changes what is protected, or how, updates this page; the template asks.

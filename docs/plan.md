@@ -834,7 +834,8 @@ storage does not contain a usable device key; and a release's notes include its 
 
 ### Phase 6 work breakdown
 
-1. **Decisions.** ADR 0023, in the Phase 5b decisions pull request.
+1. **Decisions.** ADR 0023, in the Phase 5b decisions pull request, amended before the specs
+   for author vouching, revocation, per-folder databases and confirmed copies.
 2. **Specs.** sync/2, blobs/2, the encryption key, key grant and sealed version formats, and
    the key derivations, each with golden vectors, merged before any code.
 3. **`crypto` crate.** Folder key derivations, chunk and metadata sealing and HPKE grants,
@@ -847,4 +848,7 @@ storage does not contain a usable device key; and a release's notes include its 
 7. **Infra.** `role-storage-peer`, and a VM test of the exit criterion that also checks the
    storage peer's disk for plaintext.
 8. **Docs, site and release.** Guide pages for encrypted folders and running a storage peer.
-   Release `v0.10.0`, and the infra, site and Android pins.
+   A release, and the infra, site and Android pins.
+
+The simulation (ADR 0036) gains encrypted folders in step 5 and a storage-peer device in step 6,
+so each step is checked by it as well as by its own tests.
