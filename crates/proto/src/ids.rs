@@ -131,6 +131,23 @@ id!(
     /// (`specs/encryption-v1.md`).
     ListId, 32
 );
+id!(
+    /// What `tidefell/blobs/2` transfers: a sealed chunk's chunk ID or a list blob's list ID.
+    /// Which it is, the requester knows.
+    BlobId, 32
+);
+
+impl From<ChunkId> for BlobId {
+    fn from(id: ChunkId) -> Self {
+        Self(id.0)
+    }
+}
+
+impl From<ListId> for BlobId {
+    fn from(id: ListId) -> Self {
+        Self(id.0)
+    }
+}
 
 #[cfg(test)]
 mod tests {

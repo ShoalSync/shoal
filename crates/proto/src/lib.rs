@@ -16,6 +16,7 @@
 )]
 
 pub mod blobs;
+pub mod blobs2;
 mod bytes;
 pub mod frame;
 pub mod identity;
@@ -24,6 +25,7 @@ pub mod manifest;
 pub mod pair;
 pub mod signed;
 pub mod sync;
+pub mod sync2;
 pub mod version;
 
 pub use ids::{
@@ -69,4 +71,7 @@ pub enum Error {
     /// Text is not a valid pairing code.
     #[error("not a valid pairing code")]
     InvalidCode,
+    /// A message decodes but breaks a rule of its spec.
+    #[error("{0}")]
+    Invalid(&'static str),
 }

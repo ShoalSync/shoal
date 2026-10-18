@@ -48,6 +48,27 @@ impl Message for crate::blobs::BlobsMessage {}
 
 impl Message for crate::pair::PairMessage {}
 
+/// Decodes exactly one message, refusing bytes left over: the v2 protocols have no fields
+/// appended later.
+fn exact<T: DeserializeOwned>(body: &[u8]) -> Result<T, Error> {
+    match postcard::take_from_bytes(body)? {
+        (message, []) => Ok(message),
+        _ => Err(Error::Decode(postcard::Error::DeserializeBadEncoding)),
+    }
+}
+
+impl Message for crate::sync2::SyncMessage {
+    fn decode_body(body: &[u8]) -> Result<Self, Error> {
+        exact(body)
+    }
+}
+
+impl Message for crate::blobs2::BlobsMessage {
+    fn decode_body(body: &[u8]) -> Result<Self, Error> {
+        exact(body)
+    }
+}
+
 impl Message for crate::sync::SyncMessage {
     /// Also reads a `Hello` from before `revocations` (ADR 0040), whose frame ends after
     /// `clock_ms`, or from before `clock_ms` (ADR 0030), whose frame ends after `folders`: the
