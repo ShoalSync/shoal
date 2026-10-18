@@ -204,7 +204,8 @@ Once built, for an encrypted folder:
 
 - **A storage peer, or whoever runs or breaks into it, can** see the folder's ID, its member
   users and devices, entry IDs, version vectors, which device made each version and when, chunk
-  counts and approximate sizes, and when devices connect. It can refuse to store or serve, serve
+  counts and approximate sizes, which versions and entries share chunks (copies, and edits that
+  keep most of a file), and when devices connect. It can refuse to store or serve, serve
   old versions, or delete what it holds.
 - **It cannot** read paths, names, contents or exact sizes, test whether the folder holds a file
   it knows, or change anything undetected: versions are signed by their authors and chunks are

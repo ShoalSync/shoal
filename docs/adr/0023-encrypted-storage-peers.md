@@ -109,8 +109,8 @@ amendments fit it to them; where they differ from the decision above, they win.
   }>` is signed by `device`'s identity key, which its user certified, rather than by the user
   key: the user key stays on one device (ADR 0015), and devices paired before Phase 6 can
   publish a key without it. A device's newest encryption key by `issued_ms` replaces older ones.
-- **Keys are identified, not only numbered.** Each folder key has a 16-byte random `key id`
-  besides its generation. Grants and sealed versions name both. Two devices that rotate at once
+- **Keys are identified, not only numbered.** Each folder key has a 16-byte `key id` besides its
+  generation, derived from the key (encryption-v1), so a device granted a key can check it. Grants and sealed versions name both. Two devices that rotate at once
   make two keys of one generation; both are granted to the same devices, so both stay readable,
   and every member uses the one with the lower key id for new content. Members keep every key
   they are granted.
@@ -142,6 +142,12 @@ amendments fit it to them; where they differ from the decision above, they win.
   folder a member first fetches the content of such a version, from any peer, storage peers
   included: if it gets it, it takes the version over; only if every peer it reaches lacks the
   content does it withdraw the version.
+- **No arrival time from a storage peer.** ADR 0040 places a version before or after a time of
+  loss by when each replica received it. A version that waited on a storage peer arrives late
+  without being late, so a member records no arrival time for a version it first received from
+  a storage peer: such versions are taken over where held and never withdrawn. Members that meet
+  only through storage peers withdraw little on a time of loss, but keep the work made before
+  it; revocation still stops everything the device makes afterwards.
 - **Conflict resolution compares the signed sealed version.** Rule 4 of sync/1 (the greater
   encoding wins) compares the encoding of the signed `SealedVersion`, which every replica has,
   not of the decrypted `EntryVersion`, whose sealing uses a random nonce. The other rules use

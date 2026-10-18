@@ -157,6 +157,23 @@
           statix = check "statix" [ pkgs.statix ] "statix check .";
           deadnix = check "deadnix" [ pkgs.deadnix ] "deadnix --fail .";
           typos = check "typos" [ pkgs.typos ] "typos";
+          # The encrypted folders' golden vectors come from a second implementation, in Python;
+          # this remakes them and checks it against RFC 9180 and sync/1's vectors.
+          spec-vectors =
+            check "spec-vectors"
+              [ (pkgs.python3.withPackages (p: [ p.blake3 p.cryptography p.pynacl ])) ]
+              ''
+                work=$(mktemp -d)
+                cp -r specs "$work/"
+                cd "$work/specs/vectors/gen"
+                export PYTHONDONTWRITEBYTECODE=1
+                python3 hpke.py
+                python3 check_wire.py
+                for spec in encryption_v1 sync_v2 blobs_v2; do
+                  python3 "$spec.py" > "$work/$spec.json"
+                  diff -u "../''${spec//_/-}.json" "$work/$spec.json"
+                done
+              '';
         };
 
       # Evaluates the NixOS module and builds its systemd unit and checked configuration.
