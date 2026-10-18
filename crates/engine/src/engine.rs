@@ -978,7 +978,8 @@ impl Engine {
             let (inner, node) = (inner.clone(), node.clone());
             tasks.spawn(supervised(inner.clone(), "confirm", async move {
                 loop {
-                    tokio::time::sleep(CONFIRM_INTERVAL).await;
+                    // As often as twice the retry interval, which tests shorten.
+                    tokio::time::sleep(CONFIRM_INTERVAL.min(inner.retry_interval() * 2)).await;
                     for id in inner
                         .folder_ids()
                         .into_iter()

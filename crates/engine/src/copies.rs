@@ -38,13 +38,52 @@ pub(crate) fn confirmed(
                         .certificate(**device)
                         .and_then(|c| c.verify_certificate().ok())
                         .is_some_and(|c| {
-                            state.members.contains(&c.user) && !vouching.is_revoked(&c)
+                            !vouching.is_revoked(&c)
+                                && (state.members.contains(&c.user)
+                                    || storage_copy_counts(state, vouching, **device, content))
                         })
                 })
                 .map(|(device, at)| (*device, *at))
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether a storage peer's copy of `content` counts (ADR 0023): it is one of the folder's
+/// storage peers, and a member device other than this one holds a grant of a key the content is
+/// sealed with, so the copy can still be read if this device is lost.
+fn storage_copy_counts(
+    state: &FolderState,
+    vouching: &Vouching,
+    device: DeviceId,
+    content: &ContentHash,
+) -> bool {
+    let Some(encryption) = state.config.encryption.as_ref() else {
+        return false;
+    };
+    if !encryption.storage_peers.contains(&device) {
+        return false;
+    }
+    let keys: Vec<tidefell_proto::KeyId> = state
+        .sealed_chunks
+        .keys()
+        .filter(|(c, _)| c == content)
+        .map(|(_, key)| *key)
+        .collect();
+    let me = state.meta.device();
+    state.items.values().any(|item| {
+        let tidefell_proto::sync2::Item::Grant(signed) = item else {
+            return false;
+        };
+        signed.verify().is_ok_and(|grant| {
+            keys.contains(&grant.key)
+                && grant.recipient != me
+                && vouching
+                    .certificate(grant.recipient)
+                    .and_then(|c| c.verify_certificate().ok())
+                    .is_some_and(|c| state.members.contains(&c.user) && !vouching.is_revoked(&c))
+        })
+    })
 }
 
 /// Content of the current versions and conflict copies of `state` that this device made and
@@ -133,6 +172,66 @@ pub(crate) async fn confirm(
     }
     let mut confirmed: Vec<(ContentHash, DeviceId)> = Vec::new();
     let mut names: Vec<(DeviceId, String)> = Vec::new();
+    // An encrypted folder's copies are asked about over blobs/2, by chunk ID, of members and its
+    // storage peers alike; which count is decided in [`confirmed`] (ADR 0023).
+    let encrypted = {
+        let state = handle.lock();
+        state.config.encryption.as_ref().map(|e| {
+            let chunks: Vec<(ContentHash, Vec<tidefell_proto::ChunkId>)> = pending
+                .iter()
+                .filter_map(|m| {
+                    state
+                        .sealed_chunks
+                        .iter()
+                        .find(|((c, _), _)| *c == m.content)
+                        .map(|(_, list)| (m.content, list.iter().map(|(id, _)| *id).collect()))
+                })
+                .collect();
+            (chunks, e.storage_peers.clone())
+        })
+    };
+    if let Some((chunks, storage_peers)) = encrypted {
+        for peer in node.encrypted_peers() {
+            if !peer.shared_folders().contains(&id) {
+                continue;
+            }
+            let device = peer.device();
+            if !members.contains(&peer.certificate().user) && !storage_peers.contains(&device) {
+                continue;
+            }
+            let Ok(endpoint) = EndpointId::from_bytes(device.as_bytes()) else {
+                continue;
+            };
+            match node.is_full_encrypted_replica(endpoint, id).await {
+                Ok(true) => names.push((device, peer.certificate().name.clone())),
+                Ok(false) => continue,
+                Err(e) => {
+                    debug!(folder = %id, peer = %device, error = %e, "not counted as a full replica");
+                    continue;
+                }
+            }
+            for (content, ids) in &chunks {
+                if ids.is_empty() || confirmed.iter().any(|(c, d)| c == content && *d == device) {
+                    continue;
+                }
+                let mut all = true;
+                for batch in ids.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_AVAILABILITY) {
+                    let blobs: Vec<tidefell_proto::blobs2::BlobId> =
+                        batch.iter().map(|c| (*c).into()).collect();
+                    match node.blob_availability(endpoint, id, &blobs).await {
+                        Ok(held) if held.len() == blobs.len() && held.iter().all(|h| *h) => {}
+                        _ => {
+                            all = false;
+                            break;
+                        }
+                    }
+                }
+                if all {
+                    confirmed.push((*content, device));
+                }
+            }
+        }
+    }
     for peer in node.peers() {
         if !peer.shared_folders().contains(&id) {
             continue;

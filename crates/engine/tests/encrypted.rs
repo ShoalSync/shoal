@@ -660,3 +660,75 @@ async fn eventually_for(what: &str, seconds: u64, mut check: impl FnMut() -> boo
     }
     panic!("timed out waiting for {what}");
 }
+
+fn only_here(engine: &Engine) -> usize {
+    engine
+        .folders()
+        .into_iter()
+        .find(|f| f.id == FOLDER)
+        .unwrap()
+        .only_here
+}
+
+/// A storage peer's copy is a confirmed copy only while a member device other than the one
+/// asking holds a grant of the key (ADR 0023, ADR 0022): otherwise losing that device would lose
+/// the key, and with it everything the storage peer holds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_storage_peers_copy_counts_once_another_member_holds_the_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([16; 32]);
+    let operator = UserKey::from_seed([17; 32]);
+    let a = Member::new(dir.path(), "a", 130);
+    let b = Member::new(dir.path(), "b", 131);
+    let (id_a, id_b) = (a.key.id(), b.key.id());
+    let storage_key = DeviceKey::from_seed([132; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        132,
+        &operator,
+        &[user.id()],
+        &network,
+        &[id_a, id_b],
+        1 << 30,
+    )
+    .await;
+    let engine_a = a
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    a.write("photo.jpg", b"only here, as far as a can tell");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("the storage peer holds the photo", || {
+        stored(&engine_s).missing_chunks == 0 && stored(&engine_s).versions == 1
+    })
+    .await;
+    // Held, but a alone has the key: not a copy that counts.
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert_eq!(only_here(&engine_a), 1);
+
+    // Once a has granted the key to b, the storage peer's copy counts.
+    let engine_b = b
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[storage_key],
+        )
+        .await;
+    eventually("b is granted the key", || generation(&engine_b) == Some(1)).await;
+    eventually("the storage peer's copy counts", || {
+        only_here(&engine_a) == 0
+    })
+    .await;
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
+    engine_s.shutdown().await;
+}
