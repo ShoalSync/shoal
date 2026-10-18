@@ -1,7 +1,9 @@
 //! The storage and policy interface a [`crate::Node`] needs. Implemented by `engine`.
 
+use tidefell_proto::blobs2::BlobId;
 use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 use tidefell_proto::sync::EntryVersion;
+use tidefell_proto::sync2::Item;
 use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
 
@@ -118,4 +120,76 @@ pub trait Backend: Send + Sync + 'static {
     /// A counter that changes whenever local index entries are added, so sessions can push
     /// new versions to peers.
     fn changes(&self) -> watch::Receiver<u64>;
+}
+
+/// A page of an encrypted folder's index, for a sync/2 `IndexBatch`.
+#[derive(Debug, Clone, Default)]
+pub struct ItemPage {
+    /// The index's epoch.
+    pub epoch: u64,
+    /// Highest sequence covered by `items`.
+    pub up_to: u64,
+    /// Items after the requested sequence, in sequence order.
+    pub items: Vec<Item>,
+}
+
+/// What a node needs for encrypted folders (`tidefell/sync/2`, `tidefell/blobs/2`), beside a
+/// [`Backend`], which still answers for the device: its certificate, clock, revocations and the
+/// certificates it holds. Implemented by `engine` on member devices, and by a storage peer.
+///
+/// Methods are synchronous and should be quick; they are called from async tasks.
+pub trait EncryptedBackend: Send + Sync + 'static {
+    /// Encrypted folders this device syncs, offered when dialing a peer.
+    fn folders(&self) -> Vec<FolderId>;
+
+    /// True if `peer` (already verified) may sync `folder`: a member device, or a storage peer
+    /// this device lists for it; on a storage peer, a device of a member user its operator
+    /// listed.
+    fn is_member(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool;
+
+    /// True if `peer` is a storage peer of `folder`: its user is not a member. Its answer that it
+    /// cannot vouch for an author counts for nothing (ADR 0023).
+    fn is_storage_peer(&self, folder: &FolderId, peer: &DeviceCertificate) -> bool;
+
+    /// The devices whose certificates this backend lacks among the signers of `items`, each
+    /// once: asked for before the items are applied (ADR 0024).
+    fn unknown_authors(&self, _items: &[Item]) -> Vec<DeviceId> {
+        Vec::new()
+    }
+
+    /// Signers of items stored in `folder` whose certificates this backend lacks, a few at a
+    /// time.
+    fn stored_unknown_authors(&self, _folder: &FolderId) -> Vec<DeviceId> {
+        Vec::new()
+    }
+
+    /// A member peer sharing `folder` answered it cannot vouch for `author`.
+    fn cannot_vouch(&self, _folder: &FolderId, _author: DeviceId) {}
+
+    /// At most `limit` items of `folder`'s index after `since`, as [`Backend::index_since`].
+    fn index_since(
+        &self,
+        folder: &FolderId,
+        epoch: u64,
+        since: u64,
+        limit: usize,
+    ) -> Option<ItemPage>;
+
+    /// Applies items received from `peer`. Invalid items are skipped by the backend.
+    fn apply_items(&self, folder: &FolderId, peer: DeviceId, items: Vec<Item>);
+
+    /// The `(epoch, sequence)` last received from `peer` for `folder`, or `(0, 0)`.
+    fn peer_progress(&self, folder: &FolderId, peer: DeviceId) -> (u64, u64);
+
+    /// Records progress after a complete index response from `peer`.
+    fn set_peer_progress(&self, folder: &FolderId, peer: DeviceId, epoch: u64, up_to: u64);
+
+    /// A sealed chunk or list blob of `folder`, if held and referenced there.
+    fn blob(&self, folder: &FolderId, id: &BlobId) -> Option<Vec<u8>>;
+
+    /// Which of `ids` this backend holds in `folder`, in order; `None` if the folder is unknown.
+    fn holds(&self, folder: &FolderId, ids: &[BlobId]) -> Option<Vec<bool>>;
+
+    /// Whether this device is a full replica of `folder`; `None` if the folder is unknown.
+    fn is_full_replica(&self, folder: &FolderId) -> Option<bool>;
 }

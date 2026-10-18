@@ -98,6 +98,10 @@ pub(crate) trait Protocol: Sized + Send + Sync + 'static {
     fn name(message: &Self::Message) -> &'static str;
     /// The most encoded bytes of items in one batch.
     const MAX_BATCH_BYTES: usize;
+    /// False if a received message breaks a limit of the protocol, which ends the session.
+    fn check(_message: &Self::Message) -> bool {
+        true
+    }
 }
 
 /// A page of a folder's index, for an `IndexBatch`.
@@ -127,6 +131,11 @@ pub(crate) trait Side<P: Protocol>: Send + Sync + 'static {
     fn stored_unknown_authors(&self, folder: &FolderId) -> Vec<DeviceId>;
     /// `peer`, which shares `folder`, answered it cannot vouch for `author` (ADR 0024).
     fn cannot_vouch(&self, folder: &FolderId, author: DeviceId, peer: &DeviceCertificate);
+    /// Whether `peer`'s answer that it cannot vouch for an author settles it. If not, the
+    /// author's items are held, as when a request goes unanswered (ADR 0023: a storage peer's).
+    fn counts_as_answer(&self, _folder: &FolderId, _peer: &DeviceCertificate) -> bool {
+        true
+    }
     fn index_since(
         &self,
         folder: &FolderId,
@@ -555,7 +564,11 @@ pub(crate) async fn run<P: Protocol>(
 async fn read_loop<P: Protocol>(mut recv: RecvHalf, tx: mpsc::Sender<Result<P::Message>>) {
     loop {
         let message = match frame_io::read(&mut recv).await {
-            Ok(Some(message)) => Ok(message),
+            Ok(Some(message)) if P::check(&message) => Ok(message),
+            Ok(Some(message)) => Err(Error::Protocol(format!(
+                "{} over the protocol's limits",
+                P::name(&message)
+            ))),
             Ok(None) => return,
             Err(e) => Err(e),
         };
@@ -917,7 +930,8 @@ async fn fetch_certificates<P: Protocol>(
                 // Only these say the peer knows and cannot vouch: anything else, such as a
                 // peer from before certificate streams, may vouch later.
                 Ok((author, Err(Error::Rejected(code))))
-                    if code == "UnknownDevice" || code == "NotAMember" =>
+                    if (code == "UnknownDevice" || code == "NotAMember")
+                        && side.counts_as_answer(&folder, peer) =>
                 {
                     debug!(%author, %code, "the peer cannot vouch for an author");
                     side.cannot_vouch(&folder, author, peer);

@@ -8,18 +8,23 @@ use iroh::endpoint::presets;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, RelayMap, RelayMode, RelayUrl, SecretKey};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
+use tidefell_proto::blobs2::BlobId;
 use tidefell_proto::identity::DeviceCertificate;
 use tidefell_proto::{
-    ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed, ALPN_BLOBS_V1, ALPN_SYNC_V1,
+    ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed, ALPN_BLOBS_V1, ALPN_BLOBS_V2,
+    ALPN_SYNC_V1, ALPN_SYNC_V2,
 };
 use tokio::sync::oneshot;
 use tracing::{debug, warn};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, EncryptedBackend};
 use crate::blobs::{self, BlobsProtocol, ChunkResult};
+use crate::blobs2::{self, BlobKind, BlobResult, Blobs2Protocol};
 use crate::limits::{Limits, RateLimiter};
 use crate::locks::{Locked, ReadWrite};
-use crate::sync::{self, Peer};
+use crate::session::{Protocol, Side};
+use crate::sync::{self, Peer, V1Side, V1};
+use crate::sync2::{V2Side, V2};
 use crate::transport::Conn;
 use crate::{Error, Result};
 
@@ -165,12 +170,14 @@ pub struct PeerStatus {
     pub clock_offset_ms: Option<i64>,
 }
 
-/// A connected sync peer.
+/// A connected sync peer: a sync/1 session, or a sync/2 session for encrypted folders.
 #[derive(Debug, Clone)]
 pub struct PeerHandle {
     conn: Conn,
     peer: Peer,
     limiter: Arc<RateLimiter>,
+    /// A sync/2 session.
+    encrypted: bool,
 }
 
 impl PeerHandle {
@@ -189,12 +196,16 @@ impl PeerHandle {
         self.peer.shared.read_locked().clone()
     }
 
-    /// Requests the manifest of `content` in `folder`.
+    /// Requests the manifest of `content` in `folder`. sync/1 only: an encrypted folder's
+    /// versions carry their chunk lists.
     pub async fn request_manifest(
         &self,
         folder: FolderId,
         content: ContentHash,
     ) -> Result<Manifest> {
+        if self.encrypted {
+            return Err(Error::Protocol("sync/2 has no manifests".into()));
+        }
         sync::request_manifest(&self.conn, &self.limiter, folder, content).await
     }
 
@@ -204,25 +215,41 @@ impl PeerHandle {
         folder: FolderId,
         device: DeviceId,
     ) -> Result<Signed<DeviceCertificate>> {
-        sync::request_certificate(&self.conn, &self.limiter, folder, device).await
+        if self.encrypted {
+            crate::session::request_certificate::<V2>(&self.conn, &self.limiter, folder, device)
+                .await
+        } else {
+            sync::request_certificate(&self.conn, &self.limiter, folder, device).await
+        }
     }
 }
 
-#[derive(Clone)]
-struct SyncProtocol {
-    backend: Arc<dyn Backend>,
+/// Serves one sync protocol version's sessions.
+struct SyncProtocol<P: Protocol> {
+    side: Arc<dyn Side<P>>,
     peers: Peers,
     records: Records,
     limiter: Arc<RateLimiter>,
 }
 
-impl std::fmt::Debug for SyncProtocol {
+impl<P: Protocol> Clone for SyncProtocol<P> {
+    fn clone(&self) -> Self {
+        Self {
+            side: self.side.clone(),
+            peers: self.peers.clone(),
+            records: self.records.clone(),
+            limiter: self.limiter.clone(),
+        }
+    }
+}
+
+impl<P: Protocol> std::fmt::Debug for SyncProtocol<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SyncProtocol").finish_non_exhaustive()
     }
 }
 
-impl ProtocolHandler for SyncProtocol {
+impl<P: Protocol + std::fmt::Debug> ProtocolHandler for SyncProtocol<P> {
     async fn accept(
         &self,
         conn: iroh::endpoint::Connection,
@@ -232,12 +259,12 @@ impl ProtocolHandler for SyncProtocol {
     }
 }
 
-impl SyncProtocol {
+impl<P: Protocol> SyncProtocol<P> {
     /// Runs the sync session a peer opened on `conn` until it ends.
     async fn serve(&self, conn: Conn) {
         run_session(
             conn,
-            self.backend.clone(),
+            self.side.clone(),
             self.peers.clone(),
             self.records.clone(),
             self.limiter.clone(),
@@ -246,11 +273,30 @@ impl SyncProtocol {
         )
         .await;
     }
+
+    /// Dials `conn`'s peer: runs the session until it ends, sending its handle once the
+    /// handshake is done.
+    fn start(&self, conn: Conn, ready: oneshot::Sender<Result<PeerHandle>>) {
+        tokio::spawn(run_session(
+            conn,
+            self.side.clone(),
+            self.peers.clone(),
+            self.records.clone(),
+            self.limiter.clone(),
+            true,
+            Some(ready),
+        ));
+    }
 }
 
-async fn run_session(
+/// Whether sessions of `P` are sync/2's.
+fn is_v2<P: Protocol>() -> bool {
+    std::any::TypeId::of::<P>() == std::any::TypeId::of::<V2>()
+}
+
+async fn run_session<P: Protocol>(
     conn: Conn,
-    backend: Arc<dyn Backend>,
+    backend: Arc<dyn Side<P>>,
     peers: Peers,
     records: Records,
     limiter: Arc<RateLimiter>,
@@ -271,6 +317,7 @@ async fn run_session(
                 conn,
                 peer,
                 limiter,
+                encrypted: is_v2::<P>(),
             };
             peers.locked().insert(device, handle.clone());
             let mut records = records.locked();
@@ -284,7 +331,7 @@ async fn run_session(
             }
         }
     };
-    let result = sync::run(
+    let result = crate::session::run::<P>(
         conn.clone(),
         backend.clone(),
         session_limiter,
@@ -321,25 +368,60 @@ async fn run_session(
     }
 }
 
-/// The handlers of `sync/1` and `blobs/1`.
-fn protocols(
-    backend: &Arc<dyn Backend>,
-    peers: &Peers,
-    records: &Records,
-    limiter: &Arc<RateLimiter>,
-) -> (SyncProtocol, BlobsProtocol) {
-    (
-        SyncProtocol {
-            backend: backend.clone(),
-            peers: peers.clone(),
-            records: records.clone(),
-            limiter: limiter.clone(),
-        },
-        BlobsProtocol {
-            backend: backend.clone(),
-            limiter: limiter.clone(),
-        },
-    )
+/// The handlers of `sync/1` and `blobs/1`, and of `sync/2` and `blobs/2` for a node with
+/// encrypted folders.
+#[derive(Clone)]
+struct Protocols {
+    sync: SyncProtocol<V1>,
+    blobs: BlobsProtocol,
+    encrypted: Option<(SyncProtocol<V2>, Blobs2Protocol)>,
+}
+
+impl Protocols {
+    fn new(
+        backend: &Arc<dyn Backend>,
+        encrypted: Option<&Arc<dyn EncryptedBackend>>,
+        records: &Records,
+        limiter: &Arc<RateLimiter>,
+    ) -> Self {
+        Self {
+            sync: SyncProtocol {
+                side: Arc::new(V1Side(backend.clone())),
+                peers: Peers::default(),
+                records: records.clone(),
+                limiter: limiter.clone(),
+            },
+            blobs: BlobsProtocol {
+                backend: backend.clone(),
+                limiter: limiter.clone(),
+            },
+            encrypted: encrypted.map(|folders| {
+                (
+                    SyncProtocol {
+                        side: Arc::new(V2Side {
+                            device: backend.clone(),
+                            folders: folders.clone(),
+                        }) as Arc<dyn Side<V2>>,
+                        peers: Peers::default(),
+                        records: records.clone(),
+                        limiter: limiter.clone(),
+                    },
+                    Blobs2Protocol {
+                        folders: folders.clone(),
+                        limiter: limiter.clone(),
+                    },
+                )
+            }),
+        }
+    }
+
+    fn alpns(&self) -> Vec<Vec<u8>> {
+        let mut alpns = vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()];
+        if self.encrypted.is_some() {
+            alpns.extend([ALPN_SYNC_V2.to_vec(), ALPN_BLOBS_V2.to_vec()]);
+        }
+        alpns
+    }
 }
 
 /// Binds an iroh endpoint with this device's key, serving `alpns`.
@@ -408,9 +490,12 @@ enum Transport {
 pub struct Node {
     transport: Transport,
     backend: Arc<dyn Backend>,
+    protocols: Protocols,
+    /// The sync/1 sessions; sync/2's are in `protocols`.
     peers: Peers,
     records: Records,
-    blob_conns: Mutex<HashMap<DeviceId, Conn>>,
+    /// Connections for blob requests, by device and ALPN.
+    blob_conns: Mutex<HashMap<(DeviceId, &'static [u8]), Conn>>,
     limiter: Arc<RateLimiter>,
 }
 
@@ -425,23 +510,36 @@ impl std::fmt::Debug for Node {
 impl Node {
     /// Binds the endpoint and starts serving `sync/1` and `blobs/1`.
     pub async fn spawn(config: NodeConfig, backend: Arc<dyn Backend>) -> Result<Self> {
-        let endpoint =
-            bind_endpoint(&config, vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()]).await?;
+        Self::spawn_with(config, backend, None).await
+    }
 
-        let peers: Peers = Arc::default();
+    /// Binds the endpoint and starts serving `sync/1` and `blobs/1`, and `sync/2` and `blobs/2`
+    /// for `encrypted` folders if given (ADR 0023).
+    pub async fn spawn_with(
+        config: NodeConfig,
+        backend: Arc<dyn Backend>,
+        encrypted: Option<Arc<dyn EncryptedBackend>>,
+    ) -> Result<Self> {
         let records: Records = Arc::default();
         let limiter = Arc::new(RateLimiter::new(config.limits));
-        let (sync, blobs) = protocols(&backend, &peers, &records, &limiter);
+        let protocols = Protocols::new(&backend, encrypted.as_ref(), &records, &limiter);
+        let endpoint = bind_endpoint(&config, protocols.alpns()).await?;
         // Read once now, so the first paths are judged with this device's networks.
         crate::limits::refresh_on_link();
-        let router = Router::builder(endpoint.clone())
-            .accept(ALPN_SYNC_V1, sync)
-            .accept(ALPN_BLOBS_V1, blobs)
-            .spawn();
+        let mut router = Router::builder(endpoint.clone())
+            .accept(ALPN_SYNC_V1, protocols.sync.clone())
+            .accept(ALPN_BLOBS_V1, protocols.blobs.clone());
+        if let Some((sync, blobs)) = &protocols.encrypted {
+            router = router
+                .accept(ALPN_SYNC_V2, sync.clone())
+                .accept(ALPN_BLOBS_V2, blobs.clone());
+        }
+        let router = router.spawn();
         Ok(Self {
             transport: Transport::Iroh { endpoint, router },
             backend,
-            peers,
+            peers: protocols.sync.peers.clone(),
+            protocols,
             records,
             blob_conns: Mutex::default(),
             limiter,
@@ -456,22 +554,33 @@ impl Node {
         device: DeviceId,
         limits: Limits,
         backend: Arc<dyn Backend>,
+        encrypted: Option<Arc<dyn EncryptedBackend>>,
     ) -> Self {
-        let peers: Peers = Arc::default();
         let records: Records = Arc::default();
         let limiter = Arc::new(RateLimiter::new(limits));
-        let (sync, blobs) = protocols(&backend, &peers, &records, &limiter);
+        let protocols = Protocols::new(&backend, encrypted.as_ref(), &records, &limiter);
         let mut incoming = network.register(device);
+        let serving = protocols.clone();
         let accepting = tokio::spawn(async move {
             while let Some(accepted) = incoming.recv().await {
-                if accepted.alpn == ALPN_SYNC_V1 {
-                    let sync = sync.clone();
-                    tokio::spawn(async move { sync.serve(accepted.conn).await });
-                } else if accepted.alpn == ALPN_BLOBS_V1 {
-                    let blobs = blobs.clone();
-                    tokio::spawn(async move { blobs.serve(accepted.conn).await });
-                } else {
-                    accepted.conn.close(0, b"unknown protocol");
+                let protocols = serving.clone();
+                let conn = accepted.conn;
+                match (accepted.alpn.as_slice(), &protocols.encrypted) {
+                    (ALPN_SYNC_V1, _) => {
+                        tokio::spawn(async move { protocols.sync.serve(conn).await });
+                    }
+                    (ALPN_BLOBS_V1, _) => {
+                        tokio::spawn(async move { protocols.blobs.serve(conn).await });
+                    }
+                    (ALPN_SYNC_V2, Some((sync, _))) => {
+                        let sync = sync.clone();
+                        tokio::spawn(async move { sync.serve(conn).await });
+                    }
+                    (ALPN_BLOBS_V2, Some((_, blobs))) => {
+                        let blobs = blobs.clone();
+                        tokio::spawn(async move { blobs.serve(conn).await });
+                    }
+                    _ => conn.close(0, b"unknown protocol"),
                 }
             }
         });
@@ -482,7 +591,8 @@ impl Node {
                 accepting,
             },
             backend,
-            peers,
+            peers: protocols.sync.peers.clone(),
+            protocols,
             records,
             blob_conns: Mutex::default(),
             limiter,
@@ -558,16 +668,37 @@ impl Node {
             }
         };
         let (tx, rx) = oneshot::channel();
-        tokio::spawn(run_session(
-            conn,
-            self.backend.clone(),
-            self.peers.clone(),
-            self.records.clone(),
-            self.limiter.clone(),
-            true,
-            Some(tx),
-        ));
+        self.protocols.sync.start(conn, tx);
         rx.await.map_err(|_| Error::Closed)?
+    }
+
+    /// Dials a peer and starts a sync/2 session for encrypted folders (ADR 0023). Only for a node
+    /// spawned with encrypted folders, and a peer that shares one: other peers get no second
+    /// connection.
+    pub async fn connect_encrypted(&self, addr: impl Into<EndpointAddr>) -> Result<PeerHandle> {
+        let Some((sync, _)) = &self.protocols.encrypted else {
+            return Err(Error::Protocol("this node has no encrypted folders".into()));
+        };
+        let addr = addr.into();
+        let conn = self.dial(addr, ALPN_SYNC_V2).await?;
+        let (tx, rx) = oneshot::channel();
+        sync.start(conn, tx);
+        rx.await.map_err(|_| Error::Closed)?
+    }
+
+    /// The sync/2 session with `device`, if connected.
+    pub fn encrypted_peer(&self, device: &DeviceId) -> Option<PeerHandle> {
+        let (sync, _) = self.protocols.encrypted.as_ref()?;
+        sync.peers.locked().get(device).cloned()
+    }
+
+    /// Peers with an active sync/2 session.
+    pub fn encrypted_peers(&self) -> Vec<PeerHandle> {
+        self.protocols
+            .encrypted
+            .as_ref()
+            .map(|(sync, _)| sync.peers.locked().values().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// The connection with `device` as far as this node knows it: now, if connected, and what
@@ -684,15 +815,66 @@ impl Node {
     }
 
     async fn blob_conn(&self, addr: EndpointAddr) -> Result<Conn> {
-        let id = DeviceId(*addr.id.as_bytes());
-        if let Some(conn) = self.blob_conns.locked().get(&id) {
+        self.blob_conn_for(addr, ALPN_BLOBS_V1).await
+    }
+
+    async fn blob_conn_for(&self, addr: EndpointAddr, alpn: &'static [u8]) -> Result<Conn> {
+        let key = (DeviceId(*addr.id.as_bytes()), alpn);
+        if let Some(conn) = self.blob_conns.locked().get(&key) {
             if !conn.is_closed() {
                 return Ok(conn.clone());
             }
         }
-        let conn = self.dial(addr, ALPN_BLOBS_V1).await?;
-        self.blob_conns.locked().insert(id, conn.clone());
+        let conn = self.dial(addr, alpn).await?;
+        self.blob_conns.locked().insert(key, conn.clone());
         Ok(conn)
+    }
+
+    /// Fetches up to 64 sealed chunks and list blobs of an encrypted `folder` from a peer. List
+    /// blobs are checked against their IDs; sealed chunks are for the caller to open.
+    pub async fn fetch_blobs(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+        wanted: &[(BlobId, BlobKind)],
+    ) -> Result<Vec<BlobResult>> {
+        let conn = self.blob_conn_for(peer.into(), ALPN_BLOBS_V2).await?;
+        blobs2::fetch_blobs(
+            &conn,
+            &self.limiter,
+            self.backend.certificate(),
+            folder,
+            wanted,
+        )
+        .await
+    }
+
+    /// Asks a peer which of `ids`, blobs of an encrypted `folder`, it holds, in order.
+    pub async fn blob_availability(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+        ids: &[BlobId],
+    ) -> Result<Vec<bool>> {
+        let conn = self.blob_conn_for(peer.into(), ALPN_BLOBS_V2).await?;
+        blobs2::availability(
+            &conn,
+            &self.limiter,
+            self.backend.certificate(),
+            folder,
+            ids,
+        )
+        .await
+    }
+
+    /// Asks a peer whether it is a full replica of the encrypted `folder`.
+    pub async fn is_full_encrypted_replica(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+    ) -> Result<bool> {
+        let conn = self.blob_conn_for(peer.into(), ALPN_BLOBS_V2).await?;
+        blobs2::replica(&conn, &self.limiter, self.backend.certificate(), folder).await
     }
 
     /// Fetches up to 64 chunks of `folder` from a peer. Returned data is hash-verified.

@@ -803,7 +803,7 @@ impl Engine {
             }
             #[cfg(feature = "simulation")]
             Network::Memory(network) => {
-                Node::spawn_simulated(&network, device, config.limits, backend)
+                Node::spawn_simulated(&network, device, config.limits, backend, None)
             }
         });
         info!(device = %device, "engine started");

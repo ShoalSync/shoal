@@ -18,6 +18,7 @@
 
 mod backend;
 mod blobs;
+mod blobs2;
 mod frame_io;
 mod limits;
 mod locks;
@@ -27,11 +28,13 @@ mod node;
 mod pair;
 mod session;
 mod sync;
+mod sync2;
 mod traffic;
 mod transport;
 
-pub use backend::{Backend, IndexPage};
+pub use backend::{Backend, EncryptedBackend, IndexPage, ItemPage};
 pub use blobs::ChunkResult;
+pub use blobs2::{BlobKind, BlobResult};
 pub use iroh::{EndpointAddr, EndpointId, RelayUrl};
 pub use limits::{Limits, MIN_BYTES_PER_SEC};
 #[cfg(feature = "simulation")]

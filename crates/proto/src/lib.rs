@@ -44,6 +44,13 @@ pub const ALPN_BLOBS_V1: &[u8] = b"tidefell/blobs/1";
 /// ALPN for the version 1 pairing protocol. See `specs/pair-v1.md`.
 pub const ALPN_PAIR_V1: &[u8] = b"tidefell/pair/1";
 
+/// ALPN for encrypted folders' metadata exchange (`specs/sync-v2.md`), alongside sync/1.
+pub const ALPN_SYNC_V2: &[u8] = b"tidefell/sync/2";
+
+/// ALPN for encrypted folders' sealed chunks and list blobs (`specs/blobs-v2.md`), alongside
+/// blobs/1.
+pub const ALPN_BLOBS_V2: &[u8] = b"tidefell/blobs/2";
+
 /// Errors decoding or verifying wire data.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

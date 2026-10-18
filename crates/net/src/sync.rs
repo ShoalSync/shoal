@@ -18,6 +18,7 @@ use crate::{frame_io, Error, Result};
 pub(crate) use crate::session::{verify_peer, Peer};
 
 /// sync/1's messages and items.
+#[derive(Debug)]
 pub(crate) struct V1;
 
 impl Protocol for V1 {
@@ -251,25 +252,6 @@ impl Side<V1> for V1Side {
     fn changes(&self) -> watch::Receiver<u64> {
         self.0.changes()
     }
-}
-
-/// Runs a sync/1 session until the peer disconnects. `on_ready` is called once the handshake
-/// succeeds.
-pub(crate) async fn run(
-    conn: Conn,
-    backend: Arc<dyn Backend>,
-    limiter: Arc<RateLimiter>,
-    initiator: bool,
-    on_ready: impl FnOnce(Peer),
-) -> Result<()> {
-    crate::session::run::<V1>(
-        conn,
-        Arc::new(V1Side(backend)),
-        limiter,
-        initiator,
-        on_ready,
-    )
-    .await
 }
 
 /// Requests a manifest from a connected peer on a new stream.
