@@ -17,6 +17,7 @@
 
 - [NixOS](nixos.md)
 - [An always-on peer](guide/always-on.md)
+- [A storage peer](guide/storage-peer.md)
 - [The control API](admin/api.md)
 
 # Reference

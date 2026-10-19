@@ -8,7 +8,9 @@ device syncs with whenever it is awake.
 A NAS at home does this already. Without one, run an always-on peer on a small server you
 control, such as a VPS. It is your machine and holds your files in plaintext, like any other
 replica, so choose a provider you trust with them
-([ADR 0018](../adr/0018-always-on-peers.md)). The Tidefell project runs no storage service.
+([ADR 0018](../adr/0018-always-on-peers.md)). For a machine you do not trust with them, use a
+[storage peer](storage-peer.md) instead: it keeps an encrypted folder without being able to read
+it. The Tidefell project runs no storage service.
 
 ## What you need
 
