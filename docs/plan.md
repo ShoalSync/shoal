@@ -855,8 +855,9 @@ so each step is checked by it as well as by its own tests.
 
 Open items in step 5, each to land before the release:
 
-- Unopened sealed versions are kept in the database and read on demand, not held in memory
-  (ADR 0035), and superseded ones are pruned rather than served.
+- ~~Unopened sealed versions read from the database on demand.~~ Deferred until after the
+  release (ADR 0023, "Amendment: kept versions in memory for now"); superseded ones are already
+  pruned rather than served.
 - Release seed 21581, rare and failing on main too: a device loses a file its user did not
   remove, in an encrypted folder.
 - Release seed 21889, failed once in 3000 under host load and passed 65 times after: after a

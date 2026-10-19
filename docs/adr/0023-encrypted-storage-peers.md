@@ -255,6 +255,24 @@ How `tidefelld` stores folders it cannot read, decided before the engine is chan
   device with the first of these, and the infra role and its VM test (step 7) check that a
   storage peer's disk holds no plaintext.
 
+## Amendment: kept versions in memory for now (2026-10-19)
+
+"On storage peers" says a storage peer reads the versions it keeps from the database when it
+serves or judges them, not from memory. The first release keeps them in memory, as a member
+keeps the versions it opened, beside the database that makes them durable:
+
+- **Measured.** A storage peer holding one folder of 100,000 sealed versions used 156 MiB
+  resident, about 1.2 KB a version (48 MiB at 10,000), took 40 ms for a status and 0.94 s of CPU
+  a minute while idle. A million versions would need about 1.2 GB.
+- **Why now.** Reading them from the database touches most of the encrypted-folder code (the
+  index served over sync/2, the newest-by-vector rule, grants, confirmed copies); the release
+  waits on nothing else of it, and a storage peer of a few hundred thousand versions fits a
+  small server.
+- **Documented.** The storage-peer guide gives the figure per kept version, superseded ones
+  included until retention drops them, so operators size servers for it.
+- **Next.** Reading versions from the database, as decided, is the first change after the
+  release; the measurement example (`crates/engine/examples/stored.rs`) checks it.
+
 ## Consequences
 
 - Specs come first: sync/2, blobs/2 and the key formats, each with vectors, are reviewed

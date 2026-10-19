@@ -85,6 +85,13 @@ replaced versions it keeps, its size against the quota, and how many chunks it i
   picks them up, and a new device of a member gets the folder's key, granted by another member,
   the same way.
 
+## Sizing
+
+Besides disk for the sealed chunks, a storage peer holds the versions it keeps in memory: about
+1.2 KB each, replaced versions included until `retention_days` drops them. A folder of 100,000
+files with a version each needs about 120 MB; ten such folders, about 1.2 GB. A later release
+reads them from disk instead (ADR 0023).
+
 ## As a backup
 
 A phone counts a file as safe elsewhere once a full replica confirms it holds it (see
