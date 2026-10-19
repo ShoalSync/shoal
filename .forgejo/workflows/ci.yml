@@ -145,17 +145,21 @@ jobs:
   aar:
     name: Android library (AAR)
     runs-on: ephemeral
-    env:
-      NDK_VERSION: "30.0.16248370"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.forgejo/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
-          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+      # Built by Nix, or fetched from the binary cache when this source was built before:
+      # tidefell-ffi for each ABI, the bindings generated from the host build (`ci-host`), and the
+      # NDK they were built with, for the loadable check.
+      - name: Libraries and bindings
+        run: |
+          {
+            echo "JNI_LIBS=$(nix build --no-link --print-out-paths --print-build-logs .#tidefell-ffi-android)"
+            echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)"
+            ndk=$(nix build --no-link --print-out-paths --print-build-logs .#android-ndk)
+            echo "ANDROID_NDK_HOME=$(echo "$ndk"/libexec/android-sdk/ndk/*)"
+          } >> "$GITHUB_ENV"
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
@@ -166,20 +170,14 @@ jobs:
         with:
           # The default also asks for `tools`, which the SDK repository no longer carries.
           packages: platform-tools
-      - name: Install cargo-ndk and the NDK
+      - name: Android platform
         run: |
-          # Install records can outlive the binary, so check the binary itself.
-          if ! cargo ndk --version 2>/dev/null | grep -q " 4.1.2"; then
-            cargo install cargo-ndk --locked --version 4.1.2 --force
-          fi
-          # Steps run with pipefail, and yes ends on SIGPIPE once sdkmanager stops reading. The
-          # lock keeps one sdkmanager at a time on runners whose slots share an SDK.
-          (yes || true) | flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager --licenses > /dev/null
-          flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          # Steps run with pipefail, and yes ends on SIGPIPE once sdkmanager stops reading.
+          (yes || true) | sdkmanager --licenses > /dev/null
+          sdkmanager "platforms;android-36"
       - name: Build
         working-directory: bindings/android
-        run: ./gradlew --no-daemon :ffi:assembleRelease
+        run: ./gradlew --no-daemon :ffi:assembleRelease "-Ptidefell.jniLibs=$JNI_LIBS" "-Ptidefell.host=$HOST"
       - name: Loadable by Android
         run: bindings/android/check-loadable.sh bindings/android/ffi/build/outputs/aar/ffi-release.aar
 
@@ -209,4 +207,4 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$name" -C "$RUNNER_TEMP" actionlint
           "$RUNNER_TEMP/actionlint" -config-file .forgejo/actionlint.yaml .forgejo/workflows/*.yml
       - name: zizmor
-        run: zizmor --offline --min-severity medium .forgejo/workflows/*.yml .forgejo/actions/*/action.yml
+        run: zizmor --offline --min-severity medium .forgejo/workflows/*.yml

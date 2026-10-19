@@ -130,9 +130,131 @@
               '';
             }
           );
+
+          # tidefell-ffi for Android (ADR 0014), as the AAR ships it: each ABI its own derivation,
+          # on dependencies built once per Cargo.lock, with the NDK that CI and releases use and
+          # the rustc of the other builds. Only on x86_64 Linux, the NDK's host.
+          android =
+            let
+              inherit (pkgs) lib;
+              ndkVersion = "30.0.16248370";
+              apiLevel = 29;
+              androidPkgs = import nixpkgs {
+                inherit (pkgs.stdenv.hostPlatform) system;
+                config = {
+                  allowUnfree = true;
+                  android_sdk.accept_license = true;
+                };
+              };
+              # Nixpkgs lists only this NDK's release candidates: the release, as Google's
+              # repository lists it.
+              repoJson = pkgs.writeText "android-repo.json" (
+                builtins.toJSON (
+                  lib.recursiveUpdate
+                    (lib.importJSON "${androidPkgs.path}/pkgs/development/mobile/androidenv/repo.json")
+                    {
+                      packages.ndk.${ndkVersion} = {
+                        archives = [
+                          {
+                            arch = "all";
+                            os = "linux";
+                            sha1 = "5107f898313790e449e87eee2183d9a20602dee9";
+                            size = 738633529;
+                            url = "https://dl.google.com/android/repository/android-ndk-r30-linux.zip";
+                          }
+                        ];
+                        displayName = "NDK (Side by side) ${ndkVersion}";
+                        license = "android-sdk-license";
+                        name = "ndk";
+                        path = "ndk/${ndkVersion}";
+                        revision = ndkVersion;
+                        revision-details = {
+                          "major:0" = "30";
+                          "minor:1" = "0";
+                          "micro:2" = "16248370";
+                        };
+                        type-details.element-attributes."xsi:type" = "ns5:genericDetailsType";
+                      };
+                    }
+                )
+              );
+              ndk =
+                (androidPkgs.androidenv.composeAndroidPackages {
+                  inherit repoJson;
+                  includeNDK = true;
+                  ndkVersions = [ ndkVersion ];
+                }).ndk-bundle;
+              ndkRoot = "${ndk}/libexec/android-sdk/ndk/${ndkVersion}";
+              abis = [
+                {
+                  abi = "arm64-v8a";
+                  target = "aarch64-linux-android";
+                  clang = "aarch64-linux-android";
+                }
+                {
+                  abi = "armeabi-v7a";
+                  target = "armv7-linux-androideabi";
+                  clang = "armv7a-linux-androideabi";
+                }
+                {
+                  abi = "x86_64";
+                  target = "x86_64-linux-android";
+                  clang = "x86_64-linux-android";
+                }
+              ];
+              androidLib = (crane.mkLib pkgs).overrideToolchain (
+                p:
+                (p.extend rust-overlay.overlays.default).rust-bin.stable.${pkgs.rustc.version}.minimal.override {
+                  targets = map (a: a.target) abis;
+                }
+              );
+              forAbi =
+                a:
+                let
+                  bin = "${ndkRoot}/toolchains/llvm/prebuilt/linux-x86_64/bin";
+                  under = builtins.replaceStrings [ "-" ] [ "_" ] a.target;
+                  clang = "${bin}/${a.clang}${toString apiLevel}-clang";
+                  # What cargo-ndk sets: the NDK's clang links, and builds the C that ring and
+                  # blake3 carry.
+                  args = commonArgs // {
+                    pname = "tidefell-ffi-${a.abi}";
+                    CARGO_PROFILE = "mobile";
+                    CARGO_BUILD_TARGET = a.target;
+                    "CARGO_TARGET_${lib.toUpper under}_LINKER" = clang;
+                    "CC_${under}" = clang;
+                    "CXX_${under}" = "${clang}++";
+                    "AR_${under}" = "${bin}/llvm-ar";
+                    "RANLIB_${under}" = "${bin}/llvm-ranlib";
+                    cargoExtraArgs = "--locked --package tidefell-ffi";
+                    doCheck = false;
+                    # Stripped by the mobile profile; the host's tools would not read the ELF.
+                    dontFixup = true;
+                  };
+                in
+                androidLib.mkCargoDerivation (
+                  args
+                  // {
+                    cargoArtifacts = androidLib.buildDepsOnly (args // { cargoCheckCommand = "true"; });
+                    doInstallCargoArtifacts = false;
+                    buildPhaseCargoCommand = "cargo build --locked --profile mobile --target ${a.target} --package tidefell-ffi";
+                    installPhaseCommand = ''
+                      mkdir -p $out/${a.abi}
+                      cp target/${a.target}/mobile/libtidefell_ffi.so $out/${a.abi}/
+                    '';
+                  }
+                );
+            in
+            {
+              inherit ndk ndkRoot;
+              # libtidefell_ffi.so for each ABI, laid out as an AAR's jniLibs.
+              jniLibs = pkgs.symlinkJoin {
+                name = "tidefell-ffi-android-${workspace.version}";
+                paths = map forAbi abis;
+              };
+            };
         in
         {
-          inherit ciHost;
+          inherit ciHost android;
           # `tidefelld` and `tidefell` binaries. The version is the workspace version (ADR 0005).
           package = craneLib.buildPackage (
             commonArgs
@@ -264,6 +386,11 @@
         default = tidefell;
         # What CI's FUSE, simulation and Kotlin jobs run, built once (see `ciHost`).
         ci-host = (rust pkgs).ciHost;
+      }
+      // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+        # tidefell-ffi's Android libraries, and the NDK they are built with (see `android`).
+        tidefell-ffi-android = (rust pkgs).android.jniLibs;
+        android-ndk = (rust pkgs).android.ndk;
       });
 
       # `nix flake check` runs these: formatting, clippy, the tests, the crate boundaries, the MSRV

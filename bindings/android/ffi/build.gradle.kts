@@ -19,9 +19,15 @@ val abis: List<String> = (findProperty("tidefell.abis") as String?)
 val minSdkVersion = 29
 val jniLibs = layout.buildDirectory.dir("rust/jniLibs")
 val generated = layout.buildDirectory.dir("generated/uniffi")
+// Libraries and bindings built elsewhere, as by CI's Nix packages, instead of here:
+// -Ptidefell.jniLibs=<tidefell-ffi-android> and -Ptidefell.host=<ci-host>, whose kotlin/ holds
+// the bindings.
+val prebuiltJniLibs: File? = (findProperty("tidefell.jniLibs") as String?)?.let(::File)
+val prebuiltHost: File? = (findProperty("tidefell.host") as String?)?.let(::File)
 
 val cargoNdk by tasks.registering(Exec::class) {
     description = "Cross-compiles tidefell-ffi for the Android ABIs with cargo-ndk."
+    onlyIf { prebuiltJniLibs == null }
     workingDir = repo
     outputs.dir(jniLibs)
     outputs.upToDateWhen { false } // cargo decides what to rebuild
@@ -39,6 +45,7 @@ val cargoNdk by tasks.registering(Exec::class) {
 
 val hostBuild by tasks.registering(Exec::class) {
     description = "Builds tidefell-ffi for the host; the bindings are generated from its symbols."
+    onlyIf { prebuiltHost == null }
     workingDir = repo
     outputs.upToDateWhen { false }
     commandLine("cargo", "build", "-p", "tidefell-ffi", "--locked")
@@ -46,6 +53,7 @@ val hostBuild by tasks.registering(Exec::class) {
 
 val generateBindings by tasks.registering(Exec::class) {
     description = "Generates the Kotlin API from the built library."
+    onlyIf { prebuiltHost == null }
     dependsOn(cargoNdk, hostBuild)
     workingDir = repo
     outputs.dir(generated)
@@ -72,8 +80,12 @@ android {
 
 androidComponents {
     onVariants { variant ->
-        variant.sources.java?.addStaticSourceDirectory(generated.get().asFile.path)
-        variant.sources.jniLibs?.addStaticSourceDirectory(jniLibs.get().asFile.path)
+        variant.sources.java?.addStaticSourceDirectory(
+            (prebuiltHost?.resolve("kotlin") ?: generated.get().asFile).path,
+        )
+        variant.sources.jniLibs?.addStaticSourceDirectory(
+            (prebuiltJniLibs ?: jniLibs.get().asFile).path,
+        )
     }
 }
 
