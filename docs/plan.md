@@ -435,6 +435,17 @@ runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
   revocation per device. A direct path over a network this device is on, such as a home's
   global IPv6 prefix, counts as local. Runtime settings are unchanged (format 7); the folder
   database gains a table of which version replaced each kept one, which 0.20 does not read.
+- `v0.22.0` completes Phase 6 (ADR 0023): encrypted folders and storage peers. A folder made
+  with `--encrypted` is sealed with folder keys granted to each vouched member device and
+  rotated when a member is removed or a device revoked; versions travel sealed over sync/2 and
+  content as sealed chunks over blobs/2, and pairing says a folder is encrypted (pair/2). A
+  storage peer (`[storage]` in tidefelld, `tidefell storage`) keeps encrypted folders it cannot
+  read: the newest versions by vector, replaced ones until retention, and sealed chunks within
+  a quota; its copy counts as confirmed only while another member device holds the key. Its
+  versions are kept in memory for now, about 1.2 KB each. The first release from Forgejo, its
+  assets signed with the project's release key (`cosign.pub`, ADR 0041). Runtime settings are
+  format 8, which 0.21 does not read; plaintext folders' databases are unchanged. The FFI's
+  folder calls take an encryption argument.
 - Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
   asked of the peer that sent it before it is applied; versions by authors not vouched for are
   refused, and those whose certificate request went unanswered come again. Replicas take over
