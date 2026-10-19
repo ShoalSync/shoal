@@ -436,6 +436,13 @@ pub(crate) async fn materialize(
         };
         let (i, result) = match joined {
             Ok(done) => done,
+            // Cancelled, not panicked: the runtime is shutting down.
+            Err(e) if e.is_cancelled() => {
+                return Err(Error::FolderUnavailable(
+                    id,
+                    "the engine has shut down".into(),
+                ));
+            }
             Err(e) => {
                 let message = inner.fail(
                     "write",

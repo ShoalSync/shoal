@@ -1,5 +1,6 @@
 //! The Phase 2 exit criterion: two `tidefelld` processes sync a folder end to end.
 
+use std::cell::Cell;
 use std::fs;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -35,6 +36,14 @@ fn free_port() -> u16 {
         .port()
 }
 
+fn tcp_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
 struct Daemon(Child);
 
 impl Drop for Daemon {
@@ -44,11 +53,15 @@ impl Drop for Daemon {
     }
 }
 
+/// A daemon's directory, device and ports. The ports are free when chosen, but another process
+/// may take one before the daemon binds it: [`Node::start`] then chooses again.
 struct Node {
     dir: PathBuf,
-    port: u16,
-    web_port: u16,
-    metrics_port: u16,
+    port: Cell<u16>,
+    /// 0 for none.
+    web_port: Cell<u16>,
+    /// 0 for none.
+    metrics_port: Cell<u16>,
     device: String,
 }
 
@@ -57,7 +70,25 @@ impl Node {
         self.dir.join("folder")
     }
 
+    /// Starts the daemon once it listens on all its ports, with new ones if another process took
+    /// one first.
     fn start(&self, folder_id: &str, user: &str, peer: &Node) -> Daemon {
+        for _ in 0..5 {
+            if let Some(daemon) = self.try_start(folder_id, user, peer) {
+                return daemon;
+            }
+            self.port.set(free_port());
+            for port in [&self.web_port, &self.metrics_port] {
+                if port.get() != 0 {
+                    port.set(tcp_port());
+                }
+            }
+        }
+        panic!("{} could not bind its ports", self.dir.display());
+    }
+
+    /// Starts the daemon and waits for it to listen on its ports: None if it could not bind one.
+    fn try_start(&self, folder_id: &str, user: &str, peer: &Node) -> Option<Daemon> {
         let config = format!(
             r#"
 data_dir = "{data}"
@@ -87,23 +118,25 @@ secure_cookies = false
 listen = "127.0.0.1:{metrics_port}"
 "#,
             data = self.dir.join("data").display(),
-            port = self.port,
+            port = self.port.get(),
             peer_device = peer.device,
-            peer_port = peer.port,
-            web_port = self.web_port,
-            metrics_port = self.metrics_port,
+            peer_port = peer.port.get(),
+            web_port = self.web_port.get(),
+            metrics_port = self.metrics_port.get(),
             folder = self.folder().display(),
         );
         let path = self.dir.join("tidefelld.toml");
         fs::write(&path, config).unwrap();
         tidefelld(&["config", "check", path.to_str().unwrap()]);
         // Appended to, so a restarted daemon's log follows the earlier one's.
+        let log_path = self.dir.join("daemon.log");
         let log = fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(self.dir.join("daemon.log"))
+            .open(&log_path)
             .unwrap();
-        Daemon(
+        let from = log.metadata().unwrap().len() as usize;
+        let mut daemon = Daemon(
             Command::new(BIN)
                 .args(["run", "--config", path.to_str().unwrap()])
                 .env("RUST_LOG", "info")
@@ -113,7 +146,34 @@ listen = "127.0.0.1:{metrics_port}"
                 .stderr(log)
                 .spawn()
                 .unwrap(),
-        )
+        );
+        // What it logs once it listens on each port it has.
+        let mut listening = vec!["control API listening"];
+        if self.web_port.get() != 0 {
+            listening.push("web peer listening");
+        }
+        if self.metrics_port.get() != 0 {
+            listening.push("metrics listening");
+        }
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            let logged = fs::read(&log_path).unwrap_or_default();
+            let logged = String::from_utf8_lossy(logged.get(from..).unwrap_or_default());
+            if listening.iter().all(|l| logged.contains(l)) {
+                return Some(daemon);
+            }
+            if daemon.0.try_wait().unwrap().is_some() {
+                let taken = ["Failed to bind", "cannot bind", "Address already in use"];
+                assert!(
+                    taken.iter().any(|t| logged.contains(t)),
+                    "{} exited: {logged}",
+                    self.dir.display()
+                );
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("{} did not start listening", self.dir.display());
     }
 }
 
@@ -128,18 +188,11 @@ fn init(root: &Path, name: &str, user_key: &Path) -> Node {
         "--user-key",
         user_key.to_str().unwrap(),
     ]);
-    let tcp_port = || {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port()
-    };
     Node {
         dir,
-        port: free_port(),
-        web_port: tcp_port(),
-        metrics_port: tcp_port(),
+        port: Cell::new(free_port()),
+        web_port: Cell::new(tcp_port()),
+        metrics_port: Cell::new(tcp_port()),
         device: field(&out, "device"),
     }
 }
@@ -205,7 +258,7 @@ fn two_daemons_sync_a_folder() {
     );
 
     // Prometheus metrics count the sync (ADR 0030).
-    let response = http_get(b.metrics_port, "/metrics");
+    let response = http_get(b.metrics_port.get(), "/metrics");
     let (head, page) = response.split_once("\r\n\r\n").unwrap();
     assert!(head.starts_with("HTTP/1.1 200"), "{head}");
     assert!(
@@ -281,13 +334,13 @@ fn two_daemons_sync_a_folder() {
     assert!(String::from_utf8_lossy(&out.stdout).contains(&user));
 
     let login_page = http(
-        b.web_port,
+        b.web_port.get(),
         "GET /login HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
     );
     assert!(login_page.starts_with("HTTP/1.1 200"), "{login_page}");
     let body = "username=alice&password=a+long+enough+password";
     let signed_in = http(
-        b.web_port,
+        b.web_port.get(),
         &format!(
             "POST /login HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\
              Content-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n{body}",
@@ -328,9 +381,9 @@ fn a_new_daemon_pairs_then_syncs() {
     ]);
     let a = Node {
         dir: a_dir.clone(),
-        port: free_port(),
-        web_port: 0,
-        metrics_port: 0,
+        port: Cell::new(free_port()),
+        web_port: Cell::new(0),
+        metrics_port: Cell::new(0),
         device: field(&out, "device"),
     };
     let user = field(
@@ -358,7 +411,7 @@ retention_days = 30
 scan_interval_secs = 1
 "#,
         data = a.dir.join("data").display(),
-        port = a.port,
+        port = a.port.get(),
         folder = a.folder().display(),
     );
     fs::write(a.dir.join("tidefelld.toml"), config).unwrap();
@@ -427,9 +480,9 @@ scan_interval_secs = 1
     // The paired device runs, keeps the approver connected, joins and fetches.
     let b = Node {
         dir: b_dir,
-        port: free_port(),
-        web_port: 0,
-        metrics_port: 0,
+        port: Cell::new(free_port()),
+        web_port: Cell::new(0),
+        metrics_port: Cell::new(0),
         device: b_device,
     };
     let config = format!(
@@ -443,7 +496,7 @@ local_discovery = false
 bind = "127.0.0.1:{port}"
 "#,
         data = b.dir.join("data").display(),
-        port = b.port,
+        port = b.port.get(),
     );
     fs::write(b.dir.join("tidefelld.toml"), config).unwrap();
     let log = fs::File::create(b.dir.join("daemon.log")).unwrap();

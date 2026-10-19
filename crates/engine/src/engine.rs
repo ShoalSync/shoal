@@ -1542,6 +1542,14 @@ async fn run_scan(
     }
     let scanned = match result {
         Ok(scanned) => scanned?,
+        // Cancelled, not panicked: the runtime is shutting down, as when the engine is stopped
+        // before a scan it queued started. Nothing went wrong to stop the engine for.
+        Err(e) if e.is_cancelled() => {
+            return Err(Error::FolderUnavailable(
+                id,
+                "the engine has shut down".into(),
+            ));
+        }
         Err(e) => {
             let message = inner.fail(
                 "scan",
