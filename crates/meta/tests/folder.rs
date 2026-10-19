@@ -837,3 +837,48 @@ fn replicas_taking_over_one_version_agree_without_a_conflict() {
         "the same winner on both"
     );
 }
+
+/// Where entries go stays right as their versions change, with the layout looked at between
+/// each change: one that leaves every live entry's path and kind alike keeps the layout, and
+/// any other lays the folder out again.
+#[test]
+fn the_layout_follows_each_change() {
+    let mut a = replica(1);
+    let k = key(1);
+    let (low, high) = (EntryId([1; 16]), EntryId([2; 16]));
+    let at = |a: &Folder, path: &str| a.find_path(path).map(|v| v.entry);
+    a.local_change(&k, low, "a.txt", file(1), 1000).unwrap();
+    a.local_change(&k, high, "b.txt", file(2), 1000).unwrap();
+    assert_eq!(at(&a, "b.txt"), Some(high));
+
+    // New content alone.
+    a.local_change(&k, high, "b.txt", file(3), 2000).unwrap();
+    assert_eq!(at(&a, "b.txt"), Some(high));
+    assert_eq!(a.disk_path(&high), Some("b.txt"));
+
+    // A move onto another entry's path: the lower entry ID keeps it (ADR 0024).
+    a.local_change(&k, high, "a.txt", file(3), 3000).unwrap();
+    assert_eq!(at(&a, "b.txt"), None);
+    assert_eq!(at(&a, "a.txt"), Some(low));
+    let beside = a.disk_path(&high).unwrap().to_owned();
+    assert_ne!(beside, "a.txt");
+    assert_eq!(at(&a, &beside), Some(high));
+
+    // New content for the one that keeps the path: the other still gives way.
+    a.local_change(&k, low, "a.txt", file(4), 4000).unwrap();
+    assert_eq!(a.disk_path(&high), Some(beside.as_str()));
+
+    // A delete: the other takes the path.
+    a.local_change(&k, low, "a.txt", EntryKind::Tombstone, 5000)
+        .unwrap();
+    assert_eq!(a.disk_path(&low), None);
+    assert_eq!(at(&a, "a.txt"), Some(high));
+
+    // A file that becomes a folder, then the deleted file back: a folder keeps its place.
+    a.local_change(&k, high, "a.txt", EntryKind::Directory, 6000)
+        .unwrap();
+    assert_eq!(at(&a, "a.txt"), Some(high));
+    a.restore(&k, low, 7000).unwrap();
+    assert_eq!(at(&a, "a.txt"), Some(high));
+    assert_ne!(a.disk_path(&low), Some("a.txt"));
+}

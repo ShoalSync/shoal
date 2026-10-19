@@ -9,8 +9,9 @@ use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
 
 #[derive(Debug, Default)]
 pub(crate) struct Vouching {
-    /// The newest certificate seen for each device, as issued.
-    certificates: BTreeMap<DeviceId, Signed<DeviceCertificate>>,
+    /// The newest certificate seen for each device, as issued, and what it says: each is kept
+    /// only once it verifies, and not checked again each time an author is judged.
+    certificates: BTreeMap<DeviceId, (Signed<DeviceCertificate>, DeviceCertificate)>,
     /// Authors noted as not vouched for, once each, so the log says so once.
     noted: BTreeSet<(FolderId, DeviceId)>,
     /// Counts the certificates and revocations learnt, so what was worked out from them can tell
@@ -83,12 +84,12 @@ impl Vouching {
         let newer = self
             .certificates
             .get(&body.device)
-            .and_then(|c| c.verify_certificate().ok())
-            .is_none_or(|held| body.issued_ms > held.issued_ms);
+            .is_none_or(|(_, held)| body.issued_ms > held.issued_ms);
         if !newer {
             return false;
         }
-        self.certificates.insert(body.device, certificate);
+        self.certificates
+            .insert(body.device, (certificate, body.clone()));
         self.generation += 1;
         true
     }
@@ -121,12 +122,8 @@ impl Vouching {
         } else if self.revocations.len() >= MAX_REVOCATIONS {
             return false;
         }
-        let known_user = relevant(&body.user)
-            || self
-                .certificates
-                .values()
-                .filter_map(|c| c.verify_certificate().ok())
-                .any(|c| c.user == body.user);
+        let known_user =
+            relevant(&body.user) || self.certificates.values().any(|(_, c)| c.user == body.user);
         if !known_user {
             return false;
         }
@@ -139,11 +136,7 @@ impl Vouching {
 
     /// The revocation of `device` by its user, by the certificate held for it, if revoked.
     pub(crate) fn revocation_of(&self, device: DeviceId) -> Option<DeviceRevocation> {
-        let user = self
-            .certificates
-            .get(&device)
-            .and_then(|c| c.verify_certificate().ok())?
-            .user;
+        let user = self.certificates.get(&device).map(|(_, c)| c.user)?;
         self.revocations
             .get(&(user, device))
             .and_then(|r| r.verify_revocation().ok())
@@ -160,11 +153,11 @@ impl Vouching {
     }
 
     pub(crate) fn certificate(&self, device: DeviceId) -> Option<&Signed<DeviceCertificate>> {
-        self.certificates.get(&device)
+        self.certificates.get(&device).map(|(signed, _)| signed)
     }
 
     pub(crate) fn certificates(&self) -> impl Iterator<Item = &Signed<DeviceCertificate>> {
-        self.certificates.values()
+        self.certificates.values().map(|(signed, _)| signed)
     }
 
     /// Whether a certificate for `device` is held.
@@ -176,21 +169,13 @@ impl Vouching {
     /// it did: a revocation of the same device ID by another user revokes nothing, and counts
     /// for nothing here.
     pub(crate) fn revoked_since(&self, device: DeviceId) -> Option<i64> {
-        let user = self
-            .certificates
-            .get(&device)
-            .and_then(|c| c.verify_certificate().ok())?
-            .user;
+        let user = self.certificates.get(&device).map(|(_, c)| c.user)?;
         self.learnt.get(&(user, device)).map(|(ms, _)| *ms)
     }
 
     /// When this run learnt that its user revoked `device`, by the monotonic clock.
     pub(crate) fn revoked_at(&self, device: DeviceId) -> Option<std::time::Instant> {
-        let user = self
-            .certificates
-            .get(&device)
-            .and_then(|c| c.verify_certificate().ok())?
-            .user;
+        let user = self.certificates.get(&device).map(|(_, c)| c.user)?;
         self.learnt.get(&(user, device)).map(|(_, at)| *at)
     }
 
@@ -218,13 +203,9 @@ impl Vouching {
         author: DeviceId,
         is_member: impl Fn(&UserId) -> bool,
     ) -> Result<(), (Unvouched, bool)> {
-        let why = match self
-            .certificates
-            .get(&author)
-            .and_then(|c| c.verify_certificate().ok())
-        {
+        let why = match self.certificates.get(&author).map(|(_, c)| c) {
             None => Unvouched::NoCertificate,
-            Some(c) if self.is_revoked(&c) => Unvouched::Revoked,
+            Some(c) if self.is_revoked(c) => Unvouched::Revoked,
             Some(c) if !is_member(&c.user) => Unvouched::NotAMember,
             Some(_) => return Ok(()),
         };

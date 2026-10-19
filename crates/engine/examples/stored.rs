@@ -4,7 +4,9 @@
 //! `cargo run --release -p tidefell-engine --example stored -- run <files>` writes `files` small
 //! files into a member's encrypted folder, then runs the member in this process and a storage
 //! peer in another, over loopback. The storage peer reports its resident memory once it stores
-//! every version and chunk, how long its status takes, and its CPU while idle. Linux only.
+//! every version and chunk, how long its status takes, and its CPU while idle. Then a second
+//! member device, in a third process, which knows only the storage peer, joins the folder and
+//! reports how long it took to have every file on disk. Linux only.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,6 +25,7 @@ static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
 const FOLDER: FolderId = FolderId([43; 32]);
 const MEMBER_PORT: u16 = 47711;
 const STORAGE_PORT: u16 = 47712;
+const SECOND_PORT: u16 = 47713;
 
 fn user() -> UserKey {
     UserKey::from_seed([1; 32])
@@ -32,6 +35,9 @@ fn member_key() -> DeviceKey {
 }
 fn storage_key() -> DeviceKey {
     DeviceKey::from_seed([3; 32])
+}
+fn second_key() -> DeviceKey {
+    DeviceKey::from_seed([4; 32])
 }
 
 fn peer(key: &DeviceKey, port: u16) -> PeerAddr {
@@ -129,7 +135,10 @@ async fn store(dir: &Path, files: usize) {
     let config = config(
         dir.join("storage"),
         STORAGE_PORT,
-        vec![peer(&member_key(), MEMBER_PORT)],
+        vec![
+            peer(&member_key(), MEMBER_PORT),
+            peer(&second_key(), SECOND_PORT),
+        ],
         folder(
             dir.join("storage").join("stored"),
             Encryption {
@@ -189,7 +198,75 @@ async fn store(dir: &Path, files: usize) {
         idle.as_secs(),
         resident()
     );
+    // Serves the second member until it has every file.
+    let done = dir.join("received");
+    let mut second = spawn("receive", dir, files);
+    while !done.exists() {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    let _ = second.wait();
     engine.shutdown().await;
+}
+
+/// The files under `dir`, counted.
+fn count_files(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => count_files(&e.path()),
+            Ok(t) if t.is_file() => 1,
+            _ => 0,
+        })
+        .sum()
+}
+
+async fn receive(dir: &Path, files: usize) {
+    let key = second_key();
+    let path = dir.join("second");
+    let config = config(
+        dir.join("second-data"),
+        SECOND_PORT,
+        vec![peer(&storage_key(), STORAGE_PORT)],
+        folder(
+            path.clone(),
+            Encryption {
+                storage_peers: vec![storage_key().id()],
+                stored: None,
+            },
+        ),
+    );
+    let engine = Engine::start(config, key.clone(), user().certify(key.id(), "second", 0))
+        .await
+        .expect("the second member starts");
+    let started = Instant::now();
+    while count_files(&path) < files {
+        assert!(
+            started.elapsed() < Duration::from_secs(3600),
+            "timed out with {} files",
+            count_files(&path)
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    println!(
+        "second   received {files} files through the storage peer in {:.0} s; rss {} MiB",
+        started.elapsed().as_secs_f64(),
+        resident()
+    );
+    std::fs::write(dir.join("received"), b"").unwrap();
+    engine.shutdown().await;
+}
+
+/// Runs this example as `mode` in another process.
+fn spawn(mode: &str, dir: &Path, files: usize) -> std::process::Child {
+    Command::new(std::env::current_exe().unwrap())
+        .arg(mode)
+        .arg(dir)
+        .arg(files.to_string())
+        .spawn()
+        .expect("the process runs")
 }
 
 fn main() {
@@ -208,24 +285,21 @@ fn main() {
                 std::fs::write(&path, format!("file {n}\n")).unwrap();
             }
             println!("{files} files written");
-            let mut child = Command::new(std::env::current_exe().unwrap())
-                .arg("store")
-                .arg(dir.path())
-                .arg(files.to_string())
-                .spawn()
-                .expect("the storage peer runs");
+            let mut child = spawn("store", dir.path(), files);
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let path = dir.path().to_owned();
             runtime.spawn(async move { member(&path).await });
             let status = child.wait().expect("the storage peer exits");
             std::process::exit(i32::from(!status.success()));
         }
-        Some("store") => {
+        Some(mode @ ("store" | "receive")) => {
             let dir = PathBuf::from(&args[2]);
             let files: usize = args[3].parse().expect("files");
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(store(&dir, files));
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            match mode {
+                "store" => runtime.block_on(store(&dir, files)),
+                _ => runtime.block_on(receive(&dir, files)),
+            }
         }
         _ => eprintln!("usage: stored run <files>"),
     }

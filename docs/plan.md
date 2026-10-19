@@ -859,3 +859,5 @@ Open items in step 5, each to land before the release:
   (ADR 0035), and superseded ones are pruned rather than served.
 - Release seed 21581, rare and failing on main too: a device loses a file its user did not
   remove, in an encrypted folder.
+- Release seed 21889, failed once in 3000 under host load and passed 65 times after: after a
+  device loses its metadata, two devices of an encrypted folder do not settle on one file.

@@ -524,9 +524,12 @@ pub(crate) fn grant_pending(inner: &Inner, state: &mut FolderState) -> usize {
     let mut vouching = inner.vouching.lock().unwrap();
     // A grant counts only while its signer is vouched for: the recipient drops one from a
     // revoked device, so another holder of the key grants it again.
+    // Grants only: judging the signer of every sealed version too would cost a certificate
+    // check for each.
     let granted: Vec<(KeyId, DeviceId, [u8; 32])> = state
         .items
         .values()
+        .filter(|item| matches!(item, Item::Grant(_)))
         .filter(|item| {
             let signer = signer_of(item);
             signer == me
