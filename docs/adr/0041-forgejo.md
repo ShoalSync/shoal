@@ -42,10 +42,16 @@ directly, with a deploy key.
     which `-PtidefellFfiLocalPath` already did for FFI work. CI builds the emulator's ABI only and
     keeps a checkout per runner slot, so cargo rebuilds only what changed. The exit-criterion
     test's `tidefelld` is the release's flake package. This supersedes ADR 0014.
-- **Releases.** `release.yml` moves to `.forgejo/workflows/` once it publishes Forgejo releases;
-  until then no release tag is pushed. Whether the AAR and the book stay release assets, and how
-  assets are signed now that Sigstore's keyless signing (which used GitHub's OIDC identity) is
-  not available, is decided with that change.
+- **Releases.** `release.yml` is in `.forgejo/workflows/` and publishes Forgejo releases through
+  the API with the job's token, after checking that the tag is on `main` and that its commit's CI
+  and Nix statuses all succeeded. The assets are the binaries and the specs, vectors and schemas,
+  each with a SHA-256 file. The AAR and the book are no longer assets: android and site build
+  them from the pinned release's source. Sigstore's keyless signing used GitHub's OIDC identity,
+  which Forgejo does not provide, so assets are signed with cosign and a release key
+  (2026-10-19): the private key is a repository secret, the public key is `cosign.pub` in the
+  repository, and the workflow checks every signature against it before publishing. Signatures
+  are not recorded in Sigstore's public log, which would publish the private repository's asset
+  hashes.
 
 ## Consequences
 

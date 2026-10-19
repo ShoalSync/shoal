@@ -1,39 +1,48 @@
 # The release runner
 
-Releases are built on one runner that runs nothing else (Phase 5c step 5): a GitHub Actions
-runner registered to this repository alone, as a user of its own, with the label `release` and
-none of the default labels, so no pull-request job (`runs-on: self-hosted`) ever lands on it.
-It keeps its own toolchains and caches. The release workflow refuses a tag that is not on `main`
-or whose commit did not pass CI, and signs every asset with Sigstore.
+Releases are built on one runner that runs nothing else (Phase 5c step 5): a Forgejo runner
+(ADR 0041) registered to this repository alone, as a user of its own, with the label `release` and
+none of the labels the CI runners take, so no pull-request job (`runs-on: self-hosted`) ever lands
+on it. It keeps its own toolchains and caches. The release workflow refuses a tag that is not on
+`main` or whose commit did not pass CI.
 
 ## Setting one up
 
 On a Linux machine with `gcc`, `gcc-aarch64-linux-gnu`, `pkg-config`, `unzip`, `git`, `python3`
-and internet access. Everything else the release needs (Rust, mdBook, a JDK, the Android SDK and
-NDK, cosign) is installed by the workflow into the runner's own home.
+and internet access: the job's user has no sudo, so the cross compiler must be installed already.
+Everything else the release needs is installed by the workflow: Rust into the runner's own home,
+and cosign from Nix, which the runner's machine must have.
 
 ```sh
 sudo useradd -m -s /bin/bash tidefell-release
-sudo -u tidefell-release mkdir -p /home/tidefell-release/runner
-version=2.337.0
-curl -L -o /tmp/runner.tar.gz "https://github.com/actions/runner/releases/download/v$version/actions-runner-linux-x64-$version.tar.gz"
-# From the release notes of that version.
-echo "70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613  /tmp/runner.tar.gz" | sha256sum -c
-sudo -u tidefell-release tar -xzf /tmp/runner.tar.gz -C /home/tidefell-release/runner
-cd /home/tidefell-release/runner
-token=$(gh api -X POST repos/Tidefell/tidefell/actions/runners/registration-token --jq .token)
-sudo -u tidefell-release ./config.sh --unattended --url https://github.com/Tidefell/tidefell \
-  --token "$token" --name "$(hostname)-release" --no-default-labels --labels release --work _work
-sudo ./svc.sh install tidefell-release
-sudo ./svc.sh start
+# A registration token from the repository's Settings → Actions → Runners on Forgejo.
+sudo -u tidefell-release forgejo-runner register --no-interactive \
+  --instance https://github.com --token "$token" \
+  --name "$(hostname)-release" --labels release:host
+# Then run `forgejo-runner daemon` as tidefell-release, from a systemd unit.
 ```
 
-`gh api repos/Tidefell/tidefell/actions/runners` then lists it with the label `release` only.
+The repository's runners list then shows it with the label `release` only.
+
+## The release key
+
+Assets are signed with cosign and the project's release key (ADR 0041). Made once, by a
+maintainer, on their own machine:
+
+```sh
+cosign generate-key-pair      # asks for a password; writes cosign.key and cosign.pub
+```
+
+`cosign.pub` is committed at the repository's root, where the workflow checks every signature
+against it. The contents of `cosign.key` and its password go in the repository's Actions secrets
+as `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`, and `cosign.key` is then kept offline or deleted:
+a new key means a new `cosign.pub`, and users are told in the release notes.
 
 ## What it does not protect against
 
-A machine shared with the pull-request runners, whose user can become root, is no boundary
-against a hostile pull request: it can reach the release user's files. The runner keeps a
+The pull-request runners run as a user of their own with no sudo, so a hostile pull request
+cannot read the release user's files directly; but a machine shared with them is no boundary
+against one that escapes its user through the kernel or a shared service. The runner keeps a
 release's builds and caches apart from everyone else's, which stops accidents and cache
 poisoning. A release runner on a machine of its own is the boundary; the threat model lists
 this as a gap until then.

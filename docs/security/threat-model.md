@@ -184,12 +184,14 @@ Dependencies, the build machines and the release process.
 - **Releases are made only from tags on `main` whose commit passed CI,** on a runner that runs
   nothing else, as its own user with its own caches (`docs/project/release-runner.md`): a pull
   request's job cannot poison what a release builds from.
-- **Every asset is signed, keyless.** Sigstore issues the release workflow a certificate naming
-  this repository, the workflow file and the tag, and the signature goes in its public log. A
-  signature cannot be made by anything but that workflow on a tag, and a checksum beside an
-  asset shows it arrived whole while the signature shows the release built it
-  (`docs/guide/install.md`). The log is public: it reveals that the repository exists and the
-  assets' hashes, which is accepted.
+- **Every asset is signed with the release key.** The release workflow signs each asset with
+  cosign, with a private key held only in the repository's secrets, and checks the signature
+  against `cosign.pub` before publishing; a checksum beside an asset shows it arrived whole while
+  the signature shows the release made it (`docs/guide/install.md`). Signatures stay out of
+  Sigstore's public log, which would publish every asset's hash. The key is what an attacker
+  would need: anyone who can read the repository's secrets, or run the release workflow with
+  changes of their own, can sign. Releases run only from tags on `main` whose commit passed CI,
+  on a runner that runs nothing else, so changing the workflow takes a reviewed change on `main`.
 - **Pull-request jobs run as a user of their own,** with no sudo and no access to developers'
   keys or tokens (ADR 0041). They reach the private monorepo only with a deploy key that can read
   `tidefell/tidefell` and nothing else, so a hostile pull request can read the source it already

@@ -24,22 +24,29 @@ sudo install tidefell-$version-$target/tidefell tidefell-$version-$target/tidefe
 
 ### Checking who built it
 
-Every asset is signed when it is released, without a key to steal: [Sigstore](https://sigstore.dev)
-issues the release workflow a short-lived certificate naming this repository, the workflow and
-the tag, and records the signature in its public log. [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
-checks that an asset was signed by that workflow:
+Every asset is signed when it is released, with the project's release key: its public half is
+[`cosign.pub`](https://github.com/tidefell/tidefell/blob/main/cosign.pub) in the repository.
+[cosign](https://docs.sigstore.dev/cosign/system_config/installation/) checks that an asset
+was signed with it:
 
 ```sh
 curl -LO https://github.com/tidefell/tidefell/releases/download/v$version/tidefell-$version-$target.tar.gz.sigstore.json
+cosign verify-blob tidefell-$version-$target.tar.gz --key cosign.pub \
+  --bundle tidefell-$version-$target.tar.gz.sigstore.json --insecure-ignore-tlog
+```
+
+The signatures are not recorded in Sigstore's public log, so cosign warns that it skipped the
+log; the key is what it checks.
+
+Releases 0.20 and 0.21 were signed without a key, by GitHub's release workflow, through Sigstore,
+and are checked by the workflow that signed them:
+
+```sh
 cosign verify-blob tidefell-$version-$target.tar.gz \
   --bundle tidefell-$version-$target.tar.gz.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/Tidefell/tidefell/\.github/workflows/release\.yml@refs/(tags/v.+|heads/main)$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
-
-A release is normally built when its tag is pushed, and the certificate names the tag. One built
-by hand, as 0.20.0 was, runs the workflow from `main` and the certificate names `main`; either
-way the workflow builds only a tag on `main` whose commit passed CI.
 
 A checksum shows a download arrived whole; this shows it is what the release built.
 
