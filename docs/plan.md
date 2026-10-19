@@ -154,13 +154,14 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5k** Robustness | Memory budgets, simulation testing, folder markers, free-space floors and error handling (ADR 0035, ADR 0036, ADR 0037) | See the Phase 5k breakdown |
 | **5l** Security and battery | Threat model, Android Keystore, device revocation ADR, battery benchmark and counters (ADR 0038, ADR 0039) | See the Phase 5l breakdown |
 | **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
-| **7** iOS client (planned) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
-| **8** Windows client (planned) | `tidefelld` as a Windows service; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; signed installer | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
+| **7** iOS client (set aside) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
+| **8** Windows client | `tidefelld` per user; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; installer (ADR 0042) | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
 
 ### Client phases (outline)
 
-Phases 7 and 8 get their own decisions and breakdown when they start. Both wait for CI
-runners: a Mac for iOS, a Windows machine or VM for Windows. Known constraints:
+Phases 7 and 8 get their own decisions and breakdown when they start. Phase 7 is set aside
+(2026-10-19): it needs a Mac, which the project does not have. Phase 8 started then, with a
+Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 
 - **iOS.** A new `tidefell/ios` repository consumes a `TidefellFFI.xcframework` release asset,
   as Android consumes the AAR (ADR 0014). The File Provider extension runs under tight memory
@@ -876,3 +877,36 @@ Open items in step 5, each to land before the release:
   (so with no receipt time), was not yet fetched when the revocation was judged; nothing judged it
   again once it was, so one replica kept it while another, which never had it, did not. A
   replica now judges it again once it has fetched it, and takes it over (ADR 0040).
+
+### Phase 8 work breakdown
+
+Decided in ADR 0042. Each step lands with tests that run on the Windows runner (label
+`windows`); until it is ready, Windows code is type-checked by cross-compiling.
+
+0. **Spike.** On the runner: a program installed without package identity registers a sync root,
+   Explorer shows it with its states, and a placeholder hydrates through a callback. Its result
+   settles ADR 0042's installer decision.
+1. **The workspace builds for Windows.** `fs-fuse` and the simulation's Linux-only parts gated
+   by target; Unix-only test code gated; a Windows type-check in CI.
+2. **Local control and privacy.** The control API and SDK over a named pipe; the data
+   directory under `%LOCALAPPDATA%`; DACLs where Unix uses file modes (data directory, keys,
+   web accounts and shares).
+3. **File semantics.** The executable bit kept from the current version; NTFS file IDs; free
+   space and volume serial numbers; network drives; renames that replace open files, and
+   non-replacing renames; the hidden reserved directory; long paths; one recursive watch per
+   folder; logs and allocator settings.
+4. **Windows CI.** The workspace's tests on the Windows runner, each job's result required like
+   the Linux ones.
+5. **`fs-cfapi`.** The engine's seam for folders whose files another component places;
+   sync-root registration and connection, placeholders from metadata,
+   hydration through the engine's `open`, dehydration on eviction, pins from Explorer's states,
+   deletes and renames from notifications, and the scanner's rule for placeholders. Tests on
+   the runner.
+6. **The daemon on Windows.** Partial folders as sync roots, started and stopped with the
+   daemon; console use for development.
+7. **Tray app.** Starting and supervising the daemon, status, folders, pause, pairing.
+8. **Installer and release.** The installer the spike settled, and a zip, as release assets,
+   built on a release-only Windows runner and signed with cosign; Authenticode decided first.
+9. **Exit criterion.** On the Windows runner: a partial replica pairs with a Linux daemon,
+   Explorer's view of the folder (the shell's file listing) shows placeholders, and opening one
+   fetches its content. Docs: an install and a guide page for Windows.

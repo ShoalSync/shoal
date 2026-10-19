@@ -80,3 +80,4 @@
   - [0039: Android battery](adr/0039-android-battery.md)
   - [0040: Device revocation](adr/0040-device-revocation.md)
   - [0041: The repositories on Forgejo, consumed from source](adr/0041-forgejo.md)
+  - [0042: The Windows client](adr/0042-windows-client.md)
