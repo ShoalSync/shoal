@@ -857,6 +857,5 @@ Open items in step 5, each to land before the release:
 
 - Unopened sealed versions are kept in the database and read on demand, not held in memory
   (ADR 0035), and superseded ones are pruned rather than served.
-- Chunk IDs are computed in the scanner's hash pass, not read under the folder lock when sealing.
 - Release seed 21581, rare and failing on main too: a device loses a file its user did not
   remove, in an encrypted folder.

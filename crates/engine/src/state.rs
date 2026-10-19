@@ -444,6 +444,16 @@ pub(crate) enum Open {
     Rebuild(String),
 }
 
+/// What a storage peer's kept versions list, as kept in [`FolderState::stored_listed`]: the
+/// items revision and count of list blobs it was worked out at, every chunk ID, and the current
+/// versions' only.
+pub(crate) type StoredListed = (
+    u64,
+    usize,
+    Vec<tidefell_proto::ChunkId>,
+    Vec<tidefell_proto::ChunkId>,
+);
+
 pub(crate) struct FolderState {
     pub(crate) config: FolderConfig,
     pub(crate) members: FolderMembers,
@@ -493,6 +503,18 @@ pub(crate) struct FolderState {
     /// An encrypted folder's list blobs, by list ID: those its own versions list, and those
     /// fetched to open or store others' (ADR 0023).
     pub(crate) list_blobs: Tracked<tidefell_proto::ListId, Vec<u8>>,
+    /// Bumped whenever `items` changes, so what is worked out from them can be kept until then.
+    pub(crate) items_revision: u64,
+    /// The keys a member device holds a grant of, other than this one, at an items revision
+    /// and a vouching generation: whether a storage peer's copy counts (ADR 0023).
+    pub(crate) granted_keys:
+        std::cell::RefCell<Option<(u64, u64, std::collections::BTreeSet<tidefell_proto::KeyId>)>>,
+    /// On a storage peer, the chunk IDs its kept versions list, all and the current versions'
+    /// only, at an items revision and a count of list blobs: worked out again only after a change.
+    pub(crate) stored_listed: std::cell::RefCell<Option<StoredListed>>,
+    /// The items revision and count of list blobs at which no kept version lacked a list blob:
+    /// nothing to fetch until either changes.
+    pub(crate) lists_complete: std::cell::Cell<Option<(u64, usize)>>,
     /// Digests of `items`, built when first needed: finding an item already kept costs a
     /// lookup, not a pass over them all.
     pub(crate) item_digests: Option<std::collections::HashSet<[u8; 32]>>,
@@ -621,6 +643,10 @@ impl FolderState {
             items: Tracked::default(),
             superseded: Tracked::default(),
             list_blobs: Tracked::default(),
+            items_revision: 0,
+            granted_keys: std::cell::RefCell::new(None),
+            stored_listed: std::cell::RefCell::new(None),
+            lists_complete: std::cell::Cell::new(None),
             item_digests: None,
             chunk_index: None,
             sealed_store: None,
@@ -844,6 +870,7 @@ impl FolderState {
         self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
         self.items = Tracked::decode(take("items")).map_err(corrupt)?;
         // Made again from what was read, when first needed.
+        self.items_revision = self.items_revision.wrapping_add(1);
         self.item_digests = None;
         self.chunk_index = None;
         self.stored_heads = None;
@@ -1294,6 +1321,8 @@ impl FolderState {
     pub(crate) fn set_members(&mut self, members: Vec<tidefell_proto::UserId>) {
         self.members = FolderMembers::new(self.config.id, members.iter().copied());
         self.config.members = members;
+        // Whose grants count changed with the members.
+        self.granted_keys.replace(None);
         self.touch();
     }
 

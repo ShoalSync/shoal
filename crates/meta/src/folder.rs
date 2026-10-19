@@ -150,6 +150,15 @@ fn live(entry: &Entry) -> Option<&str> {
     (!matches!(entry.current.kind, EntryKind::Tombstone)).then_some(&*entry.current.path)
 }
 
+/// What of `entry` a layout depends on: its path if it is live, and whether it is a folder.
+fn placement(entry: &Entry) -> Option<(String, bool)> {
+    let path = live(entry)?;
+    Some((
+        path.to_owned(),
+        matches!(entry.current.kind, EntryKind::Directory),
+    ))
+}
+
 /// What applying a version did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Applied {
@@ -417,7 +426,9 @@ impl Folder {
 
     /// Where `entry` goes on disk, if it is live.
     pub fn disk_path(&self, entry: &EntryId) -> Option<&str> {
-        self.layout().path_of(entry, self.live_path(entry))
+        // An entry that is not live is nowhere, without laying the folder out.
+        let own = self.live_path(entry)?;
+        self.layout().path_of(entry, Some(own))
     }
 
     /// The path of `entry`'s current version, if it is live.
@@ -737,8 +748,7 @@ impl Folder {
     /// no other version supersedes.
     fn store(&mut self, version: EntryVersion, signed: Wire, recorded_ms: i64) -> Applied {
         let entry_id = version.entry;
-        self.layout.take();
-        self.unfolded.take();
+        let placed_before = self.entries.get(&entry_id).and_then(placement);
         let existing = self.entries.get(&entry_id).map(|e| Full {
             current: e.current.clone().into_stored(self.id, &self.devices),
             conflicts: e.conflicts.to_vec(),
@@ -863,6 +873,12 @@ impl Folder {
             current: Slim::new(current, &mut self.devices),
             conflicts: survivors.into(),
         });
+        // Only where live entries are and which are folders decides the layout: a change to a
+        // file's content keeps it, which saves laying out a large folder again for each.
+        if self.entries.get(&entry_id).and_then(placement) != placed_before {
+            self.layout.take();
+            self.unfolded.take();
+        }
         match (is_new, conflicted) {
             (true, _) => Applied::New,
             (false, true) => Applied::Conflict,

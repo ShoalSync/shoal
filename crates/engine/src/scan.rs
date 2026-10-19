@@ -1,6 +1,6 @@
 //! Detecting local changes by scanning a folder on disk.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -303,6 +303,9 @@ struct Changed {
     rel: String,
     manifest: Manifest,
     stat: DiskStat,
+    /// In an encrypted folder, each chunk's ID under the key it will be sealed with, worked out
+    /// as the file is read rather than by reading it again under the folder lock (ADR 0023).
+    chunk_ids: Vec<(tidefell_proto::ChunkHash, tidefell_proto::ChunkId)>,
 }
 
 /// What a scan found.
@@ -369,6 +372,16 @@ pub(crate) fn scan(
     };
 
     let ignores = Ignores::load(&root);
+    // The key an encrypted folder's changes are sealed with, if it has one yet.
+    let seal_key = {
+        let state = handle.lock();
+        state
+            .config
+            .encryption
+            .is_some()
+            .then(|| crate::encrypted::newest_key(&state))
+            .flatten()
+    };
     let mut walker = Walk {
         root: &root,
         ignores: &ignores,
@@ -451,7 +464,14 @@ pub(crate) fn scan(
         };
         // The file itself is where its content is kept and read from (ADR 0027); only the
         // manifest is recorded. One file that cannot be read does not stop the scan.
-        let manifest = match chunk_reader(BufReader::new(file), Params::DEFAULT, |_, _| Ok(())) {
+        let mut chunk_ids = Vec::new();
+        let read = chunk_reader(BufReader::new(file), Params::DEFAULT, |chunk, data| {
+            if let Some(key) = &seal_key {
+                chunk_ids.push((chunk.hash, key.chunk_id(data)));
+            }
+            Ok(())
+        });
+        let manifest = match read {
             Ok(manifest) => manifest,
             Err(e) => {
                 warn!(path = %rel, error = %e, "cannot read file");
@@ -474,6 +494,7 @@ pub(crate) fn scan(
             rel,
             manifest,
             stat: disk,
+            chunk_ids,
         });
     }
 
@@ -483,27 +504,55 @@ pub(crate) fn scan(
     let mut index_changed = false;
     let mut conflicts = Vec::new();
     let now = inner.now_ms();
+    // What is at the path of each file not recorded here, looked up before any change is
+    // recorded: recording a version lays the folder out again (ADR 0024), so looking up after
+    // each would make the first scan of a large folder take time in the square of its files. A
+    // path that a change recorded below claims, as this device compares names, is looked up
+    // again.
+    let mut at_paths: HashMap<String, Option<(EntryId, EntryKind)>> = changed
+        .iter()
+        .filter(|c| state.local.get(&c.rel).is_none())
+        .map(|c| {
+            let path = recorded(&c.rel).into_owned();
+            let at = state
+                .meta
+                .find_path(&path)
+                .map(|v| (v.entry, v.kind.clone()));
+            (path, at)
+        })
+        .collect();
+    let mut claimed: HashSet<String> = HashSet::new();
     for c in changed {
         let content = c.manifest.content;
         // Recorded in NFC, whatever form the name has on disk (ADR 0033).
         let path = recorded(&c.rel).into_owned();
+        let at_path =
+            |state: &FolderState, at_paths: &mut HashMap<_, _>| match at_paths.remove(&path) {
+                Some(at) if !claimed.contains(&*state.folding().fold(&path)) => at,
+                _ => state
+                    .meta
+                    .find_path(&path)
+                    .map(|v| (v.entry, v.kind.clone())),
+            };
         let entry = match state.local.get(&c.rel).map(|l| l.entry) {
             Some(entry) => entry,
-            None if rebuilding => match state.meta.find_path(&path) {
-                Some(v)
-                    if matches!(v.kind, EntryKind::File { content: c2, executable, .. }
-                    if *c2 == content && *executable == c.stat.executable) =>
-                {
-                    v.entry
-                }
+            None if rebuilding => match at_path(&state, &mut at_paths) {
+                Some((
+                    entry,
+                    EntryKind::File {
+                        content: c2,
+                        executable,
+                        ..
+                    },
+                )) if c2 == content && executable == c.stat.executable => entry,
                 _ => continue,
             },
             // A file this device never had on disk here (a placeholder, a file dropped from
             // this device, or any file of a send-only folder) is the same entry only if it has
             // the same content. Otherwise it is a new file that happens to share the path, and
             // both are kept (ADR 0024) instead of it replacing the other device's file.
-            None => match state.meta.find_path(&path) {
-                Some(v) if file_content(v.kind) == Some(content) => v.entry,
+            None => match at_path(&state, &mut at_paths) {
+                Some((entry, kind)) if file_content(&kind) == Some(content) => entry,
                 _ => EntryId(random_bytes()?),
             },
         };
@@ -515,6 +564,11 @@ pub(crate) fn scan(
                     if *current == content && *executable == c.stat.executable)
         });
         state.add_manifest(c.manifest);
+        if let Some(key) = &seal_key {
+            for (hash, id) in &c.chunk_ids {
+                crate::encrypted::record_chunk_id(&mut state, *id, *hash, key.id());
+            }
+        }
         let base = if up_to_date {
             state.meta.current_vector(&entry)
         } else {
@@ -528,6 +582,11 @@ pub(crate) fn scan(
                 size: c.stat.size,
                 executable: c.stat.executable,
             };
+            let folding = state.folding();
+            claimed.insert(folding.fold(&path));
+            if let Some(was) = state.meta.disk_path(&entry) {
+                claimed.insert(folding.fold(was));
+            }
             let signer = crate::encrypted::signer(inner, &mut state, &kind, Some(&c.rel))?;
             let (_, vector) = state.meta.local_change_from(
                 &signer,
@@ -546,8 +605,8 @@ pub(crate) fn scan(
         // The same file under its old spelling, after a rename in case only (ADR 0033).
         let stale: Vec<String> = state
             .local
-            .iter()
-            .filter(|(k, l)| l.entry == entry && ***k != *c.rel && state.same_place(k, &c.rel))
+            .with_entry(&entry)
+            .filter(|(k, _)| **k != *c.rel && state.same_place(k, &c.rel))
             .map(|(k, _)| k.to_string())
             .collect();
         for k in stale {

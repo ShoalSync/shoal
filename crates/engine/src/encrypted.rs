@@ -194,6 +194,7 @@ fn chunk_id(
 
 fn add_item(state: &mut FolderState, item: Item) -> u64 {
     let sequence = state.meta.next_sequence();
+    state.items_revision = state.items_revision.wrapping_add(1);
     if let Some(digests) = state.item_digests.as_mut() {
         digests.insert(digest(&item));
     }
@@ -219,6 +220,7 @@ fn has_item(state: &mut FolderState, item: &Item) -> bool {
 /// Removes the item at `sequence`.
 fn remove_item(state: &mut FolderState, sequence: &u64) {
     if let Some(item) = state.items.remove(sequence) {
+        state.items_revision = state.items_revision.wrapping_add(1);
         if let Some(digests) = state.item_digests.as_mut() {
             digests.remove(&digest(&item));
         }
@@ -715,6 +717,7 @@ pub(crate) fn apply(
                     });
                     // Rare: the digests are made again when next needed.
                     state.item_digests = None;
+                    state.items_revision = state.items_revision.wrapping_add(1);
                     add_item(&mut state, Item::EncryptionKey(signed));
                     applied.changed = true;
                 }
@@ -862,6 +865,10 @@ pub(crate) async fn fetch_lists(
 
     let (folder, mut wanted) = {
         let state = handle.lock();
+        let at = (state.items_revision, state.list_blobs.len());
+        if state.lists_complete.get() == Some(at) {
+            return false;
+        }
         let mut wanted: Vec<tidefell_proto::ListId> = Vec::new();
         for item in state.items.values() {
             let Item::Version(signed) = item else {
@@ -877,6 +884,9 @@ pub(crate) async fn fetch_lists(
                     }
                 }
             }
+        }
+        if wanted.is_empty() {
+            state.lists_complete.set(Some(at));
         }
         (state.config.id, wanted)
     };

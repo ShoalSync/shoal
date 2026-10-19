@@ -64,26 +64,49 @@ fn storage_copy_counts(
     if !encryption.storage_peers.contains(&device) {
         return false;
     }
-    let keys: Vec<tidefell_proto::KeyId> = state
+    let granted = granted_keys(state, vouching);
+    let (low, high) = (
+        (*content, tidefell_proto::KeyId([0; 16])),
+        (*content, tidefell_proto::KeyId([0xff; 16])),
+    );
+    state
         .sealed_chunks
-        .keys()
-        .filter(|(c, _)| c == content)
-        .map(|(_, key)| *key)
-        .collect();
+        .range(low..=high)
+        .any(|((_, key), _)| granted.contains(key))
+}
+
+/// The keys that a member device other than this one, vouched for now, holds a grant of. Worked
+/// out once per change to the items or to vouching, not once per file: the grants were verified
+/// when they were kept, so they are only decoded here.
+fn granted_keys(state: &FolderState, vouching: &Vouching) -> BTreeSet<tidefell_proto::KeyId> {
+    use tidefell_proto::SignedKind as _;
+    let at = (state.items_revision, vouching.generation());
+    if let Some((revision, generation, keys)) = state.granted_keys.borrow().as_ref() {
+        if (*revision, *generation) == at {
+            return keys.clone();
+        }
+    }
     let me = state.meta.device();
-    state.items.values().any(|item| {
-        let tidefell_proto::sync2::Item::Grant(signed) = item else {
-            return false;
-        };
-        signed.verify().is_ok_and(|grant| {
-            keys.contains(&grant.key)
-                && grant.recipient != me
+    let keys: BTreeSet<tidefell_proto::KeyId> = state
+        .items
+        .values()
+        .filter_map(|item| match item {
+            tidefell_proto::sync2::Item::Grant(signed) => {
+                tidefell_proto::sync2::KeyGrant::decode(&signed.body).ok()
+            }
+            _ => None,
+        })
+        .filter(|grant| {
+            grant.recipient != me
                 && vouching
                     .certificate(grant.recipient)
                     .and_then(|c| c.verify_certificate().ok())
                     .is_some_and(|c| state.members.contains(&c.user) && !vouching.is_revoked(&c))
         })
-    })
+        .map(|grant| grant.key)
+        .collect();
+    *state.granted_keys.borrow_mut() = Some((at.0, at.1, keys.clone()));
+    keys
 }
 
 /// Content of the current versions and conflict copies of `state` that this device made and

@@ -106,8 +106,22 @@ impl SealedStore {
 }
 
 /// The chunk IDs the kept sealed versions list, the current ones first: what the folder's
-/// store must hold.
+/// store must hold. Worked out once per change to the items or the list blobs held, not on every
+/// pass and status.
 fn listed(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
+    let at = (state.items_revision, state.list_blobs.len());
+    if let Some((revision, lists, all, current)) = state.stored_listed.borrow().as_ref() {
+        if (*revision, *lists) == at {
+            return if current_only { current } else { all }.clone();
+        }
+    }
+    let (all, current) = (listed_now(state, false), listed_now(state, true));
+    let result = if current_only { &current } else { &all }.clone();
+    *state.stored_listed.borrow_mut() = Some((at.0, at.1, all, current));
+    result
+}
+
+fn listed_now(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
     let mut seen = BTreeSet::new();
     let mut order = Vec::new();
     for pass in [false, true] {
