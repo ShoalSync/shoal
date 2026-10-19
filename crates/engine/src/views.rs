@@ -82,6 +82,8 @@ pub struct EncryptionInfo {
     /// The generation of the folder key new content is sealed with, or `None` until a key has
     /// reached this device.
     pub key_generation: Option<u64>,
+    /// Sealed versions kept unopened, waiting for a key that has not reached this device.
+    pub waiting_versions: usize,
     /// On a storage peer, what it stores of the folder.
     pub stored: Option<StoredInfo>,
 }

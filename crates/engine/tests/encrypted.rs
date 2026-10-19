@@ -225,8 +225,16 @@ async fn a_device_of_a_user_not_a_member_gets_no_key() {
         )
         .await;
     engine_a.scan(FOLDER).await.unwrap();
-    // c gets a's sealed versions but cannot open them.
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // c gets a's sealed versions but cannot open them: they wait, unopened, for a key.
+    eventually("c keeps a's sealed version", || {
+        engine_c
+            .folders()
+            .into_iter()
+            .find(|f| f.id == FOLDER)
+            .and_then(|f| f.encryption)
+            .is_some_and(|e| e.waiting_versions == 1)
+    })
+    .await;
     assert!(paths(&engine_c).is_empty());
     // And a has not taken c's versions either: c is not vouched for by a's member list.
     c.write("from-c.txt", b"not a member's");

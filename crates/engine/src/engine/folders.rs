@@ -141,6 +141,15 @@ impl Engine {
                         storage_peers: e.storage_peers.clone(),
                         key_generation: crate::encrypted::newest_key(&state)
                             .map(|key| key.generation()),
+                        waiting_versions: if e.stored.is_some() {
+                            0
+                        } else {
+                            state
+                                .items
+                                .values()
+                                .filter(|i| matches!(i, tidefell_proto::sync2::Item::Version(_)))
+                                .count()
+                        },
                         stored: e
                             .stored
                             .map(|stored| crate::encrypted::stored_info(&state, stored)),

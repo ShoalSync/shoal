@@ -182,24 +182,67 @@ fn chunk_id(
     hash: &ChunkHash,
     also: Option<(&str, &tidefell_proto::ContentHash)>,
 ) -> Result<ChunkId> {
-    if let Some((id, _)) = state
-        .chunk_ids
-        .iter()
-        .find(|(_, (h, k))| h == hash && *k == key.id())
-    {
-        return Ok(*id);
+    if let Some(id) = find_chunk_id(state, hash, key.id()) {
+        return Ok(id);
     }
     let data = crate::content::read_chunk_here(inner, state, hash, also)
         .ok_or_else(|| Error::Invalid(format!("chunk {hash} is not here to seal")))?;
     let id = key.chunk_id(&data);
-    state.chunk_ids.insert(id, (*hash, key.id()));
+    record_chunk_id(state, id, *hash, key.id());
     Ok(id)
 }
 
 fn add_item(state: &mut FolderState, item: Item) -> u64 {
     let sequence = state.meta.next_sequence();
+    if let Some(digests) = state.item_digests.as_mut() {
+        digests.insert(digest(&item));
+    }
     state.items.insert(sequence, item);
     sequence
+}
+
+fn digest(item: &Item) -> [u8; 32] {
+    *blake3::hash(&postcard::to_stdvec(item).unwrap_or_default()).as_bytes()
+}
+
+/// Whether `item` is kept already, by its digest.
+fn has_item(state: &mut FolderState, item: &Item) -> bool {
+    if state.item_digests.is_none() {
+        state.item_digests = Some(state.items.values().map(digest).collect());
+    }
+    state
+        .item_digests
+        .as_ref()
+        .is_some_and(|digests| digests.contains(&digest(item)))
+}
+
+/// Removes the item at `sequence`.
+fn remove_item(state: &mut FolderState, sequence: &u64) {
+    if let Some(item) = state.items.remove(sequence) {
+        if let Some(digests) = state.item_digests.as_mut() {
+            digests.remove(&digest(&item));
+        }
+    }
+}
+
+/// The ID of chunk `hash` under `key`, if recorded.
+fn find_chunk_id(state: &mut FolderState, hash: &ChunkHash, key: KeyId) -> Option<ChunkId> {
+    let index = state.chunk_index.get_or_insert_with(|| {
+        state
+            .chunk_ids
+            .iter()
+            .map(|(id, (hash, key))| ((*hash, *key), *id))
+            .collect()
+    });
+    index.get(&(*hash, key)).copied()
+}
+
+/// Records that chunk `id` is `hash` under `key`.
+pub(crate) fn record_chunk_id(state: &mut FolderState, id: ChunkId, hash: ChunkHash, key: KeyId) {
+    if let Some(index) = state.chunk_index.as_mut() {
+        index.insert((hash, key), id);
+    }
+    state.chunk_ids.insert(id, (hash, key));
 }
 
 /// On a storage peer, keeps a sealed version whose author it vouches for (ADR 0023, "On
@@ -306,7 +349,7 @@ pub(crate) fn purge_superseded(state: &mut FolderState, now: i64) -> usize {
         .collect();
     for sequence in &due {
         state.superseded.remove(sequence);
-        state.items.remove(sequence);
+        remove_item(state, sequence);
     }
     due.len()
 }
@@ -635,6 +678,10 @@ pub(crate) fn apply(
         .meta
         .set_record_receipts(!rebuilding && !from_storage_peer);
     for item in items {
+        // Sent again, as after a reconnection: already kept.
+        if has_item(&mut state, &item) {
+            continue;
+        }
         let signer = signer_of(&item);
         if signer != inner.key.id() {
             let members = state.members.clone();
@@ -666,6 +713,8 @@ pub(crate) fn apply(
                         !matches!(i, Item::EncryptionKey(k)
                             if k.verify_own().is_ok_and(|k| k.device == key.device))
                     });
+                    // Rare: the digests are made again when next needed.
+                    state.item_digests = None;
                     add_item(&mut state, Item::EncryptionKey(signed));
                     applied.changed = true;
                 }
@@ -674,12 +723,7 @@ pub(crate) fn apply(
                 let Ok(grant) = signed.verify() else {
                     continue;
                 };
-                if grant.folder != folder
-                    || state
-                        .items
-                        .values()
-                        .any(|i| *i == Item::Grant(signed.clone()))
-                {
+                if grant.folder != folder || has_item(&mut state, &Item::Grant(signed.clone())) {
                     continue;
                 }
                 add_item(&mut state, Item::Grant(signed));
@@ -933,7 +977,7 @@ fn keep_waiting(
         return false;
     }
     let item = Item::Version(signed);
-    if state.items.values().any(|i| *i == item) {
+    if has_item(state, &item) {
         return false;
     }
     add_item(state, item);
@@ -988,17 +1032,17 @@ fn open_waiting(
     let mut changed = false;
     for (sequence, signed) in waiting {
         let Ok(sealed) = signed.verify_authored() else {
-            state.items.remove(&sequence);
+            remove_item(state, &sequence);
             continue;
         };
         match open(state, &sealed, signed) {
             Some(Ok((verified, content))) => {
                 touched.push(sealed.entry);
-                state.items.remove(&sequence);
+                remove_item(state, &sequence);
                 changed |= apply_opened(state, verified, content, now);
             }
             Some(Err(_)) => {
-                state.items.remove(&sequence);
+                remove_item(state, &sequence);
             }
             None => {}
         }
@@ -1070,7 +1114,7 @@ fn locate(inner: &Inner, state: &mut FolderState, id: &ChunkId) -> Option<(Chunk
     if key(state, &key_id)?.chunk_id(&data) != *id {
         return None;
     }
-    state.chunk_ids.insert(*id, (hash, key_id));
+    record_chunk_id(state, *id, hash, key_id);
     Some((hash, key_id))
 }
 
@@ -1176,7 +1220,7 @@ async fn fetch_sealed(
                 {
                     continue;
                 }
-                handle.lock().chunk_ids.insert(chunk_id, (hash, key.id()));
+                record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
                 for (i, (listed, _)) in list.iter().enumerate() {
                     if *listed == chunk_id {
                         hashes[i] = Some(hash);

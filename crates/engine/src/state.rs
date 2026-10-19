@@ -493,6 +493,17 @@ pub(crate) struct FolderState {
     /// An encrypted folder's list blobs, by list ID: those its own versions list, and those
     /// fetched to open or store others' (ADR 0023).
     pub(crate) list_blobs: Tracked<tidefell_proto::ListId, Vec<u8>>,
+    /// Digests of `items`, built when first needed: finding an item already kept costs a
+    /// lookup, not a pass over them all.
+    pub(crate) item_digests: Option<std::collections::HashSet<[u8; 32]>>,
+    /// The chunk ID of each chunk under each key, `chunk_ids` the other way round, built when
+    /// first needed.
+    pub(crate) chunk_index: Option<
+        std::collections::HashMap<
+            (tidefell_proto::ChunkHash, tidefell_proto::KeyId),
+            tidefell_proto::ChunkId,
+        >,
+    >,
     /// On a storage peer, the folder's sealed chunks (ADR 0023).
     pub(crate) sealed_store: Option<crate::stored::SealedStore>,
     pub(crate) stored_heads: Option<
@@ -610,6 +621,8 @@ impl FolderState {
             items: Tracked::default(),
             superseded: Tracked::default(),
             list_blobs: Tracked::default(),
+            item_digests: None,
+            chunk_index: None,
             sealed_store: None,
             stored_heads: None,
             chunk_ids: Tracked::default(),
@@ -830,6 +843,10 @@ impl FolderState {
         self.replaced = Tracked::decode(take("replaced")).map_err(corrupt)?;
         self.keys = Tracked::decode(take("keys")).map_err(corrupt)?;
         self.items = Tracked::decode(take("items")).map_err(corrupt)?;
+        // Made again from what was read, when first needed.
+        self.item_digests = None;
+        self.chunk_index = None;
+        self.stored_heads = None;
         self.superseded = Tracked::decode(take("superseded")).map_err(corrupt)?;
         self.list_blobs = Tracked::decode(take("list_blobs")).map_err(corrupt)?;
         self.chunk_ids = Tracked::decode(take("chunk_ids")).map_err(corrupt)?;
