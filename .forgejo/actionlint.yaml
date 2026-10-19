@@ -1,4 +1,7 @@
-# Labels of the self-hosted runners (docs/project/release-runner.md), for actionlint.
+# Labels of this project's runners, for actionlint: the container runners (`ephemeral`, one
+# job per runner, and `docker`) and the release runner (docs/project/release-runner.md).
 self-hosted-runner:
   labels:
+    - docker
+    - ephemeral
     - release

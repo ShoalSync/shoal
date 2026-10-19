@@ -1,7 +1,7 @@
 name: Fuzz
 
-# Every fuzz target for ten minutes each night on main (ADR 0031). Not on pull requests: three
-# self-hosted runners on one machine serve every repository.
+# Every fuzz target for ten minutes each night on main (ADR 0031). Not on pull requests: a few
+# runners on one machine serve every repository.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -13,7 +13,7 @@ permissions:
 jobs:
   fuzz:
     name: Fuzz targets
-    runs-on: self-hosted
+    runs-on: ephemeral
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -34,9 +34,10 @@ jobs:
           fi
       - name: Run each target
         working-directory: fuzz
-        # The corpus each run grows is kept on the runner; the seeds in fuzz/corpus are read only.
+        # The corpus each run grows is kept on the runner slot, beside its CARGO_HOME, which a
+        # container runner keeps between jobs; the seeds in fuzz/corpus are read only.
         run: |
-          corpus="$HOME/.cache/tidefell-fuzz/corpus"
+          corpus="${CARGO_HOME:-$HOME/.cargo}/tidefell-fuzz/corpus"
           failed=0
           for target in $(cargo fuzz list); do
             mkdir -p "$corpus/$target"

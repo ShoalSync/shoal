@@ -1,6 +1,6 @@
 name: Persistent cargo target
 description: >
-  Links target/ to a directory kept between runs, one per runner and job, so unchanged
+  Links target/ to a directory kept between runs, one per runner slot and job, so unchanged
   dependencies are not rebuilt. Checkout removes the link, so every job runs this after
   checking out.
 runs:
@@ -8,12 +8,11 @@ runs:
   steps:
     - shell: bash
       run: |
-        # The runners share a user and a home directory. Keying by runner slot keeps two
-        # runners from waiting on each other's cargo lock, and lets the size check below clear
-        # a directory that no other job is using. Forgejo's runner sets no RUNNER_NAME, but
-        # gives each slot its own CARGO_HOME, .../cargo/<slot>, so the slot is its last part.
-        slot=$(basename "${CARGO_HOME:-default}")
-        dir="$HOME/.cache/tidefell-ci/target/$slot/${{ github.job }}"
+        # Under CARGO_HOME, which each runner slot has its own of and keeps between jobs: a
+        # container runner's is a volume of the slot, and a host runner's .../cargo/<slot>.
+        # Two runners then never wait on each other's cargo lock, and the size check below
+        # clears a directory no other job is using.
+        dir="${CARGO_HOME:-$HOME/.cargo}/tidefell-ci-target/${{ github.job }}"
         mkdir -p "$dir"
         # Keep it bounded: start again once it passes 10 GiB.
         if [ "$(du -s --block-size=1G "$dir" | cut -f1)" -gt 10 ]; then

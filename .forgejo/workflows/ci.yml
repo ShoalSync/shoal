@@ -28,6 +28,8 @@ jobs:
   # tests need /dev/fuse, which the Nix sandbox does not have, so they run here.
   fuse:
     name: FUSE tests
+    # On a host runner until a container's mount() is allowed: Docker's default AppArmor profile
+    # refuses it even with SYS_ADMIN.
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -38,7 +40,7 @@ jobs:
         with:
           toolchain: stable
       - name: Test
-        # The FUSE mount tests must run, not skip, on the self-hosted runner.
+        # The FUSE mount tests must run, not skip, on the runner.
         env:
           TIDEFELL_REQUIRE_FUSE: "1"
         run: |
@@ -50,7 +52,7 @@ jobs:
   # workflow 10,000 more.
   simulation:
     name: Simulation
-    runs-on: self-hosted
+    runs-on: ephemeral
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -73,7 +75,7 @@ jobs:
   # runner serves every repository.
   deny:
     name: cargo-deny
-    runs-on: self-hosted
+    runs-on: ephemeral
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -120,7 +122,7 @@ jobs:
 
   kotlin:
     name: Kotlin bindings (JVM)
-    runs-on: self-hosted
+    runs-on: ephemeral
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -140,7 +142,7 @@ jobs:
 
   aar:
     name: Android library (AAR)
-    runs-on: self-hosted
+    runs-on: ephemeral
     env:
       NDK_VERSION: "30.0.16248370"
     steps:
@@ -157,7 +159,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
-      # The self-hosted runner may not carry an Android SDK the way GitHub's images do.
+      # The runners carry no Android SDK; it is kept in each slot's tool cache.
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           # The default also asks for `tools`, which the SDK repository no longer carries.
@@ -169,7 +171,7 @@ jobs:
             cargo install cargo-ndk --locked --version 4.1.2 --force
           fi
           # Steps run with pipefail, and yes ends on SIGPIPE once sdkmanager stops reading. The
-          # runner slots share one SDK, so one sdkmanager runs at a time.
+          # lock keeps one sdkmanager at a time on runners whose slots share an SDK.
           (yes || true) | flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager --licenses > /dev/null
           flock "$ANDROID_HOME/.tidefell-ci.lock" sdkmanager "ndk;$NDK_VERSION" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
@@ -183,7 +185,7 @@ jobs:
   # severity or higher fail, so actions stay pinned by commit.
   workflows:
     name: Workflows
-    runs-on: self-hosted
+    runs-on: ephemeral
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

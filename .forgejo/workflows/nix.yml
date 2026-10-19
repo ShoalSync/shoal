@@ -20,10 +20,10 @@ permissions:
 jobs:
   build:
     # Formatting, clippy, the tests, the crate boundaries, the MSRV build, the package and the
-    # NixOS module. The compiled dependencies are their own derivation, kept in the runner's Nix
-    # store until Cargo.lock changes.
+    # NixOS module. The compiled dependencies are their own derivation, fetched from the LAN
+    # binary cache that the runners push what they build to, until Cargo.lock changes.
     name: nix flake check
-    runs-on: self-hosted
+    runs-on: ephemeral
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
