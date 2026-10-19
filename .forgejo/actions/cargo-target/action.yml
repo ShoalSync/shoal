@@ -14,9 +14,9 @@ runs:
         # clears a directory no other job is using.
         dir="${CARGO_HOME:-$HOME/.cargo}/tidefell-ci-target/${{ github.job }}"
         mkdir -p "$dir"
-        # Keep it bounded: start again once it passes 10 GiB.
-        if [ "$(du -s --block-size=1G "$dir" | cut -f1)" -gt 10 ]; then
-          echo "Clearing $dir, which passed 10 GiB"
+        # Keep it bounded, within a runner slot's disk budget: start again once it passes 2 GiB.
+        if [ "$(du -s --block-size=1G "$dir" | cut -f1)" -gt 2 ]; then
+          echo "Clearing $dir, which passed 2 GiB"
           rm -rf "$dir"
           mkdir -p "$dir"
         fi
