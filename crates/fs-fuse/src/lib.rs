@@ -2,7 +2,8 @@
 //!
 //! Mounts one folder with FUSE. Listings come from the folder's metadata, opening a file
 //! fetches it if it is a placeholder, and writes are staged and recorded when the file is
-//! closed.
+//! closed. Linux only: elsewhere the crate is empty, so the workspace builds everywhere.
+#![cfg(target_os = "linux")]
 
 mod backend;
 mod core;

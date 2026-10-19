@@ -53,14 +53,15 @@ impl Device {
             .await
             .unwrap(),
         );
-        let socket = data.join("control.sock");
+        let socket = tidefell_sdk::Client::socket_path(&data);
         tokio::spawn({
             let (engine, socket) = (engine.clone(), socket.clone());
             let options = tidefell_api::Options { user_key };
-            async move { tidefell_api::serve_unix_with(engine, &socket, options).await }
+            async move { tidefell_api::serve_local_with(engine, &socket, options).await }
         });
+        let client = tidefell_sdk::Client::local(&socket);
         for _ in 0..200 {
-            if socket.exists() {
+            if client.status().await.is_ok() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

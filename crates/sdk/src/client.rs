@@ -43,8 +43,11 @@ pub enum Error {
 
 #[derive(Debug, Clone)]
 enum Target {
-    Unix(PathBuf),
-    Tcp { host: String },
+    /// The daemon's control endpoint on this machine: a Unix socket, or on Windows a named pipe.
+    Local(PathBuf),
+    Tcp {
+        host: String,
+    },
 }
 
 /// A client for one daemon.
@@ -55,9 +58,16 @@ pub struct Client {
 
 impl Client {
     /// Talks to a daemon over its Unix control socket (`<data_dir>/control.sock`).
+    #[cfg(unix)]
     pub fn unix(socket: impl Into<PathBuf>) -> Self {
+        Self::local(socket)
+    }
+
+    /// Talks to a daemon on this machine at its control endpoint, as [`Client::socket_path`]
+    /// names it: a Unix socket, or on Windows a named pipe (ADR 0042).
+    pub fn local(endpoint: impl Into<PathBuf>) -> Self {
         Self {
-            target: Target::Unix(socket.into()),
+            target: Target::Local(endpoint.into()),
         }
     }
 
@@ -75,14 +85,14 @@ impl Client {
         body: Option<Vec<u8>>,
     ) -> Result<hyper::Response<hyper::body::Incoming>, Error> {
         let (io, host) = match &self.target {
-            Target::Unix(socket) => {
-                let stream = tokio::net::UnixStream::connect(socket)
+            Target::Local(endpoint) => {
+                let stream = connect_local(endpoint)
                     .await
                     .map_err(|source| Error::Connect {
-                        target: socket.display().to_string(),
+                        target: endpoint.display().to_string(),
                         source,
                     })?;
-                (Io::Unix(TokioIo::new(stream)), "localhost".to_string())
+                (Io::Local(TokioIo::new(stream)), "localhost".to_string())
             }
             Target::Tcp { host } => {
                 let stream = tokio::net::TcpStream::connect(host)
@@ -102,7 +112,7 @@ impl Client {
             .body(Full::new(Bytes::from(body.unwrap_or_default())))
             .map_err(|e| Error::Http(e.to_string()))?;
         match io {
-            Io::Unix(io) => exchange(io, request).await,
+            Io::Local(io) => exchange(io, request).await,
             Io::Tcp(io) => exchange(io, request).await,
         }
     }
@@ -769,14 +779,58 @@ impl Client {
         Ok(())
     }
 
-    /// The control socket path under a daemon's data directory.
+    /// The control endpoint of the daemon with data directory `data_dir`: its Unix socket,
+    /// `<data_dir>/control.sock`, or on Windows the named pipe
+    /// `\\.\pipe\tidefell-<hash>`, from the directory's canonical path with case folded, so
+    /// the daemon and its clients agree however the path is spelled (ADR 0042).
     pub fn socket_path(data_dir: &Path) -> PathBuf {
-        data_dir.join("control.sock")
+        #[cfg(windows)]
+        {
+            let path = std::fs::canonicalize(data_dir).unwrap_or_else(|_| data_dir.to_owned());
+            let folded = path.to_string_lossy().to_lowercase();
+            // FNV-1a: stable across builds and platforms, unlike the standard library's hasher.
+            let hash = folded.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+                (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+            });
+            PathBuf::from(format!(r"\\.\pipe\tidefell-{hash:016x}"))
+        }
+        #[cfg(not(windows))]
+        {
+            data_dir.join("control.sock")
+        }
+    }
+}
+
+#[cfg(unix)]
+type LocalStream = tokio::net::UnixStream;
+#[cfg(windows)]
+type LocalStream = tokio::net::windows::named_pipe::NamedPipeClient;
+
+/// Connects to the daemon's local control endpoint.
+#[cfg(unix)]
+async fn connect_local(endpoint: &Path) -> std::io::Result<LocalStream> {
+    tokio::net::UnixStream::connect(endpoint).await
+}
+
+/// Connects to the daemon's named pipe, waiting while every instance is busy: the server makes
+/// a new one as it accepts each connection.
+#[cfg(windows)]
+async fn connect_local(endpoint: &Path) -> std::io::Result<LocalStream> {
+    // ERROR_PIPE_BUSY.
+    const BUSY: i32 = 231;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match tokio::net::windows::named_pipe::ClientOptions::new().open(endpoint) {
+            Err(e) if e.raw_os_error() == Some(BUSY) && std::time::Instant::now() < deadline => {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            result => return result,
+        }
     }
 }
 
 enum Io {
-    Unix(TokioIo<tokio::net::UnixStream>),
+    Local(TokioIo<LocalStream>),
     Tcp(TokioIo<tokio::net::TcpStream>),
 }
 

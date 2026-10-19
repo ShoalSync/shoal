@@ -183,6 +183,26 @@ jobs:
       - name: Loadable by Android
         run: bindings/android/check-loadable.sh bindings/android/ffi/build/outputs/aar/ffi-release.aar
 
+  # Windows (ADR 0042): the workspace builds and links there and clippy holds. Its tests follow
+  # as Phase 8 makes them pass.
+  windows:
+    name: Windows
+    runs-on: windows
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Clippy and build
+        shell: bash
+        run: |
+          # Kept between runs, outside the checkout, where Defender does not scan; the runner is
+          # not ephemeral.
+          export CARGO_TARGET_DIR=C:/ci/target/tidefell
+          mkdir -p "$CARGO_TARGET_DIR" || unset CARGO_TARGET_DIR
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+          cargo build --locked --workspace --all-targets
+
   # The workflows themselves (ADR 0031): actionlint, and zizmor, whose findings of medium
   # severity or higher fail, so actions stay pinned by commit.
   workflows:

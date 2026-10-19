@@ -1,4 +1,5 @@
-//! The `/v1` API over a real engine on a Unix socket, driven through the `sdk` client.
+//! The `/v1` API over a real engine on its local control endpoint, driven through the `sdk`
+//! client.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -59,9 +60,9 @@ async fn control_api_end_to_end() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_unix(engine, &socket).await }
+        async move { tidefell_api::serve_local(engine, &socket).await }
     });
-    let client = Client::unix(&socket);
+    let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;
 
     #[cfg(unix)]
@@ -493,9 +494,9 @@ async fn logging_through_the_api() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_unix(engine, &socket).await }
+        async move { tidefell_api::serve_local(engine, &socket).await }
     });
-    let client = Client::unix(&socket);
+    let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;
 
     // Before the process starts logging there is nothing to show.
@@ -584,9 +585,9 @@ async fn encrypted_folders_through_the_api() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_unix(engine, &socket).await }
+        async move { tidefell_api::serve_local(engine, &socket).await }
     });
-    let client = Client::unix(&socket);
+    let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;
 
     let new_folder = |name: &str, encryption| NewFolder {

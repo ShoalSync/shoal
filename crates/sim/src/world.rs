@@ -368,13 +368,7 @@ impl World {
                 // engine put at `to` in the meantime is not replaced unnoticed, and one it put at
                 // `from` is not removed with what the user moved, as linking then unlinking
                 // would. The file may also have gone since it was listed.
-                let _ = rustix::fs::renameat_with(
-                    rustix::fs::CWD,
-                    root.join(&from),
-                    rustix::fs::CWD,
-                    root.join(&to),
-                    rustix::fs::RenameFlags::NOREPLACE,
-                );
+                rename_noreplace(&root.join(&from), &root.join(&to));
             }
             Op::Delete { device, file } => {
                 let n = usize::from(device) % count;
@@ -721,6 +715,27 @@ fn content(step: usize, len: usize) -> Vec<u8> {
     }
     out.truncate(len.max(16));
     out
+}
+
+/// Renames `from` to `to` in one step, unless something is at `to`.
+#[cfg(unix)]
+fn rename_noreplace(from: &Path, to: &Path) {
+    let _ = rustix::fs::renameat_with(
+        rustix::fs::CWD,
+        from,
+        rustix::fs::CWD,
+        to,
+        rustix::fs::RenameFlags::NOREPLACE,
+    );
+}
+
+/// Renames `from` to `to`, unless something is at `to`. The simulation runs on Unix; elsewhere
+/// this only builds, and checks then renames.
+#[cfg(not(unix))]
+fn rename_noreplace(from: &Path, to: &Path) {
+    if !to.exists() {
+        let _ = fs::rename(from, to);
+    }
 }
 
 fn pick(items: &[String], n: u8) -> Option<String> {

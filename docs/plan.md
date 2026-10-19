@@ -889,8 +889,8 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
 1. **The workspace builds for Windows.** `fs-fuse` and the simulation's Linux-only parts gated
    by target; Unix-only test code gated; a Windows type-check in CI.
 2. **Local control and privacy.** The control API and SDK over a named pipe; the data
-   directory under `%LOCALAPPDATA%`; DACLs where Unix uses file modes (data directory, keys,
-   web accounts and shares).
+   directory under `%LOCALAPPDATA%`, private by the profile's access control (ADR 0042's
+   amendment), and `tidefell doctor` warning of one outside it.
 3. **File semantics.** The executable bit kept from the current version; NTFS file IDs; free
    space and volume serial numbers; network drives; renames that replace open files, and
    non-replacing renames; the hidden reserved directory; long paths; one recursive watch per

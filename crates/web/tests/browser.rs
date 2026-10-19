@@ -1094,6 +1094,8 @@ async fn deciding_a_conflict() {
     other.shutdown().await;
 }
 
+// Unix only: a file is made unreadable with its mode.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn status_and_problems() {
     use std::os::unix::fs::PermissionsExt;

@@ -123,6 +123,8 @@ pub(crate) struct PendingWrite {
     pub(crate) path: String,
     content: ContentHash,
     pub(crate) size: u64,
+    /// Set as the file's mode on Unix; Windows has no executable bit (ADR 0042).
+    #[cfg_attr(not(unix), allow(dead_code))]
     executable: bool,
     modified_ms: i64,
     /// Where this entry was on disk before, if it moved.

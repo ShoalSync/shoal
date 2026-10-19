@@ -1,6 +1,7 @@
 //! A real FUSE mount over a folder kept in a directory: ordinary file operations through the
 //! kernel. Needs `/dev/fuse` (and `fusermount3` unless run as root); without them the test
 //! is skipped, unless `TIDEFELL_REQUIRE_FUSE` is set, as in CI.
+#![cfg(target_os = "linux")]
 
 use std::collections::BTreeMap;
 use std::fs;

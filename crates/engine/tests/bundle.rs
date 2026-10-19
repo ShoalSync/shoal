@@ -1,5 +1,6 @@
 //! The diagnostics bundle (ADR 0030): what it holds, and that nothing it should not hold gets
-//! in.
+//! in. Unix only: it makes a file unreadable with its mode.
+#![cfg(unix)]
 
 use std::fs;
 use std::io::Read;

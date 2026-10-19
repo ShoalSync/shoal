@@ -1,7 +1,7 @@
 //! `tidefell`: command-line control of a local Tidefell daemon.
 //!
-//! Talks to `tidefelld` over its control socket (`<data_dir>/control.sock`) through the
-//! `tidefell-sdk` client only.
+//! Talks to `tidefelld` over its control endpoint (`<data_dir>/control.sock`, or on Windows a
+//! named pipe named from the data directory) through the `tidefell-sdk` client only.
 
 mod format;
 
@@ -19,10 +19,11 @@ use tidefell_sdk::Client;
 #[command(name = "tidefell", version, about = "Control a Tidefell peer")]
 struct Cli {
     /// The daemon's data directory; its control socket is `<data_dir>/control.sock`.
-    /// Defaults to $TIDEFELL_DATA_DIR, then ~/.local/share/tidefell.
+    /// Defaults to $TIDEFELL_DATA_DIR, then ~/.local/share/tidefell (%LOCALAPPDATA%\Tidefell
+    /// on Windows).
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
-    /// Control socket path, overriding --data-dir.
+    /// Control socket path (on Windows, the pipe name), overriding --data-dir.
     #[arg(long, global = true)]
     socket: Option<PathBuf>,
     /// Print JSON instead of text.
@@ -514,10 +515,21 @@ fn default_data_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("TIDEFELL_DATA_DIR") {
         return dir.into();
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    home.join(".local/share/tidefell")
+    #[cfg(windows)]
+    {
+        // Per user, under the profile, whose access control keeps it private (ADR 0042).
+        let local = std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        local.join("Tidefell")
+    }
+    #[cfg(not(windows))]
+    {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default();
+        home.join(".local/share/tidefell")
+    }
 }
 
 fn print<T: Serialize>(json: bool, value: &T, text: impl FnOnce(&T) -> String) {
@@ -592,7 +604,7 @@ async fn run(cli: Cli) -> Result<(), String> {
     let socket = cli.socket.clone().unwrap_or_else(|| {
         Client::socket_path(&cli.data_dir.clone().unwrap_or_else(default_data_dir))
     });
-    let client = Client::unix(&socket);
+    let client = Client::local(&socket);
     let json = cli.json;
     let e = |e: tidefell_sdk::Error| e.to_string();
     match cli.command {

@@ -460,7 +460,7 @@ async fn run(path: &Path) -> Result<(), String> {
         let options = tidefell_api::Options {
             user_key: user_key.clone(),
         };
-        async move { tidefell_api::serve_unix_with(engine, &socket, options).await }
+        async move { tidefell_api::serve_local_with(engine, &socket, options).await }
     });
     let web = match &config.web {
         Some(web) => {
@@ -515,6 +515,8 @@ async fn run(path: &Path) -> Result<(), String> {
     if let Some(failure) = failure {
         return Err(failure);
     }
+    // A Unix socket leaves a file behind; a named pipe goes with the process.
+    #[cfg(unix)]
     let _ = std::fs::remove_file(&socket);
 
     // In-flight API requests hold the engine briefly; wait for them before a clean shutdown.

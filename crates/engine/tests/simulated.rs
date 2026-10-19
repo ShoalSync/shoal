@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tidefell_engine::{
-    Direction, Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig,
-    ReplicaMode, Retention, SyncOptions,
+    Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig, ReplicaMode,
+    Retention, SyncOptions,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_net::Network;
@@ -230,9 +230,12 @@ async fn engines_reconnect_after_a_partition_heals() {
     engine_a.shutdown().await;
 }
 
+// Unix only: the file is made unreadable with its mode.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn content_a_read_missed_is_offered_again_after_a_scan() {
     use std::os::unix::fs::PermissionsExt;
+    use tidefell_engine::Direction;
     let dir = tempfile::tempdir().unwrap();
     let network = Network::new();
     let user = UserKey::from_seed([1; 32]);

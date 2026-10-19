@@ -1,7 +1,10 @@
 # Labels of this project's runners, for actionlint: the container runners (`ephemeral`, one
-# job per runner, and `docker`) and the release runner (docs/project/release-runner.md).
+# job per runner, and `docker`), the Windows runner (`windows`, ADR 0042) and the release
+# runners (docs/project/release-runner.md).
 self-hosted-runner:
   labels:
     - docker
     - ephemeral
     - release
+    - release-windows
+    - windows

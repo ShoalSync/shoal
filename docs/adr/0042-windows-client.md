@@ -115,6 +115,22 @@ Explorer shows its state (online only, on this device, always keep) with no extr
   the simulation's Linux-only parts) are gated by target, so `cargo build --workspace` works
   there.
 
+## Amendment: privacy from Windows' defaults (2026-10-19)
+
+Setting an explicit DACL takes Win32 calls that are `unsafe` in Rust, and the workspace forbids
+unsafe code. Windows' defaults already give what the DACLs above were for, so no DACL is set:
+
+- **The data directory** is under the user's profile (`%LOCALAPPDATA%`), and what is created
+  in it inherits the profile's access control: the user, SYSTEM and administrators, as a Unix
+  build's mode 0700 and 0600 allow the user and root. A data directory set outside the profile
+  does not have that; `tidefell doctor` says so.
+- **The control pipe** keeps a named pipe's default security: full access for its creator,
+  SYSTEM and administrators, and read access for everyone else, which cannot send a request.
+  It refuses remote clients.
+
+If a tighter access list is ever needed, it comes from a maintained crate that wraps those calls
+safely, not from unsafe code here.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

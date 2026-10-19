@@ -1,5 +1,6 @@
 //! Status and problems (ADR 0030): peers connected or not, folder states, transfer totals and
-//! paths that fail.
+//! paths that fail. Unix only: unreadable files and directories are made with their mode.
+#![cfg(unix)]
 
 use std::fs;
 use std::net::SocketAddr;

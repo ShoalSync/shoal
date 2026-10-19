@@ -2,13 +2,13 @@
 //!
 //! Serves the `/v1` REST API (ADR 0009) over an [`Engine`]. Bodies are the `tidefell-sdk`
 //! types; the OpenAPI document is generated from them and served at `/v1/openapi.json`.
-//! `tidefelld` serves this router on its Unix control socket (ADR 0010).
+//! `tidefelld` serves this router on its control endpoint: a Unix socket (ADR 0010), or on
+//! Windows a named pipe (ADR 0042).
 
 mod convert;
 mod handlers;
 mod pairing;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -174,16 +174,19 @@ pub fn openapi() -> utoipa::openapi::OpenApi {
 
 /// Serves the API on a Unix socket at `path`, readable and writable only by the daemon's
 /// user. Replaces a stale socket file. Runs until the listener fails.
+#[cfg(unix)]
 pub async fn serve_unix(engine: Arc<Engine>, path: &Path) -> std::io::Result<()> {
     serve_unix_with(engine, path, Options::default()).await
 }
 
 /// [`serve_unix`] with [`Options`].
+#[cfg(unix)]
 pub async fn serve_unix_with(
     engine: Arc<Engine>,
     path: &Path,
     options: Options,
 ) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
     if path.exists() {
         std::fs::remove_file(path)?;
     }
@@ -191,6 +194,101 @@ pub async fn serve_unix_with(
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     tracing::info!(socket = %path.display(), "control API listening");
     axum::serve(listener, router_with(engine, options)).await
+}
+
+/// Serves the API on this machine's control endpoint `endpoint`, as
+/// `tidefell_sdk::Client::socket_path` names it: a Unix socket, or on Windows a named pipe.
+/// Runs until the listener fails.
+pub async fn serve_local(engine: Arc<Engine>, endpoint: &Path) -> std::io::Result<()> {
+    serve_local_with(engine, endpoint, Options::default()).await
+}
+
+/// [`serve_local`] with [`Options`].
+#[cfg(unix)]
+pub async fn serve_local_with(
+    engine: Arc<Engine>,
+    endpoint: &Path,
+    options: Options,
+) -> std::io::Result<()> {
+    serve_unix_with(engine, endpoint, options).await
+}
+
+/// [`serve_local`] with [`Options`]: a named pipe (ADR 0042). Its default security lets only
+/// the daemon's user, SYSTEM and administrators write to it, and it refuses remote clients, so
+/// no one else can make a request. Fails if another daemon already serves the pipe.
+#[cfg(windows)]
+pub async fn serve_local_with(
+    engine: Arc<Engine>,
+    endpoint: &Path,
+    options: Options,
+) -> std::io::Result<()> {
+    let listener = pipe::PipeListener::bind(endpoint)?;
+    tracing::info!(pipe = %endpoint.display(), "control API listening");
+    axum::serve(listener, router_with(engine, options)).await
+}
+
+#[cfg(windows)]
+mod pipe {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+
+    /// Connections to a named pipe, for `axum::serve`: each accepted instance is handed over
+    /// and a new one made to wait for the next client.
+    pub(crate) struct PipeListener {
+        name: std::ffi::OsString,
+        next: NamedPipeServer,
+    }
+
+    impl PipeListener {
+        pub(crate) fn bind(name: &Path) -> std::io::Result<Self> {
+            let next = ServerOptions::new()
+                .first_pipe_instance(true)
+                .reject_remote_clients(true)
+                .create(name)?;
+            Ok(Self {
+                name: name.as_os_str().to_owned(),
+                next,
+            })
+        }
+
+        fn instance(&self) -> std::io::Result<NamedPipeServer> {
+            ServerOptions::new()
+                .reject_remote_clients(true)
+                .create(&self.name)
+        }
+    }
+
+    impl axum::serve::Listener for PipeListener {
+        type Io = NamedPipeServer;
+        type Addr = std::ffi::OsString;
+
+        async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+            loop {
+                if let Err(e) = self.next.connect().await {
+                    tracing::warn!(error = %e, "accepting on the control pipe failed");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+                // A client is connected: make the next instance before handing this one over.
+                let next = loop {
+                    match self.instance() {
+                        Ok(next) => break next,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "making a control pipe instance failed");
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    }
+                };
+                return (std::mem::replace(&mut self.next, next), self.name.clone());
+            }
+        }
+
+        fn local_addr(&self) -> std::io::Result<Self::Addr> {
+            Ok(self.name.clone())
+        }
+    }
 }
 
 /// The content type of [`serve_metrics`]'s page.

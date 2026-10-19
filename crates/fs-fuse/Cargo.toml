@@ -10,9 +10,11 @@ publish = false
 [lints]
 workspace = true
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 fuser = { workspace = true }
 libc = { workspace = true }
+
+[dependencies]
 thiserror = { workspace = true }
 tidefell-engine = { workspace = true }
 tidefell-proto = { workspace = true }

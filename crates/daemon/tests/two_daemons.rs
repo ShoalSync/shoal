@@ -197,6 +197,11 @@ fn init(root: &Path, name: &str, user_key: &Path) -> Node {
     }
 }
 
+/// A node's control endpoint: its socket, or on Windows its named pipe.
+fn control(node: &Node) -> std::path::PathBuf {
+    tidefell_sdk::Client::socket_path(&node.dir.join("data"))
+}
+
 fn wait_for(what: &str, nodes: &[&Node], mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(60);
     while Instant::now() < deadline {
@@ -291,7 +296,7 @@ fn two_daemons_sync_a_folder() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let client = tidefell_sdk::Client::unix(b.dir.join("data/control.sock"));
+        let client = tidefell_sdk::Client::local(control(&b));
         let status = client.status().await.unwrap();
         assert_eq!(status.device, b.device);
         assert_eq!(status.user, user);
@@ -456,9 +461,9 @@ scan_interval_secs = 1
         .enable_all()
         .build()
         .unwrap();
-    let client = tidefell_sdk::Client::unix(a.dir.join("data/control.sock"));
-    wait_for("the approver's control socket", &[&a], || {
-        a.dir.join("data/control.sock").exists()
+    let client = tidefell_sdk::Client::local(control(&a));
+    wait_for("the approver's control endpoint", &[&a], || {
+        runtime.block_on(client.status()).is_ok()
     });
     let pending = runtime.block_on(client.pair(&code)).unwrap();
     assert_eq!(pending.suggested_name, "phone");
@@ -512,10 +517,10 @@ bind = "127.0.0.1:{port}"
             .spawn()
             .unwrap(),
     );
-    wait_for("the new device's control socket", &[&a, &b], || {
-        b.dir.join("data/control.sock").exists()
+    let phone = tidefell_sdk::Client::local(control(&b));
+    wait_for("the new device's control endpoint", &[&a, &b], || {
+        runtime.block_on(phone.status()).is_ok()
     });
-    let phone = tidefell_sdk::Client::unix(b.dir.join("data/control.sock"));
     runtime.block_on(async {
         let known = phone.known_peers().await.unwrap();
         assert_eq!(known[0].device, a.device);
