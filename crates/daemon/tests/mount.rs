@@ -10,10 +10,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const BIN: &str = env!("CARGO_BIN_EXE_tidefelld");
+/// The tidefelld this test runs: the one built with it, unless `TIDEFELLD` names another, as
+/// when CI runs this test built elsewhere.
+fn bin() -> String {
+    std::env::var("TIDEFELLD").unwrap_or_else(|_| env!("CARGO_BIN_EXE_tidefelld").to_owned())
+}
 
 fn tidefelld(args: &[&str]) -> String {
-    let out = Command::new(BIN).args(args).output().unwrap();
+    let out = Command::new(bin()).args(args).output().unwrap();
     assert!(
         out.status.success(),
         "tidefelld {args:?} failed: {}",
@@ -132,7 +136,7 @@ scan_interval_secs = 1
             .open(self.dir.join("daemon.log"))
             .unwrap();
         Daemon(
-            Command::new(BIN)
+            Command::new(bin())
                 .args(["run", "--config", path.to_str().unwrap()])
                 .env("RUST_LOG", "info,tidefell_fs_fuse=debug")
                 .stdout(Stdio::null())

@@ -40,7 +40,11 @@ async fn seeds_pass() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn regressions_pass() {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions");
+    // `TIDEFELL_SIM_REGRESSIONS` names them when this test runs away from its source, as in CI.
+    let dir = std::env::var_os("TIDEFELL_SIM_REGRESSIONS").map_or_else(
+        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/regressions"),
+        PathBuf::from,
+    );
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
         .unwrap()
         .flatten()

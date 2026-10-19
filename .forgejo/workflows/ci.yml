@@ -33,17 +33,17 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.forgejo/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
+      # Built by Nix from the compiled dependencies, or fetched from the binary cache when this
+      # source was built before (`ci-host` in flake.nix).
+      - name: Host build
+        run: echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)" >> "$GITHUB_ENV"
       - name: Test
         # The FUSE mount tests must run, not skip: the runners give jobs /dev/fuse and mount().
         env:
           TIDEFELL_REQUIRE_FUSE: "1"
         run: |
-          cargo test --locked --package tidefell-fs-fuse --test kernel
-          cargo test --locked --package tidefell-daemon --test mount
+          "$HOST/tests/kernel"
+          TIDEFELLD="$HOST/bin/tidefelld" "$HOST/tests/mount"
 
   # Several engines on a simulated network, through steps 200 seeds choose (ADR 0036). The
   # Nix workflow runs a few; this runs the pull request's share, and the nightly Simulation
@@ -56,18 +56,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.forgejo/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
+      # Built by Nix from the compiled dependencies, or fetched from the binary cache when this
+      # source was built before (`ci-host` in flake.nix).
+      - name: Host build
+        run: echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)" >> "$GITHUB_ENV"
       - name: 200 seeds
         env:
           TIDEFELL_SIM_SEEDS: "200"
           TIDEFELL_SIM_JOBS: "6"
         run: |
           export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
+          export TIDEFELL_SIM_REGRESSIONS="$PWD/crates/sim/tests/regressions"
           mkdir -p "$TIDEFELL_SIM_DIR"
-          cargo test --locked --package tidefell-sim --test seeds -- --nocapture
+          "$HOST/tests/seeds" --nocapture
 
   # Dependency and public API checks. Kept in one job, under its original name, because one
   # runner serves every repository.
@@ -125,18 +126,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: ./.forgejo/actions/cargo-target
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
-        with:
-          toolchain: stable
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
-        with:
-          distribution: temurin
-          java-version: 21
+      # Built by Nix from the compiled dependencies, or fetched from the binary cache when this
+      # source was built before (`ci-host` in flake.nix).
+      - name: Host build
+        run: echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)" >> "$GITHUB_ENV"
+      # A JDK from the same Nixpkgs as the host build: a library built by Nix loads into a JVM
+      # on Nix's C library, not into one on the runner's.
+      - name: JDK
+        run: |
+          jdk=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#jdk21_headless)
+          echo "JAVA_HOME=$jdk/lib/openjdk" >> "$GITHUB_ENV"
+          echo "$jdk/bin" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
-      - name: Generate the bindings and run the JVM tests
+      - name: Run the JVM tests against the host build
         working-directory: bindings/android
-        run: ./gradlew --no-daemon :jvm-test:test
+        run: ./gradlew --no-daemon :jvm-test:test "-Ptidefell.host=$HOST"
 
   aar:
     name: Android library (AAR)

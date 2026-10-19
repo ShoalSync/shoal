@@ -92,8 +92,47 @@
             p: (p.extend rust-overlay.overlays.default).rust-bin.stable."${workspace.rust-version}.0".minimal
           );
           msrvArtifacts = msrvLib.buildDepsOnly commonArgs;
+
+          # CI's host build, in the dev profile like a plain `cargo test`, so debug assertions hold:
+          # the dependencies as their own derivation, then what CI's jobs run, fetched from the
+          # binary cache when that source was built before instead of compiled in each job.
+          devArgs = commonArgs // {
+            CARGO_PROFILE = "dev";
+          };
+          devArtifacts = craneLib.buildDepsOnly devArgs;
+          ciHost = craneLib.mkCargoDerivation (
+            devArgs
+            // {
+              pnameSuffix = "-ci-host";
+              cargoArtifacts = devArtifacts;
+              doInstallCargoArtifacts = false;
+              # The FUSE, mount and simulation tests (run outside the sandbox: they need /dev/fuse
+              # or take long), tidefell-ffi with tidefelld and tidefell for the Kotlin tests, and
+              # the Kotlin bindings generated from that library. Built workspace-wide, as the
+              # dependencies were: one package alone would enable other features of them and
+              # build them again.
+              buildPhaseCargoCommand = ''
+                cargo test --locked --profile dev --workspace --no-run \
+                  --message-format json-render-diagnostics > tests.json
+                cargo build --locked --profile dev --workspace
+                target/debug/uniffi-bindgen generate --library target/debug/libtidefell_ffi.so \
+                  --language kotlin --no-format --out-dir kotlin
+              '';
+              installPhaseCommand = ''
+                mkdir -p $out/bin $out/lib $out/tests
+                ${pkgs.jq}/bin/jq -r 'select(.reason == "compiler-artifact" and .profile.test
+                  and (.target.name | IN("kernel", "mount", "seeds")))
+                  | "\(.target.name) \(.executable)"' tests.json |
+                  while read -r name executable; do cp "$executable" "$out/tests/$name"; done
+                cp target/debug/tidefelld target/debug/tidefell $out/bin/
+                cp target/debug/libtidefell_ffi.so $out/lib/
+                cp -r kotlin $out/kotlin
+              '';
+            }
+          );
         in
         {
+          inherit ciHost;
           # `tidefelld` and `tidefell` binaries. The version is the workspace version (ADR 0005).
           package = craneLib.buildPackage (
             commonArgs
@@ -223,6 +262,8 @@
       packages = forAllSystems (pkgs: rec {
         tidefell = (rust pkgs).package;
         default = tidefell;
+        # What CI's FUSE, simulation and Kotlin jobs run, built once (see `ciHost`).
+        ci-host = (rust pkgs).ciHost;
       });
 
       # `nix flake check` runs these: formatting, clippy, the tests, the crate boundaries, the MSRV
