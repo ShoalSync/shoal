@@ -155,7 +155,9 @@ jobs:
       - name: Libraries and bindings
         run: |
           {
-            echo "JNI_LIBS=$(nix build --no-link --print-out-paths --print-build-logs .#tidefell-ffi-android)"
+            # One ABI at a time: three optimised builds of tidefell-ffi at once outgrow a job's
+            # memory when they are not in the cache yet.
+            echo "JNI_LIBS=$(nix build --max-jobs 1 --no-link --print-out-paths --print-build-logs .#tidefell-ffi-android)"
             echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)"
             ndk=$(nix build --no-link --print-out-paths --print-build-logs .#android-ndk)
             echo "ANDROID_NDK_HOME=$(echo "$ndk"/libexec/android-sdk/ndk/*)"
