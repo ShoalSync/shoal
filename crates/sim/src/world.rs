@@ -364,11 +364,17 @@ impl World {
                     return Ok(());
                 }
                 let root = &self.devices[n].root;
-                // Linked, then unlinked, so a file the engine put at `to` in the meantime is not
-                // replaced unnoticed; the file may also have gone since it was listed.
-                if fs::hard_link(root.join(&from), root.join(&to)).is_ok() {
-                    let _ = fs::remove_file(root.join(&from));
-                }
+                // In one step, as a user's `mv` is, and only if nothing is at `to`: a file the
+                // engine put at `to` in the meantime is not replaced unnoticed, and one it put at
+                // `from` is not removed with what the user moved, as linking then unlinking
+                // would. The file may also have gone since it was listed.
+                let _ = rustix::fs::renameat_with(
+                    rustix::fs::CWD,
+                    root.join(&from),
+                    rustix::fs::CWD,
+                    root.join(&to),
+                    rustix::fs::RenameFlags::NOREPLACE,
+                );
             }
             Op::Delete { device, file } => {
                 let n = usize::from(device) % count;

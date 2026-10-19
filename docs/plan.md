@@ -858,7 +858,10 @@ Open items in step 5, each to land before the release:
 - ~~Unopened sealed versions read from the database on demand.~~ Deferred until after the
   release (ADR 0023, "Amendment: kept versions in memory for now"); superseded ones are already
   pruned rather than served.
-- Release seed 21581, rare and failing on main too: a device loses a file its user did not
-  remove, in an encrypted folder.
-- Release seed 21889, failed once in 3000 under host load and passed 65 times after: after a
-  device loses its metadata, two devices of an encrypted folder do not settle on one file.
+- ~~Release seed 21581.~~ Not the engine: the simulation's rename linked then unlinked, so a
+  file the engine placed at the old path in between was removed with it, unseen by the user. It
+  now renames in one step, as `mv` does.
+- ~~Release seed 21889.~~ A version by a revoked device, received while a folder was rebuilt
+  (so with no receipt time), was not yet fetched when the revocation was judged; nothing judged it
+  again once it was, so one replica kept it while another, which never had it, did not. A
+  replica now judges it again once it has fetched it, and takes it over (ADR 0040).

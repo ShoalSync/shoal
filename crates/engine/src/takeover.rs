@@ -261,9 +261,12 @@ fn decide(inner: &Inner, state: &FolderState, exchanged: Option<std::time::Insta
     // there. Nor is the same content on disk as something else, such as where a send-only
     // replica left a file another device then moved: a version taken over would be this
     // replica's with no file behind it that its scans follow.
+    let keeps = |target: &Target| {
+        target.conflict || crate::content::keeps(state, &target.entry, &target.kind)
+    };
     let held = |target: &Target| match &target.kind {
         EntryKind::File { content, .. } => {
-            (target.conflict || crate::content::keeps(state, &target.entry, &target.kind))
+            keeps(target)
                 && state.manifests.get(content).is_some_and(|m| {
                     m.chunks
                         .iter()
@@ -324,6 +327,11 @@ fn decide(inner: &Inner, state: &FolderState, exchanged: Option<std::time::Insta
                     continue;
                 }
                 if !is_held {
+                    // Content this replica keeps but has not all fetched yet is taken over once
+                    // it has: decided again after the fetch.
+                    if keeps(&target) {
+                        plan.waiting = true;
+                    }
                     continue;
                 }
                 Action::TakeOver
