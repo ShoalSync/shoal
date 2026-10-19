@@ -28,9 +28,7 @@ jobs:
   # tests need /dev/fuse, which the Nix sandbox does not have, so they run here.
   fuse:
     name: FUSE tests
-    # On a host runner until a container's mount() is allowed: Docker's default AppArmor profile
-    # refuses it even with SYS_ADMIN.
-    runs-on: self-hosted
+    runs-on: ephemeral
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -40,7 +38,7 @@ jobs:
         with:
           toolchain: stable
       - name: Test
-        # The FUSE mount tests must run, not skip, on the runner.
+        # The FUSE mount tests must run, not skip: the runners give jobs /dev/fuse and mount().
         env:
           TIDEFELL_REQUIRE_FUSE: "1"
         run: |
