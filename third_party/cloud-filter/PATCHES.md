@@ -12,6 +12,9 @@ The commit that vendored it changed nothing. Every change since is one of the pa
 
 Drop this copy, and the `[patch.crates-io]` entry, once a release upstream has the fixes.
 
+Upstream pull request: <https://github.com/ho-229/cloud-filter-rs/pull/11> (2026-10-20). This
+copy matches it.
+
 ## Handoff: submitting the fixes upstream
 
 This section is for whoever opens the upstream pull request.
@@ -22,8 +25,8 @@ This section is for whoever opens the upstream pull request.
   fix, or separate pull requests.
 - None of the fixes touch the examples.
 
-**Breaking change:** fix 2 changes the signature of `Request::process` to return an `Option`.
-Say so in the pull request.
+**No breaking change:** fix 2 keeps `Request::process`'s signature and adds
+`Request::try_process`.
 
 **Where it came from:** ok-nick/wincs, the crate `cloud-filter` was forked from, already
 reached the design of fixes 1 and 3: its callbacks return `()`, and every ticket has a `fail`.
@@ -63,8 +66,8 @@ The fix ignores the result of `fail`, because nothing more can be done for that 
 
 ### 2. `Request::process` dereferences a null pointer
 
-`CF_CALLBACK_INFO::ProcessInfo` is null for some callbacks, such as `CANCEL_FETCH_DATA`.
-`process()` dereferenced it unconditionally:
+`CF_CALLBACK_INFO::ProcessInfo` is null for some callbacks, such as `CANCEL_FETCH_DATA`, and
+`process()` dereferenced it unconditionally. So did `Request`'s `Debug`, which calls it.
 
 ```
 panicked at cloud-filter-0.0.6\src\filter\request.rs:38:26:
@@ -72,7 +75,10 @@ null pointer dereference occurred
 thread caused non-unwinding panic. aborting.
 ```
 
-The fix makes `process()` return `Option<Process>`, which is `None` when the pointer is null.
+The fix keeps `process()`'s signature, so it breaks no caller:
+- With no process information, `process()` returns an empty `Process`.
+- The accessors check their string pointers.
+- The new `try_process() -> Option<Process>` tells that case apart.
 
 ### 3. A fetch cannot be failed from outside the callback
 

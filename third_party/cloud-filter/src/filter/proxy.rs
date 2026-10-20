@@ -92,8 +92,8 @@ pub unsafe extern "system" fn fetch_data<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::Write::fail_range(connection_key, transfer_key, range, e);
     }
 }
@@ -116,8 +116,8 @@ pub unsafe extern "system" fn validate_data<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::Validate::fail(connection_key, transfer_key, e);
     }
 }
@@ -152,8 +152,8 @@ pub unsafe extern "system" fn fetch_placeholders<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::CreatePlaceholders::fail(connection_key, transfer_key, e);
     }
 }
@@ -212,8 +212,8 @@ pub unsafe extern "system" fn notify_dehydrate<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::Dehydrate::fail(connection_key, transfer_key, e);
     }
 }
@@ -245,8 +245,8 @@ pub unsafe extern "system" fn notify_delete<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::Delete::fail(connection_key, transfer_key, e);
     }
 }
@@ -278,8 +278,8 @@ pub unsafe extern "system" fn notify_rename<T: SyncFilter + 'static>(
             return;
         };
 
-        // Fails if the request was already cancelled or timed out; nothing more can be done,
-        // and a panic here would abort the process.
+        // Fails if the request was already cancelled or timed out. Nothing more can be done, and
+        // a panic here would abort the process: these callbacks are `extern "system"`.
         let _ = command::Rename::fail(connection_key, transfer_key, e);
     }
 }

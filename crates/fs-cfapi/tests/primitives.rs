@@ -65,7 +65,7 @@ impl Recorder {
         self.calls.lock().unwrap().push(Call {
             kind,
             path: request.path(),
-            pid: request.process().map_or(0, |p| p.id()),
+            pid: request.try_process().map_or(0, |p| p.id()),
             extra,
         });
     }
