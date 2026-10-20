@@ -145,6 +145,42 @@ One limit came out of it: the shell does not show a sync root inside a hidden fo
 be resolved. "Where a sync root can be" therefore also refuses a partial folder inside a hidden
 or system folder. The spike stays as `fs-cfapi`'s test `tests/spike.rs`.
 
+## Amendment: file semantics as built (2026-10-20)
+
+Step 3 of the plan, tested on the Windows runner, settled how each Unix behaviour above is
+done without unsafe code:
+
+- **File IDs.** A file's NTFS file ID and its metadata come from one handle opened only to read
+  attributes, so a file another program holds without sharing is still seen; a file that
+  cannot be opened at all has no ID, as on a filesystem without inodes (ADR 0036).
+- **Renames.** The standard library's rename already uses the handle-based rename with POSIX
+  semantics, so a file another program has open, shared as programs usually share, is
+  replaced. A program holding a file without letting it be deleted makes the rename fail as
+  access denied, as missing permission does; opening the file for deletion tells the two apart.
+  Such a file is busy: its replacement is tried again on each pass, a problem meanwhile, and
+  what was fetched for it is removed rather than left in the reserved directory.
+- **Rename if absent** stays a hard link where the volume has them, as NTFS does, then the
+  old name removed, and elsewhere a check then a rename, as on Linux: no safe call renames
+  without replacing.
+- **Network drives.** A folder's path is resolved first, which turns a mapped drive letter
+  into its share's UNC path; a UNC path is a network drive.
+- **Hidden reserved directory.** `.tidefell` is hidden when a folder is created or joined, by
+  `attrib +H`, which keeps its other attributes; the root marker is inside it. A directory that
+  cannot be hidden still works.
+- **Long paths.** The standard library already passes long paths in their `\\?\` form; the
+  programs' manifests (embedded by `tidefelld`'s and `tidefell`'s build scripts) make the rest
+  of Windows accept them too.
+- **One recursive watch** holds up under a burst of 3,000 new files (a test). One limit
+  remains in `notify` 8: a watch whose buffer overflows with `ERROR_NOTIFY_ENUM_DIR` is
+  dropped without an event, so changes would wait for the hourly full scan. `notify` 9 turns
+  that into a rescan; until it is released, step 6 adds a check that the watch is still alive.
+- **Logs** need nothing: no journal is detected, so they go to the data directory's files.
+- **Allocator settings.** The allocator reads them as the process loads, before any code of
+  ours runs, and changing them in the process takes an unsafe call. So the tray app (step 7)
+  starts the daemon with them in its environment; a daemon started by hand runs without them,
+  which costs only memory, as on Unix when it cannot start itself again.
+- **Doctor.** `tidefell doctor` warns of a data directory outside the user's profile.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

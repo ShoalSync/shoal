@@ -29,7 +29,16 @@ pub(crate) enum Wanted {
     Scope(Scope),
 }
 
-/// One folder's watcher: a non-recursive watch on every directory the scans walked.
+/// How a folder's root is watched: on its own, with the directories below it added as scans
+/// walk them, as inotify needs; on Windows, recursively in one watch, since each watch there
+/// holds its directory open and would stop it being renamed or removed (ADR 0042).
+#[cfg(not(windows))]
+const ROOT_WATCH: RecursiveMode = RecursiveMode::NonRecursive;
+#[cfg(windows)]
+const ROOT_WATCH: RecursiveMode = RecursiveMode::Recursive;
+
+/// One folder's watcher: a non-recursive watch on every directory the scans walked, or, on
+/// Windows, one recursive watch on the root.
 pub(crate) struct FolderWatch {
     root: PathBuf,
     /// The device the root is on, to find directories inside it that are other mounts.
@@ -61,7 +70,7 @@ impl FolderWatch {
         };
         watch
             .watcher
-            .watch(root, RecursiveMode::NonRecursive)
+            .watch(root, ROOT_WATCH)
             .map_err(|e| format!("cannot watch {}: {e}", root.display()))?;
         watch.watched.insert(root.to_owned());
         Ok(watch)
@@ -70,6 +79,11 @@ impl FolderWatch {
     /// Watches directories a scan walked, and forgets those that are gone. Fails if a watch
     /// cannot be added, for example at the system's limit.
     pub(crate) fn add(&mut self, dirs: &[PathBuf]) -> Result<(), String> {
+        if ROOT_WATCH == RecursiveMode::Recursive {
+            // The root's watch covers them.
+            let _ = dirs;
+            return Ok(());
+        }
         let gone: Vec<PathBuf> = self
             .watched
             .iter()
@@ -233,11 +247,30 @@ fn network_filesystem(path: &Path) -> Option<&'static str> {
             _ => None,
         }
     }
-    #[cfg(not(target_os = "linux"))]
+    // A network drive, mapped to a letter or not, resolves to a UNC path (ADR 0042).
+    #[cfg(windows)]
+    {
+        std::fs::canonicalize(path)
+            .ok()
+            .filter(|p| is_unc(p))
+            .map(|_| "network drive")
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = path;
         None
     }
+}
+
+/// Whether `path` is on a network share: `\\server\share` or `\\?\UNC\server\share`.
+#[cfg(windows)]
+fn is_unc(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    matches!(
+        path.components().next(),
+        Some(Component::Prefix(p))
+            if matches!(p.kind(), Prefix::UNC(..) | Prefix::VerbatimUNC(..))
+    )
 }
 
 #[cfg(test)]
@@ -269,6 +302,16 @@ mod tests {
         // On another device (procfs stands in for a mount): classified.
         assert_eq!(nested_mount(root, Path::new("/proc"), nfs), Some("NFS"));
         assert_eq!(nested_mount(root, Path::new("/proc"), |_| None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn shares_are_network_drives_and_drive_letters_are_not() {
+        assert!(is_unc(Path::new(r"\\server\share\folder")));
+        assert!(is_unc(Path::new(r"\\?\UNC\server\share\folder")));
+        assert!(!is_unc(Path::new(r"\\?\C:\Users\ci\folder")));
+        assert!(!is_unc(Path::new(r"C:\Users\ci\folder")));
+        assert!(!is_unc(Path::new(r"\\.\pipe\tidefell")));
     }
 
     #[test]

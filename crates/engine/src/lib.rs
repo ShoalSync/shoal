@@ -262,12 +262,51 @@ pub(crate) fn rename_durably(
     to: impl AsRef<std::path::Path>,
 ) -> std::io::Result<()> {
     let (from, to) = (from.as_ref(), to.as_ref());
-    std::fs::rename(from, to)?;
+    std::fs::rename(from, to).map_err(|e| busy_if_in_use(e, to))?;
     sync_dir_of(to);
     if from.parent() != to.parent() {
         sync_dir_of(from);
     }
     Ok(())
+}
+
+/// On Windows, a rename over a file another program holds open without letting it be deleted,
+/// as some editors do, is refused as access denied, as missing permission is. Opening the file
+/// for deletion tells them apart: that program's sharing refuses it. Such a file is busy, and
+/// its replacement is tried again on the next pass rather than left as a lasting problem
+/// (ADR 0042).
+fn busy_if_in_use(error: std::io::Error, path: &std::path::Path) -> std::io::Error {
+    if error.kind() == std::io::ErrorKind::PermissionDenied && in_use(path) {
+        busy()
+    } else {
+        error
+    }
+}
+
+/// Whether another program holds the file at `path` open without letting it be deleted, so it
+/// cannot be replaced or moved until that program closes it. Only Windows has such files.
+#[cfg(windows)]
+pub(crate) fn in_use(path: &std::path::Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    const DELETE: u32 = 0x0001_0000;
+    const ERROR_SHARING_VIOLATION: i32 = 32;
+    std::fs::OpenOptions::new()
+        .access_mode(DELETE)
+        .open(path)
+        .is_err_and(|e| e.raw_os_error() == Some(ERROR_SHARING_VIOLATION))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn in_use(_path: &std::path::Path) -> bool {
+    false
+}
+
+/// The error for a file [`in_use`]: tried again on the next pass.
+pub(crate) fn busy() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::ResourceBusy,
+        "the file is open in another program",
+    )
 }
 
 /// Moves `from` to `to` as [`rename_durably`] does, but only if nothing is at `to`: the check
@@ -280,7 +319,11 @@ pub(crate) fn rename_new_durably(
     let (from, to) = (from.as_ref(), to.as_ref());
     match std::fs::hard_link(from, to) {
         Ok(()) => {
-            std::fs::remove_file(from)?;
+            // In place under its new name either way; a temporary name left behind goes with
+            // the reserved directory's next clean-up.
+            if let Err(e) = std::fs::remove_file(from) {
+                tracing::debug!(path = %from.display(), error = %e, "cannot remove the old name");
+            }
             sync_dir_of(to);
             if from.parent() != to.parent() {
                 sync_dir_of(from);
@@ -321,4 +364,68 @@ pub(crate) fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    #[test]
+    fn a_rename_replaces_a_file_another_program_has_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, target) = (dir.path().join("new.tmp"), dir.path().join("a.txt"));
+        fs::write(&target, b"old").unwrap();
+        fs::write(&tmp, b"new").unwrap();
+        // Open as programs usually open files: on Windows, sharing reads, writes and deletes.
+        let _open = fs::File::open(&target).unwrap();
+        super::rename_durably(&tmp, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+        assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn a_new_name_never_replaces_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, target) = (dir.path().join("new.tmp"), dir.path().join("a.txt"));
+        fs::write(&target, b"theirs").unwrap();
+        fs::write(&tmp, b"ours").unwrap();
+        assert!(!super::rename_new_durably(&tmp, &target).unwrap());
+        assert_eq!(fs::read(&target).unwrap(), b"theirs");
+        assert_eq!(fs::read(&tmp).unwrap(), b"ours");
+
+        fs::remove_file(&target).unwrap();
+        assert!(super::rename_new_durably(&tmp, &target).unwrap());
+        assert_eq!(fs::read(&target).unwrap(), b"ours");
+        assert!(!tmp.exists());
+    }
+
+    /// A program that opens a file without sharing it, as some editors do, holds off its
+    /// replacement until it closes it: the rename fails in a way tried again, not one that lasts.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_held_without_sharing_is_replaced_once_it_is_closed() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (tmp, target) = (dir.path().join("new.tmp"), dir.path().join("a.txt"));
+        fs::write(&target, b"old").unwrap();
+        fs::write(&tmp, b"new").unwrap();
+        let held = fs::File::options()
+            .read(true)
+            .share_mode(0)
+            .open(&target)
+            .unwrap();
+        let error = super::rename_durably(&tmp, &target).unwrap_err();
+        eprintln!(
+            "rename over a held file: {error} ({:?}, {:?})",
+            error.kind(),
+            error.raw_os_error()
+        );
+        assert_eq!(error.kind(), std::io::ErrorKind::ResourceBusy, "{error}");
+        assert!(!crate::activity::io_lasts(&error), "{error}");
+        assert_eq!(fs::read(&tmp).unwrap(), b"new", "the new content is kept");
+        drop(held);
+        super::rename_durably(&tmp, &target).unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"new");
+    }
 }

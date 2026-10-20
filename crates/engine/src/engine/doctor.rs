@@ -95,6 +95,55 @@ fn volume_of(path: &Path) -> Option<u64> {
 
 /// Whether this device may write in `dir`, without writing anything there. A read-only disk
 /// says so too.
+/// Whether `dir` is inside `profile`, compared as Windows compares paths: resolved, and without
+/// regard to case.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn inside(dir: &Path, profile: &Path) -> bool {
+    let resolved = |p: &Path| {
+        std::fs::canonicalize(p)
+            .unwrap_or_else(|_| p.to_owned())
+            .to_string_lossy()
+            .to_lowercase()
+    };
+    Path::new(&resolved(dir)).starts_with(resolved(profile))
+}
+
+/// On Windows, whether the data directory has the profile's access control (ADR 0042), which
+/// keeps its keys and databases from other users of the machine; elsewhere its own mode does.
+fn privacy_check(data_dir: &Path) -> Option<Check> {
+    #[cfg(windows)]
+    {
+        let profile = std::env::var_os("USERPROFILE")?;
+        Some(if inside(data_dir, Path::new(&profile)) {
+            check(
+                "privacy",
+                CheckLevel::Pass,
+                format!("{} is in your profile, private to you", data_dir.display()),
+                None,
+            )
+        } else {
+            check(
+                "privacy",
+                CheckLevel::Warning,
+                format!(
+                    "{} is outside your profile: other users of this computer may be able to \
+                     read its keys and files",
+                    data_dir.display()
+                ),
+                Some(
+                    "Keep the data directory under your profile, as the default \
+                     (%LOCALAPPDATA%\\Tidefell) is, or limit its access to yourself.",
+                ),
+            )
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = data_dir;
+        None
+    }
+}
+
 fn writable(dir: &Path) -> std::io::Result<()> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -171,6 +220,7 @@ impl Engine {
             format!("engine state of {} folder(s) loaded", folders.len()),
             None,
         ));
+        checks.extend(privacy_check(self.data_dir()));
         for (id, error) in self.unopened_folders() {
             checks.push(check(
                 "state",
@@ -355,6 +405,25 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_directory_in_the_profile_is_inside_it_whatever_its_case() {
+        let profile = tempfile::tempdir().unwrap();
+        let data = profile
+            .path()
+            .join("AppData")
+            .join("Local")
+            .join("Tidefell");
+        std::fs::create_dir_all(&data).unwrap();
+        assert!(inside(&data, profile.path()));
+        let other = tempfile::tempdir().unwrap();
+        assert!(!inside(other.path(), profile.path()));
+        #[cfg(windows)]
+        {
+            let upper = std::path::PathBuf::from(data.to_string_lossy().to_uppercase());
+            assert!(inside(&upper, profile.path()));
+        }
+    }
 
     #[test]
     fn any_clock_offset_gives_a_check() {

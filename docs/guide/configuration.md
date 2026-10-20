@@ -4,6 +4,16 @@
 with `tidefelld config check <file>`. `tidefelld config schema` prints its JSON Schema, which
 is also attached to every release as `tidefelld-config-X.Y.Z.schema.json`.
 
+On Windows, write paths in single quotes, which TOML takes literally, or with forward slashes:
+in double quotes a backslash starts an escape, so `"C:\Users\me"` is an error and `"D:\new"`
+holds a line break.
+
+```toml
+data_dir = 'C:\Users\me\AppData\Local\Tidefell'
+# or
+data_dir = "C:/Users/me/AppData/Local/Tidefell"
+```
+
 This example shows every section:
 
 ```toml

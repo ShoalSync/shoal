@@ -36,7 +36,7 @@ pub(crate) struct DiskStat {
 }
 
 pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
-    let meta = fs::symlink_metadata(path).ok()?;
+    let (meta, inode) = metadata(path)?;
     if !meta.is_file() {
         return None;
     }
@@ -53,10 +53,6 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
     };
     #[cfg(not(unix))]
     let executable = None;
-    #[cfg(unix)]
-    let inode = std::os::unix::fs::MetadataExt::ino(&meta);
-    #[cfg(not(unix))]
-    let inode = 0;
     Some(DiskStat {
         size: meta.len(),
         mtime_ns,
@@ -65,7 +61,42 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
     })
 }
 
-/// True if the file at `path` is exactly what the engine last saw or wrote there.
+/// The metadata of `path`, not following a symlink, and the file's inode or 0.
+#[cfg(unix)]
+fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    let inode = std::os::unix::fs::MetadataExt::ino(&meta);
+    Some((meta, inode))
+}
+
+/// The metadata of `path`, not following a symlink, and the file's NTFS file ID or 0 (ADR
+/// 0042). Both come from one handle that asks only to read attributes, so a file another
+/// program holds open, even without sharing, is still seen; if it cannot be opened at all, its
+/// ID is not known.
+#[cfg(windows)]
+fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_READ_ATTRIBUTES: u32 = 0x80;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let file = fs::OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path);
+    if let Ok(file) = file {
+        if let (Ok(meta), Ok(info)) = (file.metadata(), winapi_util::file::information(&file)) {
+            return Some((meta, info.file_index()));
+        }
+    }
+    Some((fs::symlink_metadata(path).ok()?, 0))
+}
+
+#[cfg(not(any(unix, windows)))]
+fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
+    Some((fs::symlink_metadata(path).ok()?, 0))
+}
+
 /// The vector a local change at `rel` builds on: the recorded base of the content on disk, or,
 /// for a file recorded before bases were kept or not recorded at all, everything known of
 /// `entry`.
@@ -845,5 +876,52 @@ mod tests {
             assert!(!scope.contains(path), "{path}");
         }
         assert!(!Scope::default().contains("x.txt"));
+    }
+
+    #[test]
+    fn a_file_replaced_by_one_of_the_same_size_and_time_is_changed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, other) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        fs::write(&path, b"first").unwrap();
+        fs::write(&other, b"other").unwrap();
+        let mtime = fs::metadata(&path).unwrap().modified().unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&other)
+            .unwrap()
+            .set_modified(mtime)
+            .unwrap();
+        let before = stat(&path).unwrap();
+        assert_ne!(before.inode, 0, "files have IDs here");
+        assert!(unchanged(&path, before.size, before.mtime_ns, before.inode));
+
+        fs::rename(&other, &path).unwrap();
+        let after = stat(&path).unwrap();
+        assert_eq!((after.size, after.mtime_ns), (before.size, before.mtime_ns));
+        assert!(!unchanged(
+            &path,
+            before.size,
+            before.mtime_ns,
+            before.inode
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_without_sharing_is_still_seen() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("held.txt");
+        fs::write(&path, b"held").unwrap();
+        let _held = fs::File::options()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let stat = stat(&path).expect("still there");
+        assert_eq!(stat.size, 4);
+        assert_ne!(stat.inode, 0);
     }
 }

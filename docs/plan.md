@@ -895,10 +895,11 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
 2. **Local control and privacy.** The control API and SDK over a named pipe; the data
    directory under `%LOCALAPPDATA%`, private by the profile's access control (ADR 0042's
    amendment), and `tidefell doctor` warning of one outside it.
-3. **File semantics.** The executable bit kept from the current version; NTFS file IDs; free
-   space and volume serial numbers; network drives; renames that replace open files, and
-   non-replacing renames; the hidden reserved directory; long paths; one recursive watch per
-   folder; logs and allocator settings.
+3. **File semantics.** Done (2026-10-20): the executable bit kept from the current version;
+   NTFS file IDs; free space and volume serial numbers; network drives; renames that replace
+   open files, files held without sharing tried again, and non-replacing renames; the hidden
+   reserved directory; long paths; one recursive watch per folder; logs. The allocator
+   settings come with the tray app (step 7; ADR 0042's amendment).
 4. **Windows CI.** The workspace's tests on the Windows runner, each job's result required like
    the Linux ones.
 5. **`fs-cfapi`.** The engine's seam for folders whose files another component places;
@@ -907,8 +908,10 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    deletes and renames from notifications, and the scanner's rule for placeholders. Tests on
    the runner.
 6. **The daemon on Windows.** Partial folders as sync roots, started and stopped with the
-   daemon; console use for development.
-7. **Tray app.** Starting and supervising the daemon, status, folders, pause, pairing.
+   daemon; console use for development; a watch dropped on overflow noticed (or `notify` 9,
+   which reports it; ADR 0042's file-semantics amendment).
+7. **Tray app.** Starting and supervising the daemon, with the allocator settings in its
+   environment; status, folders, pause, pairing.
 8. **Installer and release.** The installer the spike settled, and a zip, as release assets,
    built on a release-only Windows runner and signed with cosign; Authenticode decided first.
 9. **Exit criterion.** On the Windows runner: a partial replica pairs with a Linux daemon,

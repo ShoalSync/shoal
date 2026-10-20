@@ -386,3 +386,15 @@ fn missing_daemon_is_a_clear_error() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot connect"));
 }
+
+/// The program's manifest makes it long-path aware (ADR 0042).
+#[cfg(all(windows, target_env = "msvc"))]
+#[test]
+fn the_program_is_long_path_aware() {
+    let program = std::fs::read(BIN).unwrap();
+    let needle = b"<ws2:longPathAware>true</ws2:longPathAware>";
+    assert!(
+        program.windows(needle.len()).any(|w| w == needle),
+        "no long-path manifest in {BIN}"
+    );
+}

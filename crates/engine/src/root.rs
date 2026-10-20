@@ -41,6 +41,7 @@ fn write(root: &Path, folder: FolderId, device: DeviceId) -> Result<()> {
     let marker = path(root);
     let dir = root.join(RESERVED_DIR);
     fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+    hide(&dir);
     let tmp = dir.join("folder.tmp");
     fs::write(
         &tmp,
@@ -49,6 +50,29 @@ fn write(root: &Path, folder: FolderId, device: DeviceId) -> Result<()> {
     .map_err(io_err(&tmp))?;
     crate::rename_durably(&tmp, &marker).map_err(io_err(&marker))
 }
+
+/// Hides the reserved directory, and the marker in it, from Explorer's listings, as the leading
+/// dot does elsewhere (ADR 0042). Without unsafe code that is `attrib`'s job, which keeps the
+/// directory's other attributes; a directory it cannot hide still works, only visibly.
+#[cfg(windows)]
+fn hide(dir: &Path) {
+    let attrib = std::env::var_os("SystemRoot")
+        .map(|root| Path::new(&root).join("System32").join("attrib.exe"))
+        .unwrap_or_else(|| PathBuf::from("attrib.exe"));
+    let hidden = std::process::Command::new(attrib)
+        .arg("+H")
+        .arg(dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if !hidden.is_ok_and(|s| s.success()) {
+        tracing::warn!(dir = %dir.display(), "cannot hide the reserved directory");
+    }
+}
+
+#[cfg(not(windows))]
+fn hide(_dir: &Path) {}
 
 /// Creates `root` for a folder being created or joined, and marks it as the folder's.
 pub(crate) fn create(root: &Path, folder: FolderId, device: DeviceId) -> Result<()> {
@@ -119,6 +143,15 @@ mod tests {
         let (folder, device) = ids();
         create(&root, folder, device).unwrap();
         assert_eq!(check(&root, folder), None);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+            let attributes = fs::metadata(root.join(RESERVED_DIR))
+                .unwrap()
+                .file_attributes();
+            assert_ne!(attributes & FILE_ATTRIBUTE_HIDDEN, 0, "{attributes:#x}");
+        }
         // Creating again, as when a folder is removed and joined again, is fine.
         create(&root, folder, device).unwrap();
     }

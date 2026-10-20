@@ -60,9 +60,16 @@ pub(crate) fn swap_in(root: &Path, new: &Path, target: &Path, aside: &Path) -> i
             Err(e) => return Err(e.into()),
         }
     }
+    // A file another program holds (on Windows) can take a second name that could not then be
+    // removed: ask first, and try again on the next pass.
+    if crate::in_use(target) {
+        return Err(crate::busy());
+    }
     // A second name keeps the old file while the new one replaces it.
     if fs::hard_link(target, aside).is_ok() {
-        return crate::rename_durably(new, target);
+        return crate::rename_durably(new, target).inspect_err(|_| {
+            let _ = fs::remove_file(aside);
+        });
     }
     // Neither works: two renames, and a marker so a crash between them is undone.
     let marker = marker(root);
@@ -71,7 +78,11 @@ pub(crate) fn swap_in(root: &Path, new: &Path, target: &Path, aside: &Path) -> i
         format!("{}\n{}\n", target.display(), aside.display()),
     )?;
     fs::File::open(&marker)?.sync_all()?;
-    crate::rename_durably(target, aside)?;
+    if let Err(e) = crate::rename_durably(target, aside) {
+        // Nothing moved, so nothing to undo.
+        let _ = fs::remove_file(&marker);
+        return Err(e);
+    }
     crate::rename_durably(new, target)?;
     fs::remove_file(&marker)
 }

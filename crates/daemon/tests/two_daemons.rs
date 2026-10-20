@@ -697,3 +697,15 @@ fn a_damaged_database_is_rebuilt_even_when_killed_meanwhile() {
     let a_log = fs::read_to_string(a.dir.join("daemon.log")).unwrap_or_default();
     assert!(!a_log.contains("conflict"), "{a_log}");
 }
+
+/// The program's manifest makes it long-path aware (ADR 0042).
+#[cfg(all(windows, target_env = "msvc"))]
+#[test]
+fn the_program_is_long_path_aware() {
+    let program = std::fs::read(BIN).unwrap();
+    let needle = b"<ws2:longPathAware>true</ws2:longPathAware>";
+    assert!(
+        program.windows(needle.len()).any(|w| w == needle),
+        "no long-path manifest in {BIN}"
+    );
+}

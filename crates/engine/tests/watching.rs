@@ -126,6 +126,16 @@ async fn changes_are_picked_up_without_scanning() {
     .await;
     eventually("the delete reaches b", || b.read("docs/old.txt").is_none()).await;
 
+    // A watched directory renamed, and a file added under its new name.
+    fs::rename(a.root.join("docs"), a.root.join("papers")).unwrap();
+    a.write("papers/added.txt", b"added");
+    eventually("the renamed directory's files reach b", || {
+        b.read("papers/new.txt").as_deref() == Some(b"edited".as_slice())
+            && b.read("papers/added.txt").is_some()
+            && b.read("docs/new.txt").is_none()
+    })
+    .await;
+
     // A whole directory removed.
     fs::remove_dir_all(a.root.join("album")).unwrap();
     eventually("the removed directory's files leave b", || {
@@ -186,4 +196,129 @@ async fn without_watching_nothing_is_noticed() {
     a.write("new.txt", b"unseen");
     tokio::time::sleep(Duration::from_secs(3)).await;
     assert!(!recorded(&engine, "new.txt"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_past_windows_old_path_limit_syncs() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([7; 32]);
+    let a = Replica::new(dir.path(), "a", 70);
+    let b = Replica::new(dir.path(), "b", 71);
+    // Longer than the 260 characters Windows programs were once limited to (ADR 0042).
+    let deep = format!("{}/notes.txt", vec!["d".repeat(60); 5].join("/"));
+    assert!(a.root.join(&deep).as_os_str().len() > 300);
+
+    let engine_a = a.start(&user, true).await;
+    let engine_b = b.start(&user, false).await;
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    a.write(&deep, b"deep");
+    eventually("the deep file reaches b", || {
+        b.read(&deep).as_deref() == Some(b"deep".as_slice())
+    })
+    .await;
+    a.write(&deep, b"deeper");
+    eventually("its edit reaches b", || {
+        b.read(&deep).as_deref() == Some(b"deeper".as_slice())
+    })
+    .await;
+}
+
+/// A file another program holds open without sharing, as some Windows editors do, gets its
+/// newer version once that program closes it; until then it is a problem tried again, and
+/// what was fetched for it is not left behind (ADR 0042).
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_held_open_gets_its_update_once_closed() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([8; 32]);
+    let a = Replica::new(dir.path(), "a", 80);
+    let b = Replica::new(dir.path(), "b", 81);
+    a.write("held.txt", b"one");
+    let engine_a = a.start(&user, true).await;
+    let engine_b = b.start(&user, false).await;
+    engine_b.set_retry_interval(Duration::from_millis(200));
+    engine_b.connect(engine_a.addr()).await.unwrap();
+    eventually("the file reaches b", || {
+        b.read("held.txt").as_deref() == Some(b"one".as_slice())
+    })
+    .await;
+
+    let held = fs::File::options()
+        .read(true)
+        .share_mode(0)
+        .open(b.root.join("held.txt"))
+        .unwrap();
+    a.write("held.txt", b"two");
+    eventually("b tries it again, as a file in use", || {
+        engine_b.path_problems(FOLDER).unwrap().iter().any(|p| {
+            p.path == "held.txt" && p.message.contains("open in another program") && p.attempts >= 2
+        })
+    })
+    .await;
+    let tmp = b.root.join(".tidefell").join("tmp");
+    eventually("nothing fetched is left behind", || {
+        fs::read_dir(&tmp).map_or(true, |d| d.count() == 0)
+    })
+    .await;
+
+    drop(held);
+    eventually("the update lands once the file is closed", || {
+        b.read("held.txt").as_deref() == Some(b"two".as_slice())
+    })
+    .await;
+    eventually("and the problem goes", || {
+        engine_b.path_problems(FOLDER).unwrap().is_empty()
+    })
+    .await;
+    // The version replaced is kept once, beside its record, however many times its
+    // replacement was tried.
+    let history = b.root.join(".tidefell").join("history");
+    let kept: Vec<_> = fs::read_dir(&history)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_none_or(|e| e != "json"))
+        .collect();
+    assert_eq!(kept.len(), 1, "kept {kept:?}");
+    assert_eq!(fs::read(&kept[0]).unwrap(), b"one");
+}
+
+/// A burst of changes larger than a watch's buffer still leaves the folder watched: the watch
+/// asks for a full scan rather than stopping (ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_burst_of_changes_leaves_the_folder_watched() {
+    const FILES: usize = 3000;
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([9; 32]);
+    let a = Replica::new(dir.path(), "a", 90);
+    a.write("first.txt", b"first");
+    let engine = a.start(&user, true).await;
+    eventually("the first scan", || recorded(&engine, "first.txt")).await;
+
+    for i in 0..FILES {
+        a.write(&format!("burst/{i:04}.txt"), format!("file {i}").as_bytes());
+    }
+    let mut waited = 0;
+    while engine.files(FOLDER).unwrap().len() < FILES + 1 && waited < 600 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        waited += 1;
+    }
+    assert_eq!(
+        engine.files(FOLDER).unwrap().len(),
+        FILES + 1,
+        "every file recorded"
+    );
+
+    let start = Instant::now();
+    a.write("after.txt", b"after");
+    eventually("a change after the burst is still noticed", || {
+        recorded(&engine, "after.txt")
+    })
+    .await;
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        start.elapsed()
+    );
 }

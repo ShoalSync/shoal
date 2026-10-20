@@ -848,8 +848,12 @@ async fn write_file(
                     let _ = fs::remove_file(&tmp);
                     return Err(e);
                 }
-            } else {
-                crate::history::keep(&mut state, &write.path, &existing, Some(&tmp))?;
+            } else if let Err(e) =
+                crate::history::keep(&mut state, &write.path, &existing, Some(&tmp))
+            {
+                // Such as a file another program holds open: fetched again next time.
+                let _ = fs::remove_file(&tmp);
+                return Err(e);
             }
             placed = true;
         }
@@ -858,9 +862,16 @@ async fn write_file(
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io_err(parent))?;
         }
-        if state.local.contains_key(&write.path) {
-            crate::rename_durably(&tmp, &target).map_err(io_err(&target))?;
-        } else if !crate::rename_new_durably(&tmp, &target).map_err(io_err(&target))? {
+        let renamed = if state.local.contains_key(&write.path) {
+            crate::rename_durably(&tmp, &target).map(|()| true)
+        } else {
+            crate::rename_new_durably(&tmp, &target)
+        };
+        let renamed = renamed.map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            io_err(&target)(e)
+        })?;
+        if !renamed {
             // A file the user put there since it was checked: theirs, recorded at the next scan.
             let _ = fs::remove_file(&tmp);
             debug!(path = %write.path, "a file appeared; not overwriting");
