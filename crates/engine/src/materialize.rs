@@ -123,8 +123,6 @@ pub(crate) struct PendingWrite {
     pub(crate) path: String,
     content: ContentHash,
     pub(crate) size: u64,
-    /// Set as the file's mode on Unix; Windows has no executable bit (ADR 0042).
-    #[cfg_attr(not(unix), allow(dead_code))]
     executable: bool,
     modified_ms: i64,
     /// Where this entry was on disk before, if it moved.
@@ -879,7 +877,7 @@ async fn write_file(
             content: write.content,
             size: disk.size,
             mtime_ns: disk.mtime_ns,
-            executable: disk.executable,
+            executable: disk.executable.unwrap_or(write.executable),
             base: write.base.clone(),
         },
     );

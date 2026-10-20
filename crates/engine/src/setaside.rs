@@ -118,7 +118,7 @@ pub(crate) fn restore(state: &mut FolderState, entry: &EntryId) -> Result<String
     let mut local = item.local;
     local.size = disk.size;
     local.mtime_ns = disk.mtime_ns;
-    local.executable = disk.executable;
+    local.executable = disk.executable.unwrap_or(local.executable);
     state.set_aside.remove(entry);
     state.dropped.remove(entry);
     state.record_local(path.clone(), local);

@@ -63,6 +63,7 @@ impl Replica {
         fs::write(abs, data).unwrap();
     }
 
+    #[cfg(unix)]
     fn read(&self, path: &str) -> Option<Vec<u8>> {
         fs::read(self.root.join(path)).ok()
     }
@@ -96,6 +97,7 @@ fn unmount(root: &Path, mount_point: bool) -> PathBuf {
     away
 }
 
+#[cfg(unix)]
 fn mount(root: &Path, away: &Path) {
     let _ = fs::remove_dir(root);
     fs::rename(away, root).unwrap();
@@ -103,6 +105,8 @@ fn mount(root: &Path, away: &Path) {
 
 /// A folder whose drive is not mounted is unavailable: its files are not recorded as deleted,
 /// nothing is written to the empty mount point, and it syncs again once the drive is back.
+// The drive is taken away by moving the folder, which Windows refuses while it is watched.
+#[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unmounted_folder_deletes_nothing() {
     let dir = tempfile::tempdir().unwrap();

@@ -3,7 +3,8 @@
 //! fails, `TIDEFELL_SIM_JOBS` how many at once and `TIDEFELL_SIM_DIR`
 //! where their folders go. The first failing seed, or the first `TIDEFELL_SIM_SHRINK`, is
 //! shortened to the fewest steps that still fail and printed, to keep in `tests/regressions/`
-//! as a JSON list of steps.
+//! as a JSON list of steps. The simulation runs on Unix.
+#![cfg(unix)]
 
 use std::path::PathBuf;
 

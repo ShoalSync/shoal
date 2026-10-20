@@ -92,7 +92,7 @@ pub fn generate(
                 content,
                 size,
                 mtime_ns: disk.mtime_ns,
-                executable: disk.executable,
+                executable: disk.executable.unwrap_or(false),
                 base,
             },
         );

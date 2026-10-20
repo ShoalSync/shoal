@@ -1,0 +1,6 @@
+# Text is checked out with LF line endings on every platform, Windows included: tests and
+# golden vectors compare bytes, and the configuration examples are edited by line (ADR 0042).
+* text=auto eol=lf
+# Batch files need CRLF; the generated Gradle wrapper properties are kept as they are.
+*.bat text eol=crlf
+bindings/android/gradle/wrapper/gradle-wrapper.properties -text

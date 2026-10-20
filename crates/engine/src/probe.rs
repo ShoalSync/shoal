@@ -247,6 +247,8 @@ fn max_name(dir: &Path) -> Option<NameLength> {
 mod tests {
     use super::*;
 
+    // Linux's filesystems keep every name; NTFS ignores case by default.
+    #[cfg(target_os = "linux")]
     #[test]
     fn a_linux_filesystem_keeps_every_name() {
         let dir = tempfile::tempdir().unwrap();

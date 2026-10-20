@@ -878,6 +878,10 @@ Open items in step 5, each to land before the release:
   again once it was, so one replica kept it while another, which never had it, did not. A
   replica now judges it again once it has fetched it, and takes it over (ADR 0040).
 
+Open after the release: release seeds 20407 (two devices do not settle on `Photos/a.txt`) and
+22153 (a device waits for chunks no connected device has), each failing once in a 3000-seed run
+under heavy load (2026-10-19) and passing 20 times alone; to be reproduced under load and fixed.
+
 ### Phase 8 work breakdown
 
 Decided in ADR 0042. Each step lands with tests that run on the Windows runner (label

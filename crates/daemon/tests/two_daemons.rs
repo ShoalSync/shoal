@@ -91,7 +91,7 @@ impl Node {
     fn try_start(&self, folder_id: &str, user: &str, peer: &Node) -> Option<Daemon> {
         let config = format!(
             r#"
-data_dir = "{data}"
+data_dir = '{data}'
 
 [network]
 relay = {{ mode = "disabled" }}
@@ -105,7 +105,7 @@ addrs = ["127.0.0.1:{peer_port}"]
 
 [[folders]]
 id = "{folder_id}"
-path = "{folder}"
+path = '{folder}'
 members = ["{user}"]
 retention_days = 30
 scan_interval_secs = 1
@@ -400,7 +400,7 @@ fn a_new_daemon_pairs_then_syncs() {
     fs::write(a.folder().join("beach.jpg"), b"sand and sea").unwrap();
     let config = format!(
         r#"
-data_dir = "{data}"
+data_dir = '{data}'
 
 [network]
 relay = {{ mode = "disabled" }}
@@ -410,7 +410,7 @@ bind = "127.0.0.1:{port}"
 
 [[folders]]
 id = "{folder_id}"
-path = "{folder}"
+path = '{folder}'
 members = ["{user}"]
 retention_days = 30
 scan_interval_secs = 1
@@ -492,7 +492,7 @@ scan_interval_secs = 1
     };
     let config = format!(
         r#"
-data_dir = "{data}"
+data_dir = '{data}'
 
 [network]
 relay = {{ mode = "disabled" }}
@@ -567,11 +567,14 @@ fn files_under(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
             if path.is_dir() {
                 stack.push(path);
             } else if let Ok(data) = fs::read(&path) {
+                // As recorded, with `/` between names, on Windows too.
                 let rel = path
                     .strip_prefix(dir)
                     .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 found.insert(rel, data);
             }
         }

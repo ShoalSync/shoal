@@ -722,7 +722,7 @@ mod tests {
         let config = |mode: &str| {
             parse(&format!(
                 "data_dir = \"/x\"\n[network.relay]\nmode = \"{mode}\"\n\
-                 urls = [\"https://relay.example.org\"]\ntoken_file = \"{}\"\n",
+                 urls = [\"https://relay.example.org\"]\ntoken_file = '{}'\n",
                 file.display()
             ))
             .unwrap()

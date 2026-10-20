@@ -17,7 +17,14 @@ pub(crate) fn free(path: &Path) -> Option<(u64, u64)> {
         let block = stat.f_frsize.max(1);
         Some((stat.f_bavail * block, stat.f_blocks * block))
     }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    #[cfg(windows)]
+    {
+        Some((
+            fs4::available_space(path).ok()?,
+            fs4::total_space(path).ok()?,
+        ))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android", windows)))]
     {
         let _ = path;
         None
@@ -31,7 +38,15 @@ pub(crate) fn volume(path: &Path) -> Option<u64> {
         use std::os::unix::fs::MetadataExt;
         path.metadata().ok().map(|m| m.dev())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        // The volume's serial number (ADR 0042).
+        let handle = winapi_util::Handle::from_path_any(path).ok()?;
+        winapi_util::file::information(&handle)
+            .ok()
+            .map(|i| i.volume_serial_number())
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         None

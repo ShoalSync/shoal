@@ -26,7 +26,10 @@ pub(crate) const RESERVED_DIR: &str = ".tidefell";
 pub(crate) struct DiskStat {
     pub(crate) size: u64,
     pub(crate) mtime_ns: i128,
-    pub(crate) executable: bool,
+    /// Whether the file is executable, or None where the filesystem has no such bit, as on
+    /// Windows: there it is unknown, matches whatever was recorded, and a change keeps the
+    /// entry's bit (ADR 0042).
+    pub(crate) executable: Option<bool>,
     /// The file's inode, or 0 where there is none: a file moved over another of the same size
     /// and modification time is still told apart from it (ADR 0036).
     pub(crate) inode: u64,
@@ -46,10 +49,10 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
     #[cfg(unix)]
     let executable = {
         use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
+        Some(meta.permissions().mode() & 0o111 != 0)
     };
     #[cfg(not(unix))]
-    let executable = false;
+    let executable = None;
     #[cfg(unix)]
     let inode = std::os::unix::fs::MetadataExt::ino(&meta);
     #[cfg(not(unix))]
@@ -348,7 +351,7 @@ fn deletes(state: &FolderState, rel: &str, entry: EntryId) -> bool {
 fn matchable(state: &FolderState, rel: &str, disk: &DiskStat) -> bool {
     state.meta.find_path(&recorded(rel)).is_some_and(|v| {
         matches!(v.kind, EntryKind::File { size, executable, .. }
-            if *size == disk.size && *executable == disk.executable)
+            if *size == disk.size && disk.executable.is_none_or(|x| x == *executable))
     })
 }
 
@@ -431,7 +434,7 @@ pub(crate) fn scan(
             let known = state.local.get(&rel).map(|l| {
                 l.size == disk.size
                     && l.mtime_ns == disk.mtime_ns
-                    && l.executable == disk.executable
+                    && disk.executable.is_none_or(|x| x == l.executable)
                     && (l.inode == 0 || l.inode == disk.inode)
             });
             // Inodes are not saved: a record read back learns its file's here.
@@ -544,7 +547,7 @@ pub(crate) fn scan(
                         executable,
                         ..
                     },
-                )) if c2 == content && executable == c.stat.executable => entry,
+                )) if c2 == content && c.stat.executable.is_none_or(|x| x == executable) => entry,
                 _ => continue,
             },
             // A file this device never had on disk here (a placeholder, a file dropped from
@@ -556,12 +559,24 @@ pub(crate) fn scan(
                 _ => EntryId(random_bytes()?),
             },
         };
+        // Where the filesystem has no executable bit, the entry keeps the one it has (ADR 0042).
+        let executable = c.stat.executable.unwrap_or_else(|| {
+            state.meta.current(&entry).is_some_and(|v| {
+                matches!(
+                    v.kind,
+                    EntryKind::File {
+                        executable: true,
+                        ..
+                    }
+                )
+            })
+        });
         // The file is where its entry goes, by name as spelled apart from Unicode form: a
         // rename that only changes case is a change (ADR 0033).
         let up_to_date = state.meta.current(&entry).is_some_and(|v| {
             state.meta.disk_path(&entry) == Some(path.as_str())
-                && matches!(v.kind, EntryKind::File { content: current, executable, .. }
-                    if *current == content && *executable == c.stat.executable)
+                && matches!(v.kind, EntryKind::File { content: current, executable: x, .. }
+                    if *current == content && *x == executable)
         });
         state.add_manifest(c.manifest);
         if let Some(key) = &seal_key {
@@ -580,7 +595,7 @@ pub(crate) fn scan(
             let kind = EntryKind::File {
                 content,
                 size: c.stat.size,
-                executable: c.stat.executable,
+                executable,
             };
             let folding = state.folding();
             claimed.insert(folding.fold(&path));
@@ -624,7 +639,7 @@ pub(crate) fn scan(
                 content,
                 size: c.stat.size,
                 mtime_ns: c.stat.mtime_ns,
-                executable: c.stat.executable,
+                executable,
                 base,
             },
         );

@@ -90,16 +90,7 @@ fn probe(dir: &Path) -> std::io::Result<()> {
 
 /// The volume `path` is on, where the platform can tell.
 fn volume_of(path: &Path) -> Option<u64> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        std::fs::metadata(path).ok().map(|m| m.dev())
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
-        None
-    }
+    crate::space::volume(path)
 }
 
 /// Whether this device may write in `dir`, without writing anything there. A read-only disk

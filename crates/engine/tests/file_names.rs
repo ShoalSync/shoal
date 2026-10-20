@@ -171,6 +171,8 @@ async fn one_name_written_two_ways_is_one_file_and_a_problem() {
     assert_eq!(problems[0].kind, ProblemKind::NameNotAllowed);
 }
 
+// The temporary directory's filesystem must keep every name, as Linux's do; NTFS ignores case.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn the_doctor_reports_what_the_drive_does_with_names() {
     let dir = tempfile::tempdir().unwrap();
@@ -210,6 +212,7 @@ fn fat() -> Filesystem {
 }
 
 /// What each file at the top of the folder holds, by its name on disk.
+#[cfg(target_os = "linux")]
 fn contents(replica: &Replica) -> Vec<(String, String)> {
     replica
         .names()
@@ -221,6 +224,8 @@ fn contents(replica: &Replica) -> Vec<(String, String)> {
         .collect()
 }
 
+// Names that differ only in case come from a filesystem that keeps both, as Linux's do.
+#[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_drive_that_ignores_case_keeps_both_files_and_lists_refused_names() {
     let dir = tempfile::tempdir().unwrap();

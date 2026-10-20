@@ -118,7 +118,7 @@ async fn create_join_delete_restore() {
     assert!(laptop.run(&["folder", "list"]).contains("no folders"));
 
     // Create on the laptop; the output tells the user how to join elsewhere.
-    let laptop_root = tmp.path().join("laptop/photos");
+    let laptop_root = tmp.path().join("laptop").join("photos");
     let created = laptop.run(&["folder", "create", laptop_root.to_str().unwrap()]);
     assert!(created.contains("tidefell folder join"));
     let folders = laptop.json(&["folder", "list"]);
@@ -199,7 +199,7 @@ async fn create_join_delete_restore() {
 
     // A partial replica on a third device keeps the photo as a placeholder until fetched.
     let phone = Device::start(tmp.path(), "phone", 12, &alice).await;
-    let phone_root = tmp.path().join("phone/photos");
+    let phone_root = tmp.path().join("phone").join("photos");
     phone.run(&[
         "folder",
         "join",

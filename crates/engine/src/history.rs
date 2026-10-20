@@ -157,7 +157,7 @@ pub(crate) fn keep(
         id,
         content,
         size: disk.size,
-        executable: disk.executable,
+        executable: disk.executable.unwrap_or(recorded.executable),
         modified_ms: (disk.mtime_ns / 1_000_000) as i64,
         kept_ms: state.now_ms(),
         path: path.to_owned(),
@@ -197,7 +197,17 @@ pub(crate) fn adopt(
         id,
         content,
         size: disk.size,
-        executable: disk.executable,
+        executable: disk.executable.unwrap_or_else(|| {
+            state.meta.current(&entry).is_some_and(|v| {
+                matches!(
+                    v.kind,
+                    tidefell_proto::sync::EntryKind::File {
+                        executable: true,
+                        ..
+                    }
+                )
+            })
+        }),
         modified_ms: (disk.mtime_ns / 1_000_000) as i64,
         kept_ms: now,
         path: path.to_owned(),

@@ -513,7 +513,7 @@ async fn logging_through_the_api() {
     assert_eq!(settings.level, "info");
     assert_eq!(
         settings.file.as_deref(),
-        Some(data_dir.join("logs/tidefell.log").to_str().unwrap())
+        Some(data_dir.join("logs").join("tidefell.log").to_str().unwrap())
     );
     assert_eq!(
         client

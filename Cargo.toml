@@ -48,6 +48,7 @@ chacha20poly1305 = "0.11"
 hkdf = "0.13"
 sha2 = "0.11"
 fastcdc = "5"
+fs4 = "1.1"
 fuser = "0.18"
 getrandom = "0.4"
 http-body-util = "0.1"
@@ -86,6 +87,9 @@ uniffi = "0.32"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 paranoid-android = "0.2"
+# Windows only (ADR 0042): free space, and volume serial numbers and file IDs, without unsafe
+# code here.
+winapi-util = "0.1"
 
 # Dependencies, above all the Ed25519 and BLAKE3 code, are built optimised in development so
 # tests that sign and verify tens of thousands of versions run in seconds. Workspace crates

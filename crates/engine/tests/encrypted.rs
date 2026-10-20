@@ -469,7 +469,9 @@ async fn members_meet_through_a_storage_peer() {
         b.read("notes.txt").as_deref() == Some(b"second".as_slice())
     })
     .await;
-    // Nowhere on the storage peer's disk is the plaintext of either version.
+    // Nowhere on the storage peer's disk is the plaintext of either version: read once it has
+    // stopped, since Windows lets no one read a database another process has locked.
+    engine_s.shutdown().await;
     for file in walk(&dir.path().join("storage")) {
         let bytes = fs::read(&file).unwrap();
         for plain in [b"first".as_slice(), b"second".as_slice()] {
@@ -482,7 +484,6 @@ async fn members_meet_through_a_storage_peer() {
     }
 
     // What it stores outlasts a restart.
-    engine_s.shutdown().await;
     let (_, engine_s) = storage_peer(
         dir.path(),
         102,
