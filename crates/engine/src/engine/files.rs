@@ -139,6 +139,25 @@ impl Engine {
         Ok(abs)
     }
 
+    /// Fetches the current content of the live file at `path` and passes it to `sink` in order,
+    /// by offset, without placing it in the folder or recording it: for a component that
+    /// places files itself, such as a Windows sync root filling a placeholder in place (ADR
+    /// 0042). No lock is held while peers are waited on. Fails with [`Error::Unavailable`] if
+    /// no connected peer has the content, and with [`Error::Paused`] while the folder is paused.
+    pub async fn fetch(
+        &self,
+        folder: FolderId,
+        path: &str,
+        sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+    ) -> Result<()> {
+        let path = &*recorded(path);
+        let handle = self.inner.folder(&folder)?;
+        if self.inner.is_paused(&folder) {
+            return Err(Error::Paused(folder));
+        }
+        materialize::fetch_into(&self.inner, &self.node, folder, &handle, path, sink).await
+    }
+
     /// Pins the file or directory at `path` on a partial replica (ADR 0029): what it covers is
     /// fetched in the background, kept up to date and never evicted, and does not count against
     /// the folder's budget. Pins are this device's own and are not synced.
@@ -394,12 +413,19 @@ impl Engine {
                     state
                         .meta
                         .local_change_from(key, entry, &base, &new, kind, modified_ms)?;
-                if let Some(mut local) = state.local.remove(&old) {
+                if let Some(local) = state.local.get(&old) {
                     let (src, dst) = (root.join(&old), root.join(&new));
-                    if let Some(parent) = dst.parent() {
-                        std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
+                    // Already moved by the user, as a Windows sync root reports moves after
+                    // they happen (ADR 0042): only the record follows.
+                    let moved = !src.exists()
+                        && crate::scan::unchanged(&dst, local.size, local.mtime_ns, local.inode);
+                    if !moved {
+                        if let Some(parent) = dst.parent() {
+                            std::fs::create_dir_all(parent).map_err(crate::io_err(parent))?;
+                        }
+                        crate::rename_durably(&src, &dst).map_err(crate::io_err(&src))?;
                     }
-                    crate::rename_durably(&src, &dst).map_err(crate::io_err(&src))?;
+                    let mut local = state.local.remove(&old).expect("recorded");
                     local.base = vector;
                     state.record_local(new.clone(), local);
                     if let Some(used) = state.used.remove(&old) {

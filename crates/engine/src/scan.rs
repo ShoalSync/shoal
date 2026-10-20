@@ -33,6 +33,34 @@ pub(crate) struct DiskStat {
     /// The file's inode, or 0 where there is none: a file moved over another of the same size
     /// and modification time is still told apart from it (ADR 0036).
     pub(crate) inode: u64,
+    /// Whether the file's data is not on disk: a Windows placeholder, ours or another
+    /// program's, which reading would download (ADR 0042). It is never read, and never what
+    /// the engine last saw or wrote.
+    pub(crate) placeholder: bool,
+}
+
+/// Whether a file with `meta` has its data elsewhere, to be fetched when it is read: a cloud
+/// placeholder, or a file another program moved offline. Only Windows has such files, and only
+/// metadata read without following the placeholder (`symlink_metadata`, or a handle opened on
+/// the reparse point) shows it.
+pub(crate) fn is_placeholder(meta: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_OFFLINE: u32 = 0x1000;
+        const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
+        const FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
+        meta.file_attributes()
+            & (FILE_ATTRIBUTE_OFFLINE
+                | FILE_ATTRIBUTE_RECALL_ON_OPEN
+                | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
+            != 0
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = meta;
+        false
+    }
 }
 
 pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
@@ -58,6 +86,7 @@ pub(crate) fn stat(path: &Path) -> Option<DiskStat> {
         mtime_ns,
         executable,
         inode,
+        placeholder: is_placeholder(&meta),
     })
 }
 
@@ -107,10 +136,14 @@ pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> Version
     }
 }
 
-/// True if the file at `path` has `size`, `mtime_ns` and, unless 0 (not known), `inode`.
+/// True if the file at `path` has `size`, `mtime_ns` and, unless 0 (not known), `inode`, and
+/// its data on disk: a placeholder keeps the size and time of the file it stands for.
 pub(crate) fn unchanged(path: &Path, size: u64, mtime_ns: i128, inode: u64) -> bool {
     stat(path).is_some_and(|s| {
-        s.size == size && s.mtime_ns == mtime_ns && (inode == 0 || s.inode == inode)
+        !s.placeholder
+            && s.size == size
+            && s.mtime_ns == mtime_ns
+            && (inode == 0 || s.inode == inode)
     })
 }
 
@@ -458,8 +491,28 @@ pub(crate) fn scan(
     // Each file is compared with what is recorded under the folder lock, briefly, rather than
     // with a copy of every record (ADR 0035).
     let mut changed = Vec::new();
+    // Recorded files whose data has since left the disk, as when the user frees up space.
+    let mut evicted = Vec::new();
     for (rel, disk) in &found {
         let (rel, disk) = (rel.clone(), *disk);
+        // A placeholder is never read, which would download it (ADR 0042). In a partial
+        // folder it is a file not on this device; in a full one, another program's online-only
+        // file, whose content this device cannot sync until it is downloaded.
+        if disk.placeholder {
+            let state = handle.lock();
+            if state.local.get(&rel).is_some() {
+                evicted.push(rel);
+            } else if state.config.mode.budget_bytes().is_none() {
+                failures.push(Failure::new(
+                    &rel,
+                    Operation::Scan,
+                    ProblemKind::Other,
+                    "the file is online-only, its content not on this device; make it \
+                     available offline to sync it",
+                ));
+            }
+            continue;
+        }
         let known = {
             let mut state = handle.lock();
             let known = state.local.get(&rel).map(|l| {
@@ -535,6 +588,11 @@ pub(crate) fn scan(
     let mut state = handle.lock();
     state.ignores = ignores;
     state.touch();
+    for rel in evicted {
+        debug!(path = %rel, "freed up outside the engine");
+        state.local.remove(&rel);
+        state.used.remove(&rel);
+    }
     let mut index_changed = false;
     let mut conflicts = Vec::new();
     let now = inner.now_ms();

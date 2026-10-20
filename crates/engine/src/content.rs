@@ -89,6 +89,11 @@ fn sources(state: &FolderState, hash: &ChunkHash) -> Vec<Source> {
 
 /// Reads a chunk from `source` if it still hashes to `hash`.
 fn read_verified(source: &Source, hash: &ChunkHash) -> Option<Vec<u8>> {
+    // A placeholder's data would be fetched, by this engine if the folder is its own. Only the
+    // placeholder itself, not what it stands for, says so (ADR 0042).
+    if crate::scan::is_placeholder(&fs::symlink_metadata(&source.path).ok()?) {
+        return None;
+    }
     let mut file = fs::File::open(&source.path).ok()?;
     file.seek(SeekFrom::Start(source.offset)).ok()?;
     let mut data = vec![0; source.len as usize];

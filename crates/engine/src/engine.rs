@@ -1144,6 +1144,18 @@ impl Engine {
         run_scan(&self.inner, folder, None, None).await.map(drop)
     }
 
+    /// Looks again at the file at `path` and the others in its directory, as a watch would when
+    /// something changes there: for a component that changes files in ways a watch does not
+    /// report, such as Windows filling a placeholder in place (ADR 0042).
+    pub async fn scan_path(&self, folder: FolderId, path: &str) -> Result<()> {
+        let path = crate::state::recorded(path);
+        let mut scope = Scope::default();
+        scope.add(path.rsplit_once('/').map_or("", |(dir, _)| dir), false);
+        run_scan(&self.inner, folder, Some(scope), None)
+            .await
+            .map(drop)
+    }
+
     /// Tries again every write and delete in `folder` that failed in a way that lasts, such as
     /// permission refused, rather than waiting for the file to change (ADR 0037).
     pub fn retry(&self, folder: FolderId) -> Result<()> {

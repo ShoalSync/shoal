@@ -4,7 +4,7 @@ use crate::engine::metrics::FetchFailure;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -536,7 +536,57 @@ pub(crate) async fn fetch_one(
     handle: &FolderHandle,
     path: &str,
 ) -> Result<bool> {
-    let (root, write) = {
+    let (root, write) = pending(handle, path)?;
+    let written = write_file(inner, node, handle, id, &root, &write).await?;
+    if written {
+        inner.emit(Event::FileUpdated {
+            folder: id,
+            path: write.path.clone(),
+        });
+        handle.lock().save()?;
+    }
+    Ok(written)
+}
+
+/// Fetches the current version of the live file at `path` and passes its content to `sink`
+/// in order, by offset, without placing or recording it: for a component that places files
+/// itself, such as a Windows sync root filling a placeholder in place (ADR 0042). Fails with
+/// [`Error::Unavailable`] if no connected peer has it. Each chunk is checked on its own and the
+/// whole content at the end, so a bad copy fails the fetch rather than being kept.
+pub(crate) async fn fetch_into(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    id: FolderId,
+    handle: &FolderHandle,
+    path: &str,
+    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+) -> Result<()> {
+    let (_, write) = pending(handle, path)?;
+    let Some(manifest) = fetch_content(inner, node, handle, id, &write).await? else {
+        return Err(Error::Unavailable(path.to_owned()));
+    };
+    // Kept from compaction while it is read.
+    let _fetched = Fetching(inner, manifest.content);
+    let mut hasher = blake3::Hasher::new();
+    let mut offset = 0;
+    for chunk in &manifest.chunks {
+        let data = crate::content::read_chunk(inner, handle, &chunk.hash)
+            .filter(|d| tidefell_chunker::hash_chunk(d) == chunk.hash)
+            .ok_or_else(|| Error::Unavailable(path.to_owned()))?;
+        hasher.update(&data);
+        sink(offset, &data).map_err(io_err(path))?;
+        offset += data.len() as u64;
+    }
+    if hasher.finalize().as_bytes() != manifest.content.as_bytes() || offset != write.size {
+        handle.lock().remove_manifest(&write.content);
+        return Err(Error::Unavailable(path.to_owned()));
+    }
+    Ok(())
+}
+
+/// What writing the current version of the live file at `path` takes, and its folder's root.
+fn pending(handle: &FolderHandle, path: &str) -> Result<(PathBuf, PendingWrite)> {
+    Ok({
         let state = handle.lock();
         let Some(version) = state.meta.find_path(path) else {
             return Err(Error::NoSuchFile(path.to_owned()));
@@ -570,16 +620,7 @@ pub(crate) async fn fetch_one(
                 no_space: std::sync::Mutex::default(),
             },
         )
-    };
-    let written = write_file(inner, node, handle, id, &root, &write).await?;
-    if written {
-        inner.emit(Event::FileUpdated {
-            folder: id,
-            path: write.path.clone(),
-        });
-        handle.lock().save()?;
-    }
-    Ok(written)
+    })
 }
 
 /// Renames the file at `from` to `to`, which differ only in case, if it is still what the engine
@@ -802,10 +843,17 @@ async fn write_file(
         debug!(path = %write.path, "changed while fetched; written at the next pass");
         return Ok(false);
     }
+    // A placeholder of a file not on disk, in a partial folder, where a Windows sync root keeps
+    // one for every such file: it stands in for this very file, and gives way to it. Renamed
+    // over, it would be downloaded first (ADR 0042). In a full folder a placeholder is another
+    // program's, and stays.
+    let placeholder_here = state.local.get(&write.path).is_none()
+        && state.config.mode.budget_bytes().is_some()
+        && stat(&target).is_some_and(|s| s.placeholder);
     // Never replace a file the user changed since the engine last saw it.
     let replaceable = match state.local.get(&write.path) {
         Some(local) => unchanged(&target, local.size, local.mtime_ns, local.inode),
-        None => !target.exists(),
+        None => placeholder_here || !target.exists(),
     };
     if !replaceable {
         let _ = fs::remove_file(&tmp);
@@ -861,6 +909,16 @@ async fn write_file(
     if !placed {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(io_err(parent))?;
+        }
+        if placeholder_here {
+            match fs::remove_file(&target) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(io_err(&target)(e));
+                }
+            }
         }
         let renamed = if state.local.contains_key(&write.path) {
             crate::rename_durably(&tmp, &target).map(|()| true)

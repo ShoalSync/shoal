@@ -541,3 +541,126 @@ async fn a_removed_members_copies_no_longer_count() {
     assert_eq!(engine_phone.files(FOLDER).unwrap()[0].confirmed_copies, 1);
     engine_phone.shutdown().await;
 }
+
+/// Fetching without placing hands over the content in order and leaves the folder as it was
+/// (ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn content_is_fetched_without_being_placed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 50, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        51,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    // Several chunks, so their order matters.
+    let big: Vec<u8> = (0..3_000_000u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+        .collect();
+    nas.write("big.bin", &big);
+    nas.write("small.txt", b"small");
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 2
+    })
+    .await;
+
+    for (path, content) in [("big.bin", &big[..]), ("small.txt", b"small".as_slice())] {
+        let mut got = Vec::new();
+        engine_laptop
+            .fetch(FOLDER, path, &mut |offset, data| {
+                assert_eq!(offset, got.len() as u64);
+                got.extend_from_slice(data);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert!(got == content, "{path}");
+        assert!(!on_disk(&engine_laptop, path));
+        assert!(laptop.read(path).is_none());
+    }
+    assert!(matches!(
+        engine_laptop
+            .fetch(FOLDER, "missing.txt", &mut |_, _| Ok(()))
+            .await,
+        Err(Error::NoSuchFile(_))
+    ));
+
+    // Put in place by another component, as Windows fills a placeholder, and looked at: the
+    // same entry, now on disk, with nothing to sync.
+    let entry = |e: &Engine| {
+        e.files(FOLDER)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == "small.txt")
+            .unwrap()
+            .entry
+    };
+    let before = entry(&engine_laptop);
+    laptop.write("small.txt", b"small");
+    engine_laptop.scan_path(FOLDER, "small.txt").await.unwrap();
+    assert!(on_disk(&engine_laptop, "small.txt"));
+    assert_eq!(entry(&engine_laptop), before);
+    assert_eq!(engine_nas.files(FOLDER).unwrap().len(), 2);
+    engine_nas.shutdown().await;
+    engine_laptop.shutdown().await;
+}
+
+/// A move the user already made on disk, reported afterwards, as a Windows sync root reports
+/// moves (ADR 0042): the record follows the file, which is not looked for at its old path.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rename_already_made_on_disk_is_recorded() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 40, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        41,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    fs::create_dir_all(nas.root().join("docs")).unwrap();
+    nas.write("docs/b.txt", b"bee");
+    nas.write("docs/c.txt", b"sea");
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 2
+    })
+    .await;
+    assert_eq!(touch(&engine_laptop, "docs/b.txt").await, b"bee");
+
+    // The directory moved by the user, with the file on disk in it and the placeholder.
+    fs::rename(laptop.root().join("docs"), laptop.root().join("papers")).unwrap();
+    engine_laptop
+        .rename(FOLDER, "docs", "papers")
+        .await
+        .unwrap();
+    assert!(on_disk(&engine_laptop, "papers/b.txt"));
+    assert!(!on_disk(&engine_laptop, "papers/c.txt"));
+    eventually("the NAS moves the directory", || {
+        nas.read("papers/b.txt").as_deref() == Some(b"bee".as_slice())
+            && nas.read("papers/c.txt").as_deref() == Some(b"sea".as_slice())
+            && nas.read("docs/b.txt").is_none()
+    })
+    .await;
+    // A scan finds nothing deleted or new.
+    engine_laptop.scan(FOLDER).await.unwrap();
+    assert_eq!(engine_laptop.files(FOLDER).unwrap().len(), 2);
+    assert!(on_disk(&engine_laptop, "papers/b.txt"));
+    engine_nas.shutdown().await;
+    engine_laptop.shutdown().await;
+}
