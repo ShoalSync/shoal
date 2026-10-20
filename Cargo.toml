@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "xtask"]
 # The fuzz targets build with a nightly toolchain and have their own workspace (ADR 0031).
-exclude = ["fuzz", "bench"]
+exclude = ["fuzz", "bench", "third_party/cloud-filter"]
 resolver = "2"
 
 [workspace.package]
@@ -103,3 +103,7 @@ opt-level = 2
 [profile.mobile]
 inherits = "release"
 strip = "symbols"
+
+# cloud-filter with fixes not yet released upstream (third_party/cloud-filter/PATCHES.md).
+[patch.crates-io]
+cloud-filter = { path = "third_party/cloud-filter" }

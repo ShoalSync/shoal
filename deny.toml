@@ -11,6 +11,10 @@ ignore = [
     # `paste` is unmaintained. It is a compile-time proc-macro (no runtime code) reached only
     # through iroh -> netwatch -> netlink-packet-core. Revisit when iroh drops it.
     { id = "RUSTSEC-2024-0436", reason = "build-time proc-macro via iroh, no runtime code" },
+    # `basic-toml` is unmaintained. askama's derive macro reads its configuration with it at
+    # compile time (askama -> askama_macros -> askama_derive), so no runtime code. Revisit when
+    # askama drops it.
+    { id = "RUSTSEC-2026-0374", reason = "build-time, via askama's derive macro, no runtime code" },
 ]
 
 [licenses]

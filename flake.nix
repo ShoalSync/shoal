@@ -45,6 +45,7 @@
               ./crates
               ./xtask
               ./specs
+              ./third_party
             ];
           };
           # crane links each vendored crate from its own store path. askama (in uniffi_bindgen)

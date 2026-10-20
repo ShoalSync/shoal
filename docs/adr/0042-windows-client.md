@@ -181,6 +181,41 @@ done without unsafe code:
   which costs only memory, as on Unix when it cannot start itself again.
 - **Doctor.** `tidefell doctor` warns of a data directory outside the user's profile.
 
+## Amendment: the second spike, the seam's primitives (2026-10-20)
+
+`fs-cfapi/tests/primitives.rs` tried each operation the engine's seam relies on, on the
+Windows runner. The test is ignored by default; CI runs it so it prints its findings.
+
+- **The provider's own changes raise no callbacks.** Deletes and renames made by the daemon's
+  own process in its sync root raise none. Other processes' changes carry their process IDs.
+- **Placeholders deleted while the provider is not connected go without a callback.** Windows
+  allows the delete and reports nothing when the provider connects again. The provider
+  therefore keeps a durable record of the placeholders it made. When it connects, one that is
+  gone counts as a delete by the user, with the mass-delete hold (ADR 0037), as a file deleted
+  while the daemon was stopped does on Linux. Decided by the project's owner.
+- **Pins hydrate by themselves.** "Always keep on this device" makes Windows fetch the file
+  through the provider's callback.
+- **Dehydrating and converting work in place.**
+  - Dehydrating keeps the file's size, modification time and file ID.
+  - A file written in the usual way can be made an in-sync placeholder afterwards.
+  - Both need a handle opened for writing, exclusively.
+- **Only metadata that does not follow a placeholder shows its data is elsewhere.**
+  `symlink_metadata` does, and so does a handle opened on the reparse point. The engine reads
+  only those (step 5).
+- **Renaming a file over a dehydrated placeholder first downloads the old content.** A
+  placeholder in the way is therefore removed before a file takes its place.
+- **Fetches are answered from threads of their own.** The callback returns at once.
+  - Windows runs about two of one process's fetches at a time.
+  - It cancels a fetch after 60 s with no data, then retries it once.
+  - Reporting progress keeps a fetch alive, as progressive hydration does, so a large file
+    reports progress as its chunks arrive.
+  - A fetch that cannot be served fails at once with "network unavailable". Sending nothing
+    would leave the program reading the file waiting two minutes.
+- **`cloud-filter` is patched.** As published, two of its bugs aborted the process: a
+  callback without process information, and a failure the platform refused. Failing a fetch was
+  refused, and other arguments were misused. The fixes are in a copy at `third_party/cloud-filter`
+  (its `PATCHES.md`), until a release upstream carries them.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a
