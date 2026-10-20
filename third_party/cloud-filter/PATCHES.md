@@ -155,6 +155,24 @@ range's end, or `end - 1` for an exclusive end.
 The fix computes `end - start`, and keeps `-1`, the rest of the file, for an unbounded end.
 `hydrate(..)` from the start of a file was never affected.
 
+### 7. `Placeholder::info` panics on a folder placeholder
+
+`info()` truncates its buffer to the size the platform reports, then slices `..=size_of` of the
+info structure. That is one byte past the structure. For a folder placeholder without an
+identity blob, the platform reports 60 bytes:
+
+```
+panicked at src\placeholder.rs:712:29:
+range end index 64 out of range for slice of length 60
+```
+
+`fixed_size_info` slices the same way, so it panics for a blob size of 0.
+
+The fix keeps at least the structure's size, which is zeroed past what the platform wrote, and
+slices `..size_of`.
+
+Not yet in the upstream pull request (found 2026-10-20, after it was opened).
+
 ## Also observed, not patched
 
 These are useful context for upstream, but they are not bugs in the crate:
@@ -168,3 +186,10 @@ These are useful context for upstream, but they are not bugs in the crate:
 - Renaming an ordinary file over a dehydrated placeholder first hydrates the old placeholder,
   through `fetch_data`.
 - Reporting progress during a fetch, or progressive hydration, keeps a fetch alive past 60 s.
+- Another process renaming a plain folder of placeholders raises no callback. Renaming a
+  placeholder folder raises one `rename` and one `renamed` for the folder.
+- A placeholder moved into a hidden folder in the root, or out of the root, stays a placeholder,
+  but is no longer in sync. Dehydrating it is then refused: "The file is not in sync with the
+  cloud", or, out of the root, "only supported on files under a cloud sync root".
+- `PlaceholderFile` refuses to create a folder placeholder with `has_no_children` and
+  `mark_in_sync`. Converting a plain folder works.

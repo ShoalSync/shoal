@@ -216,6 +216,59 @@ Windows runner. The test is ignored by default; CI runs it so it prints its find
   refused, and other arguments were misused. The fixes are in a copy at `third_party/cloud-filter`
   (its `PATCHES.md`), until a release upstream carries them.
 
+## Amendment: the provider's design (2026-10-20)
+
+Two more questions for the spike settled the rest. The design below replaces the earlier text
+where they differ.
+
+- **The reserved directory stays in the folder.** `.tidefell` stays in the sync root as a hidden,
+  plain directory, not in the data directory as planned above. This replaces the "sync root
+  holds only the user's files" text:
+  - A placeholder moved into it becomes "not in sync", so Windows refuses to free it. History,
+    the recycle bin and kept copies therefore stay whole as long as nothing under `.tidefell` is
+    ever marked in sync.
+  - The engine's moves stay on one volume.
+  - The root marker and its identity check are unchanged.
+  - The provider's own moves into it raise no callbacks.
+- **Folders in a sync root are placeholders.** Another program renaming a plain folder of
+  placeholders raised no callback at all. Renaming a placeholder folder raises one rename for
+  the folder, which becomes the engine's directory rename. So the provider converts every
+  folder it makes or finds into an in-sync placeholder.
+- **The engine records the placeholders.** For each placeholder, the engine durably records the
+  entry and the version vector it showed, beside its records of files on disk.
+  - **Deletes:** a deleted placeholder builds on that vector, so a newer remote change survives
+    as a conflict.
+  - **Missing at a scan:** a recorded placeholder that is gone at a scan is a delete, under the
+    same mass-delete hold as files (ADR 0037). This includes one deleted while the daemon was
+    off, as decided above.
+  - **The record comes second:** the provider records a placeholder only after creating it, so
+    a crash between the two never reads as a delete.
+- **The provider reconciles.** On the engine's events, as the FUSE mount refreshes on them, it
+  makes the folder match the engine:
+  - **Not on disk:** a live file not on disk gets a dehydrated, in-sync placeholder. Its
+    identity blob names the entry and content.
+  - **Changed elsewhere:** a placeholder of a file changed elsewhere is updated, and it stays
+    dehydrated.
+  - **No longer live:** a placeholder of a file no longer live is removed.
+  - **Placed by the engine:** a file the engine placed is made an in-sync placeholder. That
+    happens only on an exclusive handle, and only while the file is still what the engine
+    recorded, because in-sync tells Windows the data may be freed.
+  - **`.tidefell`:** nothing under it is touched.
+- **Fetches serve the version the placeholder shows.**
+  - A fetch runs on a thread of its own and reports progress while the engine waits on peers.
+  - It fails with "network unavailable" when the content cannot be had. It fails the same way
+    when the placeholder's version is no longer current; the reconciler then updates the
+    placeholder.
+  - A file once filled is recorded by a scan of its directory.
+- **Callbacks from other programs:**
+  - **Deletes and renames** become the engine's `delete` and `rename`.
+  - **State changes** carry pins from Explorer to the engine. They also carry "Free up space":
+    the scan finds the placeholder and drops the file's record.
+- **Pins:** Windows fills a pinned placeholder through the provider itself. A pin made through
+  the engine sets the placeholder's pin state, and the provider fills it, so one component owns
+  each placeholder's data. The engine's own placing replaces a placeholder only when the file
+  is one it already had on disk.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

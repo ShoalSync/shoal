@@ -903,7 +903,7 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
 4. **Windows CI.** The workspace's tests on the Windows runner, each job's result required like
    the Linux ones.
 5. **`fs-cfapi`.** A second spike (done 2026-10-20) settled the primitives and patched
-   `cloud-filter` (ADR 0042's amendment); a change on Windows is sometimes seen only after
+   `cloud-filter`; its last questions set the provider's design (ADR 0042's amendments); a change on Windows is sometimes seen only after
    9-12 s rather than within 2 (`watching.rs`, intermittent since step 3), to look into here. The engine's seam for folders whose files another component places;
    sync-root registration and connection, placeholders from metadata,
    hydration through the engine's `open`, dehydration on eviction, pins from Explorer's states,

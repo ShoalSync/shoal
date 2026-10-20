@@ -671,3 +671,105 @@ fn fetches_answered_from_other_threads() {
     );
     report_calls("spawned", &root);
 }
+
+/// Q10: a hydrated, in-sync placeholder moved into a hidden folder inside the root (where the
+/// engine keeps history), and out of the root into the local app data: whether it stays a
+/// placeholder, and whether it can then be dehydrated.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn moving_a_placeholder_aside() {
+    let root = Root::new("Aside", HydrationType::Full);
+    let reserved = root.path.join(".tidefell");
+    std::fs::create_dir(&reserved).unwrap();
+    let outside = tempfile::tempdir().unwrap(); // under %LOCALAPPDATA%
+    for (case, dest) in [
+        ("into .tidefell", reserved.join("kept.txt")),
+        ("out of the root", outside.path().join("kept.txt")),
+    ] {
+        let name = format!("{}.txt", case.replace(' ', "-"));
+        let file = root.placeholder(&name, b"kept content");
+        std::fs::read(&file).unwrap();
+        report(case, format!("hydrated: {}", describe(&file)));
+        let moved = std::fs::rename(&file, &dest);
+        report(case, format!("move: {moved:?}; after: {}", describe(&dest)));
+        let dehydrated = Placeholder::options()
+            .write_access()
+            .exclusive()
+            .open(&dest)
+            .and_then(|mut p| {
+                p.update(UpdateOptions::default().dehydrate(), None)
+                    .map(drop)
+            });
+        report(
+            case,
+            format!("dehydrate: {dehydrated:?}; after: {}", describe(&dest)),
+        );
+        report(
+            case,
+            format!("read: {:?}", std::fs::read(&dest).map(|c| c.len())),
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
+    settle();
+    report_calls("aside", &root);
+}
+
+/// Q11: another process renames a folder holding a hydrated file and dehydrated placeholders,
+/// once a plain folder and once a placeholder folder: which callbacks name the files in it.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn another_process_renames_a_folder_of_placeholders() {
+    let root = Root::new("FolderRename", HydrationType::Full);
+    // A plain folder.
+    std::fs::create_dir(root.path.join("plain")).unwrap();
+    // A placeholder folder: created by cloud-filter's PlaceholderFile it is refused ("The cloud
+    // operation is invalid"), so made as a plain folder and converted.
+    std::fs::create_dir(root.path.join("placeholder")).unwrap();
+    let converted = Placeholder::options()
+        .write_access()
+        .exclusive()
+        .open(root.path.join("placeholder"))
+        .and_then(|mut p| {
+            p.convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)
+                .map(drop)
+        });
+    report(
+        "folder rename",
+        format!("convert the folder: {converted:?}"),
+    );
+    for dir in ["plain", "placeholder"] {
+        let parent = root.path.join(dir);
+        for name in ["a.txt", "b.txt"] {
+            let blob = format!("{dir}/{name}");
+            root.filter()
+                .content
+                .lock()
+                .unwrap()
+                .insert(blob.as_bytes().to_vec(), name.as_bytes().to_vec());
+            PlaceholderFile::new(name)
+                .metadata(Metadata::file().size(name.len() as u64))
+                .blob(blob.into_bytes())
+                .mark_in_sync()
+                .create::<&Path>(&parent)
+                .unwrap();
+        }
+        let _ = std::fs::read(parent.join("a.txt"));
+        report(
+            "folder rename",
+            format!(
+                "{dir}: {} / a {} / b {}",
+                describe(&parent),
+                describe(&parent.join("a.txt")),
+                describe(&parent.join("b.txt"))
+            ),
+        );
+        let moved = std::process::Command::new("cmd")
+            .args(["/C", "move"])
+            .arg(&parent)
+            .arg(root.path.join(format!("{dir}-moved")))
+            .status();
+        report("folder rename", format!("cmd move {dir}: {moved:?}"));
+    }
+    settle();
+    report_calls("folder rename", &root);
+}
