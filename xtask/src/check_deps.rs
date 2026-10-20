@@ -14,7 +14,7 @@ const AGPL: &str = "AGPL-3.0-only";
 const PERMISSIVE_CRATES: &[&str] = &["tidefell-proto", "tidefell-sdk"];
 
 /// Crates that `tidefell-engine` must never depend on, directly or transitively.
-const ENGINE_FORBIDDEN: &[&str] = &["tidefell-fs-fuse", "tidefell-web"];
+const ENGINE_FORBIDDEN: &[&str] = &["tidefell-fs-fuse", "tidefell-fs-cfapi", "tidefell-web"];
 
 /// The only workspace crates `tidefell-ffi` may depend on directly.
 const FFI_ALLOWED: &[&str] = &["tidefell-sdk", "tidefell-engine"];

@@ -1,0 +1,17 @@
+[package]
+name = "tidefell-fs-cfapi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tidefell: Windows placeholders through the Cloud Files API"
+publish = false
+
+[lints]
+workspace = true
+
+[target.'cfg(windows)'.dependencies]
+cloud-filter = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -887,9 +887,9 @@ under heavy load (2026-10-19) and passing 20 times alone; to be reproduced under
 Decided in ADR 0042. Each step lands with tests that run on the Windows runner (label
 `windows`); until it is ready, Windows code is type-checked by cross-compiling.
 
-0. **Spike.** On the runner: a program installed without package identity registers a sync root,
-   Explorer shows it with its states, and a placeholder hydrates through a callback. Its result
-   settles ADR 0042's installer decision.
+0. **Spike.** Done (2026-10-20): an unpackaged program registers a sync root that Windows lists,
+   and a placeholder hydrates through a callback; the per-user installer stands, and sync roots
+   cannot be inside hidden folders (ADR 0042's amendment).
 1. **The workspace builds for Windows.** `fs-fuse` and the simulation's Linux-only parts gated
    by target; Unix-only test code gated; a Windows type-check in CI.
 2. **Local control and privacy.** The control API and SDK over a named pipe; the data

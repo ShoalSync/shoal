@@ -62,9 +62,10 @@ Explorer shows its state (online only, on this device, always keep) with no extr
     deleted files, staging) lives in the data directory instead of in `.tidefell` inside the
     folder, and the folder's identity check (ADR 0037) uses the sync-root registration in place
     of the marker file.
-  - **Where a sync root can be.** A partial folder must be on a local NTFS volume and not
-    inside another provider's sync root (such as Documents redirected into OneDrive); otherwise
-    it is refused when added, with the reason.
+  - **Where a sync root can be.** A partial folder must be on a local NTFS volume, not inside
+    another provider's sync root (such as Documents redirected into OneDrive), and not inside a
+    hidden or system folder (see the spike's amendment); otherwise it is refused when added, with
+    the reason.
   - **The scanner never reads a placeholder's data**, which would download it: a file whose
     attributes say its data is not on disk is a placeholder, not a change. Another tool's
     online-only files (OneDrive's) inside a full replica's folder are reported as problems
@@ -130,6 +131,19 @@ unsafe code. Windows' defaults already give what the DACLs above were for, so no
 
 If a tighter access list is ever needed, it comes from a maintained crate that wraps those calls
 safely, not from unsafe code here.
+
+## Amendment: the spike's result (2026-10-20)
+
+On the Windows runner (Windows 11 25H2, an ordinary user, no package identity), a test program
+registered a sync root through `StorageProviderSyncRootManager`, Windows listed it among its
+active sync roots (as Explorer's navigation pane does), a placeholder made there had no data on
+disk, and reading it filled it through the provider's callback. So the installer stays a per-user
+MSI without package identity, and is no longer provisional.
+
+One limit came out of it: the shell does not show a sync root inside a hidden folder, such as
+`AppData` (where temporary directories are): its registration is written but the folder cannot
+be resolved. "Where a sync root can be" therefore also refuses a partial folder inside a hidden
+or system folder. The spike stays as `fs-cfapi`'s test `tests/spike.rs`.
 
 ## Consequences
 
