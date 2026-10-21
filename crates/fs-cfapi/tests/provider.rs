@@ -206,6 +206,107 @@ async fn freeing_up_space_and_pinning() {
     blocking(move || root.unregister().unwrap()).await;
 }
 
+/// Over its budget, the engine evicts a file it filled by dehydrating it in place: it stays in
+/// the folder, online-only, and its placeholder is recorded (ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn eviction_dehydrates_in_place() {
+    let p = pair(140);
+    // Two files that do not both fit the laptop's 1 MiB budget.
+    let (a, b) = (vec![b'a'; 600 << 10], vec![b'b'; 600 << 10]);
+    p.nas.write("a.bin", &a);
+    p.nas.write("b.bin", &b);
+    let (nas, laptop) = (p.nas.start().await, p.laptop.start().await);
+    nas.scan(p.nas.folder).await.unwrap();
+    laptop.connect(nas.addr()).await.unwrap();
+    let folder = p.laptop.folder;
+    eventually("the laptop lists the files", || {
+        laptop.files(folder).unwrap().len() == 2
+    })
+    .await;
+    let root = Arc::new(connect_root(&laptop, &p.laptop).await);
+    laptop.set_freer(folder, Some(Arc::new(tidefell_fs_cfapi::free)));
+    for (name, data) in [("a.bin", &a), ("b.bin", &b)] {
+        let path = p.laptop.abs(name);
+        assert_eq!(&blocking(move || fs::read(path).unwrap()).await, data);
+    }
+
+    // One of them is evicted: freed where it is, not removed and made again.
+    let freed = |name: &str| {
+        !on_disk(&laptop, folder, name)
+            && is_placeholder_not_on_disk(&p.laptop.abs(name))
+            && laptop
+                .placeholders(folder)
+                .unwrap()
+                .iter()
+                .any(|(path, _)| path == name)
+    };
+    eventually("a file is freed in place", || {
+        freed("a.bin") || freed("b.bin")
+    })
+    .await;
+    let (gone, kept) = if freed("a.bin") {
+        ("a.bin", "b.bin")
+    } else {
+        ("b.bin", "a.bin")
+    };
+    assert!(on_disk(&laptop, folder, kept));
+    let reconciled = {
+        let root = root.clone();
+        blocking(move || root.changed().unwrap()).await
+    };
+    assert_eq!(reconciled.made, 0, "the placeholder was not made again");
+    assert!(laptop.path_problems(folder).unwrap().is_empty());
+
+    // Read again, it fills again.
+    let path = p.laptop.abs(gone);
+    let data = blocking(move || fs::read(path).unwrap()).await;
+    assert_eq!(&data, if gone == "a.bin" { &a } else { &b });
+    laptop.set_freer(folder, None);
+    let root = Arc::try_unwrap(root).ok().unwrap();
+    blocking(move || root.unregister().unwrap()).await;
+}
+
+/// A file of the engine's is made in sync only while it is the file the engine recorded: one
+/// moved over it with the same size and modification time is not (ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_moved_over_one_recorded_is_not_made_in_sync() {
+    let p = pair(150);
+    let (nas, laptop) = (p.nas.start().await, p.laptop.start().await);
+    laptop.connect(nas.addr()).await.unwrap();
+    let folder = p.laptop.folder;
+    let root = Arc::new(connect_root(&laptop, &p.laptop).await);
+    p.laptop.write("mine.txt", b"one version");
+    laptop.scan(folder).await.unwrap();
+    assert!(on_disk(&laptop, folder, "mine.txt"));
+
+    let abs = p.laptop.abs("mine.txt");
+    let modified = fs::metadata(&abs).unwrap().modified().unwrap();
+    let other = p.laptop.abs("other.tmp");
+    fs::write(&other, b"two version").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&other)
+        .unwrap()
+        .set_modified(modified)
+        .unwrap();
+    fs::rename(&other, &abs).unwrap();
+    let reconciled = {
+        let root = root.clone();
+        blocking(move || root.changed().unwrap()).await
+    };
+    assert_eq!(reconciled.in_sync, 0, "not the file recorded");
+
+    // Once scanned, it is.
+    laptop.scan(folder).await.unwrap();
+    let reconciled = {
+        let root = root.clone();
+        blocking(move || root.changed().unwrap()).await
+    };
+    assert_eq!(reconciled.in_sync, 1);
+    let root = Arc::try_unwrap(root).ok().unwrap();
+    blocking(move || root.unregister().unwrap()).await;
+}
+
 /// A sync root dropped on the runtime's own thread, as a daemon drops one when a folder is
 /// removed, while another root of the process is filling: the fill finishes and the engines
 /// stay connected (ADR 0042).

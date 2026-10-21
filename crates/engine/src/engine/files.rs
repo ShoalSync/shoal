@@ -30,6 +30,12 @@ impl Engine {
                     executable,
                 } => {
                     let path = state.meta.disk_path(&v.entry).unwrap_or(v.path);
+                    // On disk at its place, as this device tells names apart (ADR 0033).
+                    let here = state
+                        .local
+                        .with_entry(&v.entry)
+                        .find(|(p, l)| state.same_place(p, path) && l.content == *content)
+                        .map(|(_, l)| l);
                     Some(FileInfo {
                         entry: v.entry,
                         path: path.to_owned(),
@@ -37,11 +43,8 @@ impl Engine {
                         size: *size,
                         modified_ms: v.modified_ms,
                         executable: *executable,
-                        // On disk at its place, as this device tells names apart (ADR 0033).
-                        on_disk: state
-                            .local
-                            .with_entry(&v.entry)
-                            .any(|(p, l)| state.same_place(p, path) && l.content == *content),
+                        on_disk: here.is_some(),
+                        file_id: here.map_or(0, |l| l.inode),
                         conflicts: state.meta.open_conflicts(&v.entry).count(),
                         author: v.author(),
                         author_name: names
@@ -169,6 +172,17 @@ impl Engine {
             sink,
         )
         .await
+    }
+
+    /// Has eviction in `folder` free files in place with `freer`, rather than remove them, or
+    /// remove them again for `None`: a Windows sync root's files are dehydrated, so they stay
+    /// where they are as online-only (ADR 0042).
+    pub fn set_freer(&self, folder: FolderId, freer: Option<crate::Freer>) {
+        let mut freers = self.inner.freers.lock().unwrap();
+        match freer {
+            Some(freer) => freers.insert(folder, freer),
+            None => freers.remove(&folder),
+        };
     }
 
     /// Records that a placeholder of the live file at `path` is there, showing the version

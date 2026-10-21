@@ -116,6 +116,7 @@ async fn run(
         }
     }
     for (folder, root) in roots.connected.drain() {
+        engine.set_freer(folder, None);
         disconnect(folder, root, false).await;
     }
 }
@@ -145,6 +146,7 @@ impl Roots {
         for folder in gone {
             let removed = !folders.iter().any(|f| f.id == folder);
             if let Some(root) = self.connected.remove(&folder) {
+                engine.set_freer(folder, None);
                 disconnect(folder, root, removed).await;
             }
         }
@@ -176,6 +178,8 @@ impl Roots {
                 Ok(root) => {
                     tracing::info!(folder = %folder, root = %root.root().display(), "sync root connected");
                     self.refused.remove(&folder);
+                    // Eviction dehydrates, leaving the file online-only where it is.
+                    engine.set_freer(folder, Some(Arc::new(tidefell_fs_cfapi::free)));
                     self.connected.insert(folder, root);
                 }
                 Err(reason) => {

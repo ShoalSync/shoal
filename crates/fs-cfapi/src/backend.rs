@@ -22,6 +22,8 @@ pub struct FileEntry {
     pub on_disk: bool,
     /// Whether it is pinned on this device.
     pub pinned: bool,
+    /// Its NTFS file ID as the engine last saw it on disk; 0 if not on disk or not known.
+    pub file_id: u64,
 }
 
 /// Why a backend operation failed.
@@ -107,6 +109,7 @@ impl Backend for EngineFolder {
                 modified_ms: f.modified_ms,
                 on_disk: f.on_disk,
                 pinned: f.pinned,
+                file_id: f.file_id,
             })
             .collect())
     }

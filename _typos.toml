@@ -12,5 +12,5 @@ extend-ignore-re = [
 Pn = "Pn"
 
 [files]
-# Vendored, minified code.
-extend-exclude = ["*.min.js"]
+# Vendored code: minified, or another project's copied as published.
+extend-exclude = ["*.min.js", "third_party/"]

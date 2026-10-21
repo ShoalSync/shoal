@@ -162,6 +162,8 @@ pub(crate) struct Inner {
     pub(crate) store: Mutex<BlockStore>,
     /// Contents being downloaded, whose chunks the block store keeps until they are written.
     pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
+    /// How each folder whose files another component places frees one in place (ADR 0042).
+    pub(crate) freers: Mutex<HashMap<FolderId, crate::Freer>>,
     /// Chunk requests waiting to go to each peer together (ADR 0032).
     pub(crate) batches: Arc<crate::batch::Batches>,
     /// Whether each peer said it is a full replica of each folder, and when (ADR 0032).
@@ -828,6 +830,7 @@ impl Engine {
             floors: crate::space::Floors::new(config.min_free_space),
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
+            freers: Mutex::new(HashMap::new()),
             batches: Arc::default(),
             full_replicas: Mutex::default(),
             replica_query: tokio::sync::Mutex::default(),

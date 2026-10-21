@@ -305,6 +305,9 @@ pub struct FileInfo {
     pub only_here: bool,
     /// Pinned on this device (ADR 0029): kept on disk and never evicted.
     pub pinned: bool,
+    /// The file's ID on disk as last scanned, its inode or NTFS file ID; 0 if not on disk or
+    /// not known.
+    pub file_id: u64,
 }
 
 /// A full replica that confirmed holding a file's content (ADR 0022).

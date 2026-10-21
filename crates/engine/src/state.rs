@@ -1067,6 +1067,26 @@ impl FolderState {
         disk == path || self.folding().fold(disk) == self.folding().fold(path)
     }
 
+    /// Records the file at `rel` freed in place: the placeholder left stands for it, and its
+    /// going would be the file's delete (ADR 0042).
+    pub(crate) fn freed(&mut self, rel: &str) {
+        if let Some(local) = self.local.remove(rel) {
+            let base = if local.base.is_empty() {
+                self.meta.current_vector(&local.entry)
+            } else {
+                local.base
+            };
+            self.placeholders.insert(
+                rel.to_owned(),
+                Placeholder {
+                    entry: local.entry,
+                    base,
+                },
+            );
+        }
+        self.used.remove(rel);
+    }
+
     /// Where the file recorded at `path` is on disk: the name of a file already there that is
     /// at `path` as this device tells names apart, which keeps the spelling it has on disk
     /// (ADR 0033), or else `path`.

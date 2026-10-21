@@ -18,6 +18,7 @@ tidefell-engine = { workspace = true }
 tidefell-proto = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+winapi-util = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

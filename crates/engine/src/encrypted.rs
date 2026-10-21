@@ -1165,6 +1165,158 @@ pub(crate) async fn fetch_content(
     Err(last)
 }
 
+/// [`fetch_content`] without the block store, for a fill (ADR 0042's amendment): the content's
+/// chunks are fetched sealed, a `window` of bytes at a time in file order, opened in memory and
+/// handed to `sink`, checking the whole content against `content` and `size`. Nothing is read
+/// from the block store or the folder, even what is there: during a fill, opening a file can
+/// wait on that fill.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn fill_content(
+    inner: &std::sync::Arc<Inner>,
+    node: &std::sync::Arc<tidefell_net::Node>,
+    handle: &FolderHandle,
+    folder: tidefell_proto::FolderId,
+    content: tidefell_proto::ContentHash,
+    size: u64,
+    window: u64,
+    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+) -> std::result::Result<(), String> {
+    let candidates: Vec<(FolderKey, Vec<(ChunkId, u32)>)> = {
+        let state = handle.lock();
+        state
+            .sealed_chunks
+            .iter()
+            .filter(|((c, _), _)| *c == content)
+            .filter_map(|((_, key_id), list)| Some((key(&state, key_id)?, list.clone())))
+            .collect()
+    };
+    if candidates.is_empty() {
+        return Err("no version here says how this content is sealed, with a key held".into());
+    }
+    let mut last = String::new();
+    for (key, list) in candidates {
+        let mut written = false;
+        match fill_sealed(
+            inner,
+            node,
+            handle,
+            folder,
+            (content, size),
+            &key,
+            &list,
+            window,
+            sink,
+            &mut written,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            // Another key's chunks are tried only while nothing has been handed over.
+            Err(e) if !written => last = e,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last)
+}
+
+/// [`fill_content`] for the content as `key` seals it, in chunks `list`; `written` is set once
+/// anything is handed to `sink`.
+#[allow(clippy::too_many_arguments)]
+async fn fill_sealed(
+    inner: &std::sync::Arc<Inner>,
+    node: &std::sync::Arc<tidefell_net::Node>,
+    handle: &FolderHandle,
+    folder: tidefell_proto::FolderId,
+    (content, size): (tidefell_proto::ContentHash, u64),
+    key: &FolderKey,
+    list: &[(ChunkId, u32)],
+    window: u64,
+    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+    written: &mut bool,
+) -> std::result::Result<(), String> {
+    use tidefell_net::{BlobKind, BlobResult};
+    use tidefell_proto::blobs2::BlobId;
+
+    let peers: Vec<DeviceId> = node
+        .encrypted_peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&folder))
+        .map(|p| p.device())
+        .collect();
+    let mut hasher = blake3::Hasher::new();
+    let mut offset = 0u64;
+    let mut rest = list;
+    while !rest.is_empty() {
+        let mut take = 0;
+        let mut bytes = 0u64;
+        while take < rest.len() && (take == 0 || bytes + u64::from(rest[take].1) <= window) {
+            bytes += u64::from(rest[take].1);
+            take += 1;
+        }
+        let (part, after) = rest.split_at(take);
+        rest = after;
+        let mut got: Vec<Option<Vec<u8>>> = vec![None; part.len()];
+        let mut answered = false;
+        for peer in &peers {
+            let missing: Vec<usize> = (0..part.len()).filter(|i| got[*i].is_none()).collect();
+            if missing.is_empty() {
+                break;
+            }
+            let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
+                continue;
+            };
+            for batch in missing.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST) {
+                let wanted: Vec<(BlobId, BlobKind)> = batch
+                    .iter()
+                    .map(|i| (BlobId::from(part[*i].0), BlobKind::SealedChunk))
+                    .collect();
+                let Ok(results) = node.fetch_blobs(endpoint, folder, &wanted).await else {
+                    break;
+                };
+                answered = true;
+                for result in results {
+                    let BlobResult::Found(id, sealed) = result else {
+                        continue;
+                    };
+                    let chunk_id = ChunkId(id.0);
+                    // A chunk that does not open, or is not what it was asked for, is as missing.
+                    let Ok(plaintext) = key.open_chunk(&folder, &chunk_id, &sealed) else {
+                        continue;
+                    };
+                    let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
+                    record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
+                    for (i, (listed, len)) in part.iter().enumerate() {
+                        if *listed == chunk_id && plaintext.len() == *len as usize {
+                            got[i] = Some(plaintext.to_vec());
+                        }
+                    }
+                }
+            }
+        }
+        if got.iter().any(Option::is_none) {
+            if answered {
+                inner.unobtainable.lock().unwrap().insert((folder, content));
+            }
+            return Err("some of its chunks are not available from any connected device".into());
+        }
+        for data in got.into_iter().flatten() {
+            hasher.update(&data);
+            *written = true;
+            sink(offset, &data).map_err(|e| e.to_string())?;
+            offset += data.len() as u64;
+        }
+    }
+    if hasher.finalize().as_bytes() != content.as_bytes() || offset != size {
+        return Err("the content opened is not the version's".into());
+    }
+    inner
+        .unobtainable
+        .lock()
+        .unwrap()
+        .remove(&(folder, content));
+    Ok(())
+}
+
 /// [`fetch_content`] for the content as `key` seals it, in chunks `list`.
 async fn fetch_sealed(
     inner: &std::sync::Arc<Inner>,

@@ -249,6 +249,16 @@ pub enum Error {
 /// Result alias for this crate.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Frees the file at a path in place, as a Windows sync root dehydrates one (ADR 0042), if it
+/// is still the given entry's content and no other program has it open: called with its
+/// absolute path, entry and content, it returns whether it freed it. One that is not freed is
+/// removed, as in any folder.
+pub type Freer = std::sync::Arc<
+    dyn Fn(&std::path::Path, EntryId, tidefell_proto::ContentHash) -> std::io::Result<bool>
+        + Send
+        + Sync,
+>;
+
 pub(crate) fn io_err(path: impl Into<std::path::PathBuf>) -> impl FnOnce(std::io::Error) -> Error {
     let path = path.into();
     move |source| Error::Io { path, source }

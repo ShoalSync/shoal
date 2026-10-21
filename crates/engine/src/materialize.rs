@@ -572,8 +572,7 @@ pub(crate) async fn fetch_into(
     // Only a placeholder is filled, so a file recorded as on disk there was freed outside the
     // engine and not scanned since: it holds none of the content, and is the very file being
     // filled. It is not looked at, which could wait on its own filling.
-    let (root, write) = pending(handle, path)?;
-    let target = root.join(&write.path);
+    let (_, write) = pending(handle, path)?;
     {
         let mut state = handle.lock();
         if state.local.contains_key(&write.path) {
@@ -592,10 +591,23 @@ pub(crate) async fn fetch_into(
     if expected.is_some_and(|e| e != write.content) {
         return Err(Error::Unavailable(path.to_owned()));
     }
-    // An encrypted folder's content is opened into the block store (ADR 0023); it is read
-    // from there, which can wait on a fill pending (ADR 0042's amendment: not yet avoided).
+    // An encrypted folder's content comes sealed (ADR 0023), and is opened in memory too.
     if handle.lock().config.encryption.is_some() {
-        return fill_via_store(inner, node, id, handle, path, &target, &write, sink).await;
+        return crate::encrypted::fill_content(
+            inner,
+            node,
+            handle,
+            id,
+            write.content,
+            write.size,
+            FILL_WINDOW,
+            sink,
+        )
+        .await
+        .map_err(|e| {
+            debug!(path, error = %e, "cannot fill");
+            Error::Unavailable(path.to_owned())
+        });
     }
     let peers: Vec<DeviceId> = node
         .peers()
@@ -710,40 +722,6 @@ async fn fill_from_peers(
     }
     if hasher.finalize().as_bytes() != manifest.content.as_bytes() || offset != write.size {
         return Err(unavailable());
-    }
-    Ok(())
-}
-
-/// A fill through the block store, as an encrypted folder's content arrives there.
-#[allow(clippy::too_many_arguments)]
-async fn fill_via_store(
-    inner: &Arc<Inner>,
-    node: &Arc<Node>,
-    id: FolderId,
-    handle: &FolderHandle,
-    path: &str,
-    target: &Path,
-    write: &PendingWrite,
-    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
-) -> Result<()> {
-    inner.fetching.lock().unwrap().insert(write.content);
-    let _fetched = Fetching(inner, write.content);
-    let Some(manifest) = fetch_content(inner, node, handle, id, write).await? else {
-        return Err(Error::Unavailable(path.to_owned()));
-    };
-    let mut hasher = blake3::Hasher::new();
-    let mut offset = 0;
-    for chunk in &manifest.chunks {
-        let data = crate::content::read_chunk_except(inner, handle, &chunk.hash, Some(target))
-            .filter(|d| tidefell_chunker::hash_chunk(d) == chunk.hash)
-            .ok_or_else(|| Error::Unavailable(path.to_owned()))?;
-        hasher.update(&data);
-        sink(offset, &data).map_err(io_err(path))?;
-        offset += data.len() as u64;
-    }
-    if hasher.finalize().as_bytes() != manifest.content.as_bytes() || offset != write.size {
-        handle.lock().remove_manifest(&write.content);
-        return Err(Error::Unavailable(path.to_owned()));
     }
     Ok(())
 }

@@ -24,6 +24,7 @@ use cloud_filter::root::{
 use tidefell_proto::FolderId;
 
 pub use backend::{Backend, BackendError, EngineFolder, FileEntry, Sink};
+pub use ops::free;
 pub use place::unusable;
 pub use reconcile::Reconciled;
 

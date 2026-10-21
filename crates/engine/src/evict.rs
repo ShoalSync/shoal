@@ -92,27 +92,42 @@ pub(crate) fn evict(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) -> 
             debug!(folder = %id, path = %candidate.path, "keeping: no full replica holds it yet");
             continue;
         }
-        let mut state = handle.lock();
-        let Some(local) = state.local.get(&candidate.path).map(|l| l.to_file()) else {
+        let abs = root.join(&candidate.path);
+        let still = |state: &crate::state::FolderState| {
+            let local = state.local.get(&candidate.path).map(|l| l.to_file())?;
+            (local.content == candidate.content
+                && !handle.open_paths().contains(&candidate.path)
+                && !is_pinned(&state.pins, &candidate.path)
+                // Edited since the last scan otherwise; the next scan records it.
+                && unchanged(&abs, local.size, local.mtime_ns, 0))
+            .then_some(local.entry)
+        };
+        let Some(entry) = still(&handle.lock()) else {
             continue;
         };
-        if local.content != candidate.content
-            || handle.open_paths().contains(&candidate.path)
-            || is_pinned(&state.pins, &candidate.path)
-        {
-            continue;
+        // Freed in place, outside the state's lock: Windows may take its time.
+        let freer = inner.freers.lock().unwrap().get(&id).cloned();
+        let freed = freer.is_some_and(|free| {
+            free(&abs, entry, candidate.content).unwrap_or_else(|e| {
+                debug!(folder = %id, path = %candidate.path, error = %e, "cannot free in place");
+                false
+            })
+        });
+        let mut state = handle.lock();
+        if freed {
+            state.freed(&candidate.path);
+            info!(folder = %id, path = %candidate.path, "evicted, freed in place");
+        } else {
+            if still(&state).is_none() {
+                continue;
+            }
+            let _ = fs::remove_file(&abs);
+            state.local.remove(&candidate.path);
+            state.used.remove(&candidate.path);
+            info!(folder = %id, path = %candidate.path, "evicted");
         }
-        let abs = root.join(&candidate.path);
-        if !unchanged(&abs, local.size, local.mtime_ns, 0) {
-            // Edited since the last scan; the next scan records it.
-            continue;
-        }
-        let _ = fs::remove_file(&abs);
-        state.local.remove(&candidate.path);
-        state.used.remove(&candidate.path);
         usage = usage.saturating_sub(candidate.size);
         evicted = true;
-        info!(folder = %id, path = %candidate.path, "evicted");
         drop(state);
         inner.emit(Event::FileRemoved {
             folder: id,

@@ -20,6 +20,7 @@ struct Member {
     root: PathBuf,
     data: PathBuf,
     key: DeviceKey,
+    mode: ReplicaMode,
 }
 
 impl Member {
@@ -28,6 +29,7 @@ impl Member {
             root: dir.join(name).join("folder"),
             data: dir.join(name).join("data"),
             key: DeviceKey::from_seed([seed; 32]),
+            mode: ReplicaMode::Full,
         }
     }
 
@@ -65,7 +67,7 @@ impl Member {
             folders: vec![FolderConfig {
                 id: FOLDER,
                 path: self.root.clone(),
-                mode: ReplicaMode::Full,
+                mode: self.mode,
                 members: members.to_vec(),
                 retention: Retention::Days(30),
                 scan_interval: Duration::from_secs(3600),
@@ -166,6 +168,66 @@ async fn members_sync_an_encrypted_folders_metadata() {
 
     engine_b.shutdown().await;
     engine_a.shutdown().await;
+}
+
+/// A partial replica's fill, as a Windows sync root's, of an encrypted folder: its content is
+/// fetched sealed, opened and handed over without placing the file (ADR 0042's amendment).
+#[tokio::test(flavor = "multi_thread")]
+async fn an_encrypted_folders_content_is_fetched_without_being_placed() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([16; 32]);
+    let a = Member::new(dir.path(), "a", 130);
+    let mut b = Member::new(dir.path(), "b", 131);
+    b.mode = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let big: Vec<u8> = (0..3 * 1024 * 1024u32)
+        .map(|i| (i * 13 % 251) as u8)
+        .collect();
+    a.write("big.bin", &big);
+    a.write("small.txt", b"sealed and small");
+    let (id_a, id_b) = (a.key.id(), b.key.id());
+    let engine_a = a.start(&user, &network, &[id_b]).await;
+    let engine_b = b.start(&user, &network, &[id_a]).await;
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually("b lists a's files", || {
+        paths(&engine_b) == ["big.bin", "small.txt"]
+    })
+    .await;
+
+    for (path, want) in [
+        ("big.bin", big.as_slice()),
+        ("small.txt", b"sealed and small"),
+    ] {
+        let mut got = Vec::new();
+        engine_b
+            .fetch(FOLDER, path, None, &mut |offset, data| {
+                assert_eq!(offset, got.len() as u64);
+                got.extend_from_slice(data);
+                Ok(())
+            })
+            .await
+            .unwrap();
+        assert_eq!(got, want, "{path}");
+        assert!(b.read(path).is_none(), "{path} is not placed");
+    }
+
+    // With no member to fetch from, it is not available.
+    engine_a.shutdown().await;
+    let mut wrote = false;
+    let gone = engine_b
+        .fetch(FOLDER, "small.txt", None, &mut |_, _| {
+            wrote = true;
+            Ok(())
+        })
+        .await;
+    assert!(
+        matches!(gone, Err(tidefell_engine::Error::Unavailable(_))),
+        "{gone:?}"
+    );
+    assert!(!wrote);
+    engine_b.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

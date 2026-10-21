@@ -598,21 +598,7 @@ pub(crate) fn scan(
         // Freed outside the engine, as by Explorer's "Free up space": the placeholder left
         // stands for the file, and going would be its delete (ADR 0042).
         debug!(path = %rel, "freed up outside the engine");
-        if let Some(local) = state.local.remove(&rel) {
-            let base = if local.base.is_empty() {
-                state.meta.current_vector(&local.entry)
-            } else {
-                local.base
-            };
-            state.placeholders.insert(
-                rel.clone(),
-                crate::state::Placeholder {
-                    entry: local.entry,
-                    base,
-                },
-            );
-        }
-        state.used.remove(&rel);
+        state.freed(&rel);
     }
     let mut index_changed = false;
     let mut conflicts = Vec::new();

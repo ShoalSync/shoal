@@ -186,8 +186,9 @@ pub(crate) fn update(path: &Path, file: &FileEntry) -> io::Result<()> {
 
 /// Makes the file the engine has at `path`, `file`'s current version, an in-sync placeholder,
 /// so it shows as on this device and can be freed. Only while no other program has it open,
-/// and only if it is still what the engine recorded: in-sync tells Windows the data is
-/// elsewhere too, and it may free it. Returns false, leaving it, otherwise.
+/// and only if it is still what the engine recorded, the same file with the same size and
+/// modification time: in-sync tells Windows the data is elsewhere too, and it may free it.
+/// Returns false, leaving it, otherwise.
 pub(crate) fn make_in_sync(path: &Path, file: &FileEntry) -> io::Result<bool> {
     // Shared with no one while it is checked and converted.
     let handle = match fs::OpenOptions::new()
@@ -208,6 +209,10 @@ pub(crate) fn make_in_sync(path: &Path, file: &FileEntry) -> io::Result<bool> {
     if meta.len() != file.size || modified_ms != file.modified_ms {
         return Ok(false);
     }
+    // Another file moved there, with the same size and time.
+    if file.file_id != 0 && winapi_util::file::information(&handle)?.file_index() != file.file_id {
+        return Ok(false);
+    }
     let blob = blob(file.entry, file.content);
     let mut placeholder = Placeholder::from(handle);
     match placeholder.info().map_err(io::Error::other)? {
@@ -219,6 +224,39 @@ pub(crate) fn make_in_sync(path: &Path, file: &FileEntry) -> io::Result<bool> {
             .map(drop),
     }
     .map_err(io::Error::other)?;
+    Ok(true)
+}
+
+/// Frees the file at `path` in place, leaving its dehydrated placeholder, if it is the in-sync
+/// placeholder of `entry`'s `content` and no other program has it open. Returns whether it did:
+/// in sync, Windows has kept it unchanged since it was made so.
+pub fn free(path: &Path, entry: EntryId, content: ContentHash) -> io::Result<bool> {
+    // Shared with no one while it is checked and freed.
+    let handle = match fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .share_mode(0)
+        .open(path)
+    {
+        Ok(handle) => handle,
+        Err(e) if e.raw_os_error() == Some(32) => return Ok(false), // ERROR_SHARING_VIOLATION
+        Err(e) => return Err(e),
+    };
+    let mut placeholder = Placeholder::from(handle);
+    let shows = placeholder
+        .info()
+        .map_err(io::Error::other)?
+        .is_some_and(|info| {
+            info.is_in_sync()
+                && info.pin_state() != PinState::Pinned
+                && read_blob(info.blob()) == Some((entry, content))
+        });
+    if !shows {
+        return Ok(false);
+    }
+    placeholder
+        .update(UpdateOptions::default().dehydrate(), None)
+        .map_err(io::Error::other)?;
     Ok(true)
 }
 

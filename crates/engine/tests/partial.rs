@@ -794,3 +794,78 @@ async fn most_placeholders_gone_at_once_are_held() {
     engine_nas.shutdown().await;
     engine_laptop.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn eviction_frees_in_place_where_a_freer_is_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 40, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        41,
+        &alice,
+        ReplicaMode::Partial { budget_bytes: 25 },
+    );
+    nas.write("a.txt", b"aaaaaaaaaa");
+    nas.write("b.txt", b"bbbbbbbbbb");
+    nas.write("c.txt", b"cccccccccc");
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("the laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 3
+    })
+    .await;
+
+    // Frees a.txt, as a sync root would dehydrate it, and refuses anything else.
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    engine_laptop.set_freer(
+        FOLDER,
+        Some(std::sync::Arc::new({
+            let asked = asked.clone();
+            move |path: &Path, entry, content| {
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                asked.lock().unwrap().push((name.clone(), entry, content));
+                Ok(name == "a.txt")
+            }
+        })),
+    );
+    assert_eq!(touch(&engine_laptop, "a.txt").await, b"aaaaaaaaaa");
+    assert_eq!(touch(&engine_laptop, "b.txt").await, b"bbbbbbbbbb");
+    let a = engine_laptop
+        .files(FOLDER)
+        .unwrap()
+        .into_iter()
+        .find(|f| f.path == "a.txt")
+        .unwrap();
+    assert_eq!(touch(&engine_laptop, "c.txt").await, b"cccccccccc");
+
+    // a.txt, the least recently used, was freed: left where it is, recorded as a placeholder.
+    assert_eq!(
+        asked.lock().unwrap().as_slice(),
+        &[("a.txt".to_owned(), a.entry, a.content)]
+    );
+    assert!(!on_disk(&engine_laptop, "a.txt"));
+    assert!(
+        laptop.read("a.txt").is_some(),
+        "freed in place, not removed"
+    );
+    assert!(engine_laptop
+        .placeholders(FOLDER)
+        .unwrap()
+        .iter()
+        .any(|(path, _)| path == "a.txt"));
+
+    // One the freer does not free is removed, as without one.
+    engine_laptop.set_freer(FOLDER, None);
+    fs::remove_file(laptop.root().join("a.txt")).unwrap();
+    engine_laptop.placeholder_gone(FOLDER, "a.txt").unwrap();
+    assert_eq!(touch(&engine_laptop, "a.txt").await, b"aaaaaaaaaa");
+    assert!(laptop.read("b.txt").is_none());
+    assert!(!on_disk(&engine_laptop, "b.txt"));
+
+    engine_laptop.shutdown().await;
+    engine_nas.shutdown().await;
+}

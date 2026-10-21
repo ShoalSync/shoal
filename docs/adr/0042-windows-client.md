@@ -174,6 +174,8 @@ done without unsafe code:
   remains in `notify` 8: a watch whose buffer overflows with `ERROR_NOTIFY_ENUM_DIR` is
   dropped without an event, so changes would wait for the hourly full scan. `notify` 9 turns
   that into a rescan; until it is released, step 6 adds a check that the watch is still alive.
+  (As built in step 6: `notify` 8 is patched in `third_party/notify` with notify 9's
+  handling, so an overflow in either form is a rescan and the watch is kept.)
 - **Logs** need nothing: no journal is detected, so they go to the data directory's files.
 - **Allocator settings.** The allocator reads them as the process loads, before any code of
   ours runs, and changing them in the process takes an unsafe call. So the tray app (step 7)
@@ -319,15 +321,18 @@ What the runs taught:
     looks at files only through their attributes.
   - Not yet avoided: an encrypted folder's fill still reads through the block store, where
     its content is opened (ADR 0023). Before such a folder is a sync root, its opened chunks
-    must reach the fill in memory too.
+    must reach the fill in memory too. (Done in step 6: its sealed chunks are fetched a window
+    at a time, opened in memory and handed over, never stored or read back.)
   - What came first, and stays: a process-wide lock keeps fills' writes to Windows apart from
     connecting, disconnecting and asking the sync root manager. Tried first, it was not the
     cause, but it keeps a safe order.
 - **Not yet done.**
   - **Eviction:** the engine's own eviction still removes a file, and the reconciler then makes
-    its placeholder again. Dehydrating in place is for step 6, with the daemon's wiring.
+    its placeholder again. Dehydrating in place is for step 6, with the daemon's wiring (done:
+    see the daemon's amendment).
   - **Making a file in sync** compares its size and modification time with the engine's, not
-    yet its file ID.
+    yet its file ID. (Done in step 6: the engine's files carry the file ID last scanned, and a
+    file moved over the one recorded, with the same size and time, is left until scanned.)
 
 ## Amendment: the daemon's sync roots (2026-10-21)
 
@@ -346,6 +351,13 @@ What the runs taught:
   kind is not looked up: Windows refuses to register a root it cannot keep placeholders on,
   with its reason. Refusing such a folder when it is added is left to the tray app's adding of
   folders (step 7).
+- **Eviction dehydrates in place.** The engine takes a per-folder hook that frees a file in
+  place; the daemon sets `fs-cfapi`'s for each root it connects and clears it before
+  disconnecting. Eviction makes its usual checks under the folder's lock, then calls the hook
+  outside it: the file, opened shared with no one, is dehydrated only if it is the in-sync,
+  unpinned placeholder of the version the engine evicts, and the engine then records its
+  placeholder, as for a file freed in Explorer. A file not freed (open elsewhere, not yet in
+  sync) is removed as before, and the reconciler makes its placeholder.
 - **Stopping without a signal.** Windows has no signal another program can send a console
   process, so the control API gains `POST /v1/shutdown`, which stops the daemon as a signal
   does; the tray app uses it, as the daemon's test does. Ctrl-C, Ctrl-Break and closing the
