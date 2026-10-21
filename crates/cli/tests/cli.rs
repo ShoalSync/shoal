@@ -56,7 +56,10 @@ impl Device {
         let socket = tidefell_sdk::Client::socket_path(&data);
         tokio::spawn({
             let (engine, socket) = (engine.clone(), socket.clone());
-            let options = tidefell_api::Options { user_key };
+            let options = tidefell_api::Options {
+                user_key,
+                ..Default::default()
+            };
             async move { tidefell_api::serve_local_with(engine, &socket, options).await }
         });
         let client = tidefell_sdk::Client::local(&socket);

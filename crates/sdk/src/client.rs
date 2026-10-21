@@ -229,6 +229,11 @@ impl Client {
         }
     }
 
+    /// Asks the daemon to stop. It answers first, then stops as on a signal.
+    pub async fn shutdown(&self) -> Result<(), Error> {
+        self.call(Method::POST, "/v1/shutdown", None::<&()>).await
+    }
+
     /// Resumes syncing of `folder`, or of the whole device if `None`.
     pub async fn resume(&self, folder: Option<&str>) -> Result<(), Error> {
         match folder {

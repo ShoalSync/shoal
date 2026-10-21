@@ -910,14 +910,14 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    0042's amendments and tested on the runner. Still to look into: a change on Windows is
    sometimes seen only after 9-12 s rather than within 2 (`watching.rs`, intermittent since
    step 3).
-6. **The daemon on Windows.** Partial folders as sync roots, started and stopped with the
-   daemon, reconciled on the engine's events as the FUSE mount refreshes; an encrypted
-   folder's fill that opens no file, as an unencrypted one's (ADR 0042's amendment); eviction that
-   dehydrates in place rather than removing; a folder restarted with the blocking
-   `SyncRoot::disconnect` off the runtime, and every root disconnected before the engine
-   shuts down (a dropped root's disconnect is detached); making a file in sync checks its
-   file ID too; console use for development; a watch dropped on overflow noticed (or `notify` 9,
-   which reports it; ADR 0042's file-semantics amendment).
+6. **The daemon on Windows.** In progress: partial folders are sync roots, connected and
+   disconnected with the daemon and as folders are added and removed, reconciled on the
+   engine's events as the FUSE mount refreshes, and every root disconnected before the engine
+   shuts down; `POST /v1/shutdown` stops the daemon where no signal can (ADR 0042's
+   amendment). Still to do: an encrypted folder's fill that opens no file, as an unencrypted
+   one's (ADR 0042's amendment); eviction that dehydrates in place rather than removing;
+   making a file in sync checks its file ID too; a watch dropped on overflow noticed (or
+   `notify` 9, which reports it; ADR 0042's file-semantics amendment).
 7. **Tray app.** Starting and supervising the daemon, with the allocator settings in its
    environment; status, folders, pause, pairing.
 8. **Installer and release.** The installer the spike settled, and a zip, as release assets,

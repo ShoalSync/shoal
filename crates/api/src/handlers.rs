@@ -103,6 +103,7 @@ type AppState = State<Arc<Engine>>;
         set_limits,
         pause,
         resume,
+        shutdown,
         pause_folder,
         resume_folder
     ),
@@ -1231,6 +1232,25 @@ pub(crate) async fn set_limits(
 pub(crate) async fn pause(State(engine): AppState) -> ApiResult<StatusCode> {
     engine.pause(None)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Stops the daemon, as a signal does: it answers, then finishes what it is doing and exits.
+#[utoipa::path(post, path = "/v1/shutdown", tag = "device",
+    responses((status = 202), (status = 400, body = ApiError)))]
+pub(crate) async fn shutdown(
+    State(shutdown): State<Option<Arc<tokio::sync::Notify>>>,
+) -> ApiResult<StatusCode> {
+    let Some(shutdown) = shutdown else {
+        return Err(ApiFailure(
+            StatusCode::BAD_REQUEST,
+            ApiError {
+                kind: ErrorKind::BadRequest,
+                message: "this server cannot be stopped through the API".into(),
+            },
+        ));
+    };
+    shutdown.notify_one();
+    Ok(StatusCode::ACCEPTED)
 }
 
 /// Resumes syncing of the whole device. Folders paused on their own stay paused.

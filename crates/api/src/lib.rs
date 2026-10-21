@@ -27,17 +27,27 @@ pub use handlers::ApiDoc;
 pub struct Options {
     /// The user key, if this device holds it; required to approve pairings (ADR 0015).
     pub user_key: Option<UserKey>,
+    /// Notified when a client asks the daemon to stop, as the Windows tray app does; without
+    /// it, `POST /v1/shutdown` is refused.
+    pub shutdown: Option<Arc<tokio::sync::Notify>>,
 }
 
 #[derive(Clone)]
 pub(crate) struct ApiState {
     engine: Arc<Engine>,
     pairings: Arc<pairing::Pairings>,
+    shutdown: Option<Arc<tokio::sync::Notify>>,
 }
 
 impl FromRef<ApiState> for Arc<Engine> {
     fn from_ref(state: &ApiState) -> Self {
         state.engine.clone()
+    }
+}
+
+impl FromRef<ApiState> for Option<Arc<tokio::sync::Notify>> {
+    fn from_ref(state: &ApiState) -> Self {
+        state.shutdown.clone()
     }
 }
 
@@ -57,6 +67,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
     let state = ApiState {
         engine,
         pairings: Arc::new(pairing::Pairings::new(options.user_key)),
+        shutdown: options.shutdown,
     };
     Router::new()
         .route("/v1/status", get(handlers::status))
@@ -160,6 +171,7 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
         )
         .route("/v1/pause", post(handlers::pause))
         .route("/v1/resume", post(handlers::resume))
+        .route("/v1/shutdown", post(handlers::shutdown))
         .route("/v1/folders/{id}/pause", post(handlers::pause_folder))
         .route("/v1/folders/{id}/resume", post(handlers::resume_folder))
         .route("/v1/crashes/dismiss", post(handlers::dismiss_crashes))

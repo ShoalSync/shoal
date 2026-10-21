@@ -456,10 +456,14 @@ async fn control_api_end_to_end() {
         "/v1/diagnostics",
         "/v1/folders/{id}/resolve",
         "/v1/folders/{id}/versions/open",
+        "/v1/shutdown",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }
     assert!(doc["components"]["schemas"]["NewFolder"].is_object());
+
+    // A server given no way to stop refuses to.
+    assert_eq!(api_error(client.shutdown().await), ErrorKind::BadRequest);
 
     events.abort();
     server.abort();

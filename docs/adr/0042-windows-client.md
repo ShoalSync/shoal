@@ -329,6 +329,28 @@ What the runs taught:
   - **Making a file in sync** compares its size and modification time with the engine's, not
     yet its file ID.
 
+## Amendment: the daemon's sync roots (2026-10-21)
+
+- **One task owns every root.** `tidefelld` connects each partial folder as a sync root when it
+  starts and as folders are added, and makes a root's placeholders match its folder on the
+  engine's events, as a FUSE mount is refreshed. A folder removed is disconnected and its
+  registration removed, so Explorer stops showing it; a folder whose root is unavailable is
+  disconnected only. Folders are looked at again each minute too, for a root back after its
+  drive was away or one refused before.
+- **Stopping disconnects first.** Each root is disconnected, waiting for the callbacks in
+  flight, before the engine shuts down; none is left to a dropped root's detached disconnect.
+- **A folder that cannot be a sync root still syncs**, as a partial replica without
+  placeholders, and the reason is logged once: one inside a hidden or system folder, on a
+  network share, or inside or around another sync root, another provider's or another
+  Tidefell folder's (the registration of the folder itself does not count). The volume's
+  kind is not looked up: Windows refuses to register a root it cannot keep placeholders on,
+  with its reason. Refusing such a folder when it is added is left to the tray app's adding of
+  folders (step 7).
+- **Stopping without a signal.** Windows has no signal another program can send a console
+  process, so the control API gains `POST /v1/shutdown`, which stops the daemon as a signal
+  does; the tray app uses it, as the daemon's test does. Ctrl-C, Ctrl-Break and closing the
+  console stop a daemon run by hand.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

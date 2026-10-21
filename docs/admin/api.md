@@ -9,6 +9,8 @@ scripted against the API.
   `tidefell-api-X.Y.Z.openapi.json`.
 - `GET /v1/events` is a stream of server-sent events: folders added, removed or changed, and
   files written to or removed from disk.
+- `POST /v1/shutdown` stops the daemon as a signal would, for the Windows tray app, which has
+  no signal to send.
 - Errors are JSON objects with a `kind` (`bad_request`, `not_found`, `conflict` or `internal`)
   and a `message`.
 

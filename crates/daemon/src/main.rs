@@ -6,6 +6,8 @@ static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
 mod config;
 #[cfg(target_os = "linux")]
 mod mounts;
+#[cfg(windows)]
+mod sync_roots;
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -407,7 +409,8 @@ fn read_config(path: &Path) -> Result<config::Config, String> {
     config::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Ctrl-C, or SIGTERM from a service manager.
+/// Ctrl-C, or SIGTERM from a service manager; on Windows also Ctrl-Break, and the console
+/// closing, which leaves a few seconds to stop.
 async fn shutdown_signal() {
     #[cfg(unix)]
     {
@@ -416,6 +419,18 @@ async fn shutdown_signal() {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = term.recv() => {}
+            }
+            return;
+        }
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows::{ctrl_break, ctrl_close};
+        if let (Ok(mut ctrl_break), Ok(mut close)) = (ctrl_break(), ctrl_close()) {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = ctrl_break.recv() => {}
+                _ = close.recv() => {}
             }
             return;
         }
@@ -443,6 +458,8 @@ async fn run(path: &Path) -> Result<(), String> {
     engine.set_report_url(config.report_url.clone());
     #[cfg(target_os = "linux")]
     let mounts = mounts::Mounts::start(&engine, config.mounts()?)?;
+    #[cfg(windows)]
+    let sync_roots = sync_roots::SyncRoots::start(&engine);
 
     let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
     // A user key next to the device key lets this daemon approve pairings (ADR 0015).
@@ -455,10 +472,13 @@ async fn run(path: &Path) -> Result<(), String> {
     } else {
         None
     };
+    // `POST /v1/shutdown`, as the Windows tray app asks, where there is no signal to send.
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let api = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
         let options = tidefell_api::Options {
             user_key: user_key.clone(),
+            shutdown: Some(shutdown.clone()),
         };
         async move { tidefell_api::serve_local_with(engine, &socket, options).await }
     });
@@ -503,15 +523,22 @@ async fn run(path: &Path) -> Result<(), String> {
             tracing::info!("shutting down");
             None
         }
+        () = shutdown.notified() => {
+            tracing::info!("shutting down, as asked through the API");
+            None
+        }
         result = api => Some(describe("control API", result)),
         result = web => Some(describe("web peer", result)),
         result = metrics => Some(describe("metrics", result)),
         // A panic in an engine task: exit so the service manager restarts from saved state.
         Some(message) = engine.failed() => Some(message),
     };
-    // Unmount first: mounts hold the engine and would otherwise be left stale.
+    // Unmount first: mounts and sync roots hold the engine and would otherwise be left stale.
     #[cfg(target_os = "linux")]
     mounts.stop().await;
+    // Disconnecting waits for the callbacks in flight, which call into the engine.
+    #[cfg(windows)]
+    sync_roots.stop().await;
     if let Some(failure) = failure {
         return Err(failure);
     }

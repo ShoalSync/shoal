@@ -9,6 +9,7 @@
 
 mod backend;
 mod ops;
+mod place;
 mod provider;
 mod reconcile;
 
@@ -23,6 +24,7 @@ use cloud_filter::root::{
 use tidefell_proto::FolderId;
 
 pub use backend::{Backend, BackendError, EngineFolder, FileEntry, Sink};
+pub use place::unusable;
 pub use reconcile::Reconciled;
 
 /// The provider's name, as Windows lists it.
