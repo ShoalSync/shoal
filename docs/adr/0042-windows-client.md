@@ -349,8 +349,9 @@ What the runs taught:
   network share, or inside or around another sync root, another provider's or another
   Tidefell folder's (the registration of the folder itself does not count). The volume's
   kind is not looked up: Windows refuses to register a root it cannot keep placeholders on,
-  with its reason. Refusing such a folder when it is added is left to the tray app's adding of
-  folders (step 7).
+  with its reason. Refusing such a folder when it is added is not done: the tray app adds no
+  folders (they are added with the CLI and the web peer), so the daemon's log is where the
+  reason shows.
 - **Eviction dehydrates in place.** The engine takes a per-folder hook that frees a file in
   place; the daemon sets `fs-cfapi`'s for each root it connects and clears it before
   disconnecting. Eviction makes its usual checks under the folder's lock, then calls the hook
@@ -362,6 +363,35 @@ What the runs taught:
   process, so the control API gains `POST /v1/shutdown`, which stops the daemon as a signal
   does; the tray app uses it, as the daemon's test does. Ctrl-C, Ctrl-Break and closing the
   console stop a daemon run by hand.
+
+## Amendment: the tray app (2026-10-21)
+
+- **Toolkit: `native-windows-gui`.** The tray needs a notification-area icon, a menu, message
+  boxes and, to approve another device's pairing code, a window with a text box, all without
+  unsafe code of ours. `native-windows-gui` has every one of them and its own message loop, and
+  brings only `winapi` (already a dependency), `bitflags` 1 and `lazy_static`; its last release
+  is from 2022, but it wraps a Win32 API that does not change. The alternatives were
+  `tray-icon` and `muda` with `winit`'s event loop, which have no text box (a webview or
+  `egui` would add one, at many times the size), and `slint`, a whole toolkit. A test on the
+  Windows runner brings the icon up in the runner's session and quits.
+- **The UI thread only shows.** A supervisor runs on a thread of its own, with the runtime that
+  talks to the daemon, and wakes the UI with a notice. What the icon's tooltip and menu say
+  comes from a platform-neutral function of the daemon's status and folders, and the
+  supervisor is platform-neutral too: both are tested on Linux against a real `tidefelld`.
+- **Supervising.** The daemon is `tidefelld.exe` beside the tray, run with the configuration
+  `tidefelld.toml` in the data directory (`%LOCALAPPDATA%\Tidefell` unless
+  `TIDEFELL_DATA_DIR` says otherwise, as for the CLI), with the allocator settings in its
+  environment and no console window. A daemon already answering on the control pipe, as one
+  started by hand, is used as it is. One that stops unasked is started again, waiting longer
+  each time, until it has failed five times in two minutes; the tray then shows why, from what
+  the daemon wrote to its standard error (kept in `tidefelld.stderr.log` in the data
+  directory), and offers to start it again.
+- **Quitting** stops the daemon with `POST /v1/shutdown` and waits for it, so it disconnects
+  its sync roots first; the tray never kills it. A daemon started by hand that the tray is
+  using stops too.
+- **First, the menu:** what the daemon is doing, each folder (opened in Explorer), pausing and
+  resuming, and quitting. Setting up a device (`init` or pairing as a new device) and
+  approving another device follow.
 
 ## Consequences
 

@@ -917,8 +917,10 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    in place; an encrypted folder's fill opens no file, as an unencrypted one's; making a file
    in sync checks its file ID too; and a watch's overflow is a rescan, with `notify` 8 patched
    as notify 9 does it (ADR 0042's amendments).
-7. **Tray app.** Starting and supervising the daemon, with the allocator settings in its
-   environment; status, folders, pause, pairing.
+7. **Tray app.** In progress (ADR 0042's amendment): `tidefell-tray` starts and supervises the
+   daemon, with the allocator settings in its environment, and shows its status and folders,
+   opens them, pauses and resumes, and quits. Still to do: setting up a device (as the first
+   one, or pairing as a new one) and approving another device.
 8. **Installer and release.** The installer the spike settled, and a zip, as release assets,
    built on a release-only Windows runner and signed with cosign; Authenticode decided first.
 9. **Exit criterion.** On the Windows runner: a partial replica pairs with a Linux daemon,
