@@ -12,8 +12,11 @@ The commit that vendored it changed nothing. Every change since is one of the pa
 
 Drop this copy, and the `[patch.crates-io]` entry, once a release upstream has the fixes.
 
-Upstream pull request: <https://github.com/ho-229/cloud-filter-rs/pull/11> (2026-10-20). This
-copy matches it.
+Upstream pull requests:
+- <https://github.com/ho-229/cloud-filter-rs/pull/11> (2026-10-20), fixes 1 to 6;
+- #12, #13 and #14 (2026-10-21), fixes 7, 8 and 9, one each.
+
+This copy matches them.
 
 ## Handoff: submitting the fixes upstream
 
@@ -171,7 +174,7 @@ range end index 64 out of range for slice of length 60
 The fix keeps at least the structure's size, which is zeroed past what the platform wrote, and
 slices `..size_of`.
 
-Not yet in the upstream pull request (found 2026-10-20, after it was opened).
+Upstream: <https://github.com/ho-229/cloud-filter-rs/pull/12>.
 
 ### 8. `PlaceholderInfo::blob` starts in the wrong place
 
@@ -184,7 +187,7 @@ placeholder's identity with what it should be then never matches.
 The fix slices from `offset_of!(CF_PLACEHOLDER_STANDARD_INFO, FileIdentity)` for
 `FileIdentityLength` bytes.
 
-Not yet in the upstream pull request.
+Upstream: <https://github.com/ho-229/cloud-filter-rs/pull/13>.
 
 ### 9. The state-change watcher panics when its folder goes
 
@@ -202,7 +205,7 @@ get overlapped result: Some(WIN32_ERROR(5)), expected: WIN32_ERROR(996)
 ```
 
 Only that thread ends, not the process, but the panic is noise and the watch is gone. The fix
-ends the watch quietly in each case. Not yet in the upstream pull request.
+ends the watch quietly in each case. Upstream: <https://github.com/ho-229/cloud-filter-rs/pull/14>.
 
 ## Also observed, not patched
 
