@@ -33,6 +33,7 @@ tidefell-sdk = { path = "crates/sdk" }
 tidefell-api = { path = "crates/api" }
 tidefell-web = { path = "crates/web" }
 tidefell-fs-fuse = { path = "crates/fs-fuse" }
+tidefell-fs-cfapi = { path = "crates/fs-cfapi" }
 
 # Third-party
 blake3 = "1.8"
@@ -91,6 +92,7 @@ paranoid-android = "0.2"
 # code here; and the Cloud Files API, safely wrapped.
 winapi-util = "0.1"
 cloud-filter = "0.0.6"
+nt-time = "0.8"
 
 # Dependencies, above all the Ed25519 and BLAKE3 code, are built optimised in development so
 # tests that sign and verify tens of thousands of versions run in seconds. Workspace crates

@@ -576,7 +576,7 @@ async fn content_is_fetched_without_being_placed() {
     for (path, content) in [("big.bin", &big[..]), ("small.txt", b"small".as_slice())] {
         let mut got = Vec::new();
         engine_laptop
-            .fetch(FOLDER, path, &mut |offset, data| {
+            .fetch(FOLDER, path, None, &mut |offset, data| {
                 assert_eq!(offset, got.len() as u64);
                 got.extend_from_slice(data);
                 Ok(())
@@ -589,7 +589,7 @@ async fn content_is_fetched_without_being_placed() {
     }
     assert!(matches!(
         engine_laptop
-            .fetch(FOLDER, "missing.txt", &mut |_, _| Ok(()))
+            .fetch(FOLDER, "missing.txt", None, &mut |_, _| Ok(()))
             .await,
         Err(Error::NoSuchFile(_))
     ));
@@ -661,6 +661,136 @@ async fn a_rename_already_made_on_disk_is_recorded() {
     engine_laptop.scan(FOLDER).await.unwrap();
     assert_eq!(engine_laptop.files(FOLDER).unwrap().len(), 2);
     assert!(on_disk(&engine_laptop, "papers/b.txt"));
+    engine_nas.shutdown().await;
+    engine_laptop.shutdown().await;
+}
+
+/// A recorded placeholder that is gone at a scan is a delete, as one the user deleted while the
+/// daemon was off is, and it builds on the version the placeholder showed: an edit made
+/// elsewhere since survives (ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recorded_placeholder_that_goes_is_a_delete_of_what_it_showed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 60, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        61,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    nas.write("gone.txt", b"gone");
+    nas.write("edited.txt", b"before");
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 2
+    })
+    .await;
+    let content = |e: &Engine, path: &str| {
+        e.files(FOLDER)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.path == path)
+            .unwrap()
+            .content
+    };
+    // Placeholders made for both (by the provider, on Windows) and recorded.
+    for path in ["gone.txt", "edited.txt"] {
+        engine_laptop
+            .placeholder_made(FOLDER, path, content(&engine_laptop, path))
+            .unwrap();
+    }
+    assert_eq!(engine_laptop.placeholders(FOLDER).unwrap().len(), 2);
+
+    // Edited on the NAS after the laptop's placeholder showed the earlier version, and only
+    // then both placeholders deleted on the laptop.
+    nas.write("edited.txt", b"after, on the NAS");
+    engine_nas.scan(FOLDER).await.unwrap();
+    eventually("the edit reaches the laptop's records", || {
+        engine_laptop
+            .files(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|f| f.path == "edited.txt" && f.size == 17)
+    })
+    .await;
+    engine_laptop.scan(FOLDER).await.unwrap();
+    assert!(engine_laptop.placeholders(FOLDER).unwrap().is_empty());
+
+    eventually("the NAS deletes the placeholder the laptop deleted", || {
+        nas.read("gone.txt").is_none()
+    })
+    .await;
+    // The edit survives a delete of the version before it.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        nas.read("edited.txt").as_deref(),
+        Some(b"after, on the NAS".as_slice())
+    );
+    assert!(engine_laptop
+        .files(FOLDER)
+        .unwrap()
+        .iter()
+        .any(|f| f.path == "edited.txt"));
+    engine_nas.shutdown().await;
+    engine_laptop.shutdown().await;
+}
+
+/// Most of a folder's placeholders gone at once, as when a drive's folder is wiped while the
+/// daemon is off, is held for confirmation like most of its files would be (ADR 0037, ADR 0042).
+#[tokio::test(flavor = "multi_thread")]
+async fn most_placeholders_gone_at_once_are_held() {
+    const FILES: usize = 120;
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([1; 32]);
+    let nas = Device::new(tmp.path(), "nas", 62, &alice, ReplicaMode::Full);
+    let laptop = Device::new(
+        tmp.path(),
+        "laptop",
+        63,
+        &alice,
+        ReplicaMode::Partial {
+            budget_bytes: 1 << 20,
+        },
+    );
+    for i in 0..FILES {
+        nas.write(&format!("f{i:03}.txt"), format!("file {i}").as_bytes());
+    }
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("laptop lists the files", || {
+        engine_laptop.files(FOLDER).unwrap().len() == FILES
+    })
+    .await;
+    for f in engine_laptop.files(FOLDER).unwrap() {
+        engine_laptop
+            .placeholder_made(FOLDER, &f.path, f.content)
+            .unwrap();
+    }
+    engine_laptop.scan(FOLDER).await.unwrap();
+    assert_eq!(engine_laptop.held_deletes(FOLDER).unwrap().len(), FILES);
+    assert_eq!(engine_laptop.placeholders(FOLDER).unwrap().len(), FILES);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(
+        engine_nas.files(FOLDER).unwrap().len(),
+        FILES,
+        "nothing deleted"
+    );
+
+    // Brought back: the placeholders are forgotten, for their provider to make again.
+    engine_laptop.restore_deleted(FOLDER).await.unwrap();
+    assert!(engine_laptop.held_deletes(FOLDER).unwrap().is_empty());
+    assert!(engine_laptop.placeholders(FOLDER).unwrap().is_empty());
+    engine_laptop.scan(FOLDER).await.unwrap();
+    assert_eq!(engine_nas.files(FOLDER).unwrap().len(), FILES);
     engine_nas.shutdown().await;
     engine_laptop.shutdown().await;
 }

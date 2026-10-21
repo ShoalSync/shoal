@@ -773,3 +773,463 @@ fn another_process_renames_a_folder_of_placeholders() {
     settle();
     report_calls("folder rename", &root);
 }
+
+/// Q12: what each way of reading a dehydrated placeholder's attributes says, as the engine's
+/// scanner reads them (a handle opened for attributes on the reparse point), and whether any
+/// of them fetches it.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn reading_a_placeholders_attributes() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = Root::new("Attributes", HydrationType::Full);
+    let file = root.placeholder("attributes.txt", b"attributes");
+    let handle = |flags: u32| {
+        std::fs::OpenOptions::new()
+            .access_mode(0x80) // FILE_READ_ATTRIBUTES
+            .custom_flags(flags)
+            .open(&file)
+            .and_then(|f| f.metadata())
+            .map(|m| format!("{:#x} file {}", m.file_attributes(), m.is_file()))
+    };
+    report(
+        "attributes",
+        format!(
+            "symlink_metadata {:?}",
+            std::fs::symlink_metadata(&file).map(|m| format!("{:#x}", m.file_attributes()))
+        ),
+    );
+    report(
+        "attributes",
+        format!(
+            "metadata {:?}",
+            std::fs::metadata(&file).map(|m| format!("{:#x}", m.file_attributes()))
+        ),
+    );
+    report(
+        "attributes",
+        format!(
+            "handle, backup | reparse point {:?}",
+            handle(0x0200_0000 | 0x0020_0000)
+        ),
+    );
+    report(
+        "attributes",
+        format!("handle, backup {:?}", handle(0x0200_0000)),
+    );
+    report("attributes", format!("handle {:?}", handle(0)));
+    settle();
+    report_calls("attributes", &root);
+}
+
+/// Q13: two sync roots of one process, each read at once, answered after a second, from the
+/// callback and from a thread of its own: whether one root's fetch holds up the other's.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn two_roots_fetching_at_once() {
+    for (case, answer) in [("inline", Answer::Inline), ("spawned", Answer::Spawned)] {
+        let roots: Vec<Root> = (0..2)
+            .map(|i| {
+                let root = Root::new(&format!("Two{case}{i}"), HydrationType::Full);
+                *root.filter().delay.lock().unwrap() = Duration::from_secs(1);
+                *root.filter().answer.lock().unwrap() = answer;
+                root
+            })
+            .collect();
+        let files: Vec<PathBuf> = roots
+            .iter()
+            .enumerate()
+            .map(|(i, r)| r.placeholder(&format!("two{i}.txt"), format!("two {i}").as_bytes()))
+            .collect();
+        let start = Instant::now();
+        std::thread::scope(|s| {
+            for file in &files {
+                s.spawn(move || {
+                    let read = std::fs::read(file).map(|c| c.len());
+                    report(
+                        &format!("two roots {case}"),
+                        format!(
+                            "{:?} after {:?}: {read:?}",
+                            file.file_name().unwrap(),
+                            start.elapsed()
+                        ),
+                    );
+                });
+            }
+        });
+        report(
+            &format!("two roots {case}"),
+            format!("both after {:?}", start.elapsed()),
+        );
+    }
+}
+
+/// Q14: root A filling slowly (5 s, from a thread of its own) while root B, idle, is
+/// disconnected and connected again, or gets a placeholder made, or a file converted: whether
+/// what B does holds up A's fill, or file access anywhere in the process.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn another_root_disconnected_during_a_fill() {
+    for case in ["disconnect", "create", "convert"] {
+        let a = Root::new(&format!("Busy{case}"), HydrationType::Full);
+        *a.filter().delay.lock().unwrap() = Duration::from_secs(5);
+        *a.filter().answer.lock().unwrap() = Answer::Spawned;
+        let file = a.placeholder("busy.txt", b"busy content");
+        let mut b = Root::new(&format!("Idle{case}"), HydrationType::Full);
+        b.placeholder("idle.txt", b"idle");
+        let plain = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(plain.path(), b"plain").unwrap();
+        let test = format!("other root {case}");
+        let start = Instant::now();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let read = std::fs::read(&file).map(|c| c.len());
+                report(
+                    &test,
+                    format!("A read after {:?}: {read:?}", start.elapsed()),
+                );
+            });
+            std::thread::sleep(Duration::from_millis(500));
+            let at = Instant::now();
+            match case {
+                "disconnect" => {
+                    b.connection.take();
+                    report(&test, format!("B disconnected in {:?}", at.elapsed()));
+                    let again = Instant::now();
+                    b.connect();
+                    report(&test, format!("B connected again in {:?}", again.elapsed()));
+                }
+                "create" => {
+                    b.placeholder("made.txt", b"made");
+                    report(
+                        &test,
+                        format!("placeholder made in B in {:?}", at.elapsed()),
+                    );
+                }
+                _ => {
+                    let written = b.path.join("written.txt");
+                    std::fs::write(&written, b"written").unwrap();
+                    let converted = Placeholder::options()
+                        .write_access()
+                        .exclusive()
+                        .open(&written)
+                        .and_then(|mut p| {
+                            p.convert_to_placeholder(ConvertOptions::default().mark_in_sync(), None)
+                                .map(drop)
+                        });
+                    report(
+                        &test,
+                        format!("file converted in B in {:?}: {converted:?}", at.elapsed()),
+                    );
+                }
+            }
+            let io = Instant::now();
+            let read = std::fs::read(plain.path()).map(|c| c.len());
+            let meta = std::fs::metadata(plain.path()).map(|m| m.len());
+            report(
+                &test,
+                format!(
+                    "a plain file after: read {read:?} and metadata {meta:?} in {:?}",
+                    io.elapsed()
+                ),
+            );
+        });
+        report(&test, format!("all done after {:?}", start.elapsed()));
+    }
+}
+
+/// Q15: root A writing its fill in many small pieces while root B is disconnected and
+/// connected again, over and over: whether a write in flight hangs when another root's
+/// connection changes.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn writes_while_another_root_reconnects() {
+    use cloud_filter::filter::ticket;
+    struct Slow;
+    impl SyncFilter for Slow {
+        fn fetch_data(
+            &self,
+            request: Request,
+            ticket: ticket::FetchData,
+            _info: info::FetchData,
+        ) -> CResult<()> {
+            let total = request.file_size();
+            std::thread::spawn(move || {
+                let start = Instant::now();
+                let piece = vec![7u8; 4096];
+                let mut at = 0;
+                let mut slowest = Duration::ZERO;
+                while at < total {
+                    let len = (total - at).min(4096) as usize;
+                    let t = Instant::now();
+                    if let Err(e) = ticket.write_at(&piece[..len], at) {
+                        report(
+                            "reconnects",
+                            format!("write at {at} failed after {:?}: {e}", t.elapsed()),
+                        );
+                        return;
+                    }
+                    slowest = slowest.max(t.elapsed());
+                    at += len as u64;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                report(
+                    "reconnects",
+                    format!(
+                        "A written in {:?}, slowest write {slowest:?}",
+                        start.elapsed()
+                    ),
+                );
+            });
+            Ok(())
+        }
+    }
+    let profile = std::env::var_os("USERPROFILE").unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("Tidefell primitives ")
+        .tempdir_in(profile)
+        .unwrap();
+    let a_path = dir.path().join("SlowA");
+    std::fs::create_dir(&a_path).unwrap();
+    let a_id = SyncRootIdBuilder::new("TidefellPrimitiveSlowA")
+        .user_security_id(SecurityId::current_user().unwrap())
+        .account_name("primitives")
+        .build();
+    if a_id.is_registered().unwrap() {
+        a_id.unregister().unwrap();
+    }
+    a_id.register(
+        SyncRootInfo::default()
+            .with_display_name("Tidefell primitives SlowA")
+            .with_hydration_type(HydrationType::Full)
+            .with_population_type(PopulationType::AlwaysFull)
+            .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
+            .with_version("0.0.1")
+            .with_path(&a_path)
+            .unwrap(),
+    )
+    .unwrap();
+    let a = Session::new().connect(&a_path, Slow).unwrap();
+    // 1600 pieces, about 8 s of writing.
+    PlaceholderFile::new("slow.bin")
+        .metadata(Metadata::file().size(1600 * 4096))
+        .blob(b"slow".to_vec())
+        .mark_in_sync()
+        .create::<&Path>(&a_path)
+        .unwrap();
+    let mut b = Root::new("Flapping", HydrationType::Full);
+    let file = a_path.join("slow.bin");
+    let start = Instant::now();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let read = std::fs::read(&file).map(|c| c.len());
+            report(
+                "reconnects",
+                format!("A read after {:?}: {read:?}", start.elapsed()),
+            );
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let mut slowest = Duration::ZERO;
+        for _ in 0..10 {
+            let t = Instant::now();
+            b.connection.take();
+            b.connect();
+            slowest = slowest.max(t.elapsed());
+        }
+        report(
+            "reconnects",
+            format!("B reconnected 10 times, slowest {slowest:?}"),
+        );
+        // Q17: a placeholder of B deleted while B is disconnected, then B connected again, as
+        // a delete made while the provider is away.
+        for i in 0..5 {
+            let gone = b.placeholder(&format!("gone{i}.txt"), b"gone");
+            let t = Instant::now();
+            b.connection.take();
+            let removed = std::fs::remove_file(&gone);
+            b.connect();
+            report(
+                "reconnects",
+                format!(
+                    "B's placeholder deleted while away ({removed:?}) in {:?}",
+                    t.elapsed()
+                ),
+            );
+        }
+        // Q16: the sync root manager asked about B, as `connect` asks before connecting.
+        let mut slowest = Duration::ZERO;
+        for _ in 0..10 {
+            let t = Instant::now();
+            let _ = b.id.is_registered();
+            slowest = slowest.max(t.elapsed());
+        }
+        report(
+            "reconnects",
+            format!("B looked up 10 times, slowest {slowest:?}"),
+        );
+    });
+    drop(a);
+    let _ = a_id.unregister();
+}
+
+/// Q18: looking at a placeholder whose fill is pending (5 s, answered from a thread of its own),
+/// as the engine looks at files while it holds its locks: whether looking waits for the fill.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn looking_at_a_file_being_filled() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let root = Root::new("Looked", HydrationType::Full);
+    *root.filter().delay.lock().unwrap() = Duration::from_secs(5);
+    *root.filter().answer.lock().unwrap() = Answer::Spawned;
+    let file = root.placeholder("looked.txt", b"looked at");
+    let start = Instant::now();
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let read = std::fs::read(&file).map(|c| c.len());
+            report(
+                "looked",
+                format!("read after {:?}: {read:?}", start.elapsed()),
+            );
+        });
+        std::thread::sleep(Duration::from_millis(500));
+        let t = Instant::now();
+        let meta = std::fs::symlink_metadata(&file).map(|m| m.len());
+        report(
+            "looked",
+            format!("symlink_metadata in {:?}: {meta:?}", t.elapsed()),
+        );
+        let t = Instant::now();
+        let opened = std::fs::OpenOptions::new()
+            .access_mode(0x80)
+            .custom_flags(0x0200_0000 | 0x0020_0000)
+            .open(&file)
+            .and_then(|f| f.metadata())
+            .map(|m| m.len());
+        report(
+            "looked",
+            format!("attributes handle in {:?}: {opened:?}", t.elapsed()),
+        );
+        let t = Instant::now();
+        let shared = std::fs::File::open(&file).map(drop);
+        report(
+            "looked",
+            format!(
+                "opened to read (not reading) in {:?}: {shared:?}",
+                t.elapsed()
+            ),
+        );
+    });
+}
+
+/// Q19: fills that, as the engine's do, read the content back from a file just written
+/// elsewhere (a block store's chunk) before writing it to Windows, several roots at once:
+/// whether reading a fresh file during a fill can wait on the fill, as an antivirus scanning
+/// on open might make it.
+#[test]
+#[ignore = "a spike: prints findings"]
+fn fills_that_read_a_fresh_file() {
+    use cloud_filter::filter::ticket;
+    struct ViaFile(PathBuf);
+    impl SyncFilter for ViaFile {
+        fn fetch_data(
+            &self,
+            request: Request,
+            ticket: ticket::FetchData,
+            info: info::FetchData,
+        ) -> CResult<()> {
+            let (dir, blob) = (self.0.clone(), request.file_blob().to_vec());
+            let range = info.required_file_range();
+            std::thread::spawn(move || {
+                let t = Instant::now();
+                let chunk = dir.join(format!("{:016x}", rand_id(&blob, t)));
+                std::fs::write(&chunk, &blob).unwrap();
+                let wrote = t.elapsed();
+                let data = std::fs::read(&chunk).unwrap();
+                let read = t.elapsed();
+                let done = ticket.write_at(&data[range.start as usize..], range.start);
+                report(
+                    "fresh file",
+                    format!(
+                        "wrote {wrote:?}, read back {:?}, filled {:?}: {done:?}",
+                        read - wrote,
+                        t.elapsed()
+                    ),
+                );
+            });
+            Ok(())
+        }
+    }
+    fn rand_id(blob: &[u8], t: Instant) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        blob.hash(&mut h);
+        t.hash(&mut h);
+        h.finish()
+    }
+    let profile = std::env::var_os("USERPROFILE").unwrap();
+    let store = tempfile::tempdir().unwrap(); // %TEMP%, as a test's data directory is
+    let dir = tempfile::Builder::new()
+        .prefix("Tidefell primitives ")
+        .tempdir_in(profile)
+        .unwrap();
+    let mut roots = Vec::new();
+    let mut files = Vec::new();
+    for r in 0..3 {
+        let path = dir.path().join(format!("Fresh{r}"));
+        std::fs::create_dir(&path).unwrap();
+        let id = SyncRootIdBuilder::new(format!("TidefellPrimitiveFresh{r}"))
+            .user_security_id(SecurityId::current_user().unwrap())
+            .account_name("primitives")
+            .build();
+        if id.is_registered().unwrap() {
+            id.unregister().unwrap();
+        }
+        id.register(
+            SyncRootInfo::default()
+                .with_display_name(format!("Tidefell primitives Fresh{r}"))
+                .with_hydration_type(HydrationType::Full)
+                .with_population_type(PopulationType::AlwaysFull)
+                .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
+                .with_version("0.0.1")
+                .with_path(&path)
+                .unwrap(),
+        )
+        .unwrap();
+        let connection = Session::new()
+            .connect(&path, ViaFile(store.path().to_owned()))
+            .unwrap();
+        for f in 0..5 {
+            let name = format!("f{f}.txt");
+            let content = format!("root {r} file {f}");
+            PlaceholderFile::new(&name)
+                .metadata(Metadata::file().size(content.len() as u64))
+                .blob(content.into_bytes())
+                .mark_in_sync()
+                .create::<&Path>(&path)
+                .unwrap();
+            files.push(path.join(&name));
+        }
+        roots.push((id, connection));
+    }
+    let start = Instant::now();
+    std::thread::scope(|s| {
+        for file in &files {
+            s.spawn(move || {
+                let read = std::fs::read(file).map(|c| c.len());
+                if start.elapsed() > Duration::from_secs(5) || read.is_err() {
+                    report(
+                        "fresh file",
+                        format!("{file:?} read after {:?}: {read:?}", start.elapsed()),
+                    );
+                }
+            });
+        }
+    });
+    report(
+        "fresh file",
+        format!("all 15 read after {:?}", start.elapsed()),
+    );
+    for (id, connection) in roots {
+        drop(connection);
+        let _ = id.unregister();
+    }
+}

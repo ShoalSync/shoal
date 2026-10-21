@@ -362,9 +362,11 @@ impl Engine {
             let _guard = handle.disk().await?;
             let mut state = handle.lock();
             for path in std::mem::take(&mut state.held_deletes) {
-                // Not on disk, as far as the engine knows: materialising fetches it again.
+                // Not on disk, as far as the engine knows: materialising fetches it again, and a
+                // placeholder's provider makes it again (ADR 0042).
                 state.local.remove(&path);
                 state.used.remove(&path);
+                state.placeholders.remove(&path);
             }
             state.save()?;
         }

@@ -98,10 +98,10 @@ fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
     Some((meta, inode))
 }
 
-/// The metadata of `path`, not following a symlink, and the file's NTFS file ID or 0 (ADR
-/// 0042). Both come from one handle that asks only to read attributes, so a file another
-/// program holds open, even without sharing, is still seen; if it cannot be opened at all, its
-/// ID is not known.
+/// The metadata of `path`, not following a symlink or placeholder, and the file's NTFS file ID
+/// or 0 (ADR 0042). The ID comes from a handle that asks only to read attributes, so a file
+/// another program holds open, even without sharing, still has one; if it cannot be opened at
+/// all, its ID is not known.
 #[cfg(windows)]
 fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
     use std::os::windows::fs::OpenOptionsExt;
@@ -113,12 +113,14 @@ fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
         .access_mode(FILE_READ_ATTRIBUTES)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path);
-    if let Ok(file) = file {
-        if let (Ok(meta), Ok(info)) = (file.metadata(), winapi_util::file::information(&file)) {
-            return Some((meta, info.file_index()));
-        }
-    }
-    Some((fs::symlink_metadata(path).ok()?, 0))
+    // Whether its data is on disk is read from metadata that does not follow it (ADR 0042),
+    // whatever the handle's says.
+    let meta = fs::symlink_metadata(path).ok()?;
+    let index = file
+        .ok()
+        .and_then(|file| winapi_util::file::information(&file).ok())
+        .map_or(0, |info| info.file_index());
+    Some((meta, index))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -132,7 +134,11 @@ fn metadata(path: &Path) -> Option<(fs::Metadata, u64)> {
 pub(crate) fn base_of(state: &FolderState, rel: &str, entry: EntryId) -> VersionVector {
     match state.local.get(rel) {
         Some(local) if local.entry == entry && !local.base_is_empty() => local.base(),
-        _ => state.meta.current_vector(&entry),
+        // A placeholder builds on the version it showed (ADR 0042).
+        _ => match state.placeholders.get(rel) {
+            Some(p) if p.entry == entry => p.base.clone(),
+            _ => state.meta.current_vector(&entry),
+        },
     }
 }
 
@@ -589,8 +595,23 @@ pub(crate) fn scan(
     state.ignores = ignores;
     state.touch();
     for rel in evicted {
+        // Freed outside the engine, as by Explorer's "Free up space": the placeholder left
+        // stands for the file, and going would be its delete (ADR 0042).
         debug!(path = %rel, "freed up outside the engine");
-        state.local.remove(&rel);
+        if let Some(local) = state.local.remove(&rel) {
+            let base = if local.base.is_empty() {
+                state.meta.current_vector(&local.entry)
+            } else {
+                local.base
+            };
+            state.placeholders.insert(
+                rel.clone(),
+                crate::state::Placeholder {
+                    entry: local.entry,
+                    base,
+                },
+            );
+        }
         state.used.remove(&rel);
     }
     let mut index_changed = false;
@@ -718,8 +739,9 @@ pub(crate) fn scan(
             state.used.remove(&k);
         }
         state.used.insert(c.rel.clone(), now);
-        // A file put back by hand is on this device again.
+        // A file put back by hand is on this device again, and a placeholder filled is a file.
         state.dropped.remove(&entry);
+        state.placeholders.remove(&c.rel);
         let rel = c.rel.clone();
         state.record_local(
             c.rel,
@@ -772,6 +794,25 @@ pub(crate) fn scan(
             }
         }
     }
+    // Placeholders recorded and gone, deleted by the user, perhaps while the daemon was off,
+    // when Windows says nothing (ADR 0042).
+    let mut deleted_placeholders = Vec::new();
+    for rel in state.placeholders.keys() {
+        if rebuilding
+            || seen(rel)
+            || !scope.is_none_or(|s| s.contains(rel))
+            || state.ignores.is_ignored(rel, false)
+            || unreadable
+                .iter()
+                .any(|dir| dir.is_empty() || rel.starts_with(&format!("{dir}/")))
+        {
+            continue;
+        }
+        match fs::symlink_metadata(root.join(rel)) {
+            Err(e) if is_gone(&e) => deleted_placeholders.push(rel.clone()),
+            _ => {}
+        }
+    }
     // Records are in no particular order; deletes are made in the order of their paths.
     deleted.sort_unstable();
     let deletes_here_only = state.config.sync.local_deletes == LocalDeletes::ThisDevice;
@@ -788,13 +829,25 @@ pub(crate) fn scan(
                     .is_some_and(|l| deletes(&state, rel, l.entry))
         })
         .cloned()
+        .chain(
+            deleted_placeholders
+                .iter()
+                .filter(|rel| {
+                    !deletes_here_only
+                        && state
+                            .placeholders
+                            .get(*rel)
+                            .is_some_and(|p| deletes(&state, rel, p.entry))
+                })
+                .cloned(),
+        )
         .collect();
     let confirmed = std::mem::take(&mut state.confirm_deletes);
     if !confirmed
-        && state
-            .config
-            .confirm_deletes
-            .holds(everywhere.len(), state.local.len())
+        && state.config.confirm_deletes.holds(
+            everywhere.len(),
+            state.local.len() + state.placeholders.len(),
+        )
     {
         if state.held_deletes != everywhere {
             warn!(
@@ -807,6 +860,7 @@ pub(crate) fn scan(
             inner.emit(crate::views::Event::FolderChanged(state.config.id));
         }
         deleted.clear();
+        deleted_placeholders.clear();
     } else if (scope.is_none() || confirmed) && !state.held_deletes.is_empty() {
         state.held_deletes.clear();
         inner.emit(crate::views::Event::FolderChanged(state.config.id));
@@ -849,6 +903,36 @@ pub(crate) fn scan(
             )?;
             index_changed = true;
         }
+    }
+
+    for rel in deleted_placeholders {
+        let Some(placeholder) = state.placeholders.remove(&rel) else {
+            continue;
+        };
+        if !deletes(&state, &rel, placeholder.entry) {
+            continue;
+        }
+        if deletes_here_only {
+            debug!(path = %rel, "placeholder dropped from this device");
+            state.dropped.insert(placeholder.entry);
+            continue;
+        }
+        // Building on the version the placeholder showed, so a change made elsewhere since
+        // survives as a conflict instead of being deleted unseen.
+        let path = state
+            .meta
+            .current(&placeholder.entry)
+            .map_or_else(|| recorded(&rel).into_owned(), |v| v.path.to_owned());
+        let signer = crate::encrypted::signer(inner, &mut state, &EntryKind::Tombstone, None)?;
+        state.meta.local_change_from(
+            &signer,
+            placeholder.entry,
+            &placeholder.base,
+            &path,
+            EntryKind::Tombstone,
+            inner.now_ms(),
+        )?;
+        index_changed = true;
     }
 
     if rebuilding && state.finish_rebuild(inner.peers().is_empty(), exchanged, inner.now_ms()) {

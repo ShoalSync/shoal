@@ -35,7 +35,7 @@ const CHUNKS: TableDefinition<&[u8], ()> = TableDefinition::new("chunks");
 const MANIFESTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("manifests");
 
 /// The engine's records, one table each, by name.
-pub(crate) const MAPS: [&str; 18] = [
+pub(crate) const MAPS: [&str; 19] = [
     "manifests",
     "local",
     "progress",
@@ -60,6 +60,8 @@ pub(crate) const MAPS: [&str; 18] = [
     "superseded",
     // An encrypted folder's list blobs, by list ID: of its own versions, and fetched (ADR 0023).
     "list_blobs",
+    // Placeholders another component made, as a Windows sync root's (ADR 0042).
+    "placeholders",
 ];
 
 /// In the header table, present in an encrypted folder's database: its versions rows hold

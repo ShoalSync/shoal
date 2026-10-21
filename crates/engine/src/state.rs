@@ -158,6 +158,14 @@ impl From<LocalFileV3> for LocalFile {
     }
 }
 
+/// A placeholder another component made for a file not on disk (ADR 0042): which entry it
+/// stands for, and the version vector it showed, which deleting it builds on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Placeholder {
+    pub(crate) entry: EntryId,
+    pub(crate) base: VersionVector,
+}
+
 /// A file removed from this device only and kept in the folder's reserved directory until the
 /// recycle bin purges it (ADR 0025). Restoring it moves it back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -465,6 +473,9 @@ pub(crate) struct FolderState {
     /// Changes to the folder's state, so summaries of it are made again only after one.
     revision: u64,
     pub(crate) local: LocalFiles,
+    /// Placeholders of files not on disk, by the path they are at, that another component
+    /// made and reported (ADR 0042). One that goes is a delete, as a file on disk that goes is.
+    pub(crate) placeholders: Tracked<String, Placeholder>,
     pub(crate) progress: Tracked<DeviceId, (u64, u64)>,
     /// When each file on disk was last opened or written, in milliseconds since the Unix
     /// epoch, for evicting the least recently used files of a partial replica.
@@ -632,6 +643,7 @@ impl FolderState {
             local: LocalFiles::default(),
             progress: Tracked::default(),
             used: Tracked::default(),
+            placeholders: Tracked::default(),
             copies: Tracked::default(),
             copy_names: Tracked::default(),
             dropped: TrackedSet::default(),
@@ -860,6 +872,7 @@ impl FolderState {
         .map_err(corrupt)?;
         self.progress = Tracked::decode(take("progress")).map_err(corrupt)?;
         self.used = Tracked::decode(take("used")).map_err(corrupt)?;
+        self.placeholders = Tracked::decode(take("placeholders")).map_err(corrupt)?;
         self.copies = Tracked::decode(take("copies")).map_err(corrupt)?;
         self.copy_names = Tracked::decode(take("copy_names")).map_err(corrupt)?;
         self.dropped = TrackedSet::decode(take("dropped_entries")).map_err(corrupt)?;
@@ -989,6 +1002,7 @@ impl FolderState {
             ("local", self.local.all()),
             ("progress", self.progress.all()),
             ("used", self.used.all()),
+            ("placeholders", self.placeholders.all()),
             ("copies", self.copies.all()),
             ("copy_names", self.copy_names.all()),
             ("dropped_entries", self.dropped.all()),
@@ -1012,6 +1026,7 @@ impl FolderState {
             ("local", self.local.take_changed()),
             ("progress", self.progress.take_changed()),
             ("used", self.used.take_changed()),
+            ("placeholders", self.placeholders.take_changed()),
             ("copies", self.copies.take_changed()),
             ("copy_names", self.copy_names.take_changed()),
             ("dropped_entries", self.dropped.take_changed()),

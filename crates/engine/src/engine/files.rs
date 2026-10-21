@@ -33,6 +33,7 @@ impl Engine {
                     Some(FileInfo {
                         entry: v.entry,
                         path: path.to_owned(),
+                        content: *content,
                         size: *size,
                         modified_ms: v.modified_ms,
                         executable: *executable,
@@ -139,15 +140,18 @@ impl Engine {
         Ok(abs)
     }
 
-    /// Fetches the current content of the live file at `path` and passes it to `sink` in order,
-    /// by offset, without placing it in the folder or recording it: for a component that
-    /// places files itself, such as a Windows sync root filling a placeholder in place (ADR
-    /// 0042). No lock is held while peers are waited on. Fails with [`Error::Unavailable`] if
-    /// no connected peer has the content, and with [`Error::Paused`] while the folder is paused.
+    /// Fetches the content of the live file at `path` and passes it to `sink` in order, by
+    /// offset, without placing it in the folder or recording it: for a component that places
+    /// files itself, such as a Windows sync root filling a placeholder in place (ADR 0042).
+    /// With `expected`, only that content: a placeholder made for a version since replaced
+    /// fails with [`Error::Unavailable`] rather than being filled with another version's bytes.
+    /// No lock is held while peers are waited on. Fails with [`Error::Unavailable`] if no
+    /// connected peer has the content, and with [`Error::Paused`] while the folder is paused.
     pub async fn fetch(
         &self,
         folder: FolderId,
         path: &str,
+        expected: Option<tidefell_proto::ContentHash>,
         sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
     ) -> Result<()> {
         let path = &*recorded(path);
@@ -155,7 +159,70 @@ impl Engine {
         if self.inner.is_paused(&folder) {
             return Err(Error::Paused(folder));
         }
-        materialize::fetch_into(&self.inner, &self.node, folder, &handle, path, sink).await
+        materialize::fetch_into(
+            &self.inner,
+            &self.node,
+            folder,
+            &handle,
+            path,
+            expected,
+            sink,
+        )
+        .await
+    }
+
+    /// Records that a placeholder of the live file at `path` is there, showing the version
+    /// with `content` (ADR 0042), so that it going is a delete building on that version. Call
+    /// it once the placeholder exists, never before: a placeholder recorded but never made
+    /// would read as deleted. Does nothing if `content` is no longer current, and replaces any
+    /// earlier record at `path`.
+    pub fn placeholder_made(
+        &self,
+        folder: FolderId,
+        path: &str,
+        content: tidefell_proto::ContentHash,
+    ) -> Result<()> {
+        let path = recorded(path);
+        let handle = self.inner.folder(&folder)?;
+        let mut state = handle.lock();
+        let Some(version) = state.meta.find_path(&path) else {
+            return Err(Error::NoSuchFile(path.into_owned()));
+        };
+        if !matches!(version.kind, EntryKind::File { content: c, .. } if *c == content) {
+            return Ok(());
+        }
+        let entry = version.entry;
+        let base = state.meta.current_vector(&entry);
+        let disk = state.on_disk(&path);
+        state
+            .placeholders
+            .insert(disk, crate::state::Placeholder { entry, base });
+        state.save()
+    }
+
+    /// Forgets the placeholder at `path`, which the caller is about to remove because its file
+    /// is no longer live or another component now holds it (ADR 0042). Forget it before
+    /// removing it: removed while still recorded, it would read as deleted.
+    pub fn placeholder_gone(&self, folder: FolderId, path: &str) -> Result<()> {
+        let path = recorded(path);
+        let handle = self.inner.folder(&folder)?;
+        let mut state = handle.lock();
+        let disk = state.on_disk(&path);
+        if state.placeholders.remove(&disk).is_some() {
+            state.save()?;
+        }
+        Ok(())
+    }
+
+    /// The placeholders recorded in `folder`, by path, with the entry each stands for.
+    pub fn placeholders(&self, folder: FolderId) -> Result<Vec<(String, EntryId)>> {
+        let handle = self.inner.folder(&folder)?;
+        let state = handle.lock();
+        Ok(state
+            .placeholders
+            .iter()
+            .map(|(path, p)| (path.clone(), p.entry))
+            .collect())
     }
 
     /// Pins the file or directory at `path` on a partial replica (ADR 0029): what it covers is
@@ -413,6 +480,11 @@ impl Engine {
                     state
                         .meta
                         .local_change_from(key, entry, &base, &new, kind, modified_ms)?;
+                // A placeholder moves with its file, showing the moved version.
+                if let Some(mut placeholder) = state.placeholders.remove(&old) {
+                    placeholder.base = vector.clone();
+                    state.placeholders.insert(new.clone(), placeholder);
+                }
                 if let Some(local) = state.local.get(&old) {
                     let (src, dst) = (root.join(&old), root.join(&new));
                     // Already moved by the user, as a Windows sync root reports moves after
@@ -444,6 +516,8 @@ impl Engine {
 /// Removes the file at `path` from disk and forgets it, if this replica has it. Its content is
 /// kept for the recycle bin if the file is unchanged since it was recorded (ADR 0027).
 fn remove_local(state: &mut FolderState, root: &Path, path: &str) -> Result<()> {
+    // A placeholder there was deleted with its file, by whoever deleted it.
+    state.placeholders.remove(path);
     if let Some(local) = state.local.remove(path) {
         let abs = root.join(path);
         if crate::scan::unchanged(&abs, local.size, local.mtime_ns, 0) {

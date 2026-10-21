@@ -278,8 +278,11 @@ pub struct RecycleSummary {
 pub struct FileInfo {
     /// Stable entry ID.
     pub entry: EntryId,
-    /// Path within the folder.
+    /// Path within the folder, where the file is on disk: for entries that share a path or
+    /// whose names fold together, not always the path recorded (ADR 0024, ADR 0033).
     pub path: String,
+    /// The current version's content.
+    pub content: tidefell_proto::ContentHash,
     /// Size in bytes.
     pub size: u64,
     /// Modification time, milliseconds since the Unix epoch.

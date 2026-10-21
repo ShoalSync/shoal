@@ -266,8 +266,68 @@ where they differ.
     the scan finds the placeholder and drops the file's record.
 - **Pins:** Windows fills a pinned placeholder through the provider itself. A pin made through
   the engine sets the placeholder's pin state, and the provider fills it, so one component owns
-  each placeholder's data. The engine's own placing replaces a placeholder only when the file
-  is one it already had on disk.
+  each placeholder's data: the engine never writes where a recorded placeholder is, and replaces
+  one only if it is unrecorded, as one made just before a crash is.
+
+## Amendment: the provider as built (2026-10-21)
+
+The provider (`fs-cfapi`), with the engine's placeholder records, passes its tests on the
+Windows runner, three sync roots at once in one process. Its tests cover:
+- filling on reading;
+- other programs' deletes, renames and folder renames;
+- a delete made while disconnected;
+- a version changed before the first read;
+- "Free up space";
+- a pin made through the engine.
+
+What the runs taught:
+
+- **Fill only placeholders, never read one.** Windows asks for data only for a placeholder,
+  so a file being filled that the engine still records as on disk was freed and not yet
+  scanned. Its record is dropped before the fetch, and the fill never reads chunks from the
+  file it fills. The engine had read its own placeholder, which waited on the fill that was
+  waiting on it.
+- **Callbacks hand their work to the provider's own thread**, and read placeholders' state
+  through a plain handle, without an oplock.
+- **Disconnecting is kept off the runtime.**
+  - What was seen: with three roots in one process, one test disconnected its root on one of
+    its runtime's threads, and every fetch in the process stood still. That lasted until
+    Windows gave up on them, two minutes later.
+  - What it was not: a disconnect alone, off any runtime, holds up no other root's fill (the
+    spike's Q14).
+  - What fixed it: disconnecting off the runtime.
+  - So dropping a `SyncRoot` disconnects on a thread of its own, and `disconnect` and
+    `unregister`, which block, are called off the runtime. A test drops a root on the
+    runtime's thread while another root fills.
+- **A fill opens no file.**
+  - What was seen: with several roots in one process filling, now and then a fill stood still
+    for two minutes, until Windows gave up on it. Every fetch of the process waited with it.
+  - Where it stopped: step-by-step logs put it in the engine's read of a chunk from its block
+    store, a plain file in the data directory. That read took the whole two minutes, holding
+    the store's lock.
+  - What the spike showed (Q19, nothing but `cloud-filter` and `std`): a fill that writes a
+    file, then reads it back before answering, waits 60 s and more on the read. It is freed
+    only as Windows cancels a fill pending, over and over. Writing the file took 2 ms. Opening
+    a placeholder whose fill is pending also waits for the fill (Q18); reading its attributes
+    does not.
+  - Not told apart: whether the wait is Windows Defender scanning on open (on, on the
+    runner), or the cloud files filter. It matters to neither the fix nor users, who have
+    both.
+  - The fix: a fill fetches its chunks from peers into memory, 16 MiB at a time in file
+    order, and hands them over. It reads nothing from the block store or the folder, even
+    what is there, so a chunk already here is fetched again. Under its locks, the engine
+    looks at files only through their attributes.
+  - Not yet avoided: an encrypted folder's fill still reads through the block store, where
+    its content is opened (ADR 0023). Before such a folder is a sync root, its opened chunks
+    must reach the fill in memory too.
+  - What came first, and stays: a process-wide lock keeps fills' writes to Windows apart from
+    connecting, disconnecting and asking the sync root manager. Tried first, it was not the
+    cause, but it keeps a safe order.
+- **Not yet done.**
+  - **Eviction:** the engine's own eviction still removes a file, and the reconciler then makes
+    its placeholder again. Dehydrating in place is for step 6, with the daemon's wiring.
+  - **Making a file in sync** compares its size and modification time with the engine's, not
+    yet its file ID.
 
 ## Consequences
 

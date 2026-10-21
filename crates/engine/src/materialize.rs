@@ -256,6 +256,12 @@ pub(crate) fn plan(state: &FolderState) -> Plan {
                 if current || ignored || !wanted {
                     continue;
                 }
+                // A placeholder another component made and recorded there is that component's
+                // to fill, as Windows fills a pinned one through its provider (ADR 0042): one
+                // owner for each placeholder's data.
+                if here.is_none() && state.placeholders.contains_key(path) {
+                    continue;
+                }
                 // A folder being rebuilt matches the file already at a path to its entry by
                 // scanning it, rather than fetching content it may well have (ADR 0034).
                 if here.is_none()
@@ -559,18 +565,176 @@ pub(crate) async fn fetch_into(
     id: FolderId,
     handle: &FolderHandle,
     path: &str,
+    expected: Option<ContentHash>,
     sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
 ) -> Result<()> {
-    let (_, write) = pending(handle, path)?;
-    let Some(manifest) = fetch_content(inner, node, handle, id, &write).await? else {
+    debug!(path, "fetching without placing");
+    // Only a placeholder is filled, so a file recorded as on disk there was freed outside the
+    // engine and not scanned since: it holds none of the content, and is the very file being
+    // filled. It is not looked at, which could wait on its own filling.
+    let (root, write) = pending(handle, path)?;
+    let target = root.join(&write.path);
+    {
+        let mut state = handle.lock();
+        if state.local.contains_key(&write.path) {
+            if let Some(local) = state.local.remove(&write.path) {
+                state.used.remove(&write.path);
+                state.placeholders.insert(
+                    write.path.clone(),
+                    crate::state::Placeholder {
+                        entry: local.entry,
+                        base: local.base,
+                    },
+                );
+            }
+        }
+    }
+    if expected.is_some_and(|e| e != write.content) {
+        return Err(Error::Unavailable(path.to_owned()));
+    }
+    // An encrypted folder's content is opened into the block store (ADR 0023); it is read
+    // from there, which can wait on a fill pending (ADR 0042's amendment: not yet avoided).
+    if handle.lock().config.encryption.is_some() {
+        return fill_via_store(inner, node, id, handle, path, &target, &write, sink).await;
+    }
+    let peers: Vec<DeviceId> = node
+        .peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&id))
+        .map(|p| p.device())
+        .collect();
+    if peers.is_empty() {
+        return Err(Error::Unavailable(path.to_owned()));
+    }
+    // A small file is one chunk named by its content hash (ADR 0032); a peer that split it
+    // otherwise is asked for its manifest.
+    let (manifest, guessed) = match cached_manifest(handle, write.content, write.size) {
+        Some(manifest) => (manifest, false),
+        None => match single_chunk(write.content, write.size) {
+            Some(manifest) => (manifest, true),
+            None => (
+                request_manifest(node, handle, id, write.content, write.size)
+                    .await
+                    .ok_or_else(|| Error::Unavailable(path.to_owned()))?,
+                false,
+            ),
+        },
+    };
+    debug!(path, chunks = manifest.chunks.len(), "filling from peers");
+    let filled = fill_from_peers(inner, node, id, &manifest, &peers, &write, sink).await;
+    match filled {
+        Err(Error::Unavailable(_)) if guessed => {
+            let theirs = request_manifest(node, handle, id, write.content, write.size)
+                .await
+                .ok_or_else(|| Error::Unavailable(path.to_owned()))?;
+            fill_from_peers(inner, node, id, &theirs, &peers, &write, sink).await
+        }
+        other => other,
+    }
+    .map_err(|e| match e {
+        Error::Unavailable(_) => Error::Unavailable(path.to_owned()),
+        other => other,
+    })
+}
+
+/// How much of a fill is held in memory at once: its chunks are fetched a window at a time, in
+/// file order, and handed over before the next.
+const FILL_WINDOW: u64 = 16 << 20;
+
+/// Fetches `manifest`'s chunks from `peers` into memory, a window at a time, and passes them
+/// to `sink` in order, checking each and the whole content. No file is opened: during a fill,
+/// opening a file can wait on that fill (ADR 0042's amendment), so nothing comes from the
+/// block store or the folder, even what is there.
+async fn fill_from_peers(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    id: FolderId,
+    manifest: &Manifest,
+    peers: &[DeviceId],
+    write: &PendingWrite,
+    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+) -> Result<()> {
+    let unavailable = || Error::Unavailable(write.path.clone());
+    let source = Arc::new(PeerSource {
+        node: node.clone(),
+        folder: id,
+        inner: inner.clone(),
+        full: Vec::new(),
+    });
+    let mut hasher = blake3::Hasher::new();
+    let mut offset = 0u64;
+    let mut rest: &[tidefell_proto::ChunkRef] = &manifest.chunks;
+    while !rest.is_empty() {
+        let mut take = 0;
+        let mut bytes = 0u64;
+        while take < rest.len() && (take == 0 || bytes + u64::from(rest[take].len) <= FILL_WINDOW) {
+            bytes += u64::from(rest[take].len);
+            take += 1;
+        }
+        let (window, after) = rest.split_at(take);
+        rest = after;
+        let part = Manifest {
+            content: manifest.content,
+            chunks: window.to_vec(),
+        };
+        let mut got: HashMap<ChunkHash, Vec<u8>> = HashMap::new();
+        let fetched = fetch(
+            source.clone(),
+            &part,
+            peers,
+            |_| false,
+            Config::default(),
+            |hash, data| {
+                if tidefell_chunker::hash_chunk(&data) != hash {
+                    return Err("a chunk did not match its hash".to_owned());
+                }
+                got.insert(hash, data);
+                Ok(())
+            },
+        );
+        tokio::select! {
+            fetched = fetched => {
+                fetched.map_err(|e| {
+                    debug!(path = %write.path, error = %e, "cannot fill from peers");
+                    unavailable()
+                })?;
+            }
+            () = until_paused(inner, id) => return Err(Error::Paused(id)),
+        }
+        for chunk in window {
+            let data = got.get(&chunk.hash).ok_or_else(unavailable)?;
+            hasher.update(data);
+            sink(offset, data).map_err(io_err(&write.path))?;
+            offset += data.len() as u64;
+        }
+    }
+    if hasher.finalize().as_bytes() != manifest.content.as_bytes() || offset != write.size {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
+/// A fill through the block store, as an encrypted folder's content arrives there.
+#[allow(clippy::too_many_arguments)]
+async fn fill_via_store(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    id: FolderId,
+    handle: &FolderHandle,
+    path: &str,
+    target: &Path,
+    write: &PendingWrite,
+    sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
+) -> Result<()> {
+    inner.fetching.lock().unwrap().insert(write.content);
+    let _fetched = Fetching(inner, write.content);
+    let Some(manifest) = fetch_content(inner, node, handle, id, write).await? else {
         return Err(Error::Unavailable(path.to_owned()));
     };
-    // Kept from compaction while it is read.
-    let _fetched = Fetching(inner, manifest.content);
     let mut hasher = blake3::Hasher::new();
     let mut offset = 0;
     for chunk in &manifest.chunks {
-        let data = crate::content::read_chunk(inner, handle, &chunk.hash)
+        let data = crate::content::read_chunk_except(inner, handle, &chunk.hash, Some(target))
             .filter(|d| tidefell_chunker::hash_chunk(d) == chunk.hash)
             .ok_or_else(|| Error::Unavailable(path.to_owned()))?;
         hasher.update(&data);

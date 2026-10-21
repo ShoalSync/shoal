@@ -286,11 +286,13 @@ async fn files_created_at_the_same_path_are_both_kept() {
             .unwrap()
             .map(|e| e.unwrap())
             .filter(|e| e.file_type().unwrap().is_file())
-            .map(|e| {
-                (
+            // One listed and moved since, as a download taking its place is, is left out: the
+            // listing is looked at again until it is right.
+            .filter_map(|e| {
+                Some((
                     e.file_name().into_string().unwrap(),
-                    fs::read(e.path()).unwrap(),
-                )
+                    fs::read(e.path()).ok()?,
+                ))
             })
             .collect();
         names.sort();

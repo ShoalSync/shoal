@@ -160,11 +160,17 @@ fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto:
             .iter()
             .any(|h| h.lock().manifests.is_referenced(hash))
     };
+    // Decided under the folders' locks, then removed under the store's: the folders' are
+    // always taken first, as everywhere else, so neither waits on the other.
+    let unused: Vec<_> = chunks
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|hash| !still_used(hash))
+        .collect();
     let mut store = inner.store.lock().unwrap();
-    for hash in chunks.into_iter().collect::<BTreeSet<_>>() {
-        if !still_used(&hash) {
-            let _ = store.remove(&hash);
-        }
+    for hash in unused {
+        let _ = store.remove(&hash);
     }
 }
 

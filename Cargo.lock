@@ -4220,7 +4220,15 @@ name = "tidefell-fs-cfapi"
 version = "0.22.0"
 dependencies = [
  "cloud-filter",
+ "nt-time",
  "tempfile",
+ "thiserror 2.0.21",
+ "tidefell-engine",
+ "tidefell-identity",
+ "tidefell-proto",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

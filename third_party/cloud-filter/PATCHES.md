@@ -173,6 +173,37 @@ slices `..size_of`.
 
 Not yet in the upstream pull request (found 2026-10-20, after it was opened).
 
+### 8. `PlaceholderInfo::blob` starts in the wrong place
+
+`blob()` returned `data[size_of::<CF_PLACEHOLDER_STANDARD_INFO>()..]`. The structure declares
+`FileIdentity` as a one-byte array that ends it. So the identity starts inside the structure's
+size, and is `FileIdentityLength` bytes long; the bytes after the structure are not it. Every
+identity read back was shifted, and its last bytes were padding. A provider comparing a
+placeholder's identity with what it should be then never matches.
+
+The fix slices from `offset_of!(CF_PLACEHOLDER_STANDARD_INFO, FileIdentity)` for
+`FileIdentityLength` bytes.
+
+Not yet in the upstream pull request.
+
+### 9. The state-change watcher panics when its folder goes
+
+The thread that watches a sync root for attribute changes (`root/session.rs`) panicked in three
+places:
+- if the root could not be opened;
+- if `ReadDirectoryChangesW` failed;
+- if `GetOverlappedResult` failed with anything but `ERROR_IO_INCOMPLETE`.
+
+Deleting the root while connected, as a test's temporary directory is deleted, does the last:
+
+```
+panicked at src\root\session.rs:160:25:
+get overlapped result: Some(WIN32_ERROR(5)), expected: WIN32_ERROR(996)
+```
+
+Only that thread ends, not the process, but the panic is noise and the watch is gone. The fix
+ends the watch quietly in each case. Not yet in the upstream pull request.
+
 ## Also observed, not patched
 
 These are useful context for upstream, but they are not bugs in the crate:

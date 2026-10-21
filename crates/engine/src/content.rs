@@ -111,17 +111,33 @@ pub(crate) fn read_chunk(
     handle: &FolderHandle,
     hash: &ChunkHash,
 ) -> Option<Vec<u8>> {
+    read_chunk_except(inner, handle, hash, None)
+}
+
+/// [`read_chunk`], never reading the file at `except`: the placeholder being filled, which read
+/// would wait on its own filling (ADR 0042).
+pub(crate) fn read_chunk_except(
+    inner: &Inner,
+    handle: &FolderHandle,
+    hash: &ChunkHash,
+    except: Option<&std::path::Path>,
+) -> Option<Vec<u8>> {
     if let Ok(Some(data)) = inner.store.lock().unwrap().get(hash) {
         return Some(data);
     }
+    let sources = |state: &FolderState| {
+        let mut found = sources(state, hash);
+        found.retain(|s| except.is_none_or(|e| s.path != e));
+        found
+    };
     // Read files without holding the folder's lock.
-    let first = sources(&handle.lock(), hash);
+    let first = sources(&handle.lock());
     if let Some(found) = first.iter().find_map(|source| read_verified(source, hash)) {
         return Some(found);
     }
     // A file read is moved while it is read, as when a deleted file is kept for the recycle
     // bin: the records say where it went.
-    let again = sources(&handle.lock(), hash);
+    let again = sources(&handle.lock());
     let moved: Vec<&Source> = again
         .iter()
         .filter(|s| !first.iter().any(|f| f.path == s.path))

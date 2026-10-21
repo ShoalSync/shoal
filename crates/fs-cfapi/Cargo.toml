@@ -12,6 +12,16 @@ workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cloud-filter = { workspace = true }
+nt-time = { workspace = true }
+thiserror = { workspace = true }
+tidefell-engine = { workspace = true }
+tidefell-proto = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+tidefell-identity = { workspace = true }
+tracing-subscriber = { workspace = true }

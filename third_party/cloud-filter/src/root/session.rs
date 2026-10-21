@@ -15,7 +15,7 @@ use widestring::{U16CString, U16Str};
 use windows::{
     core::{self, PCWSTR},
     Win32::{
-        Foundation::{ERROR_IO_INCOMPLETE, HANDLE, WIN32_ERROR},
+        Foundation::{ERROR_IO_INCOMPLETE, HANDLE},
         Storage::{
             CloudFilters::{self, CfConnectSyncRoot, CF_CONNECT_FLAGS},
             FileSystem::{
@@ -123,17 +123,21 @@ fn spawn_root_watcher<T: SyncFilter + 'static>(
     let handle = thread::spawn(move || {
         const CHANGE_BUF_SIZE: usize = 1024;
 
-        let sync_root = OpenOptions::new()
+        // A sync root that cannot be watched, or whose watch fails, as when it is deleted,
+        // ends the watch: there is nothing to report, and a panic would only end this thread.
+        let Ok(sync_root) = OpenOptions::new()
             .access_mode(FILE_LIST_DIRECTORY.0)
             .custom_flags((FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED).0)
             .open(&path)
-            .expect("sync root directory is opened");
+        else {
+            return;
+        };
         let mut changes_buf = MaybeUninit::<[u8; CHANGE_BUF_SIZE]>::zeroed();
         let mut overlapped = MaybeUninit::zeroed();
         let mut transferred = MaybeUninit::zeroed();
 
         while matches!(rx.try_recv(), Err(TryRecvError::Empty)) {
-            unsafe {
+            if unsafe {
                 ReadDirectoryChangesW(
                     HANDLE(sync_root.as_raw_handle() as _),
                     changes_buf.as_mut_ptr() as *mut _,
@@ -145,7 +149,10 @@ fn spawn_root_watcher<T: SyncFilter + 'static>(
                     None,
                 )
             }
-            .expect("read directory changes");
+            .is_err()
+            {
+                return;
+            }
 
             loop {
                 if let Err(e) = unsafe {
@@ -157,10 +164,7 @@ fn spawn_root_watcher<T: SyncFilter + 'static>(
                     )
                 } {
                     if e.code() != ERROR_IO_INCOMPLETE.to_hresult() {
-                        panic!(
-                            "get overlapped result: {:?}, expected: {ERROR_IO_INCOMPLETE:?}",
-                            WIN32_ERROR::from_error(&e),
-                        );
+                        return;
                     }
 
                     // cancel by user

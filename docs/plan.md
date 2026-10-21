@@ -902,15 +902,21 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    settings come with the tray app (step 7; ADR 0042's amendment).
 4. **Windows CI.** The workspace's tests on the Windows runner, each job's result required like
    the Linux ones.
-5. **`fs-cfapi`.** A second spike (done 2026-10-20) settled the primitives and patched
-   `cloud-filter`; its last questions set the provider's design (ADR 0042's amendments); a change on Windows is sometimes seen only after
-   9-12 s rather than within 2 (`watching.rs`, intermittent since step 3), to look into here. The engine's seam for folders whose files another component places;
-   sync-root registration and connection, placeholders from metadata,
-   hydration through the engine's `open`, dehydration on eviction, pins from Explorer's states,
-   deletes and renames from notifications, and the scanner's rule for placeholders. Tests on
-   the runner.
+5. **`fs-cfapi`.** Done (2026-10-21), but for dehydrating on eviction (step 6): a second spike
+   settled the primitives and patched `cloud-filter`. Then came the engine's placeholder
+   records, and the provider: sync-root registration and connection, placeholders from
+   metadata, filling through the engine's fetch, pins and freeing from Explorer, deletes and
+   renames from notifications, and the scanner's rule for placeholders. All of it is in ADR
+   0042's amendments and tested on the runner. Still to look into: a change on Windows is
+   sometimes seen only after 9-12 s rather than within 2 (`watching.rs`, intermittent since
+   step 3).
 6. **The daemon on Windows.** Partial folders as sync roots, started and stopped with the
-   daemon; console use for development; a watch dropped on overflow noticed (or `notify` 9,
+   daemon, reconciled on the engine's events as the FUSE mount refreshes; an encrypted
+   folder's fill that opens no file, as an unencrypted one's (ADR 0042's amendment); eviction that
+   dehydrates in place rather than removing; a folder restarted with the blocking
+   `SyncRoot::disconnect` off the runtime, and every root disconnected before the engine
+   shuts down (a dropped root's disconnect is detached); making a file in sync checks its
+   file ID too; console use for development; a watch dropped on overflow noticed (or `notify` 9,
    which reports it; ADR 0042's file-semantics amendment).
 7. **Tray app.** Starting and supervising the daemon, with the allocator settings in its
    environment; status, folders, pause, pairing.
