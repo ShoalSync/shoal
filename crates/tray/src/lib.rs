@@ -3,6 +3,8 @@
 //! resumes syncing. What it shows and how it supervises are platform-neutral, and tested
 //! everywhere; the icon and menu are Windows only.
 
+pub mod approve;
+pub mod setup;
 pub mod supervisor;
 #[cfg(windows)]
 pub mod ui;

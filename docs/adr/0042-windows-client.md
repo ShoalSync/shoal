@@ -392,6 +392,22 @@ What the runs taught:
 - **First, the menu:** what the daemon is doing, each folder (opened in Explorer), pausing and
   resuming, and quitting. Setting up a device (`init` or pairing as a new device) and
   approving another device follow.
+- **Setting up.** A device with no configuration offers two ways. As the first of your
+  devices: once the user has read that the new user key must be backed up, `tidefelld init`
+  makes it in the data directory. Joining your other devices: `tidefelld pair` runs, and a
+  window shows the pairing code to enter on a device with your user key, then the
+  confirmation code to check against it; closing the window stops pairing. Either way the
+  tray then writes a configuration of only the data directory, and the supervisor starts the
+  daemon. Folders are added with the CLI.
+- **Approving another device.** "Add a device…" opens a window for the pairing code the new
+  device shows; the daemon's pairing calls (`POST /v1/pairings`, then approve or decline) run
+  on a thread of their own, and the window shows the new device's name and the confirmation
+  code to check before approving. Only a daemon that holds your user key can approve, and one
+  that does not says so. Closing the window before deciding declines.
+- **Windows' own events.** A menu or message box runs Windows' message loop while it shows,
+  so the tray's notices can arrive then: nothing the UI holds borrowed across one is changed
+  by them, and a window's own handler never unbinds itself, but asks for it on the next
+  notice.
 
 ## Consequences
 

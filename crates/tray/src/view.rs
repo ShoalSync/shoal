@@ -41,6 +41,8 @@ pub struct View {
     pub running: bool,
     /// Whether it stopped after failing too often, so starting it again is offered.
     pub failed: bool,
+    /// Whether this device is not set up yet, so setting it up is offered.
+    pub setup: bool,
 }
 
 /// The tray's view of `daemon`, with its `status` and `folders` once it answers.
@@ -63,6 +65,7 @@ pub fn view(daemon: &Daemon, status: Option<&Status>, folders: &[Folder]) -> Vie
         paused: status.is_some_and(|s| s.paused),
         running,
         failed: matches!(daemon, Daemon::Failed(_)),
+        setup: matches!(daemon, Daemon::NotSetUp),
     }
 }
 

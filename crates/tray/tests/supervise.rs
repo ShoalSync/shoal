@@ -3,28 +3,17 @@
 //! `tidefelld` has been built, as `cargo test --workspace` builds it, or where `TIDEFELLD`
 //! names one; skipped otherwise.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+mod common;
+use common::{local_config, tidefelld};
 use tidefell_sdk::Client;
 use tidefell_tray::supervisor::{supervise, Command as Ask, Paths, Snapshot};
 use tidefell_tray::view::Daemon;
 use tokio::sync::mpsc;
-
-fn tidefelld() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("TIDEFELLD") {
-        return Some(path.into());
-    }
-    // Beside this test's directory, `target/<profile>/deps`.
-    let exe = std::env::current_exe().ok()?;
-    let path = exe
-        .parent()?
-        .parent()?
-        .join(format!("tidefelld{}", std::env::consts::EXE_SUFFIX));
-    path.exists().then_some(path)
-}
 
 fn setup(daemon: &Path, dir: &Path) -> Paths {
     let data_dir = dir.join("data");
@@ -39,15 +28,7 @@ fn setup(daemon: &Path, dir: &Path) -> Paths {
         String::from_utf8_lossy(&out.stderr)
     );
     let config = dir.join("tidefelld.toml");
-    // A TOML literal string keeps a Windows path's backslashes.
-    std::fs::write(
-        &config,
-        format!(
-            "data_dir = '{}'\n\n[network]\nrelay = {{ mode = \"disabled\" }}\naddress_lookup = false\nlocal_discovery = false\nbind = \"127.0.0.1:0\"\n",
-            data_dir.display()
-        ),
-    )
-    .unwrap();
+    std::fs::write(&config, local_config(&data_dir)).unwrap();
     Paths {
         daemon: daemon.to_owned(),
         data_dir,
