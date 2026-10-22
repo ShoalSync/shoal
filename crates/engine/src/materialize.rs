@@ -1203,9 +1203,12 @@ async fn fetch_content(
                 return Ok(Some(manifest));
             }
         }
+        // Kept from compaction as they arrive, until written, as `download` does.
+        inner.fetching.lock().unwrap().insert(write.content);
         return match crate::encrypted::fetch_content(inner, node, handle, id, write.content).await {
             Ok(manifest) => Ok(Some(manifest)),
             Err(e) => {
+                inner.fetching.lock().unwrap().remove(&write.content);
                 debug!(path = %write.path, error = %e, "content not available yet");
                 *write.unavailable.lock().unwrap() = Some(e);
                 Ok(None)

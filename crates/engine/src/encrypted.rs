@@ -1376,6 +1376,9 @@ async fn fetch_sealed(
                     continue;
                 };
                 let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
+                // Recorded first, so compaction knows the chunk is this download's as soon as
+                // it is in the store.
+                record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
                 if inner
                     .store
                     .lock()
@@ -1385,7 +1388,6 @@ async fn fetch_sealed(
                 {
                     continue;
                 }
-                record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
                 for (i, (listed, _)) in list.iter().enumerate() {
                     if *listed == chunk_id {
                         hashes[i] = Some(hash);

@@ -803,3 +803,167 @@ async fn a_storage_peers_copy_counts_once_another_member_holds_the_key() {
     engine_a.shutdown().await;
     engine_s.shutdown().await;
 }
+
+/// Bytes that do not repeat, so they split into many chunks.
+fn noise(len: usize, mut state: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len + 8);
+    while out.len() < len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        out.extend_from_slice(&state.to_le_bytes());
+    }
+    out.truncate(len);
+    out
+}
+
+/// How many chunks `engine` has served other devices.
+fn served(engine: &Engine) -> f64 {
+    engine
+        .metrics()
+        .lines()
+        .find_map(|l| l.strip_prefix("tidefell_chunks_served_total "))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// The sealed chunks a storage peer under `dir` holds, as files (ADR 0023).
+fn sealed_chunks(dir: &Path) -> std::collections::BTreeSet<PathBuf> {
+    walk(&dir.join("storage"))
+        .into_iter()
+        .filter(|p| p.components().any(|c| c.as_os_str() == "chunks"))
+        .filter(|p| !p.file_name().unwrap().to_string_lossy().starts_with('.'))
+        .collect()
+}
+
+/// A large file of an encrypted folder comes in parts from two kinds of device: a storage peer
+/// and a member (ADR 0023). Neither can serve it all: the member has only the file's first part,
+/// which is also a file of its own, and the storage peer's copy of that part is damaged, so the
+/// fetch must take the rest from the storage peer and that part from the member, whichever it
+/// asks first.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([17; 32]);
+    let operator = UserKey::from_seed([18; 32]);
+    let roomy = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let author = Member::new(dir.path(), "author", 140);
+    let mut holder = Member::new(dir.path(), "holder", 141);
+    holder.mode = roomy;
+    let mut fetcher = Member::new(dir.path(), "fetcher", 142);
+    fetcher.mode = roomy;
+    let ids = [author.key.id(), holder.key.id(), fetcher.key.id()];
+    let storage_key = DeviceKey::from_seed([143; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        143,
+        &operator,
+        &[user.id()],
+        &network,
+        &ids,
+        1 << 30,
+    )
+    .await;
+    let start = async |member: &Member| {
+        let peers: Vec<DeviceId> = ids
+            .iter()
+            .copied()
+            .filter(|id| *id != member.key.id())
+            .chain([storage_key])
+            .collect();
+        member
+            .start_with(&user, &[user.id()], &[storage_key], &network, &peers)
+            .await
+    };
+
+    // The file, and its first part cut where one of its chunks ends: that part, as a file of its
+    // own, is the same chunks, so the same sealed chunk IDs.
+    let big = noise(16 << 20, 0x2545_f491_4f6c_dd1d);
+    let chunks = tidefell_chunker::manifest_of(&big, tidefell_chunker::Params::DEFAULT).chunks;
+    let half = chunks.len() / 2;
+    let cut: usize = chunks[..half].iter().map(|c| c.len as usize).sum();
+    assert_eq!(
+        tidefell_chunker::manifest_of(&big[..cut], tidefell_chunker::Params::DEFAULT).chunks,
+        chunks[..half],
+        "the first part is the file's first chunks"
+    );
+
+    // The storage peer keeps the first part, then the whole file.
+    let engine_author = start(&author).await;
+    author.write("part.bin", &big[..cut]);
+    engine_author.scan(FOLDER).await.unwrap();
+    eventually_for("the storage peer keeps the part", 120, || {
+        let s = stored(&engine_s);
+        s.versions == 1 && s.missing_chunks == 0
+    })
+    .await;
+    let first_part = sealed_chunks(dir.path());
+    assert_eq!(first_part.len(), half);
+    author.write("big.bin", &big);
+    engine_author.scan(FOLDER).await.unwrap();
+    eventually_for("the storage peer keeps the file", 120, || {
+        let s = stored(&engine_s);
+        s.versions == 2 && s.missing_chunks == 0
+    })
+    .await;
+    assert_eq!(sealed_chunks(dir.path()).len(), chunks.len());
+
+    // A member with only the first part on disk. Opening it on a partial replica is also what
+    // once failed: compaction removed an encrypted download's chunks before they were written.
+    let engine_holder = start(&holder).await;
+    eventually_for("the holder lists both files", 120, || {
+        paths(&engine_holder).len() == 2
+    })
+    .await;
+    let opened = engine_holder.open(FOLDER, "part.bin").await.unwrap();
+    assert_eq!(fs::read(&opened).unwrap(), big[..cut]);
+    engine_holder.close(FOLDER, "part.bin").unwrap();
+    assert!(holder.read("big.bin").is_none());
+
+    // The fetcher, ready before the author goes.
+    let engine_fetcher = start(&fetcher).await;
+    eventually_for("the fetcher lists both files", 120, || {
+        paths(&engine_fetcher).len() == 2 && generation(&engine_fetcher).is_some()
+    })
+    .await;
+    engine_author.shutdown().await;
+
+    // The storage peer's copy of the first part goes bad: it cannot tell, members can.
+    for file in &first_part {
+        let mut sealed = fs::read(file).unwrap();
+        let last = sealed.len() - 1;
+        sealed[last] ^= 0xff;
+        fs::write(file, sealed).unwrap();
+    }
+
+    let (storage_before, holder_before) = (served(&engine_s), served(&engine_holder));
+    let mut got = Vec::new();
+    engine_fetcher
+        .fetch(FOLDER, "big.bin", None, &mut |offset, data| {
+            assert_eq!(offset, got.len() as u64);
+            got.extend_from_slice(data);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(got == big, "the content is the file's");
+    let (from_storage, from_holder) = (
+        served(&engine_s) - storage_before,
+        served(&engine_holder) - holder_before,
+    );
+    eprintln!("chunks from the storage peer: {from_storage}, from the member: {from_holder}");
+    // Whichever was asked first: the member every chunk of the first part (the storage peer's
+    // copies of them, if it was asked first, failed their checks), the storage peer every other.
+    assert!(from_holder >= half as f64, "the member served too few");
+    assert!(
+        from_storage >= (chunks.len() - half) as f64,
+        "the storage peer served too few"
+    );
+
+    engine_fetcher.shutdown().await;
+    engine_holder.shutdown().await;
+    engine_s.shutdown().await;
+}

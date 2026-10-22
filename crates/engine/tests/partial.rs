@@ -869,3 +869,85 @@ async fn eviction_frees_in_place_where_a_freer_is_set() {
     engine_laptop.shutdown().await;
     engine_nas.shutdown().await;
 }
+
+/// Bytes that do not repeat, so they split into many chunks.
+fn noise(len: usize, mut state: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len + 8);
+    while out.len() < len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        out.extend_from_slice(&state.to_le_bytes());
+    }
+    out.truncate(len);
+    out
+}
+
+/// How many chunks `engine` has served other devices.
+fn served(engine: &Engine) -> f64 {
+    engine
+        .metrics()
+        .lines()
+        .find_map(|l| l.strip_prefix("tidefell_chunks_served_total "))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.0)
+}
+
+/// A large file opened on a phone comes in parts from two kinds of device at once: a full
+/// replica (the NAS) and a partial replica that has the file on disk (a laptop) (ADR 0032).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_file_comes_from_a_full_and_a_partial_replica_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let alice = UserKey::from_seed([3; 32]);
+    let roomy = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let nas = Device::new(tmp.path(), "nas", 50, &alice, ReplicaMode::Full);
+    let laptop = Device::new(tmp.path(), "laptop", 51, &alice, roomy);
+    let phone = Device::new(tmp.path(), "phone", 52, &alice, roomy);
+    // About a hundred chunks.
+    let big = noise(24 << 20, 0x9e37_79b9_7f4a_7c15);
+    nas.write("big.bin", &big);
+    let engine_nas = nas.start().await;
+    engine_nas.scan(FOLDER).await.unwrap();
+    let engine_laptop = laptop.start().await;
+    engine_laptop.connect(engine_nas.addr()).await.unwrap();
+    eventually("the laptop lists the file", || {
+        engine_laptop.files(FOLDER).unwrap().len() == 1
+    })
+    .await;
+
+    // The laptop has it on disk, as any partial replica does a file it opened.
+    assert_eq!(touch(&engine_laptop, "big.bin").await, big);
+    assert!(on_disk(&engine_laptop, "big.bin"));
+
+    let engine_phone = phone.start().await;
+    engine_phone.connect(engine_nas.addr()).await.unwrap();
+    engine_phone.connect(engine_laptop.addr()).await.unwrap();
+    eventually("the phone lists the file", || {
+        engine_phone.files(FOLDER).unwrap().len() == 1
+    })
+    .await;
+    eventually("the phone shares the folder with both", || {
+        engine_phone
+            .connected_peers()
+            .iter()
+            .filter(|p| p.shared_folders.contains(&FOLDER))
+            .count()
+            == 2
+    })
+    .await;
+    let (nas_before, laptop_before) = (served(&engine_nas), served(&engine_laptop));
+    assert_eq!(touch(&engine_phone, "big.bin").await, big);
+    let (from_nas, from_laptop) = (
+        served(&engine_nas) - nas_before,
+        served(&engine_laptop) - laptop_before,
+    );
+    eprintln!("chunks from the NAS: {from_nas}, from the laptop: {from_laptop}");
+    assert!(from_nas > 0.0, "the NAS served none");
+    assert!(from_laptop > 0.0, "the laptop served none");
+
+    engine_phone.shutdown().await;
+    engine_laptop.shutdown().await;
+    engine_nas.shutdown().await;
+}

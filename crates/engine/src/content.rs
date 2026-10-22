@@ -397,8 +397,9 @@ pub(crate) fn keeps(state: &FolderState, entry: &EntryId, kind: &EntryKind) -> b
 }
 
 /// Removes from the block store every chunk nothing needs there: chunks of content on disk, and
-/// chunks no content references. Chunks of content being downloaded are kept. Returns the
-/// number of chunks removed.
+/// chunks no content references. Chunks of content being downloaded are kept, an encrypted
+/// folder's too, before its manifest is made from them (ADR 0023). Returns the number of chunks
+/// removed.
 pub(crate) fn compact(inner: &Inner) -> usize {
     let mut needed: HashSet<ChunkHash> = HashSet::new();
     for handle in inner.handles() {
@@ -408,6 +409,15 @@ pub(crate) fn compact(inner: &Inner) -> usize {
         for content in store_only(&state).iter().chain(fetching.iter()) {
             if let Some(manifest) = state.manifests.get(content) {
                 needed.extend(manifest.chunks.iter().map(|c| c.hash));
+            }
+        }
+        // An encrypted download's chunks are known by their IDs as they arrive.
+        for ((content, _), list) in state.sealed_chunks.iter() {
+            if fetching.contains(content) {
+                needed.extend(
+                    list.iter()
+                        .filter_map(|(id, _)| state.chunk_ids.get(id).map(|(hash, _)| *hash)),
+                );
             }
         }
     }
