@@ -32,6 +32,9 @@ pub struct Failure {
     /// The step it failed at, or `None` if it failed once all steps were done.
     pub step: Option<usize>,
     pub message: String,
+    /// Each device's files after each step, of the run that failed: what a failure that does
+    /// not happen again, as one only under load, leaves to go on.
+    pub history: Vec<String>,
 }
 
 impl std::fmt::Display for Failure {
@@ -46,6 +49,7 @@ impl std::fmt::Display for Failure {
 fn fail(step: Option<usize>, message: impl Into<String>) -> Failure {
     Failure {
         step,
+        history: Vec::new(),
         message: message.into(),
     }
 }
@@ -84,6 +88,8 @@ struct World {
     /// devices' user (ADR 0023): left out of the comparisons, and never holds a key.
     storage: Option<Engine>,
     storage_key: DeviceKey,
+    /// Each device's files after each step, for a failure to show.
+    history: Vec<String>,
 }
 
 /// Runs `ops` on `devices` devices in a directory under `base`, then heals the network, lets
@@ -110,6 +116,10 @@ pub async fn run(ops: &[Op], devices: u8, base: &Path) -> Result<(), Failure> {
         Err(e) => Err(e),
     };
     world.stop().await;
+    let result = result.map_err(|f| Failure {
+        history: std::mem::take(&mut world.history),
+        ..f
+    });
     // Traces name each run by its directory, so a failure says which run's trace is its own.
     if std::env::var_os("TIDEFELL_SIM_TRACE").is_some() {
         let run = dir
@@ -150,6 +160,7 @@ impl World {
             encrypted: false,
             storage: None,
             storage_key: DeviceKey::from_seed([30; 32]),
+            history: Vec::new(),
         }
     }
 
@@ -478,11 +489,16 @@ impl World {
         Ok(())
     }
 
-    /// Notes the content each device has now, and fails if an engine has. With
-    /// `TIDEFELL_SIM_TRACE` set, prints every device's files.
+    /// Notes the content each device has now, and fails if an engine has. Every device's files
+    /// go in the history, and with `TIDEFELL_SIM_TRACE` set are printed too.
     fn observe(&mut self, step: usize) -> Result<(), String> {
         let trace = std::env::var_os("TIDEFELL_SIM_TRACE").is_some();
         for device in &mut self.devices {
+            self.history.push(format!(
+                "after step {step}, {}: {}",
+                device.name,
+                listing(&device.root)
+            ));
             if trace {
                 let run = device
                     .root

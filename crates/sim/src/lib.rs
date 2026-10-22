@@ -62,7 +62,10 @@ pub async fn check_seeds(
             let steps = generate(seed, DEVICES, STEPS);
             for _ in 0..repeat.max(1) {
                 if let Err(failure) = run(&steps, DEVICES, &base).await {
-                    eprintln!("seed {seed} failed {failure}");
+                    eprintln!(
+                        "seed {seed} failed {failure}\nits devices' files, step by step:\n{}",
+                        failure.history.join("\n")
+                    );
                     return Some((seed, failure, steps));
                 }
             }
