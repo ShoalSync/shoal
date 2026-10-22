@@ -81,9 +81,63 @@ replaced versions it keeps, its size against the quota, and how many chunks it i
 - Once a folder reaches its quota, it fetches nothing more for it and says so. It never drops a
   current version to make room: members then see their copy there as incomplete, not lost. Raise
   the quota and restart to let it catch up.
+- A total across all stored folders can be set as well, with an order between them: under the
+  total, a folder fetches only while none ranked above it still lacks what a connected member
+  could send. Each folder's own quota still holds.
+
+  ```toml
+  [storage]
+  quota_bytes = 500000000000   # 500 GB for all stored folders together
+
+  [[storage.folders]]
+  id = "<folder id>"
+  members = ["<user id>"]
+  quota_bytes = 300000000000
+  priority = 200               # 0 to 255, higher filled first; 128 if not set
+  ```
 - Members that are never online together sync through it: one leaves its changes there, the next
   picks them up, and a new device of a member gets the folder's key, granted by another member,
   the same way.
+
+## What it keeps first
+
+When a storage peer runs short of room, the folder's members decide what it keeps first, by
+ranking files from 0 to 255 (128 unless a rule says): it fills its quota highest first, and never
+stores a file ranked 0. The rules are in the folder's `.tidefellpriorities`, which syncs to every
+member device like any file; a member device holding the folder's key gives the storage peer the
+priority of each file, by its ID only, never its name.
+
+```sh
+tidefell folder priority <folder id> Photos/ 200      # keep photos first
+tidefell folder priority <folder id> '*.iso' 0        # never store disc images there
+tidefell folder priority <folder id> Photos/ --clear  # back to 128
+tidefell folder priorities <folder id>
+```
+
+Patterns are as in `.tidefellignore`, and the last rule that matches a file wins. The storage
+peer learns which files are ranked above others, though not which files they are.
+
+`tidefell folder storage <folder id>` shows, for each storage peer, what it holds and the room
+it has left, and for each priority how much of its files it keeps:
+
+```text
+<device id>: holds 3.0 GiB, room for 0 B more
+  priority 200: 120 file(s), 2.0 GiB: complete
+  priority 128: 4 file(s), 12.0 KiB: complete
+  priority  50: 30 file(s), 2.0 GiB: 50%, 1.0 GiB not stored
+  priority   0: 2 file(s), 8.0 GiB: never stored there
+```
+
+A storage peer never drops what it holds to make room: a file it already has stays when its
+rank falls, and one ranked higher waits. To make room, ask it to forget what is ranked low:
+
+```sh
+tidefell folder storage-drop <folder id> <storage peer's device id> --below 100
+```
+
+It asks first, and drops nothing if a file would go that has no copy known anywhere else, on
+this device or confirmed by another, listing those files; `--force` drops them anyway. What it
+drops it fetches again, highest priority first, whenever it has room.
 
 ## Sizing
 

@@ -487,4 +487,69 @@ impl EncryptedBackend for EngineBackend {
     fn is_full_replica(&self, folder: &FolderId) -> Option<bool> {
         Backend::is_full_replica(self, folder)
     }
+
+    fn set_priorities(
+        &self,
+        folder: &FolderId,
+        from: DeviceId,
+        issued_ms: i64,
+        hints: &[tidefell_proto::storage::Hint],
+    ) -> bool {
+        let Ok(handle) = self.0.folder(folder) else {
+            return false;
+        };
+        let changed = {
+            let mut state = handle.lock();
+            if !state.config.is_stored() {
+                return false;
+            }
+            let changed = crate::stored::set_priorities(&mut state, from, issued_ms, hints);
+            if changed {
+                let _ = state.save();
+            }
+            changed
+        };
+        // What is fetched first may have changed.
+        if changed {
+            self.0.changed();
+        }
+        true
+    }
+
+    fn storage_usage(&self, folder: &FolderId) -> Option<(u64, u64, u64)> {
+        let handle = self.0.folder(folder).ok()?;
+        let (quota, held) = {
+            let state = handle.lock();
+            let stored = state.config.encryption.as_ref()?.stored?;
+            (stored.quota_bytes, state.sealed_store.as_ref()?.bytes())
+        };
+        let mut room = quota.saturating_sub(held);
+        if let Some(total) = *self.0.storage_quota.lock().unwrap() {
+            let all: u64 = self
+                .0
+                .handles()
+                .iter()
+                .map(|h| h.lock().sealed_store.as_ref().map_or(0, |s| s.bytes()))
+                .sum();
+            room = room.min(total.saturating_sub(all));
+        }
+        Some((quota, held, room))
+    }
+
+    fn storage_drop(&self, folder: &FolderId, below: u8) -> Option<(u64, u64)> {
+        let handle = self.0.folder(folder).ok()?;
+        let dropped = {
+            let mut state = handle.lock();
+            if !state.config.is_stored() {
+                return None;
+            }
+            let dropped = crate::stored::drop_below(&mut state, below);
+            let _ = state.save();
+            dropped
+        };
+        tracing::info!(%folder, below, chunks = dropped.0, bytes = dropped.1, "dropped what members ranked low, as asked");
+        // Room to fetch what is ranked higher.
+        self.0.changed();
+        Some(dropped)
+    }
 }

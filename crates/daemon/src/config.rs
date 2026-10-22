@@ -70,6 +70,10 @@ pub struct Config {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Storage {
+    /// The most to keep of all stored folders' sealed chunks together, in bytes, beside each
+    /// folder's own quota. Under it, folders are filled in order of their `priority`.
+    #[serde(default)]
+    pub quota_bytes: Option<u64>,
     /// The encrypted folders this device stores. Each is kept under
     /// `<data_dir>/stored/<folder id>`, sealed: this device holds no key and cannot read it.
     #[serde(default)]
@@ -91,6 +95,11 @@ pub struct StoredFolder {
     /// Days to keep versions that later ones replaced, deletes included; 0 keeps them forever.
     #[serde(default = "default_stored_retention")]
     pub retention_days: u32,
+    /// The folder's priority against the other stored folders, 0 to 255 (128 if not set):
+    /// under the total `quota_bytes`, a folder fetches only while none of a higher priority
+    /// lacks what a connected peer could send.
+    #[serde(default)]
+    pub priority: Option<u8>,
 }
 
 fn default_stored_retention() -> u32 {
@@ -499,6 +508,9 @@ impl Config {
                     storage_peers: Vec::new(),
                     stored: Some(tidefell_engine::Stored {
                         quota_bytes: f.quota_bytes,
+                        priority: f
+                            .priority
+                            .unwrap_or(tidefell_engine::Stored::DEFAULT_PRIORITY),
                     }),
                 }),
             });
@@ -604,6 +616,27 @@ mod tests {
     }
 
     #[test]
+    fn reads_a_total_quota_and_folder_priorities() {
+        let (id, member) = ("e".repeat(64), "f".repeat(64));
+        let text = format!(
+            "{EXAMPLE}\n[storage]\nquota_bytes = 5000\n\n[[storage.folders]]\nid = \"{id}\"\nmembers = [\"{member}\"]\nquota_bytes = 1000\npriority = 200\n"
+        );
+        let config = parse(&text).unwrap();
+        assert_eq!(config.storage.as_ref().unwrap().quota_bytes, Some(5000));
+        let engine = config.to_engine().unwrap();
+        let stored = engine.folders.iter().find(|f| f.is_stored()).unwrap();
+        assert_eq!(
+            stored.encryption.as_ref().and_then(|e| e.stored),
+            Some(tidefell_engine::Stored {
+                quota_bytes: 1000,
+                priority: 200,
+            })
+        );
+        // Not more than 255.
+        assert!(parse(&text.replace("priority = 200", "priority = 300")).is_err());
+    }
+
+    #[test]
     fn reads_a_storage_peer() {
         let (id, member) = ("e".repeat(64), "f".repeat(64));
         let text = format!(
@@ -618,7 +651,10 @@ mod tests {
         assert_eq!(stored.path, config.data_dir.join("stored").join(&id));
         assert_eq!(
             stored.encryption.as_ref().and_then(|e| e.stored),
-            Some(tidefell_engine::Stored { quota_bytes: 1000 })
+            Some(tidefell_engine::Stored {
+                quota_bytes: 1000,
+                priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
+            })
         );
         // A device syncs a folder or stores it, not both.
         let synced = "c".repeat(64);

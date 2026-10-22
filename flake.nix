@@ -331,7 +331,7 @@
                 export PYTHONDONTWRITEBYTECODE=1
                 python3 hpke.py
                 python3 check_wire.py
-                for spec in encryption_v1 sync_v2 blobs_v2; do
+                for spec in encryption_v1 sync_v2 blobs_v2 storage_v1; do
                   python3 "$spec.py" > "$work/$spec.json"
                   diff -u "../''${spec//_/-}.json" "$work/$spec.json"
                 done

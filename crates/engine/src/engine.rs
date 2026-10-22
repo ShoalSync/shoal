@@ -12,6 +12,7 @@ mod history;
 pub(crate) mod metrics;
 mod peers;
 mod recycle;
+mod storage;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -164,6 +165,9 @@ pub(crate) struct Inner {
     pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
     /// How each folder whose files another component places frees one in place (ADR 0042).
     pub(crate) freers: Mutex<HashMap<FolderId, crate::Freer>>,
+    /// On a storage peer, the most all stored folders keep together, if set (ADR 0023's
+    /// amendment of 2026-10-22).
+    pub(crate) storage_quota: Mutex<Option<u64>>,
     /// Chunk requests waiting to go to each peer together (ADR 0032).
     pub(crate) batches: Arc<crate::batch::Batches>,
     /// Whether each peer said it is a full replica of each folder, and when (ADR 0032).
@@ -831,6 +835,7 @@ impl Engine {
             store: Mutex::new(store),
             fetching: Mutex::new(HashSet::new()),
             freers: Mutex::new(HashMap::new()),
+            storage_quota: Mutex::new(None),
             batches: Arc::default(),
             full_replicas: Mutex::default(),
             replica_query: tokio::sync::Mutex::default(),
@@ -974,6 +979,18 @@ impl Engine {
                         }
                     }
                     tokio::time::sleep(inner.retry_interval()).await;
+                }
+            }));
+        }
+        {
+            // Members' priorities for the folders' storage peers (ADR 0023's amendment of
+            // 2026-10-22), given as often as copies are confirmed.
+            let (inner, node) = (inner.clone(), node.clone());
+            tasks.spawn(supervised(inner.clone(), "priorities", async move {
+                let mut given = crate::priorities::Given::default();
+                loop {
+                    crate::priorities::give(&inner, &node, &mut given).await;
+                    tokio::time::sleep(CONFIRM_INTERVAL.min(inner.retry_interval() * 2)).await;
                 }
             }));
         }

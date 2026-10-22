@@ -434,7 +434,10 @@ async fn storage_peer(
             confirm_deletes: Default::default(),
             encryption: Some(Encryption {
                 storage_peers: Vec::new(),
-                stored: Some(tidefell_engine::Stored { quota_bytes }),
+                stored: Some(tidefell_engine::Stored {
+                    quota_bytes,
+                    priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
+                }),
             }),
         }],
         min_free_space: None,
@@ -1043,5 +1046,380 @@ async fn an_encrypted_download_spreads_across_peers_that_both_hold_it() {
 
     engine_fetcher.shutdown().await;
     engine_author.shutdown().await;
+    engine_s.shutdown().await;
+}
+
+/// A storage peer's stored folders under a total quota fill in order of their priority (ADR
+/// 0023's amendment of 2026-10-22): the higher one whole, the lower one with what room is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn stored_folders_fill_in_order_of_priority_under_a_total_quota() {
+    const LOW: FolderId = FolderId([45; 32]);
+    const HIGH: FolderId = FolderId([46; 32]);
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([21; 32]);
+    let operator = UserKey::from_seed([22; 32]);
+    let member_key = DeviceKey::from_seed([160; 32]);
+    let storage_key = DeviceKey::from_seed([161; 32]);
+    let encrypted = |storage_peers: Vec<DeviceId>, stored: Option<tidefell_engine::Stored>| {
+        Some(Encryption {
+            storage_peers,
+            stored,
+        })
+    };
+    let folder = |id: FolderId, path: PathBuf, members: Vec<UserId>, encryption| FolderConfig {
+        id,
+        path,
+        mode: ReplicaMode::Full,
+        members,
+        retention: Retention::Days(30),
+        scan_interval: Duration::from_secs(3600),
+        sync: Default::default(),
+        confirm_deletes: Default::default(),
+        encryption,
+    };
+    let config = |data: PathBuf, peer: DeviceId, folders| EngineConfig {
+        data_dir: data,
+        metadata_dir: None,
+        relay: RelayConfig::Disabled,
+        address_lookup: false,
+        local_discovery: false,
+        watch: false,
+        limits: Default::default(),
+        bind: None,
+        peers: vec![PeerAddr {
+            device: peer,
+            addrs: Vec::new(),
+            relay: None,
+        }],
+        folders,
+        min_free_space: None,
+    };
+
+    // The member: one file of about 2 MiB in each folder.
+    let member_dir = dir.path().join("member");
+    let member = Engine::start_simulated(
+        config(
+            member_dir.join("data"),
+            storage_key.id(),
+            [LOW, HIGH]
+                .into_iter()
+                .map(|id| {
+                    folder(
+                        id,
+                        member_dir.join(id.to_string()),
+                        vec![user.id()],
+                        encrypted(vec![storage_key.id()], None),
+                    )
+                })
+                .collect(),
+        ),
+        member_key.clone(),
+        user.certify(member_key.id(), "member", 0),
+        &network,
+    )
+    .await
+    .unwrap();
+    member.set_retry_interval(Duration::from_millis(50));
+    for (id, seed) in [(LOW, 1u64), (HIGH, 2)] {
+        let root = member_dir.join(id.to_string());
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("data.bin"), noise(2 << 20, seed)).unwrap();
+        member.scan(id).await.unwrap();
+    }
+
+    // The storage peer: the low folder at 50, the high one at 200, with room for about one.
+    let storage_dir = dir.path().join("storage").join("data");
+    let stored = |priority| {
+        encrypted(
+            Vec::new(),
+            Some(tidefell_engine::Stored {
+                quota_bytes: u64::MAX,
+                priority,
+            }),
+        )
+    };
+    let storage = Engine::start_simulated(
+        config(
+            storage_dir.clone(),
+            member_key.id(),
+            vec![
+                folder(
+                    LOW,
+                    storage_dir.join("stored").join(LOW.to_string()),
+                    vec![user.id()],
+                    stored(50),
+                ),
+                folder(
+                    HIGH,
+                    storage_dir.join("stored").join(HIGH.to_string()),
+                    vec![user.id()],
+                    stored(200),
+                ),
+            ],
+        ),
+        storage_key.clone(),
+        operator.certify(storage_key.id(), "storage", 0),
+        &network,
+    )
+    .await
+    .unwrap();
+    storage.set_retry_interval(Duration::from_millis(50));
+    // Nothing is fetched until both folders' versions are in, so neither starts first by
+    // chance.
+    storage.set_storage_quota(Some(0));
+    let info = |id: FolderId| {
+        storage
+            .folders()
+            .into_iter()
+            .find(|f| f.id == id)
+            .and_then(|f| f.encryption)
+            .and_then(|e| e.stored)
+            .unwrap()
+    };
+    eventually_for("both folders' versions", 60, || {
+        info(LOW).versions == 1 && info(HIGH).versions == 1
+    })
+    .await;
+    assert_eq!((info(LOW).bytes, info(HIGH).bytes), (0, 0));
+
+    storage.set_storage_quota(Some(3 << 20));
+    eventually_for("the high folder whole", 60, || {
+        info(HIGH).missing_chunks == 0
+    })
+    .await;
+    eventually_for("the low folder up to the total", 60, || {
+        info(LOW).bytes + info(HIGH).bytes >= 3 << 20
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let (low, high) = (info(LOW), info(HIGH));
+    eprintln!(
+        "low: {} bytes, {} missing; high: {} bytes",
+        low.bytes, low.missing_chunks, high.bytes
+    );
+    assert!(low.missing_chunks > 0, "the low folder does not all fit");
+    assert!(low.bytes > 0, "it has what room was left");
+
+    storage.shutdown().await;
+    member.shutdown().await;
+}
+
+/// Members rank what a storage peer keeps (ADR 0023's amendment of 2026-10-22): with rules in
+/// `.tidefellpriorities`, a member device gives the storage peer each file's priority, and it
+/// fills its quota highest first and never fetches a file ranked 0. With the author gone,
+/// another member then gets the first file whole from it, and neither of the others.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_storage_peer_fills_in_the_order_members_rank_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([23; 32]);
+    let operator = UserKey::from_seed([24; 32]);
+    let a = Member::new(dir.path(), "a", 170);
+    let mut b = Member::new(dir.path(), "b", 172);
+    b.mode = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let storage_key = DeviceKey::from_seed([171; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        171,
+        &operator,
+        &[user.id()],
+        &network,
+        &[a.key.id(), b.key.id()],
+        u64::MAX,
+    )
+    .await;
+    // Nothing fetched until the priorities are in.
+    engine_s.set_storage_quota(Some(0));
+    let start = async |member: &Member, other: DeviceId| {
+        member
+            .start_with(
+                &user,
+                &[user.id()],
+                &[storage_key],
+                &network,
+                &[other, storage_key],
+            )
+            .await
+    };
+    let engine_a = start(&a, b.key.id()).await;
+    let (first, never, last) = (noise(2 << 20, 3), noise(2 << 20, 4), noise(2 << 20, 5));
+    a.write("first.bin", &first);
+    a.write("disc.iso", &never);
+    a.write("last.bin", &last);
+    a.write(
+        ".tidefellpriorities",
+        b"# rank\n200 first.bin\n0 *.iso\n50 last.bin\n",
+    );
+    engine_a.scan(FOLDER).await.unwrap();
+    let engine_b = start(&b, a.key.id()).await;
+    eventually_for("b lists the files, with the key", 60, || {
+        paths(&engine_b).len() == 4 && generation(&engine_b).is_some()
+    })
+    .await;
+    eventually_for(
+        "the storage peer has the versions and their priorities",
+        60,
+        || {
+            let s = stored(&engine_s);
+            s.versions == 4 && s.ranked == 4
+        },
+    )
+    .await;
+
+    // Room for the first file and the rules, and some of the last.
+    let quota = (2 << 20) + (1 << 20);
+    engine_s.set_storage_quota(Some(quota));
+    eventually_for("the storage peer fills up", 60, || {
+        stored(&engine_s).bytes >= quota
+    })
+    .await;
+    let held = stored(&engine_s);
+    assert!(
+        held.missing_chunks > 0,
+        "the last file does not all fit: {held:?}"
+    );
+    engine_a.shutdown().await;
+
+    let fetch = async |path: &str| {
+        let mut got = Vec::new();
+        engine_b
+            .fetch(FOLDER, path, None, &mut |_, data| {
+                got.extend_from_slice(data);
+                Ok(())
+            })
+            .await
+            .map(|()| got)
+    };
+    assert!(
+        fetch("first.bin").await.unwrap() == first,
+        "the first file is all there"
+    );
+    assert!(fetch("disc.iso").await.is_err(), "the iso was never stored");
+    assert!(
+        fetch("last.bin").await.is_err(),
+        "the last file did not all fit"
+    );
+
+    engine_b.shutdown().await;
+    engine_s.shutdown().await;
+}
+
+/// Members see what a storage peer keeps of each priority, and drop from it only when asked,
+/// never what has no copy elsewhere unless forced (ADR 0023's amendment of 2026-10-22).
+#[tokio::test(flavor = "multi_thread")]
+async fn members_see_and_drop_what_a_storage_peer_keeps() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([25; 32]);
+    let operator = UserKey::from_seed([26; 32]);
+    let a = Member::new(dir.path(), "a", 180);
+    let mut b = Member::new(dir.path(), "b", 182);
+    b.mode = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let storage_key = DeviceKey::from_seed([181; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        181,
+        &operator,
+        &[user.id()],
+        &network,
+        &[a.key.id(), b.key.id()],
+        u64::MAX,
+    )
+    .await;
+    engine_s.set_storage_quota(Some(0));
+    let start = async |member: &Member, other: DeviceId| {
+        member
+            .start_with(
+                &user,
+                &[user.id()],
+                &[storage_key],
+                &network,
+                &[other, storage_key],
+            )
+            .await
+    };
+    let engine_a = start(&a, b.key.id()).await;
+    let (first, never, last) = (noise(2 << 20, 6), noise(2 << 20, 7), noise(2 << 20, 8));
+    a.write("first.bin", &first);
+    a.write("disc.iso", &never);
+    a.write("last.bin", &last);
+    a.write(
+        ".tidefellpriorities",
+        b"200 first.bin\n0 *.iso\n50 last.bin\n",
+    );
+    engine_a.scan(FOLDER).await.unwrap();
+    let engine_b = start(&b, a.key.id()).await;
+    eventually_for(
+        "the storage peer has the versions and their priorities",
+        60,
+        || {
+            let s = stored(&engine_s);
+            s.versions == 4 && s.ranked == 4
+        },
+    )
+    .await;
+    eventually_for("b lists the files, with the key", 60, || {
+        paths(&engine_b).len() == 4 && generation(&engine_b).is_some()
+    })
+    .await;
+    let quota = (2 << 20) + (1 << 20);
+    engine_s.set_storage_quota(Some(quota));
+    eventually_for("the storage peer fills up", 60, || {
+        stored(&engine_s).bytes >= quota
+    })
+    .await;
+
+    // What it keeps, by priority, as the author sees it.
+    let report = engine_a.storage_report(FOLDER).await.unwrap();
+    eprintln!("{report:?}");
+    let [peer] = report.as_slice() else {
+        panic!("one storage peer: {report:?}")
+    };
+    assert!(peer.connected && peer.error.is_none());
+    let usage = peer.usage.unwrap();
+    assert_eq!(usage.room_bytes, 0, "full");
+    let level = |p: u8| *peer.levels.iter().find(|l| l.priority == p).unwrap();
+    assert_eq!(
+        level(200).held_bytes,
+        level(200).bytes,
+        "the first file is all there"
+    );
+    assert!(
+        level(50).held_bytes < level(50).bytes,
+        "the last file is not"
+    );
+    assert_eq!(level(0).held_bytes, 0, "the iso is never stored");
+    assert_eq!(
+        peer.levels.iter().map(|l| l.priority).collect::<Vec<_>>(),
+        [200, 128, 50, 0]
+    );
+
+    // b holds none of the files ranked low, and knows of no other copy: it refuses to drop
+    // them unless forced.
+    let refused = engine_b
+        .storage_drop(FOLDER, storage_key, 100, false)
+        .await
+        .unwrap();
+    assert!(!refused.done);
+    let mut at_risk = refused.at_risk.clone();
+    at_risk.sort();
+    assert_eq!(at_risk, ["disc.iso", "last.bin"]);
+    assert!(stored(&engine_s).bytes >= quota, "nothing dropped");
+
+    // The author has them on disk: it may.
+    let dropped = engine_a
+        .storage_drop(FOLDER, storage_key, 100, false)
+        .await
+        .unwrap();
+    assert!(dropped.done && dropped.at_risk.is_empty(), "{dropped:?}");
+    assert!(dropped.dropped_chunks > 0 && dropped.dropped_bytes > 0);
+
+    engine_b.shutdown().await;
+    engine_a.shutdown().await;
     engine_s.shutdown().await;
 }

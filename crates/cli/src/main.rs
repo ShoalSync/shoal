@@ -364,6 +364,75 @@ enum FolderCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Rank the files matching PATTERN for the folder's storage peers: 0 to 255, higher kept
+    /// first when one runs short of room, 0 never stored there; 128 if no rule says. The rule
+    /// goes in the folder's `.tidefellpriorities`, which syncs to the members' other devices
+    /// (ADR 0023). Patterns are as in `.tidefellignore`; the last that matches wins.
+    Priority {
+        /// Folder ID.
+        id: String,
+        /// Paths the rule covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+        pattern: String,
+        /// The priority, 0 to 255.
+        #[arg(required_unless_present = "clear")]
+        priority: Option<u8>,
+        /// Remove the rule for PATTERN instead.
+        #[arg(long, conflicts_with = "priority")]
+        clear: bool,
+    },
+    /// List the rules ranking the folder's files for its storage peers.
+    Priorities {
+        /// Folder ID.
+        id: String,
+    },
+    /// Show what each of an encrypted folder's storage peers keeps of it, by priority.
+    Storage {
+        /// Folder ID.
+        id: String,
+    },
+    /// Ask a storage peer to forget what it holds of the folder's files ranked below a
+    /// priority, for room for those ranked higher. It never does so on its own, and fetches them
+    /// again only when it has room. Files with no copy known elsewhere are kept unless --force.
+    StorageDrop {
+        /// Folder ID.
+        id: String,
+        /// The storage peer's device ID.
+        device: String,
+        /// Files ranked below this, 0 to 255.
+        #[arg(long)]
+        below: u8,
+        /// Drop even files that have no copy known elsewhere.
+        #[arg(long)]
+        force: bool,
+        /// Do not ask first.
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+/// The file at a folder's root that ranks its files for storage peers (ADR 0023).
+const PRIORITIES_FILE: &str = ".tidefellpriorities";
+
+/// `text`, a priorities file, with its rule for `pattern` replaced by one at `priority`, or
+/// removed for `None`. Comments and other rules stay as they are.
+fn set_priority_rule(text: &str, pattern: &str, priority: Option<u8>) -> String {
+    let mut lines: Vec<String> = text
+        .lines()
+        .filter(|line| {
+            let line = line.trim();
+            line.split_once(char::is_whitespace)
+                .is_none_or(|(_, p)| p.trim() != pattern || line.starts_with('#'))
+        })
+        .map(str::to_owned)
+        .collect();
+    if let Some(priority) = priority {
+        lines.push(format!("{priority} {pattern}"));
+    }
+    let mut out = lines.join("\n");
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    out
 }
 
 /// A retention period given on the command line.
@@ -976,6 +1045,99 @@ async fn run(cli: Cli) -> Result<(), String> {
                     format!("{} now keeps deleted files {}", f.id, format::retention(f))
                 });
             }
+            FolderCommand::Priority {
+                id,
+                pattern,
+                priority,
+                clear,
+            } => {
+                let folder = client.folder(&id).await.map_err(e)?;
+                // On a partial replica the rules may not be on disk: fetched first, so they
+                // are added to, not replaced.
+                let synced = client.files(&id).await.map_err(e)?;
+                if synced
+                    .iter()
+                    .any(|f| f.path == PRIORITIES_FILE && !f.on_disk)
+                {
+                    client.fetch(&id, PRIORITIES_FILE).await.map_err(e)?;
+                }
+                let path = std::path::Path::new(&folder.path).join(PRIORITIES_FILE);
+                let text = match std::fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+                    Err(err) => return Err(format!("{}: {err}", path.display())),
+                };
+                let priority = if clear { None } else { priority };
+                std::fs::write(&path, set_priority_rule(&text, &pattern, priority))
+                    .map_err(|err| format!("{}: {err}", path.display()))?;
+                print(json, &(), |_| match priority {
+                    Some(p) => format!("{pattern} ranked {p} for the folder's storage peers"),
+                    None => format!("the rule for {pattern} is removed"),
+                });
+            }
+            FolderCommand::Storage { id } => {
+                let reports = client.storage_report(&id).await.map_err(e)?;
+                print(json, &reports, |reports| format::storage(reports));
+            }
+            FolderCommand::StorageDrop {
+                id,
+                device,
+                below,
+                force,
+                yes,
+            } => {
+                if !yes
+                    && !confirm(&format!(
+                        "Make storage peer {device} forget what it holds of files ranked below \
+                         {below}? It fetches them again only when it has room."
+                    ))?
+                {
+                    return Err("nothing dropped".into());
+                }
+                let result = client
+                    .storage_drop(&id, &device, below, force)
+                    .await
+                    .map_err(e)?;
+                if !result.done {
+                    return Err(format!(
+                        "nothing dropped: these files have no copy known other than on that \
+                         storage peer, and would be lost (--force to drop them anyway):\n{}",
+                        result.at_risk.join("\n")
+                    ));
+                }
+                print(json, &result, |r| {
+                    format!(
+                        "dropped {} ({} chunks)",
+                        format::size(r.dropped_bytes),
+                        r.dropped_chunks
+                    )
+                });
+            }
+            FolderCommand::Priorities { id } => {
+                let folder = client.folder(&id).await.map_err(e)?;
+                let path = std::path::Path::new(&folder.path).join(PRIORITIES_FILE);
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                let rules: Vec<(u8, String)> = text
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                    .filter_map(|l| {
+                        let (p, pattern) = l.split_once(char::is_whitespace)?;
+                        Some((p.parse().ok()?, pattern.trim().to_owned()))
+                    })
+                    .collect();
+                print(json, &rules, |rules| {
+                    if rules.is_empty() {
+                        "no rules: every file is ranked 128".to_owned()
+                    } else {
+                        rules
+                            .iter()
+                            .map(|(p, pattern)| format!("{p:>3} {pattern}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                });
+            }
         },
         Command::Files { folder } => print(json, &client.files(&folder).await.map_err(e)?, |f| {
             format::files(f)
@@ -1199,5 +1361,24 @@ fn main() -> ExitCode {
             eprintln!("tidefell: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_priority_rule;
+
+    #[test]
+    fn a_rule_replaces_the_one_for_its_pattern() {
+        let text = "# what to keep\n200 Photos/\n0 *.iso\n";
+        assert_eq!(
+            set_priority_rule(text, "Photos/", Some(150)),
+            "# what to keep\n0 *.iso\n150 Photos/\n"
+        );
+        assert_eq!(
+            set_priority_rule(text, "*.iso", None),
+            "# what to keep\n200 Photos/\n"
+        );
+        assert_eq!(set_priority_rule("", "docs/", Some(10)), "10 docs/\n");
     }
 }

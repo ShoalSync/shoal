@@ -456,6 +456,8 @@ async fn run(path: &Path) -> Result<(), String> {
         engine.set_diagnostics_config(value);
     }
     engine.set_report_url(config.report_url.clone());
+    // A storage peer's total across its stored folders (ADR 0023's amendment of 2026-10-22).
+    engine.set_storage_quota(config.storage.as_ref().and_then(|s| s.quota_bytes));
     #[cfg(target_os = "linux")]
     let mounts = mounts::Mounts::start(&engine, config.mounts()?)?;
     #[cfg(windows)]

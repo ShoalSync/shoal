@@ -363,3 +363,69 @@ fn v2_messages_refuse_bytes_left_over() {
     framed.extend(longer);
     assert!(frame::decode::<SyncMessage>(&framed).is_err());
 }
+
+#[test]
+fn storage_v1_messages_encode_as_the_spec_says() {
+    use tidefell_proto::storage::{Hint, StorageErrorCode, StorageMessage};
+    let hint = |n: u8, priority| Hint {
+        entry: EntryId([n; 16]),
+        priority,
+    };
+    let built = [
+        (
+            "hello",
+            StorageMessage::Hello {
+                certificate: certificate(),
+            },
+        ),
+        (
+            "priorities",
+            StorageMessage::Priorities {
+                folder: FOLDER,
+                issued_ms: 1_792_000_000_000,
+                hints: vec![hint(0x11, 200), hint(0x22, 0), hint(0x33, 128)],
+            },
+        ),
+        ("accepted", StorageMessage::Accepted),
+        (
+            "error-not-stored",
+            StorageMessage::Error {
+                code: StorageErrorCode::NotStored,
+            },
+        ),
+        (
+            "usage-request",
+            StorageMessage::UsageRequest { folder: FOLDER },
+        ),
+        (
+            "usage",
+            StorageMessage::Usage {
+                quota_bytes: 100_000_000_000,
+                held_bytes: 42_000_000_000,
+                room_bytes: 58_000_000_000,
+            },
+        ),
+        (
+            "drop",
+            StorageMessage::Drop {
+                folder: FOLDER,
+                below: 100,
+            },
+        ),
+        (
+            "dropped",
+            StorageMessage::Dropped {
+                chunks: 1234,
+                bytes: 321_000_000,
+            },
+        ),
+    ];
+    let expected = frames("storage-v1.json");
+    assert_eq!(expected.len(), built.len());
+    for ((name, message), (want_name, want)) in built.iter().zip(&expected) {
+        assert_eq!(name, want_name);
+        assert_eq!(frame::encode(message), *want, "{name}");
+        let (decoded, _): (StorageMessage, usize) = frame::decode(want).unwrap();
+        assert_eq!(decoded, *message, "{name}");
+    }
+}

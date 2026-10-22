@@ -27,6 +27,7 @@ mod memory;
 mod node;
 mod pair;
 mod session;
+mod storage;
 mod sync;
 mod sync2;
 mod traffic;

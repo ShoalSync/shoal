@@ -192,4 +192,31 @@ pub trait EncryptedBackend: Send + Sync + 'static {
 
     /// Whether this device is a full replica of `folder`; `None` if the folder is unknown.
     fn is_full_replica(&self, folder: &FolderId) -> Option<bool>;
+
+    /// Records the priorities member device `from` gave `folder`'s entries at `issued_ms`
+    /// (`specs/storage-v1.md`); false if this device does not store the folder.
+    fn set_priorities(
+        &self,
+        folder: &FolderId,
+        from: DeviceId,
+        issued_ms: i64,
+        hints: &[tidefell_proto::storage::Hint],
+    ) -> bool {
+        let _ = (folder, from, issued_ms, hints);
+        false
+    }
+
+    /// The stored `folder`'s quota, the sealed bytes held of it and the room left for it;
+    /// `None` if this device does not store it.
+    fn storage_usage(&self, folder: &FolderId) -> Option<(u64, u64, u64)> {
+        let _ = folder;
+        None
+    }
+
+    /// Forgets what is held of the stored `folder`'s entries ranked below `below`, as a member
+    /// asked; the chunks and sealed bytes removed, or `None` if this device does not store it.
+    fn storage_drop(&self, folder: &FolderId, below: u8) -> Option<(u64, u64)> {
+        let _ = (folder, below);
+        None
+    }
 }

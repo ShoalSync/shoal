@@ -962,8 +962,80 @@ pub(crate) fn revocations(list: &[tidefell_sdk::types::Revocation]) -> String {
         .join("\n")
 }
 
+/// What each storage peer keeps of a folder, by priority.
+pub(crate) fn storage(reports: &[tidefell_sdk::types::StoragePeerReport]) -> String {
+    if reports.is_empty() {
+        return "the folder has no storage peers".to_owned();
+    }
+    let mut out = Vec::new();
+    for r in reports {
+        let head = match (r.connected, &r.error, r.held_bytes) {
+            (false, _, _) => format!("{}: not connected", r.device),
+            (true, Some(e), _) => format!("{}: did not say: {e}", r.device),
+            (true, None, held) => format!(
+                "{}: holds {}, room for {} more",
+                r.device,
+                size(held.unwrap_or(0)),
+                size(r.room_bytes.unwrap_or(0)),
+            ),
+        };
+        out.push(head);
+        for l in &r.levels {
+            let state = if l.priority == 0 {
+                "never stored there".to_owned()
+            } else if l.held_bytes >= l.bytes {
+                "complete".to_owned()
+            } else {
+                format!(
+                    "{}%, {} not stored",
+                    l.held_bytes * 100 / l.bytes.max(1),
+                    size(l.bytes - l.held_bytes)
+                )
+            };
+            out.push(format!(
+                "  priority {:>3}: {} file(s), {}: {state}",
+                l.priority,
+                l.files,
+                size(l.bytes)
+            ));
+        }
+    }
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn storage_by_priority() {
+        use tidefell_sdk::types::{StorageLevel, StoragePeerReport};
+        let level = |priority, bytes, held_bytes| StorageLevel {
+            priority,
+            files: 1,
+            bytes,
+            held_bytes,
+        };
+        let shown = storage(&[StoragePeerReport {
+            device: "dd".into(),
+            connected: true,
+            quota_bytes: Some(4 << 20),
+            held_bytes: Some(3 << 20),
+            room_bytes: Some(0),
+            levels: vec![
+                level(200, 2 << 20, 2 << 20),
+                level(50, 2 << 20, 1 << 20),
+                level(0, 1024, 0),
+            ],
+            error: None,
+        }]);
+        assert_eq!(
+            shown,
+            "dd: holds 3.0 MiB, room for 0 B more\n  priority 200: 1 file(s), 2.0 MiB: complete\n  \
+             priority  50: 1 file(s), 2.0 MiB: 50%, 1.0 MiB not stored\n  priority   0: 1 \
+             file(s), 1.0 KiB: never stored there"
+        );
+        assert_eq!(storage(&[]), "the folder has no storage peers");
+    }
     use super::*;
 
     #[test]

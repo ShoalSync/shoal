@@ -291,11 +291,12 @@ is ever dropped unless a user asks.
   `tidefell folder priority` edits it; it can also be edited by hand.
 - **Hints, from rules to entries.** A storage peer cannot read paths, so a member device that
   holds the key works out each current entry's priority from the rules and sends the storage
-  peer the entries' IDs and priorities, signed. Every member device does so when the rules or
-  the entries change and it is connected to the storage peer; the rules being the same, so are
-  the hints. The storage peer keeps, for each entry, the hint signed last by the clock of the
-  device that signed it, from a device its member list vouches for, and drops a hint whose entry
-  it no longer keeps.
+  peer the entries' IDs and priorities, over a connection that is that device's, from a device
+  its member list vouches for, as blobs/2's requests are. Every member device with the rules on
+  disk does so when the rules or the entries change and it is connected to the storage peer;
+  the rules being the same, so are the hints. The storage peer keeps, for each entry, the
+  priority given last by the clock of the device that gave it, and drops one whose entry it no
+  longer keeps.
 - **A protocol of its own, `tidefell/storage/1`,** for hints and what follows, not new sync/2
   items: sync/2 has no way for a peer to skip an item it does not know, and storage peers are run
   by other people, so they lag members' versions. A storage peer that does not speak it refuses
@@ -304,13 +305,15 @@ is ever dropped unless a user asks.
   its own, authenticated as blobs/2's.
 - **Fill order.** The storage peer fetches the chunks of current versions in order of priority,
   highest first, then superseded versions' for history, highest first; within a priority, as
-  before. A chunk several entries share is fetched at the highest of their priorities.
+  before. A chunk several entries share is fetched at the highest of their priorities. One
+  priority is done with before the next starts: requests overlap, so within one, chunks arrive
+  in no set order, and the quota could otherwise run out on a lower priority's.
 - **Full is not a reason to drop.** At its quota it fetches nothing more, as before, even for a
-  higher priority than what it holds. `Usage` tells members, by priority, the sealed bytes it
-  holds, the chunk IDs of current versions it lacks, and its quota and what is left of it. A
-  storage peer learns a chunk's size only by fetching it, so the member device, which knows each
-  chunk's length, turns what is missing into bytes, and `tidefell folder status` can say
-  "priority 200: complete; 128: 60%, 4.1 GB not stored for want of room".
+  higher priority than what it holds. `Usage` tells members its quota for the folder, the sealed
+  bytes it holds and the room it has left. A storage peer learns a chunk's size only by
+  fetching it, so a member works out the rest: it asks blobs/2's availability of the chunk IDs
+  of the current files, whose lengths and priorities it knows, and `tidefell folder storage`
+  says "priority 200: complete; 50: 60%, 4.1 GiB not stored".
 - **Dropping is a user's decision, never automatic.** A user asks, on a member device, to drop
   from a storage peer what is below a priority (`tidefell folder storage-drop <folder> <peer>
   --below <priority>`), and the storage peer then forgets those entries' chunks, as if their

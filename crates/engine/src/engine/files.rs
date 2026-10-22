@@ -174,6 +174,14 @@ impl Engine {
         .await
     }
 
+    /// On a storage peer, the most all its stored folders keep together, in sealed bytes, or
+    /// no limit for `None`; each folder's own quota holds as well. Under it, stored folders
+    /// are filled in order of their priority (ADR 0023's amendment of 2026-10-22).
+    pub fn set_storage_quota(&self, quota_bytes: Option<u64>) {
+        *self.inner.storage_quota.lock().unwrap() = quota_bytes;
+        self.inner.changed();
+    }
+
     /// Has eviction in `folder` free files in place with `freer`, rather than remove them, or
     /// remove them again for `None`: a Windows sync root's files are dehydrated, so they stay
     /// where they are as online-only (ADR 0042).

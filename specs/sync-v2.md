@@ -193,7 +193,8 @@ wrote each version and when it arrived, chunk counts, list blobs, sealed chunk l
 within 4 KiB) and sealed payload lengths (to within 64 bytes), and who holds a grant of which
 key. Chunk IDs are the same for the same content within a generation, so it also sees which
 versions and entries share chunks: copies, and edits that keep most of a file. Not paths, names,
-contents, exact sizes or keys.
+contents, exact sizes or keys. Members' priorities ([storage-v1.md](storage-v1.md)) show it,
+besides, which entries they rank above others.
 
 ## Open questions
 

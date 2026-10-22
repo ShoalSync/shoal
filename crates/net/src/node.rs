@@ -375,6 +375,8 @@ struct Protocols {
     sync: SyncProtocol<V1>,
     blobs: BlobsProtocol,
     encrypted: Option<(SyncProtocol<V2>, Blobs2Protocol)>,
+    /// Members' priorities, on a device with encrypted folders (`specs/storage-v1.md`).
+    storage: Option<crate::storage::StorageProtocol>,
 }
 
 impl Protocols {
@@ -395,6 +397,9 @@ impl Protocols {
                 backend: backend.clone(),
                 limiter: limiter.clone(),
             },
+            storage: encrypted.map(|folders| crate::storage::StorageProtocol {
+                folders: folders.clone(),
+            }),
             encrypted: encrypted.map(|folders| {
                 (
                     SyncProtocol {
@@ -418,7 +423,11 @@ impl Protocols {
     fn alpns(&self) -> Vec<Vec<u8>> {
         let mut alpns = vec![ALPN_SYNC_V1.to_vec(), ALPN_BLOBS_V1.to_vec()];
         if self.encrypted.is_some() {
-            alpns.extend([ALPN_SYNC_V2.to_vec(), ALPN_BLOBS_V2.to_vec()]);
+            alpns.extend([
+                ALPN_SYNC_V2.to_vec(),
+                ALPN_BLOBS_V2.to_vec(),
+                tidefell_proto::ALPN_STORAGE_V1.to_vec(),
+            ]);
         }
         alpns
     }
@@ -534,6 +543,9 @@ impl Node {
                 .accept(ALPN_SYNC_V2, sync.clone())
                 .accept(ALPN_BLOBS_V2, blobs.clone());
         }
+        if let Some(storage) = &protocols.storage {
+            router = router.accept(tidefell_proto::ALPN_STORAGE_V1, storage.clone());
+        }
         let router = router.spawn();
         Ok(Self {
             transport: Transport::Iroh { endpoint, router },
@@ -579,6 +591,11 @@ impl Node {
                     (ALPN_BLOBS_V2, Some((_, blobs))) => {
                         let blobs = blobs.clone();
                         tokio::spawn(async move { blobs.serve(conn).await });
+                    }
+                    (tidefell_proto::ALPN_STORAGE_V1, Some(_)) => {
+                        if let Some(storage) = protocols.storage.clone() {
+                            tokio::spawn(async move { storage.serve(conn).await });
+                        }
                     }
                     _ => conn.close(0, b"unknown protocol"),
                 }
@@ -865,6 +882,49 @@ impl Node {
             ids,
         )
         .await
+    }
+
+    /// Gives a storage peer the priorities of up to 4096 of the encrypted `folder`'s entries,
+    /// issued at `issued_ms` (`specs/storage-v1.md`). Fails if it does not speak the protocol.
+    pub async fn send_priorities(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+        issued_ms: i64,
+        hints: Vec<tidefell_proto::storage::Hint>,
+    ) -> Result<()> {
+        let conn = self
+            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .await?;
+        crate::storage::send_priorities(&conn, self.backend.certificate(), folder, issued_ms, hints)
+            .await
+    }
+
+    /// Asks a storage peer its quota for the encrypted `folder`, the sealed bytes it holds of it
+    /// and the room it has left for it (`specs/storage-v1.md`).
+    pub async fn storage_usage(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+    ) -> Result<(u64, u64, u64)> {
+        let conn = self
+            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .await?;
+        crate::storage::usage(&conn, self.backend.certificate(), folder).await
+    }
+
+    /// Asks a storage peer to forget what it holds of the encrypted `folder`'s entries ranked
+    /// below `below`, as a user asked; the chunks and sealed bytes it removed.
+    pub async fn storage_drop(
+        &self,
+        peer: impl Into<EndpointAddr>,
+        folder: FolderId,
+        below: u8,
+    ) -> Result<(u64, u64)> {
+        let conn = self
+            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .await?;
+        crate::storage::drop_below(&conn, self.backend.certificate(), folder, below).await
     }
 
     /// Asks a peer whether it is a full replica of the encrypted `folder`.

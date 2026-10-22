@@ -332,6 +332,7 @@ pub(crate) fn stored_info(
         quota_bytes: stored.quota_bytes,
         bytes: state.sealed_store.as_ref().map_or(0, |s| s.bytes()),
         missing_chunks: crate::stored::missing(state),
+        ranked: state.storage_priorities.len(),
     }
 }
 

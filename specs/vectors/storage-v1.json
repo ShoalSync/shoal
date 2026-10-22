@@ -1,0 +1,39 @@
+{
+  "alpn": "tidefell/storage/1",
+  "encoding": "varint length prefix + postcard",
+  "spec": "specs/storage-v1.md",
+  "vectors": [
+    {
+      "frame": "b40100c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a752c853ad0f0cd2b619aea92ceec4fd56a24d6499d584ce79257e45cfd8139b60a7d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787370b746573742064657669636580c8d3cbae667d729b8774f97583e7bf1636b4e3e4d60f6950f7e08ee9d26285bbb9cc565274e2b87d7adc85bcef55f5de8a7f65c99189feefdeeee79a9ef495c4ff150fb700",
+      "name": "hello"
+    },
+    {
+      "frame": "5b0122222222222222222222222222222222222222222222222222222222222222228080b0b8a7680311111111111111111111111111111111c822222222222222222222222222222222003333333333333333333333333333333380",
+      "name": "priorities"
+    },
+    {
+      "frame": "0102",
+      "name": "accepted"
+    },
+    {
+      "frame": "020301",
+      "name": "error-not-stored"
+    },
+    {
+      "frame": "21042222222222222222222222222222222222222222222222222222222222222222",
+      "name": "usage-request"
+    },
+    {
+      "frame": "130580d0dbc3f40280c894bb9c018088c788d801",
+      "name": "usage"
+    },
+    {
+      "frame": "2206222222222222222222222222222222222222222222222222222222222222222264",
+      "name": "drop"
+    },
+    {
+      "frame": "0807d209c0a4889901",
+      "name": "dropped"
+    }
+  ]
+}

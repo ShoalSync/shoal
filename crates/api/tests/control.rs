@@ -457,6 +457,8 @@ async fn control_api_end_to_end() {
         "/v1/folders/{id}/resolve",
         "/v1/folders/{id}/versions/open",
         "/v1/shutdown",
+        "/v1/folders/{id}/storage",
+        "/v1/folders/{id}/storage/{device}/drop",
     ] {
         assert!(doc["paths"][path].is_object(), "OpenAPI is missing {path}");
     }

@@ -946,5 +946,5 @@ their quota in that order, and nothing held is dropped unless a user asks.
    priority order, and fetching through the scheduler with a source that keeps chunks sealed.
 2. **Rules and hints.** `.tidefellpriorities`, `tidefell folder priority`, and member devices
    sending hints over `tidefell/storage/1` (spec, vectors).
-3. **Usage.** What a storage peer holds and lacks by priority, in `tidefell folder status`.
+3. **Usage.** What a storage peer holds and lacks by priority, in `tidefell folder storage`.
 4. **Dropping.** `tidefell folder storage-drop`, refusing files with no other copy unless told.

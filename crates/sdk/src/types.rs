@@ -512,6 +512,67 @@ pub struct NewStoragePeer {
     pub device: String,
 }
 
+/// The files of one priority, and what a storage peer holds of them (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StorageLevel {
+    /// 0 to 255; higher is kept first, 0 never.
+    pub priority: u8,
+    /// Current files at it.
+    pub files: u64,
+    /// Their bytes.
+    pub bytes: u64,
+    /// The bytes of them the storage peer holds.
+    pub held_bytes: u64,
+}
+
+/// What one storage peer of an encrypted folder keeps of it, as a member sees it (ADR 0023).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StoragePeerReport {
+    /// Device ID.
+    pub device: String,
+    /// Connected now: the rest is asked only of one that is.
+    pub connected: bool,
+    /// Its quota for the folder, if it said.
+    #[serde(default)]
+    pub quota_bytes: Option<u64>,
+    /// The sealed bytes it holds of it, if it said.
+    #[serde(default)]
+    pub held_bytes: Option<u64>,
+    /// The room it has left for it, if it said.
+    #[serde(default)]
+    pub room_bytes: Option<u64>,
+    /// By priority, highest first.
+    #[serde(default)]
+    pub levels: Vec<StorageLevel>,
+    /// Why it said nothing, if it was asked.
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// Asks a storage peer to forget what it holds of an encrypted folder's files ranked below
+/// `below` (ADR 0023): only ever when a user asks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StorageDropRequest {
+    /// Files ranked below this, 0 to 255.
+    pub below: u8,
+    /// Drop them even if some have no copy known elsewhere.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// What asking a storage peer to drop did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct StorageDropResult {
+    /// Whether it was asked: not if a file was at risk and it was not forced.
+    pub done: bool,
+    /// Chunks it removed.
+    pub dropped_chunks: u64,
+    /// Sealed bytes it removed.
+    pub dropped_bytes: u64,
+    /// Files that would be dropped with no copy known elsewhere.
+    pub at_risk: Vec<String>,
+}
+
 /// A file or directory to pin or unpin on a partial replica (ADR 0029).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PinRequest {

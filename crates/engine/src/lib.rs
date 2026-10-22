@@ -73,6 +73,7 @@ mod manifests;
 mod materialize;
 pub mod pairing;
 mod pins;
+mod priorities;
 mod probe;
 mod redact;
 mod root;
@@ -161,7 +162,8 @@ pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, EncryptionInfo, Event, FileInfo, FolderInfo,
     FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
-    RebuildInfo, RecycleSummary, RecycledInfo, StoredInfo, VersionInfo, VersionKind, WithdrawnFile,
+    RebuildInfo, RecycleSummary, RecycledInfo, StorageDrop, StorageLevel, StoragePeerReport,
+    StorageUsage, StoredInfo, VersionInfo, VersionKind, WithdrawnFile,
 };
 
 /// Engine errors.

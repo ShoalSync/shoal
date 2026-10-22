@@ -15,8 +15,8 @@ use crate::types::{
     HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
     NewFolder, NewMember, NewStoragePeer, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
     PinRequest, Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest,
-    RetentionUpdate, Revocation, RevokeRequest, Status, SyncOptions, Version, VersionRequest,
-    WithdrawalsDecision,
+    RetentionUpdate, Revocation, RevokeRequest, Status, StorageDropRequest, StorageDropResult,
+    StoragePeerReport, SyncOptions, Version, VersionRequest, WithdrawalsDecision,
 };
 
 /// Client errors.
@@ -353,6 +353,28 @@ impl Client {
     }
 
     /// Removes a storage peer from an encrypted folder.
+    /// What each of an encrypted folder's storage peers keeps of it, by priority (ADR 0023).
+    pub async fn storage_report(&self, folder: &str) -> Result<Vec<StoragePeerReport>, Error> {
+        self.get(&format!("/v1/folders/{folder}/storage")).await
+    }
+
+    /// Asks a storage peer to forget what it holds of the folder's files ranked below `below`;
+    /// unless `force`, nothing is dropped if a file has no copy known elsewhere.
+    pub async fn storage_drop(
+        &self,
+        folder: &str,
+        device: &str,
+        below: u8,
+        force: bool,
+    ) -> Result<StorageDropResult, Error> {
+        self.call(
+            Method::POST,
+            &format!("/v1/folders/{folder}/storage/{device}/drop"),
+            Some(&StorageDropRequest { below, force }),
+        )
+        .await
+    }
+
     pub async fn remove_storage_peer(&self, folder: &str, device: &str) -> Result<Folder, Error> {
         self.call(
             Method::DELETE,

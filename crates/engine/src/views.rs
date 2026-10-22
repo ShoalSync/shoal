@@ -99,8 +99,62 @@ pub struct StoredInfo {
     pub quota_bytes: u64,
     /// The sealed bytes of the chunks it holds.
     pub bytes: u64,
-    /// Chunks of its current versions it does not hold yet.
+    /// Chunks of its current versions it does not hold yet, but for entries members keep from
+    /// it (priority 0).
     pub missing_chunks: usize,
+    /// Entries members have given a priority (ADR 0023's amendment of 2026-10-22).
+    pub ranked: usize,
+}
+
+/// What a storage peer says of a folder it stores for its members (ADR 0023's amendment of
+/// 2026-10-22).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageUsage {
+    /// Its quota for the folder.
+    pub quota_bytes: u64,
+    /// The sealed bytes it holds of it.
+    pub held_bytes: u64,
+    /// The room it has left for it, under the folder's quota and its total.
+    pub room_bytes: u64,
+}
+
+/// The files of one priority, and what a storage peer holds of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageLevel {
+    /// 0 to 255.
+    pub priority: u8,
+    /// Current files at it.
+    pub files: usize,
+    /// Their bytes, by their chunks' lengths.
+    pub bytes: u64,
+    /// The bytes of those chunks the storage peer holds.
+    pub held_bytes: u64,
+}
+
+/// One storage peer of an encrypted folder, as this member sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoragePeerReport {
+    pub device: DeviceId,
+    /// Connected now: the rest is only asked of one that is.
+    pub connected: bool,
+    /// What it said of its room, if it said.
+    pub usage: Option<StorageUsage>,
+    /// By priority, highest first.
+    pub levels: Vec<StorageLevel>,
+    /// Why it said nothing, if it was asked.
+    pub error: Option<String>,
+}
+
+/// What asking a storage peer to drop did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageDrop {
+    pub dropped_chunks: u64,
+    pub dropped_bytes: u64,
+    /// Files that would be dropped with no copy known elsewhere; nothing is dropped for them
+    /// unless forced.
+    pub at_risk: Vec<String>,
+    /// Whether it was asked: not if a file was at risk and it was not forced.
+    pub done: bool,
 }
 
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and

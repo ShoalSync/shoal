@@ -111,6 +111,14 @@ pub struct Encryption {
 pub struct Stored {
     /// The most this device keeps of the folder's chunks, sealed, in bytes.
     pub quota_bytes: u64,
+    /// The folder's priority against this device's other stored folders, 0 to 255, higher
+    /// filled first under a total quota (ADR 0023's amendment of 2026-10-22).
+    pub priority: u8,
+}
+
+impl Stored {
+    /// The priority of a stored folder, or a file, no one ranked.
+    pub const DEFAULT_PRIORITY: u8 = 128;
 }
 
 /// When one scan's deletes are held for confirmation (ADR 0037): a drive unmounted under a

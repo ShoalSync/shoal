@@ -105,29 +105,45 @@ impl SealedStore {
     }
 }
 
-/// The chunk IDs the kept sealed versions list, the current ones first: what the folder's
-/// store must hold. Worked out once per change to the items or the list blobs held, not on every
-/// pass and status.
-fn listed(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
-    let at = (state.items_revision, state.list_blobs.len());
-    if let Some((revision, lists, all, current)) = state.stored_listed.borrow().as_ref() {
-        if (*revision, *lists) == at {
+/// The chunk IDs the kept sealed versions list, the current ones first, each with the highest
+/// priority members gave the entries listing it, highest first within each (ADR 0023's
+/// amendment of 2026-10-22): what the folder's store must hold, in the order it fills. Worked out
+/// once per change to the items, the list blobs held or the priorities, not on every pass and
+/// status.
+fn listed(state: &FolderState, current_only: bool) -> Vec<(ChunkId, u8)> {
+    let at = (
+        state.items_revision,
+        state.list_blobs.len(),
+        state.priorities_revision,
+    );
+    if let Some((revision, lists, priorities, all, current)) = state.stored_listed.borrow().as_ref()
+    {
+        if (*revision, *lists, *priorities) == at {
             return if current_only { current } else { all }.clone();
         }
     }
     let (all, current) = (listed_now(state, false), listed_now(state, true));
     let result = if current_only { &current } else { &all }.clone();
-    *state.stored_listed.borrow_mut() = Some((at.0, at.1, all, current));
+    *state.stored_listed.borrow_mut() = Some((at.0, at.1, at.2, all, current));
     result
 }
 
-fn listed_now(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
+/// The priority members gave `entry`, or the default.
+fn entry_priority(state: &FolderState, entry: &tidefell_proto::EntryId) -> u8 {
+    state
+        .storage_priorities
+        .get(entry)
+        .map_or(tidefell_proto::storage::DEFAULT_PRIORITY, |p| p.priority)
+}
+
+fn listed_now(state: &FolderState, current_only: bool) -> Vec<(ChunkId, u8)> {
     let mut seen = BTreeSet::new();
     let mut order = Vec::new();
     for pass in [false, true] {
         if pass && current_only {
             break;
         }
+        let mut versions: Vec<(u8, u64, Vec<ChunkId>)> = Vec::new();
         for (sequence, item) in state.items.iter() {
             let Item::Version(signed) = item else {
                 continue;
@@ -142,9 +158,14 @@ fn listed_now(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
             let Some(ids) = crate::encrypted::chunk_ids_of(state, &sealed) else {
                 continue;
             };
+            versions.push((entry_priority(state, &sealed.entry), *sequence, ids));
+        }
+        // Highest priority first; within one, in index order, as before.
+        versions.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        for (priority, _, ids) in versions {
             for id in ids {
                 if seen.insert(id) {
-                    order.push(id);
+                    order.push((id, priority));
                 }
             }
         }
@@ -152,14 +173,79 @@ fn listed_now(state: &FolderState, current_only: bool) -> Vec<ChunkId> {
     order
 }
 
+/// Forgets what the store holds of entries ranked below `below`: the chunks no kept version of
+/// an entry ranked at `below` or above lists, as a member asked for a user (ADR 0023's amendment
+/// of 2026-10-22). Returns the chunks and sealed bytes removed. Never done otherwise.
+pub(crate) fn drop_below(state: &mut FolderState, below: u8) -> (u64, u64) {
+    let mut keep = BTreeSet::new();
+    for item in state.items.values() {
+        let Item::Version(signed) = item else {
+            continue;
+        };
+        let Ok(sealed) = SealedVersion::decode(&signed.body) else {
+            continue;
+        };
+        if entry_priority(state, &sealed.entry) < below {
+            continue;
+        }
+        if let Some(ids) = crate::encrypted::chunk_ids_of(state, &sealed) {
+            keep.extend(ids);
+        }
+    }
+    let Some(store) = state.sealed_store.as_mut() else {
+        return (0, 0);
+    };
+    let before = store.bytes();
+    let removed = store.retain(&keep);
+    (removed as u64, before.saturating_sub(store.bytes()))
+}
+
+/// Records the priorities member device `from` gave the folder's entries at `issued_ms`,
+/// each replacing only one given earlier (`specs/storage-v1.md`).
+pub(crate) fn set_priorities(
+    state: &mut FolderState,
+    from: DeviceId,
+    issued_ms: i64,
+    hints: &[tidefell_proto::storage::Hint],
+) -> bool {
+    let mut changed = false;
+    for hint in hints {
+        if state
+            .storage_priorities
+            .get(&hint.entry)
+            .is_some_and(|p| p.issued_ms >= issued_ms)
+        {
+            continue;
+        }
+        let was = state
+            .storage_priorities
+            .get(&hint.entry)
+            .map(|p| p.priority);
+        state.storage_priorities.insert(
+            hint.entry,
+            crate::state::StoredPriority {
+                priority: hint.priority,
+                issued_ms,
+                from,
+            },
+        );
+        changed |= was != Some(hint.priority);
+    }
+    if changed {
+        state.priorities_revision += 1;
+    }
+    changed
+}
+
 /// How many chunks of the folder's current versions it lacks.
 pub(crate) fn missing(state: &FolderState) -> usize {
     let Some(store) = state.sealed_store.as_ref() else {
         return 0;
     };
+    // Not what members keep from it: it never fetches that.
     listed(state, true)
         .iter()
-        .filter(|id| !store.has(id))
+        .filter(|(id, priority)| *priority > 0 && !store.has(id))
         .count()
 }
 
@@ -177,17 +263,142 @@ pub(crate) fn over_quota(state: &FolderState) -> bool {
         .is_some_and(|store| store.bytes() >= quota)
 }
 
+/// The folder's priority against this device's other stored folders.
+fn priority(state: &FolderState) -> u8 {
+    state
+        .config
+        .encryption
+        .as_ref()
+        .and_then(|e| e.stored)
+        .map_or(crate::config::Stored::DEFAULT_PRIORITY, |s| s.priority)
+}
+
+/// The peers sharing `folder` over sync/2.
+fn peers_of(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> Vec<DeviceId> {
+    node.encrypted_peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&folder))
+        .map(|p| p.device())
+        .collect()
+}
+
+/// Under a total quota, what the stored folders other than `folder` hold together, and
+/// whether one of a higher priority than `ranked` still lacks chunks of its current versions
+/// that a connected peer could send: it fills first (ADR 0023's amendment of 2026-10-22).
+fn others(
+    inner: &Inner,
+    node: &tidefell_net::Node,
+    folder: tidefell_proto::FolderId,
+    ranked: u8,
+) -> (u64, bool) {
+    let mut held = 0u64;
+    let mut higher_waiting = false;
+    for handle in inner.handles() {
+        let state = handle.lock();
+        if state.config.id == folder || !state.config.is_stored() {
+            continue;
+        }
+        held = held.saturating_add(state.sealed_store.as_ref().map_or(0, |s| s.bytes()));
+        if priority(&state) > ranked
+            && !over_quota(&state)
+            && missing(&state) > 0
+            && !peers_of(node, state.config.id).is_empty()
+        {
+            higher_waiting = true;
+        }
+    }
+    (held, higher_waiting)
+}
+
+/// Fetches sealed chunks over blobs/2 for the scheduler, keeping them sealed: a storage peer
+/// holds no key, so it can neither open nor check them (members do). Each chunk's ID stands in
+/// for its hash, and a chunk's length is not known before it is fetched, so only the count of
+/// chunks in flight bounds a request.
+struct StoredSource {
+    node: std::sync::Arc<tidefell_net::Node>,
+    folder: tidefell_proto::FolderId,
+}
+
+impl tidefell_fetch::ChunkSource for StoredSource {
+    type Peer = DeviceId;
+
+    async fn availability(
+        &self,
+        peer: &DeviceId,
+        manifest: &tidefell_proto::Manifest,
+    ) -> std::result::Result<Vec<tidefell_proto::ChunkHash>, String> {
+        use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
+        let endpoint =
+            tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
+        let mut held = Vec::new();
+        for part in manifest.chunks.chunks(MAX_BLOBS_PER_AVAILABILITY) {
+            let ids: Vec<BlobId> = part
+                .iter()
+                .map(|c| BlobId::from(ChunkId(c.hash.0)))
+                .collect();
+            let holds = self
+                .node
+                .blob_availability(endpoint, self.folder, &ids)
+                .await
+                .map_err(|e| e.to_string())?;
+            held.extend(
+                part.iter()
+                    .zip(holds)
+                    .filter(|(_, holds)| *holds)
+                    .map(|(c, _)| c.hash),
+            );
+        }
+        Ok(held)
+    }
+
+    async fn fetch(
+        &self,
+        peer: &DeviceId,
+        chunks: &[tidefell_proto::ChunkHash],
+    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
+        use tidefell_net::{BlobKind, BlobResult};
+        use tidefell_proto::blobs2::BlobId;
+        let endpoint =
+            tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
+        let wanted: Vec<(BlobId, BlobKind)> = chunks
+            .iter()
+            .map(|h| (BlobId::from(ChunkId(h.0)), BlobKind::SealedChunk))
+            .collect();
+        let results = self
+            .node
+            .fetch_blobs(endpoint, self.folder, &wanted)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut fetched = tidefell_fetch::Fetched::default();
+        for result in results {
+            match result {
+                // Only what was asked for: a peer cannot slip in another blob.
+                BlobResult::Found(id, sealed) if chunks.iter().any(|h| h.0 == id.0) => {
+                    fetched
+                        .chunks
+                        .push((tidefell_proto::ChunkHash(id.0), sealed));
+                }
+                BlobResult::Busy(wait) => fetched.busy_for = Some(wait),
+                _ => {}
+            }
+        }
+        Ok(fetched)
+    }
+}
+
+/// Why a stored folder's fetch stopped short.
+const FULL: &str = "the quota is reached";
+
 /// Fetches, from the peers sharing the folder, the chunks its kept versions list that it lacks,
-/// the current versions' first, until it has them or its quota is reached.
+/// the current versions' first, until it has them or its quota, or the total quota of all
+/// stored folders, is reached. Under a total quota it waits while a folder of a higher priority
+/// lacks what it could fetch.
 pub(crate) async fn fetch(
     inner: &std::sync::Arc<Inner>,
     node: &std::sync::Arc<tidefell_net::Node>,
     handle: &FolderHandle,
 ) -> Result<()> {
-    use tidefell_net::{BlobKind, BlobResult};
-    use tidefell_proto::blobs2::BlobId;
-
-    let (folder, mut wanted) = {
+    let (folder, ranked, wanted) = {
         let state = handle.lock();
         let Some(store) = state.sealed_store.as_ref() else {
             return Ok(());
@@ -195,69 +406,90 @@ pub(crate) async fn fetch(
         if over_quota(&state) {
             return Ok(());
         }
-        let wanted: Vec<ChunkId> = listed(&state, false)
+        let wanted: Vec<(ChunkId, u8)> = listed(&state, false)
             .into_iter()
-            .filter(|id| !store.has(id))
+            .filter(|(id, priority)| *priority > 0 && !store.has(id))
             .collect();
-        (state.config.id, wanted)
+        (state.config.id, priority(&state), wanted)
     };
     if wanted.is_empty() {
         return Ok(());
     }
-    let peers: Vec<DeviceId> = node
-        .encrypted_peers()
-        .into_iter()
-        .filter(|p| p.shared_folders().contains(&folder))
-        .map(|p| p.device())
-        .collect();
-    let mut fetched = 0usize;
-    for peer in peers {
-        if wanted.is_empty() {
-            break;
+    let total = *inner.storage_quota.lock().unwrap();
+    let mut others_hold = 0;
+    if total.is_some() {
+        let (held, higher_waiting) = others(inner, node, folder, ranked);
+        if higher_waiting {
+            debug!(%folder, "a stored folder of a higher priority fills first");
+            return Ok(());
         }
-        let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
-            continue;
-        };
-        let mut got = BTreeSet::new();
-        for batch in wanted.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST) {
-            let request: Vec<(BlobId, BlobKind)> = batch
+        others_hold = held;
+    }
+    let peers = peers_of(node, folder);
+    let source = std::sync::Arc::new(StoredSource {
+        node: node.clone(),
+        folder,
+    });
+    let mut fetched = 0usize;
+    // A priority at a time, highest first: within one, chunks arrive in no set order, as
+    // requests overlap, so a lower priority waits for a higher one to be done with.
+    let mut tiers: Vec<u8> = wanted.iter().map(|(_, p)| *p).collect();
+    tiers.sort_unstable_by(|a, b| b.cmp(a));
+    tiers.dedup();
+    for tier in tiers {
+        let manifest = tidefell_proto::Manifest {
+            content: tidefell_proto::ContentHash([0; 32]),
+            chunks: wanted
                 .iter()
-                .map(|id| (BlobId::from(*id), BlobKind::SealedChunk))
-                .collect();
-            let results = match node.fetch_blobs(endpoint, folder, &request).await {
-                Ok(results) => results,
-                Err(e) => {
-                    debug!(%folder, peer = %peer, error = %e, "fetching sealed chunks failed");
-                    break;
-                }
-            };
-            let mut state = handle.lock();
-            for result in results {
-                let BlobResult::Found(id, sealed) = result else {
-                    continue;
-                };
-                let id = ChunkId(id.0);
-                if !batch.contains(&id) || over_quota(&state) {
-                    continue;
+                .filter(|(_, p)| *p == tier)
+                .map(|(id, _)| tidefell_proto::ChunkRef {
+                    hash: tidefell_proto::ChunkHash(id.0),
+                    len: 0,
+                })
+                .collect(),
+        };
+        let result = tidefell_fetch::fetch(
+            source.clone(),
+            &manifest,
+            &peers,
+            |_| false,
+            tidefell_fetch::Config::default(),
+            |id, sealed| {
+                let mut state = handle.lock();
+                let full = over_quota(&state)
+                    || total.is_some_and(|total| {
+                        let here = state.sealed_store.as_ref().map_or(0, |s| s.bytes());
+                        others_hold.saturating_add(here) >= total
+                    });
+                if full {
+                    return Err(FULL.to_owned());
                 }
                 let Some(store) = state.sealed_store.as_mut() else {
-                    continue;
+                    return Err("the folder is no longer stored".to_owned());
                 };
-                match store.put(id, &sealed) {
-                    Ok(()) => {
-                        got.insert(id);
-                        fetched += 1;
-                    }
-                    Err(e) => warn!(%folder, error = %e, "storing a sealed chunk failed"),
-                }
-            }
-            if over_quota(&state) {
+                store
+                    .put(ChunkId(id.0), &sealed)
+                    .map_err(|e| e.to_string())?;
+                fetched += 1;
+                Ok(())
+            },
+        )
+        .await;
+        match result {
+            Err(tidefell_fetch::FetchError::Sink(e)) if e == FULL => {
                 info!(%folder, "stored folder reached its quota; fetching no more of it");
-                wanted.clear();
                 break;
             }
+            Err(tidefell_fetch::FetchError::Sink(e)) => {
+                warn!(%folder, error = %e, "storing a sealed chunk failed");
+                break;
+            }
+            // What no peer has of this priority waits; the next priority's can still come.
+            Err(e) => {
+                debug!(%folder, priority = tier, error = %e, "fetching sealed chunks stopped")
+            }
+            Ok(_) => {}
         }
-        wanted.retain(|id| !got.contains(id));
     }
     if fetched > 0 {
         debug!(%folder, chunks = fetched, "stored sealed chunks");
@@ -272,7 +504,8 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
     if state.sealed_store.is_none() {
         return 0;
     }
-    let keep: BTreeSet<ChunkId> = listed(state, false).into_iter().collect();
+    // What it holds of an entry members keep from it stays: dropping is a user's to ask for.
+    let keep: BTreeSet<ChunkId> = listed(state, false).into_iter().map(|(id, _)| id).collect();
     // And the list blobs no kept version names.
     let lists: BTreeSet<tidefell_proto::ListId> = state
         .items
@@ -294,6 +527,23 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
         .collect();
     for id in &gone {
         state.list_blobs.remove(id);
+    }
+    // And the priorities of entries it keeps no version of.
+    let entries: BTreeSet<tidefell_proto::EntryId> = state
+        .items
+        .values()
+        .filter_map(|item| match item {
+            Item::Version(signed) => SealedVersion::decode(&signed.body).ok(),
+            _ => None,
+        })
+        .map(|sealed| sealed.entry)
+        .collect();
+    let before = state.storage_priorities.len();
+    state
+        .storage_priorities
+        .retain(|entry, _| entries.contains(entry));
+    if state.storage_priorities.len() != before {
+        state.priorities_revision += 1;
     }
     state
         .sealed_store

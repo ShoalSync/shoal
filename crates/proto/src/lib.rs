@@ -24,6 +24,7 @@ pub mod ids;
 pub mod manifest;
 pub mod pair;
 pub mod signed;
+pub mod storage;
 pub mod sync;
 pub mod sync2;
 pub mod version;
@@ -50,6 +51,8 @@ pub const ALPN_SYNC_V2: &[u8] = b"tidefell/sync/2";
 /// ALPN for encrypted folders' sealed chunks and list blobs (`specs/blobs-v2.md`), alongside
 /// blobs/1.
 pub const ALPN_BLOBS_V2: &[u8] = b"tidefell/blobs/2";
+/// ALPN of the protocol members rank what a storage peer keeps with (`specs/storage-v1.md`).
+pub const ALPN_STORAGE_V1: &[u8] = b"tidefell/storage/1";
 
 /// Errors decoding or verifying wire data.
 #[derive(Debug, thiserror::Error)]

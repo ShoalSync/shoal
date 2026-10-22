@@ -145,6 +145,7 @@ async fn store(dir: &Path, files: usize) {
                 storage_peers: Vec::new(),
                 stored: Some(Stored {
                     quota_bytes: u64::MAX,
+                    priority: Stored::DEFAULT_PRIORITY,
                 }),
             },
         ),

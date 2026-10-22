@@ -199,6 +199,7 @@ impl World {
                     storage_peers: Vec::new(),
                     stored: Some(tidefell_engine::Stored {
                         quota_bytes: u64::MAX,
+                        priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
                     }),
                 }),
             }],

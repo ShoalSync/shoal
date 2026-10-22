@@ -100,6 +100,11 @@ pub fn router_with(engine: Arc<Engine>, options: Options) -> Router {
             delete(handlers::remove_storage_peer),
         )
         .route("/v1/folders/{id}/scan", post(handlers::scan))
+        .route("/v1/folders/{id}/storage", get(handlers::storage_report))
+        .route(
+            "/v1/folders/{id}/storage/{device}/drop",
+            post(handlers::storage_drop),
+        )
         .route("/v1/folders/{id}/files", get(handlers::files))
         .route("/v1/folders/{id}/fetch", post(handlers::fetch))
         .route("/v1/folders/{id}/remove-here", post(handlers::remove_here))

@@ -69,6 +69,12 @@ impl Message for crate::blobs2::BlobsMessage {
     }
 }
 
+impl Message for crate::storage::StorageMessage {
+    fn decode_body(body: &[u8]) -> Result<Self, Error> {
+        exact(body)
+    }
+}
+
 impl Message for crate::sync::SyncMessage {
     /// Also reads a `Hello` from before `revocations` (ADR 0040), whose frame ends after
     /// `clock_ms`, or from before `clock_ms` (ADR 0030), whose frame ends after `folders`: the

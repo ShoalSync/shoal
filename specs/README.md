@@ -9,6 +9,7 @@ One file per ALPN; bump the ALPN string on any breaking change.
 | `tidefell/pair/2` | [pair-v2.md](pair-v2.md) |
 | `tidefell/sync/2` | [sync-v2.md](sync-v2.md): encrypted folders, alongside sync/1 |
 | `tidefell/blobs/2` | [blobs-v2.md](blobs-v2.md): encrypted folders, alongside blobs/1 |
+| `tidefell/storage/1` | [storage-v1.md](storage-v1.md): what a storage peer keeps of an encrypted folder |
 
 Formats that are not protocols of their own:
 

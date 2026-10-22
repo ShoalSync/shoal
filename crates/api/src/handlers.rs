@@ -24,7 +24,8 @@ use tidefell_sdk::types::{
     Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem,
     ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest,
     ResolveRequest, RetentionUpdate, Revocation, RevokePreviewQuery, RevokeRequest, Status,
-    StoredFolder, SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
+    StorageDropRequest, StorageDropResult, StorageLevel, StoragePeerReport, StoredFolder,
+    SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
     WithdrawnFile,
 };
 use tokio_stream::wrappers::BroadcastStream;
@@ -59,6 +60,8 @@ type AppState = State<Arc<Engine>>;
         remove_member,
         add_storage_peer,
         remove_storage_peer,
+        storage_report,
+        storage_drop,
         scan,
         files,
         fetch,
@@ -125,6 +128,10 @@ type AppState = State<Arc<Engine>>;
         NewMember,
         NewEncryption,
         NewStoragePeer,
+        StorageLevel,
+        StoragePeerReport,
+        StorageDropRequest,
+        StorageDropResult,
         FolderEncryption,
         StoredFolder,
         File,
@@ -598,6 +605,69 @@ pub(crate) async fn remove_storage_peer(
     let id = parse("folder", &id)?;
     engine.remove_storage_peer(id, parse("storage peer", &device)?)?;
     Ok(Json(folder_info(&engine, id)?))
+}
+
+/// What each of an encrypted folder's storage peers keeps of it, by priority (ADR 0023): asked
+/// of each connected now.
+#[utoipa::path(get, path = "/v1/folders/{id}/storage", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = Vec<StoragePeerReport>), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn storage_report(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Vec<StoragePeerReport>>> {
+    let reports = engine.storage_report(parse("folder", &id)?).await?;
+    Ok(Json(
+        reports
+            .into_iter()
+            .map(|r| StoragePeerReport {
+                device: r.device.to_string(),
+                connected: r.connected,
+                quota_bytes: r.usage.map(|u| u.quota_bytes),
+                held_bytes: r.usage.map(|u| u.held_bytes),
+                room_bytes: r.usage.map(|u| u.room_bytes),
+                levels: r
+                    .levels
+                    .into_iter()
+                    .map(|l| StorageLevel {
+                        priority: l.priority,
+                        files: l.files as u64,
+                        bytes: l.bytes,
+                        held_bytes: l.held_bytes,
+                    })
+                    .collect(),
+                error: r.error,
+            })
+            .collect(),
+    ))
+}
+
+/// Asks a storage peer to forget what it holds of the folder's files ranked below `below`, as
+/// the user asks: never done otherwise. Unless `force`, nothing is dropped if a file has no copy
+/// known elsewhere; those are listed.
+#[utoipa::path(post, path = "/v1/folders/{id}/storage/{device}/drop", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID"), ("device" = String, Path, description = "Storage peer's device ID")),
+    request_body = StorageDropRequest,
+    responses((status = 200, body = StorageDropResult), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn storage_drop(
+    State(engine): AppState,
+    Path((id, device)): Path<(String, String)>,
+    Json(request): Json<StorageDropRequest>,
+) -> ApiResult<Json<StorageDropResult>> {
+    let outcome = engine
+        .storage_drop(
+            parse("folder", &id)?,
+            parse("storage peer", &device)?,
+            request.below,
+            request.force,
+        )
+        .await?;
+    Ok(Json(StorageDropResult {
+        done: outcome.done,
+        dropped_chunks: outcome.dropped_chunks,
+        dropped_bytes: outcome.dropped_bytes,
+        at_risk: outcome.at_risk,
+    }))
 }
 
 /// Scans the folder for local changes now.
