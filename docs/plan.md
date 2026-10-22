@@ -936,3 +936,15 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    this device"); and the two talk directly over the LAN (14 ms). The `Exit criterion` workflow
    runs it nightly and by hand; it first passed in run 589. Docs: an install section and a
    guide page for Windows.
+
+### Storage priorities
+
+Decided in ADR 0023's amendment of 2026-10-22: members rank files 0 to 255, storage peers fill
+their quota in that order, and nothing held is dropped unless a user asks.
+
+1. **Operator's side.** A total quota across stored folders and a priority for each, filling in
+   priority order, and fetching through the scheduler with a source that keeps chunks sealed.
+2. **Rules and hints.** `.tidefellpriorities`, `tidefell folder priority`, and member devices
+   sending hints over `tidefell/storage/1` (spec, vectors).
+3. **Usage.** What a storage peer holds and lacks by priority, in `tidefell folder status`.
+4. **Dropping.** `tidefell folder storage-drop`, refusing files with no other copy unless told.

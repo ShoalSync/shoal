@@ -275,6 +275,64 @@ keeps the versions it opened, beside the database that makes them durable:
 - **Next.** Reading versions from the database, as decided, is the first change after the
   release; the measurement example (`crates/engine/examples/stored.rs`) checks it.
 
+## Amendment: what a storage peer keeps, and who decides (2026-10-22)
+
+A storage peer fills its quota in whatever order it holds versions, so which files fit is
+arbitrary, and members can only store a whole folder or none. Decided with the project's owner:
+members set a priority for each file, the storage peer fills in that order, and nothing it holds
+is ever dropped unless a user asks.
+
+- **Priorities are 0 to 255.** Higher is kept first. A file no rule covers is 128. 0 means
+  "never store": the storage peer does not fetch it, and does not count as a copy of it.
+- **Members' rules, in a synced file.** `.tidefellpriorities` at the folder's root lists
+  `<priority> <pattern>` lines, patterns as in `.tidefellignore`, the last match winning. Unlike
+  the ignore file it is synced, as any file is (sealed, in an encrypted folder), so every member
+  device has the same rules, and one made on a device offline is covered when it next syncs.
+  `tidefell folder priority` edits it; it can also be edited by hand.
+- **Hints, from rules to entries.** A storage peer cannot read paths, so a member device that
+  holds the key works out each current entry's priority from the rules and sends the storage
+  peer the entries' IDs and priorities, signed. Every member device does so when the rules or
+  the entries change and it is connected to the storage peer; the rules being the same, so are
+  the hints. The storage peer keeps, for each entry, the hint signed last by the clock of the
+  device that signed it, from a device its member list vouches for, and drops a hint whose entry
+  it no longer keeps.
+- **A protocol of its own, `tidefell/storage/1`,** for hints and what follows, not new sync/2
+  items: sync/2 has no way for a peer to skip an item it does not know, and storage peers are run
+  by other people, so they lag members' versions. A storage peer that does not speak it refuses
+  the ALPN, and members then leave it as it was. Its messages: `Priorities` (hints, in pages),
+  `UsageRequest` and `Usage` (below), `Drop` and `Dropped` (below), each request on a stream of
+  its own, authenticated as blobs/2's.
+- **Fill order.** The storage peer fetches the chunks of current versions in order of priority,
+  highest first, then superseded versions' for history, highest first; within a priority, as
+  before. A chunk several entries share is fetched at the highest of their priorities.
+- **Full is not a reason to drop.** At its quota it fetches nothing more, as before, even for a
+  higher priority than what it holds. `Usage` tells members, by priority, the sealed bytes it
+  holds, the chunk IDs of current versions it lacks, and its quota and what is left of it. A
+  storage peer learns a chunk's size only by fetching it, so the member device, which knows each
+  chunk's length, turns what is missing into bytes, and `tidefell folder status` can say
+  "priority 200: complete; 128: 60%, 4.1 GB not stored for want of room".
+- **Dropping is a user's decision, never automatic.** A user asks, on a member device, to drop
+  from a storage peer what is below a priority (`tidefell folder storage-drop <folder> <peer>
+  --below <priority>`), and the storage peer then forgets those entries' chunks, as if their
+  versions had gone, for room for what is higher. Before it asks, the member device lists what
+  would go, and refuses, unless told to go ahead anyway, if a file there has no copy it can count
+  other than on that storage peer (ADR 0022): a device may have evicted its own copy, counting on
+  the storage peer's.
+- **The operator's say stays in the configuration file**, as decided above: each stored folder's
+  quota, and a total across them (`[storage] quota_bytes`), and each folder's priority against
+  the others (0 to 255, 128 if not set), which orders folders under the total: a folder fetches
+  only while no folder of a higher priority lacks chunks of its current versions that a
+  connected peer could send. As sizes are known only once fetched, no room is set aside ahead.
+  Within a folder, the members' priorities order what fills it.
+- **What a storage peer learns.** Which entries members rank high or low, or keep from it,
+  beside what it saw already. Accepted by the project's owner. Not why: paths and names stay
+  sealed.
+- **Order of work,** a pull request each: this amendment; the operator's side (the total quota
+  and folder priorities, filling in priority order with every entry at 128, and fetching through
+  the scheduler with a source of its own that keeps chunks sealed, as a storage peer holds no
+  key); the rules file, the hints and `tidefell/storage/1` (spec, vectors, CLI); `Usage` and the
+  status; dropping, with its check for copies.
+
 ## Consequences
 
 - Specs come first: sync/2, blobs/2 and the key formats, each with vectors, are reviewed
