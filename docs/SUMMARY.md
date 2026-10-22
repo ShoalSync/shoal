@@ -8,6 +8,7 @@
 - [Setting up devices](guide/setup.md)
 - [Folders](guide/folders.md)
 - [Mounting a folder](guide/mounting.md)
+- [Tidefell on Windows](guide/windows.md)
 - [The recycle bin](guide/recycle-bin.md)
 - [The web peer](guide/web.md)
 - [Configuration](guide/configuration.md)

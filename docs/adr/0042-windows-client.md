@@ -431,6 +431,24 @@ runner until one exists.
   (see the release runner's page for what this does not protect against). This replaces "Windows
   releases are built on a runner that runs nothing else" until a second Windows machine exists.
 
+## Amendment: the exit criterion, on real machines (2026-10-22)
+
+- **Two runners, at once.** The `Exit criterion` workflow runs a Linux job, a real `tidefelld`
+  on a Linux runner, and the Windows job together. The Linux runners' jobs run in containers no
+  other machine can reach, so neither side listens for the other: they meet through iroh's
+  public relays and then connect directly over the LAN, as two devices behind ordinary routers
+  do. The test requires the direct path.
+- **Pairing codes go between the jobs as commit statuses** on the run's commit (named
+  `exit-criterion/<run>/…`), written with the run's token, as nothing else carries a value from
+  one running job to another. The Linux side pairs as a new device, with a new code each time
+  one expires while the Windows runner is busy; the Windows side, set up as the first device
+  with a partial folder, approves it with the tray's approval code.
+- **What the shell reports** was read on the runner, not taken from documentation: its listing
+  leaves known extensions out of names, and gives an online-only file's status as "Available
+  when online", and a fetched one's as "Available on this device".
+- **Nightly, not a pull request's check:** it needs both runners free at once and the public
+  relays.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

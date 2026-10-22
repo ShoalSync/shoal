@@ -364,7 +364,7 @@ impl Tray {
         match setup::first_device(&self.paths, &setup::device_name()) {
             // The supervisor starts the daemon once it sees the configuration.
             Ok(()) => self.tray.show(
-                "This device is set up. Add folders with `tidefell folder add`.",
+                "This device is set up. Make a folder with `tidefell folder create <path> --partial <bytes>`.",
                 Some("Tidefell"),
                 Some(nwg::TrayNotificationFlags::INFO_ICON),
                 None,
@@ -412,7 +412,7 @@ impl Tray {
                     nwg::simple_message(
                         "Tidefell",
                         "This device has joined your devices, and Tidefell starts now. Join \
-                         folders with `tidefell folder join`.",
+                         a folder with `tidefell folder join <id> <path> --partial <bytes>`.",
                     );
                     return;
                 }

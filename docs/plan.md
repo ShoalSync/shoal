@@ -925,6 +925,9 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    with wixl, and a zip, as release assets, signed with cosign; unsigned with Authenticode, and
    the programs built on the Windows CI runner until a Windows release runner exists, as the
    project's owner decided. CI installs and uninstalls the MSI on the runner.
-9. **Exit criterion.** On the Windows runner: a partial replica pairs with a Linux daemon,
-   Explorer's view of the folder (the shell's file listing) shows placeholders, and opening one
-   fetches its content. Docs: an install and a guide page for Windows.
+9. **Exit criterion.** Done (2026-10-22): on the Windows runner, a partial replica pairs with a
+   Linux daemon on a Linux runner, approving it through the tray's code; the shell's listing of
+   the folder shows its files "Available when online"; opening one fetches it ("Available on
+   this device"); and the two talk directly over the LAN (14 ms). The `Exit criterion` workflow
+   runs it nightly and by hand; it first passed in run 589. Docs: an install section and a
+   guide page for Windows.

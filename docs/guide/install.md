@@ -1,10 +1,12 @@
 # Installing
 
-Tidefell ships two programs:
+Tidefell ships two programs, and a third on Windows:
 
 - `tidefelld`, the daemon. It holds the device's keys, syncs folders with other peers, serves
   the control API and, optionally, the web peer.
 - `tidefell`, the command-line client. It talks to a running `tidefelld` on the same machine.
+- `tidefell-tray`, on Windows: the notification-area app that runs the daemon for you. See
+  [Tidefell on Windows](windows.md).
 
 ## Release binaries
 
@@ -50,6 +52,28 @@ cosign verify-blob tidefell-$version-$target.tar.gz \
 
 A checksum shows a download arrived whole; this shows it is what the release built.
 
+## Windows
+
+From 0.23, each release has a Windows installer, `tidefell-X.Y.Z-x86_64.msi`, and a zip of the
+same programs, each with a `.sha256` file and a `.sigstore.json` signature, on the
+[releases page](https://github.com/ShoalSync/shoal/releases). The installer is for one
+user and needs no administrator rights: it puts the programs in
+`%LOCALAPPDATA%\Programs\Tidefell`, adds that to your `PATH`, starts the tray app when you sign
+in, and adds Tidefell to the Start menu. Installing a newer version replaces the older one;
+uninstalling (Settings → Apps) leaves your data directory and your folders.
+
+The installer is not signed with a code-signing certificate yet, so Windows' SmartScreen warns
+before running it ("Windows protected your PC": choose **More info**, then **Run anyway**). Check
+it first: its checksum, in PowerShell,
+
+```powershell
+(Get-FileHash tidefell-X.Y.Z-x86_64.msi).Hash.ToLower()
+Get-Content tidefell-X.Y.Z-x86_64.msi.sha256
+```
+
+and its signature, with [cosign](https://docs.sigstore.dev/cosign/system_config/installation/)
+for Windows, as below.
+
 ## Nix
 
 ```sh
@@ -75,6 +99,6 @@ The binaries are `target/release/tidefelld` and `target/release/tidefell`.
 - Empty directories and symlinks are not synced.
 - Conflicting versions are not written to disk until you resolve them; see
   [Conflicts](folders.md#conflicts).
-- Placeholders of a partial replica are fetched with `tidefell fetch` or the web peer; there is
-  no desktop filesystem integration yet.
+- Placeholders of a partial replica are fetched with `tidefell fetch` or the web peer, through a
+  [FUSE mount](mounting.md) on Linux, and on Windows by opening them in Explorer.
 - Device certificates cannot be revoked yet.
