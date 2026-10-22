@@ -921,8 +921,10 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    the daemon, with the allocator settings in its environment, and shows its status and
    folders, opens them, pauses and resumes, and quits; it sets up a device as the first one or
    by pairing as a new one, and approves another device.
-8. **Installer and release.** The installer the spike settled, and a zip, as release assets,
-   built on a release-only Windows runner and signed with cosign; Authenticode decided first.
+8. **Installer and release.** Done (2026-10-21; ADR 0042's amendment): a per-user MSI built
+   with wixl, and a zip, as release assets, signed with cosign; unsigned with Authenticode, and
+   the programs built on the Windows CI runner until a Windows release runner exists, as the
+   project's owner decided. CI installs and uninstalls the MSI on the runner.
 9. **Exit criterion.** On the Windows runner: a partial replica pairs with a Linux daemon,
    Explorer's view of the folder (the shell's file listing) shows placeholders, and opening one
    fetches its content. Docs: an install and a guide page for Windows.

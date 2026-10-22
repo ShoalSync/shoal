@@ -409,6 +409,28 @@ What the runs taught:
   by them, and a window's own handler never unbinds itself, but asks for it on the next
   notice.
 
+## Amendment: the installer and the release, for now (2026-10-21)
+
+Decided by the project's owner: ship unsigned for now, and build without a Windows release
+runner until one exists.
+
+- **The installer** is a per-user MSI from `packaging/windows/tidefell.wxs`, built with `wixl`
+  (msitools) on Linux rather than WiX on Windows, so it builds from Nix and on the release
+  runner. It installs `tidefell-tray`, `tidefelld` and `tidefell` under
+  `%LOCALAPPDATA%\Programs\Tidefell`, adds that to the user's `PATH`, starts the tray at
+  sign-in (the user's `Run` key) and puts it in the Start menu; it needs no administrator
+  rights. Every version has the same upgrade code, so installing one replaces another, and an
+  older one does not replace a newer one. Uninstalling leaves the data directory and the
+  folders. A zip of the same programs is released beside it.
+- **Tested on the runner:** CI builds the MSI from placeholder programs, and the Windows job
+  installs it, checks what it put where, and uninstalls it, checking everything went.
+- **Not signed with Authenticode**, so SmartScreen warns before running the installer. Every
+  Windows asset is still signed with cosign, as the others are.
+- **Built on the CI runner.** A release's Windows programs are built on the Windows CI runner,
+  from the tag, in a target directory made afresh, and packaged and signed on the release runner
+  (see the release runner's page for what this does not protect against). This replaces "Windows
+  releases are built on a runner that runs nothing else" until a second Windows machine exists.
+
 ## Consequences
 
 - One codebase keeps working on Linux and Android unchanged: each Windows difference is a

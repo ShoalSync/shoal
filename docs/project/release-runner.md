@@ -46,3 +46,16 @@ against one that escapes its user through the kernel or a shared service. The ru
 release's builds and caches apart from everyone else's, which stops accidents and cache
 poisoning. A release runner on a machine of its own is the boundary; the threat model lists
 this as a gap until then.
+
+## Windows
+
+There is no Windows release runner yet. Until there is, a release's Windows programs are built
+on the Windows CI runner (label `windows`), which also runs pull requests' jobs: from the
+release tag, with the release's pinned toolchain, in a target directory made afresh for the
+release rather than the one CI keeps. They are packaged (a zip, and the MSI that wixl builds from
+`packaging/windows/tidefell.wxs`) and signed on the release runner, so the release key never
+reaches the Windows machine. What this does not protect against: a pull request's job that
+changed the Windows runner's toolchain, or anything else there that outlives a job, would reach
+the release's programs. The installer is not signed with Authenticode either, so Windows'
+SmartScreen warns before running it; its cosign signature is the one to check.
+

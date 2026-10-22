@@ -200,6 +200,14 @@ Dependencies, the build machines and the release process.
   are a wall against accidents and cache poisoning; a pull request that escapes its user through
   the kernel or a shared service is not stopped by it. A separate machine is the boundary that
   closes this.
+- **Gap: Windows programs are built on the Windows CI runner** (ADR 0042's amendment), which
+  also runs pull requests' jobs: one that changed its toolchain or anything else there that
+  outlives a job would reach a release's Windows programs. Each release builds them afresh from
+  the tag, and packages and signs them on the release runner, so the release key never reaches
+  that machine. A Windows release runner closes this; until there is one, this stays.
+- **Gap: the Windows installer is not signed with Authenticode,** so Windows cannot tell users
+  who made it, and SmartScreen warns. Its cosign signature can be checked as the other assets'
+  are (`docs/guide/install.md`); a code-signing certificate closes this, and is for later.
 
 ## Encrypted folders
 

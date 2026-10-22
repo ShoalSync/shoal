@@ -128,6 +128,69 @@ jobs:
           name: binaries-${{ matrix.target }}
           path: tidefell-*.tar.gz*
 
+  # Windows' programs, built for want of a Windows release runner on the CI runner (ADR 0042's
+  # amendment), in a target directory of their own, never the one pull requests' runs keep. They
+  # are packaged and signed on the release runner.
+  windows:
+    name: Binaries (x86_64-pc-windows-msvc)
+    needs: version
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          targets: x86_64-pc-windows-msvc
+      - name: Build
+        shell: bash
+        run: |
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/release-target"
+          rm -rf "$CARGO_TARGET_DIR"
+          cargo build --release --locked --target x86_64-pc-windows-msvc \
+            --package tidefell-daemon --package tidefell-cli --package tidefell-tray
+          mkdir windows-bin
+          cp "$CARGO_TARGET_DIR"/x86_64-pc-windows-msvc/release/{tidefell,tidefelld,tidefell-tray}.exe \
+            README.md LICENSE windows-bin/
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+        with:
+          retention-days: 1
+          name: windows-bin
+          path: windows-bin
+
+  windows-packages:
+    name: Windows installer and zip
+    needs: [version, windows]
+    runs-on: release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
+        with:
+          name: windows-bin
+          path: windows-bin
+      - name: Package
+        run: |
+          version="${{ needs.version.outputs.version }}"
+          name="tidefell-$version-x86_64-pc-windows-msvc"
+          mkdir out
+          cp -r windows-bin "$name"
+          python3 -m zipfile -c "out/$name.zip" "$name"
+          msitools="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#msitools)"
+          PATH="$msitools/bin:$PATH" packaging/windows/msi.sh "$PWD/windows-bin" "$version" \
+            "out/tidefell-$version-x86_64.msi"
+          cd out
+          for asset in *; do sha256sum "$asset" > "$asset.sha256"; done
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+        with:
+          retention-days: 1
+          name: windows
+          path: out
+
   specs:
     name: Specs, vectors and schemas
     needs: version
@@ -162,7 +225,7 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: [version, binaries, specs]
+    needs: [version, binaries, specs, windows-packages]
     runs-on: release
     # Only this job writes: it creates the release and uploads its assets.
     permissions:
@@ -176,6 +239,8 @@ jobs:
       - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
         with:
           path: dist
+      - name: Leave out the unpackaged Windows build
+        run: rm -rf dist/windows-bin
       # Each asset gets a .sigstore.json bundle, signed with the release key held in the
       # repository's secrets and checked against cosign.pub, so a key that does not match the
       # published one fails the release. Not recorded in Sigstore's public log: the repository is

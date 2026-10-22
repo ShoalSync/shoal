@@ -188,12 +188,23 @@ jobs:
   # out by target.
   windows:
     name: Windows
+    needs: installer
     runs-on: windows
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
+        with:
+          name: windows-installer
+          path: installer
+      - name: The installer installs and uninstalls
+        shell: bash
+        timeout-minutes: 20
+        run: >
+          powershell -NoProfile -ExecutionPolicy Bypass
+          -File packaging/windows/test-install.ps1 installer/tidefell-test.msi
       - name: Clippy and tests
         shell: bash
         run: |
@@ -204,6 +215,23 @@ jobs:
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo test --locked -p tidefell-fs-cfapi --test primitives -- --ignored --nocapture --test-threads=1
           cargo test --locked --workspace --no-fail-fast
+
+  # The Windows installer (ADR 0042), built on Linux with wixl from placeholder programs, for the
+  # Windows job to install and uninstall.
+  installer:
+    name: Windows installer
+    runs-on: ephemeral
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: cp "$(nix build --no-link --print-out-paths --print-build-logs .#windows-installer-test)/tidefell-test.msi" .
+      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+        with:
+          retention-days: 1
+          name: windows-installer
+          path: tidefell-test.msi
 
   # The workflows themselves (ADR 0031): actionlint, and zizmor, whose findings of medium
   # severity or higher fail, so actions stay pinned by commit.

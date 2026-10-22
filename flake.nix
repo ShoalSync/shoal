@@ -392,6 +392,17 @@
         # tidefell-ffi's Android libraries, and the NDK they are built with (see `android`).
         tidefell-ffi-android = (rust pkgs).android.jniLibs;
         android-ndk = (rust pkgs).android.ndk;
+        # The Windows installer, made from placeholder programs: CI installs and uninstalls it on
+        # the Windows runner. Releases make the real one from their Windows build the same way.
+        windows-installer-test = pkgs.runCommand "tidefell-installer-test" {
+          nativeBuildInputs = [ pkgs.msitools ];
+        } ''
+          mkdir bin $out
+          for file in tidefell-tray.exe tidefelld.exe tidefell.exe LICENSE README.md; do
+            echo placeholder > "bin/$file"
+          done
+          bash ${./packaging/windows}/msi.sh "$PWD/bin" 0.0.0 $out/tidefell-test.msi
+        '';
       });
 
       # `nix flake check` runs these: formatting, clippy, the tests, the crate boundaries, the MSRV
@@ -406,6 +417,7 @@
         }
         // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           nixos-module = nixosModuleCheck;
+          windows-installer = self.packages.x86_64-linux.windows-installer-test;
         }
       );
 
