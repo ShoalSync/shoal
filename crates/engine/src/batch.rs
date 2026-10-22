@@ -2,6 +2,8 @@
 //!
 //! The first request for a peer waits a moment for others, then they go as one blobs/1 request
 //! of up to 64 chunks, on one stream, and each download gets the answers for its own chunks.
+//! Requests of one download are never joined: it keeps several under way at once, so it waits
+//! out a round trip once per many requests rather than once per request.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -17,7 +19,14 @@ const WINDOW: Duration = Duration::from_millis(2);
 
 type Answer = std::result::Result<Vec<ChunkResult>, String>;
 
+/// A new download's ID, telling its requests apart from other downloads'.
+pub(crate) fn download_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 struct Waiting {
+    download: u64,
     chunks: Vec<ChunkHash>,
     reply: oneshot::Sender<Answer>,
 }
@@ -36,13 +45,18 @@ impl Batches {
         node: &Arc<Node>,
         peer: DeviceId,
         folder: FolderId,
+        download: u64,
         chunks: Vec<ChunkHash>,
     ) -> Answer {
         let (reply, answer) = oneshot::channel();
         let first = {
             let mut queues = self.queues.lock().unwrap();
             let queue = queues.entry((peer, folder)).or_default();
-            queue.push(Waiting { chunks, reply });
+            queue.push(Waiting {
+                download,
+                chunks,
+                reply,
+            });
             queue.len() == 1
         };
         // The first request sends them all, in a task of its own, so a download that stops
@@ -84,24 +98,41 @@ impl Batches {
 }
 
 /// Takes waiting requests from the front of `queue` while their distinct chunks fit in one
-/// request; always at least one.
+/// request, at most one of each download; always at least one. Those passed over keep their
+/// place for the next request, sent alongside.
 fn take_batch(queue: &mut Vec<Waiting>) -> Vec<Waiting> {
     let mut chunks: Vec<ChunkHash> = Vec::new();
-    let mut taken = 0;
-    for waiting in queue.iter() {
+    let mut downloads: Vec<u64> = Vec::new();
+    let mut take = vec![false; queue.len()];
+    for (i, waiting) in queue.iter().enumerate() {
+        if downloads.contains(&waiting.download) {
+            continue;
+        }
         let new: Vec<ChunkHash> = waiting
             .chunks
             .iter()
             .filter(|c| !chunks.contains(c))
             .copied()
             .collect();
-        if taken > 0 && chunks.len().saturating_add(new.len()) > MAX_CHUNKS_PER_REQUEST {
+        if !downloads.is_empty() && chunks.len().saturating_add(new.len()) > MAX_CHUNKS_PER_REQUEST
+        {
             break;
         }
         chunks.extend(new);
-        taken += 1;
+        downloads.push(waiting.download);
+        take[i] = true;
     }
-    queue.drain(..taken).collect()
+    let mut batch = Vec::new();
+    let mut kept = Vec::new();
+    for (waiting, take) in queue.drain(..).zip(take) {
+        if take {
+            batch.push(waiting);
+        } else {
+            kept.push(waiting);
+        }
+    }
+    *queue = kept;
+    batch
 }
 
 /// Sends one request for every chunk in `batch`, and answers each waiting download.
@@ -169,7 +200,16 @@ mod tests {
     }
 
     fn waiting(chunks: &[u8]) -> Waiting {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+        of(
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            chunks,
+        )
+    }
+
+    fn of(download: u64, chunks: &[u8]) -> Waiting {
         Waiting {
+            download,
             chunks: chunks.iter().map(|&n| h(n)).collect(),
             reply: oneshot::channel().0,
         }
@@ -193,6 +233,19 @@ mod tests {
 
         let mut queue = vec![waiting(&(0..64).collect::<Vec<u8>>()), waiting(&[200])];
         assert_eq!(take_batch(&mut queue).len(), 1);
+    }
+
+    #[test]
+    fn a_downloads_requests_go_on_their_own() {
+        // Two of download 1's and one of download 2's: one request takes one of each, the next
+        // the other of download 1's.
+        let mut queue = vec![of(1, &[1]), of(1, &[2]), of(2, &[3])];
+        let first = take_batch(&mut queue);
+        assert_eq!(first.iter().map(|w| w.download).collect::<Vec<_>>(), [1, 2]);
+        let second = take_batch(&mut queue);
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].chunks, [h(2)]);
+        assert!(queue.is_empty());
     }
 
     #[test]

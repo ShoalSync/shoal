@@ -125,3 +125,47 @@ Recorded here so Phase 6's protocol versions pick them up:
 - The single-chunk shortcut depends on the reference chunker's minimum size. Peers with other
   parameters still interoperate through the fallback.
 - No wire format changes; sync/1 and blobs/1 peers are unaffected.
+
+## Amendment: requests under way together, and encrypted downloads alike (2026-10-22)
+
+Measured with `transfer.rs`, release build, two engines on localhost, a 256 MiB file, its rate
+after the sender's scan; a fill (as of a Windows placeholder) on a partial replica. The test
+now also measures the file in an encrypted folder, and a fill (`measure_a_fill`).
+
+- **Requests to a peer overlap.** A download kept 16 chunks in flight per peer, in requests of
+  8, and the batching above joined those two into one request: each round trip carried 16
+  chunks, and the next set waited for it, so with 100 ms per request the 256 MiB file took
+  8.4 s, about one request at a time. Now:
+  - a download keeps up to 64 chunks, and at most 16 MiB by their lengths, in flight to each
+    peer (one larger chunk still goes alone), in requests of 8;
+  - batching never joins two requests of one download: it still joins different downloads'
+    requests, as of many small files, into one of up to 64 chunks, and sends the rest
+    alongside;
+  - a test with paused time checks that a download has several requests to one peer under way
+    at once.
+- **Encrypted downloads use the same scheduler.** They asked the peers sharing the folder one
+  after another, in no set order, taking everything the first had and asking another only for
+  the rest. Now a blobs/2 source gives the scheduler what each peer holds (its availability
+  request, which members and storage peers both answer) and the sealed chunks it sends, opened
+  and checked against their IDs; a chunk's ID stands in for its hash, which only opening it
+  tells. So they ask every peer what it holds, spread their chunks across peers, back off busy
+  ones and stop when paused, as unencrypted ones do. A test checks a member and a storage peer
+  holding the same file each send part of it. Content is marked unobtainable (ADR 0040) only if
+  some peer answered, as before.
+- **A fill fetches its next window while it hands over the current one**, so at most two
+  windows of about 16 MiB are held, rather than one at a time with the download standing still
+  at the end of each (ADR 0042's amendment).
+
+| 256 MiB, MiB/s | 0 ms before | 0 ms after | 100 ms before | 100 ms after |
+|---|---|---|---|---|
+| Plain, written | 90 | 126 | 32 | 81 |
+| Encrypted, written | 48 | 112 | 39 | 78 |
+| Plain, filled | 144 | 188 | 69 | 113 |
+| Encrypted, filled | 129 | 178 | 68 | 124 |
+
+The 1,000 small files take as long as before (1.5 s; 14 s with 100 ms per request).
+
+Peers are still chosen by the fewest chunks in flight, not by measured speed: a faster peer
+answers sooner and is handed more, but each peer has the same limit, and the last chunks of a
+download are not asked of a second peer when the first is slow. Both are left for later.
+

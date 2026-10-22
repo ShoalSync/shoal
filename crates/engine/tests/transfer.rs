@@ -8,7 +8,9 @@
 //! cargo test --release -p tidefell-engine --test transfer -- --ignored --nocapture
 //! ```
 //!
-//! `TIDEFELL_REQUEST_DELAY_MS` sets the delay (100 by default).
+//! `TIDEFELL_REQUEST_DELAY_MS` sets the delay (100 by default), and `TIDEFELL_LARGE_MIB` the
+//! large file's size (256 by default). The large file is also measured in an encrypted folder
+//! (ADR 0023), whose content goes over blobs/2.
 
 use std::collections::HashMap;
 use std::fs;
@@ -17,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use tidefell_engine::{
-    Engine, EngineConfig, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Retention,
+    Encryption, Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig,
+    ReplicaMode, Retention,
 };
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_proto::FolderId;
@@ -28,6 +31,8 @@ struct Replica {
     root: PathBuf,
     data: PathBuf,
     key: DeviceKey,
+    encrypted: bool,
+    partial: bool,
 }
 
 impl Replica {
@@ -36,6 +41,8 @@ impl Replica {
             root: dir.join(name).join("folder"),
             data: dir.join(name).join("data"),
             key: DeviceKey::from_seed([seed; 32]),
+            encrypted: false,
+            partial: false,
         }
     }
 
@@ -53,14 +60,22 @@ impl Replica {
             folders: vec![FolderConfig {
                 id: FOLDER,
                 path: self.root.clone(),
-                mode: ReplicaMode::Full,
+                mode: match self.partial {
+                    true => ReplicaMode::Partial {
+                        budget_bytes: 1 << 40,
+                    },
+                    false => ReplicaMode::Full,
+                },
                 members: vec![user.id()],
                 retention: Retention::Days(30),
                 // Scans are triggered explicitly so only the measured files move.
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
-                encryption: None,
+                encryption: self.encrypted.then(|| Encryption {
+                    storage_peers: Vec::new(),
+                    stored: None,
+                }),
             }],
             min_free_space: None,
         };
@@ -195,15 +210,29 @@ async fn requests_are_counted() {
     assert_eq!(Requests::of(&engine_a).chunks, 0.0);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "a measurement of several minutes; run it with --ignored"]
-async fn measure_small_files_and_a_large_one() {
-    const SMALL: usize = 1000;
-    const LARGE: usize = 256 * 1024 * 1024;
+/// The delay before every request, and the large file's size, as set for the measurement.
+fn measured() -> (Duration, usize) {
     let delay = std::env::var("TIDEFELL_REQUEST_DELAY_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map_or(Duration::from_millis(100), Duration::from_millis);
+    let mib: usize = std::env::var("TIDEFELL_LARGE_MIB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256);
+    (delay, mib << 20)
+}
+
+/// The rate `bytes` in `elapsed` is, in MiB/s.
+fn rate(bytes: usize, elapsed: Duration) -> f64 {
+    bytes as f64 / (1 << 20) as f64 / elapsed.as_secs_f64()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a measurement of several minutes; run it with --ignored"]
+async fn measure_small_files_and_a_large_one() {
+    const SMALL: usize = 1000;
+    let (delay, large_bytes) = measured();
     let timeout = Duration::from_secs(3600);
 
     let dir = tempfile::tempdir().unwrap();
@@ -239,11 +268,12 @@ async fn measure_small_files_and_a_large_one() {
         assert_eq!(b.read(&path), Some(small(i)), "{path}");
     }
 
-    let large = noise(LARGE, 99);
+    let large = noise(large_bytes, 99);
     a.write("large.bin", &large);
     let start = Instant::now();
     let before = Requests::of(&engine_b);
     engine_a.scan(FOLDER).await.unwrap();
+    let scanned = Instant::now();
     eventually("large file on b", timeout, || {
         status(&engine_b).files.len() == SMALL + 1 && status(&engine_b).pending == 0
     })
@@ -254,5 +284,128 @@ async fn measure_small_files_and_a_large_one() {
         start.elapsed(),
         Requests::of(&engine_b).since(before),
     );
+    println!(
+        "large file: {:.1} MiB/s with the scan, {:.1} MiB/s after it",
+        rate(large_bytes, start.elapsed()),
+        rate(large_bytes, scanned.elapsed())
+    );
     assert!(b.read("large.bin") == Some(large), "large.bin differs");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a measurement; run it with --ignored"]
+async fn measure_a_large_encrypted_file() {
+    let (delay, large_bytes) = measured();
+    let timeout = Duration::from_secs(3600);
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([1; 32]);
+    let mut a = Replica::new(dir.path(), "a", 20);
+    let mut b = Replica::new(dir.path(), "b", 21);
+    a.encrypted = true;
+    b.encrypted = true;
+    let engine_a = a.start(&user).await;
+    let engine_b = b.start(&user).await;
+    // Granting the key and fetching what was not there yet are retried: soon, for the test.
+    engine_a.set_retry_interval(Duration::from_millis(50));
+    engine_b.set_retry_interval(Duration::from_millis(50));
+    engine_a.set_request_delay(delay);
+    engine_b.set_request_delay(delay);
+    // Known to b, so it opens a sync/2 session with a as well, as for any configured peer.
+    let a_addr = engine_a.addr();
+    engine_b
+        .add_peer(PeerAddr {
+            device: a.key.id(),
+            addrs: a_addr.ip_addrs().copied().collect(),
+            relay: None,
+        })
+        .unwrap();
+    // Both hold the folder's key before the file is written.
+    a.write("first.txt", b"first");
+    engine_a.scan(FOLDER).await.unwrap();
+    eventually(
+        "the key and a first file on b",
+        Duration::from_secs(60),
+        || b.read("first.txt").is_some(),
+    )
+    .await;
+    println!("request delay {} ms", delay.as_millis());
+
+    let large = noise(large_bytes, 77);
+    a.write("large.bin", &large);
+    let start = Instant::now();
+    let before = Requests::of(&engine_b);
+    engine_a.scan(FOLDER).await.unwrap();
+    let scanned = Instant::now();
+    eventually("the encrypted large file on b", timeout, || {
+        status(&engine_b).files.len() == 2 && status(&engine_b).pending == 0
+    })
+    .await;
+    report(
+        "encrypted large file",
+        1,
+        start.elapsed(),
+        Requests::of(&engine_b).since(before),
+    );
+    println!(
+        "encrypted large file: {:.1} MiB/s with the scan, {:.1} MiB/s after it",
+        rate(large_bytes, start.elapsed()),
+        rate(large_bytes, scanned.elapsed())
+    );
+    assert!(b.read("large.bin") == Some(large), "large.bin differs");
+}
+
+/// A fill, as a Windows placeholder's (ADR 0042): the content fetched into memory and handed
+/// over in order, without placing the file, plain and encrypted.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "a measurement; run it with --ignored"]
+async fn measure_a_fill() {
+    let (delay, large_bytes) = measured();
+    for encrypted in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserKey::from_seed([1; 32]);
+        let mut a = Replica::new(dir.path(), "a", 30);
+        let mut b = Replica::new(dir.path(), "b", 31);
+        a.encrypted = encrypted;
+        b.encrypted = encrypted;
+        // A partial replica, as a Windows sync root is: nothing else fetches the file.
+        b.partial = true;
+        let engine_a = a.start(&user).await;
+        let engine_b = b.start(&user).await;
+        engine_a.set_retry_interval(Duration::from_millis(50));
+        engine_b.set_retry_interval(Duration::from_millis(50));
+        engine_a.set_request_delay(delay);
+        engine_b.set_request_delay(delay);
+        engine_b.connect(engine_a.addr()).await.unwrap();
+        engine_b
+            .add_peer(PeerAddr {
+                device: a.key.id(),
+                addrs: engine_a.addr().ip_addrs().copied().collect(),
+                relay: None,
+            })
+            .unwrap();
+        let large = noise(large_bytes, 55);
+        a.write("large.bin", &large);
+        engine_a.scan(FOLDER).await.unwrap();
+        eventually("b lists the file", Duration::from_secs(60), || {
+            engine_b.files(FOLDER).is_ok_and(|f| f.len() == 1)
+        })
+        .await;
+        let start = Instant::now();
+        let mut got = Vec::with_capacity(large_bytes);
+        let fetched = engine_b
+            .fetch(FOLDER, "large.bin", None, &mut |_, data| {
+                got.extend_from_slice(data);
+                Ok(())
+            })
+            .await;
+        let elapsed = start.elapsed();
+        fetched.unwrap();
+        assert!(got == large, "the fill differs");
+        println!(
+            "{} fill: {:.1} MiB/s (request delay {} ms)",
+            if encrypted { "encrypted" } else { "plain" },
+            rate(large_bytes, elapsed),
+            delay.as_millis()
+        );
+    }
 }

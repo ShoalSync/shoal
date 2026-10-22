@@ -316,9 +316,10 @@ What the runs taught:
     runner), or the cloud files filter. It matters to neither the fix nor users, who have
     both.
   - The fix: a fill fetches its chunks from peers into memory, 16 MiB at a time in file
-    order, and hands them over. It reads nothing from the block store or the folder, even
-    what is there, so a chunk already here is fetched again. Under its locks, the engine
-    looks at files only through their attributes.
+    order, and hands them over. (Since ADR 0032's amendment of 2026-10-22, the next 16 MiB is
+    fetched while one is handed over: at most two windows are held.) It reads nothing from
+    the block store or the folder, even what is there, so a chunk already here is fetched
+    again. Under its locks, the engine looks at files only through their attributes.
   - Not yet avoided: an encrypted folder's fill still reads through the block store, where
     its content is opened (ADR 0023). Before such a folder is a sync root, its opened chunks
     must reach the fill in memory too. (Done in step 6: its sealed chunks are fetched a window

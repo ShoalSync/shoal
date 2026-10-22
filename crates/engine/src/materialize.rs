@@ -33,6 +33,8 @@ struct PeerSource {
     inner: Arc<Inner>,
     /// Peers that are full replicas of the folder, so hold every current file (ADR 0032).
     full: Vec<DeviceId>,
+    /// This download, so its requests to a peer go on their own and overlap (ADR 0032).
+    download: u64,
 }
 
 impl PeerSource {
@@ -94,7 +96,13 @@ impl ChunkSource for PeerSource {
         let results = self
             .inner
             .batches
-            .fetch(&self.node, *peer, self.folder, chunks.to_vec())
+            .fetch(
+                &self.node,
+                *peer,
+                self.folder,
+                self.download,
+                chunks.to_vec(),
+            )
             .await
             .map_err(|e| self.failed(FetchFailure::Request, e))?;
         let mut fetched = tidefell_fetch::Fetched::default();
@@ -600,7 +608,6 @@ pub(crate) async fn fetch_into(
             id,
             write.content,
             write.size,
-            FILL_WINDOW,
             sink,
         )
         .await
@@ -649,14 +656,10 @@ pub(crate) async fn fetch_into(
     })
 }
 
-/// How much of a fill is held in memory at once: its chunks are fetched a window at a time, in
-/// file order, and handed over before the next.
-const FILL_WINDOW: u64 = 16 << 20;
-
-/// Fetches `manifest`'s chunks from `peers` into memory, a window at a time, and passes them
-/// to `sink` in order, checking each and the whole content. No file is opened: during a fill,
-/// opening a file can wait on that fill (ADR 0042's amendment), so nothing comes from the
-/// block store or the folder, even what is there.
+/// Fetches `manifest`'s chunks from `peers` into memory, a window at a time with the next one
+/// under way, and passes them to `sink` in order, checking each and the whole content
+/// (`crate::fill`). No file is opened: during a fill, opening a file can wait on that fill (ADR
+/// 0042's amendment), so nothing comes from the block store or the folder, even what is there.
 async fn fill_from_peers(
     inner: &Arc<Inner>,
     node: &Arc<Node>,
@@ -672,53 +675,42 @@ async fn fill_from_peers(
         folder: id,
         inner: inner.clone(),
         full: Vec::new(),
+        download: crate::batch::download_id(),
+    });
+    let check: crate::fill::Check = Arc::new(|hash, data| {
+        if tidefell_chunker::hash_chunk(data) == *hash {
+            Ok(())
+        } else {
+            Err("a chunk did not match its hash".to_owned())
+        }
     });
     let mut hasher = blake3::Hasher::new();
     let mut offset = 0u64;
-    let mut rest: &[tidefell_proto::ChunkRef] = &manifest.chunks;
-    while !rest.is_empty() {
-        let mut take = 0;
-        let mut bytes = 0u64;
-        while take < rest.len() && (take == 0 || bytes + u64::from(rest[take].len) <= FILL_WINDOW) {
-            bytes += u64::from(rest[take].len);
-            take += 1;
-        }
-        let (window, after) = rest.split_at(take);
-        rest = after;
-        let part = Manifest {
-            content: manifest.content,
-            chunks: window.to_vec(),
-        };
-        let mut got: HashMap<ChunkHash, Vec<u8>> = HashMap::new();
-        let fetched = fetch(
-            source.clone(),
-            &part,
-            peers,
-            |_| false,
-            Config::default(),
-            |hash, data| {
-                if tidefell_chunker::hash_chunk(&data) != hash {
-                    return Err("a chunk did not match its hash".to_owned());
-                }
-                got.insert(hash, data);
-                Ok(())
-            },
-        );
-        tokio::select! {
-            fetched = fetched => {
-                fetched.map_err(|e| {
-                    debug!(path = %write.path, error = %e, "cannot fill from peers");
-                    unavailable()
-                })?;
-            }
-            () = until_paused(inner, id) => return Err(Error::Paused(id)),
-        }
-        for chunk in window {
-            let data = got.get(&chunk.hash).ok_or_else(unavailable)?;
+    let filled = crate::fill::fill(
+        source,
+        manifest.content,
+        &manifest.chunks,
+        peers,
+        check,
+        |_, data| {
             hasher.update(data);
-            sink(offset, data).map_err(io_err(&write.path))?;
+            sink(offset, data).map_err(|e| e.to_string())?;
             offset += data.len() as u64;
-        }
+            Ok(())
+        },
+    );
+    tokio::select! {
+        filled = filled => match filled {
+            Ok(()) => {}
+            Err(crate::fill::FillError::Fetch(e)) => {
+                debug!(path = %write.path, error = %e, "cannot fill from peers");
+                return Err(unavailable());
+            }
+            Err(crate::fill::FillError::Deliver(e)) => {
+                return Err(io_err(&write.path)(std::io::Error::other(e)));
+            }
+        },
+        () = until_paused(inner, id) => return Err(Error::Paused(id)),
     }
     if hasher.finalize().as_bytes() != manifest.content.as_bytes() || offset != write.size {
         return Err(unavailable());
@@ -1293,6 +1285,7 @@ async fn download(
         folder: id,
         inner: inner.clone(),
         full,
+        download: crate::batch::download_id(),
     });
     let download = fetch(
         source,
@@ -1407,7 +1400,7 @@ fn assemble(
 }
 
 /// Resolves once `folder`, or the whole device, is paused (ADR 0029).
-async fn until_paused(inner: &Inner, folder: FolderId) {
+pub(crate) async fn until_paused(inner: &Inner, folder: FolderId) {
     let mut changes = inner.changes.subscribe();
     while !inner.is_paused(&folder) {
         if changes.changed().await.is_err() {

@@ -1166,11 +1166,10 @@ pub(crate) async fn fetch_content(
 }
 
 /// [`fetch_content`] without the block store, for a fill (ADR 0042's amendment): the content's
-/// chunks are fetched sealed, a `window` of bytes at a time in file order, opened in memory and
-/// handed to `sink`, checking the whole content against `content` and `size`. Nothing is read
-/// from the block store or the folder, even what is there: during a fill, opening a file can
-/// wait on that fill.
-#[allow(clippy::too_many_arguments)]
+/// chunks are fetched sealed, a window at a time in file order with the next under way
+/// (`crate::fill`), opened in memory and handed to `sink`, checking the whole content against
+/// `content` and `size`. Nothing is read from the block store or the folder, even what is
+/// there: during a fill, opening a file can wait on that fill.
 pub(crate) async fn fill_content(
     inner: &std::sync::Arc<Inner>,
     node: &std::sync::Arc<tidefell_net::Node>,
@@ -1178,7 +1177,6 @@ pub(crate) async fn fill_content(
     folder: tidefell_proto::FolderId,
     content: tidefell_proto::ContentHash,
     size: u64,
-    window: u64,
     sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
 ) -> std::result::Result<(), String> {
     let candidates: Vec<(FolderKey, Vec<(ChunkId, u32)>)> = {
@@ -1204,7 +1202,6 @@ pub(crate) async fn fill_content(
             (content, size),
             &key,
             &list,
-            window,
             sink,
             &mut written,
         )
@@ -1230,81 +1227,57 @@ async fn fill_sealed(
     (content, size): (tidefell_proto::ContentHash, u64),
     key: &FolderKey,
     list: &[(ChunkId, u32)],
-    window: u64,
     sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
     written: &mut bool,
 ) -> std::result::Result<(), String> {
-    use tidefell_net::{BlobKind, BlobResult};
-    use tidefell_proto::blobs2::BlobId;
-
-    let peers: Vec<DeviceId> = node
-        .encrypted_peers()
-        .into_iter()
-        .filter(|p| p.shared_folders().contains(&folder))
-        .map(|p| p.device())
-        .collect();
+    let source = std::sync::Arc::new(SealedSource {
+        node: node.clone(),
+        folder,
+        inner: inner.clone(),
+        key: key.clone(),
+        answered: Default::default(),
+    });
+    let peers = sealed_peers(node, folder);
+    // Each chunk opened is checked against its ID as it arrives, by the source.
+    let check: crate::fill::Check = std::sync::Arc::new(|_, _| Ok(()));
     let mut hasher = blake3::Hasher::new();
     let mut offset = 0u64;
-    let mut rest = list;
-    while !rest.is_empty() {
-        let mut take = 0;
-        let mut bytes = 0u64;
-        while take < rest.len() && (take == 0 || bytes + u64::from(rest[take].1) <= window) {
-            bytes += u64::from(rest[take].1);
-            take += 1;
-        }
-        let (part, after) = rest.split_at(take);
-        rest = after;
-        let mut got: Vec<Option<Vec<u8>>> = vec![None; part.len()];
-        let mut answered = false;
-        for peer in &peers {
-            let missing: Vec<usize> = (0..part.len()).filter(|i| got[*i].is_none()).collect();
-            if missing.is_empty() {
-                break;
+    let manifest = by_id(content, list);
+    let filled = crate::fill::fill(
+        source.clone(),
+        content,
+        &manifest.chunks,
+        &peers,
+        check,
+        |chunk, data| {
+            if data.len() != chunk.len as usize {
+                return Err("a chunk is not the length its list says".to_owned());
             }
-            let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
-                continue;
-            };
-            for batch in missing.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST) {
-                let wanted: Vec<(BlobId, BlobKind)> = batch
-                    .iter()
-                    .map(|i| (BlobId::from(part[*i].0), BlobKind::SealedChunk))
-                    .collect();
-                let Ok(results) = node.fetch_blobs(endpoint, folder, &wanted).await else {
-                    break;
-                };
-                answered = true;
-                for result in results {
-                    let BlobResult::Found(id, sealed) = result else {
-                        continue;
-                    };
-                    let chunk_id = ChunkId(id.0);
-                    // A chunk that does not open, or is not what it was asked for, is as missing.
-                    let Ok(plaintext) = key.open_chunk(&folder, &chunk_id, &sealed) else {
-                        continue;
-                    };
-                    let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
-                    record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
-                    for (i, (listed, len)) in part.iter().enumerate() {
-                        if *listed == chunk_id && plaintext.len() == *len as usize {
-                            got[i] = Some(plaintext.to_vec());
-                        }
-                    }
-                }
-            }
+            let hash = ChunkHash(*blake3::hash(data).as_bytes());
+            record_chunk_id(&mut handle.lock(), ChunkId(chunk.hash.0), hash, key.id());
+            hasher.update(data);
+            *written = true;
+            sink(offset, data).map_err(|e| e.to_string())?;
+            offset += data.len() as u64;
+            Ok(())
+        },
+    );
+    let filled = tokio::select! {
+        filled = filled => filled,
+        () = crate::materialize::until_paused(inner, folder) => {
+            return Err("the folder was paused".to_owned());
         }
-        if got.iter().any(Option::is_none) {
-            if answered {
+    };
+    match filled {
+        Ok(()) => {}
+        Err(crate::fill::FillError::Fetch(tidefell_fetch::FetchError::Unobtainable(_))) => {
+            if source.answered() {
                 inner.unobtainable.lock().unwrap().insert((folder, content));
             }
             return Err("some of its chunks are not available from any connected device".into());
         }
-        for data in got.into_iter().flatten() {
-            hasher.update(&data);
-            *written = true;
-            sink(offset, &data).map_err(|e| e.to_string())?;
-            offset += data.len() as u64;
-        }
+        Err(crate::fill::FillError::Fetch(e)) => return Err(e.to_string()),
+        Err(crate::fill::FillError::Deliver(e)) => return Err(e),
     }
     if hasher.finalize().as_bytes() != content.as_bytes() || offset != size {
         return Err("the content opened is not the version's".into());
@@ -1317,7 +1290,138 @@ async fn fill_sealed(
     Ok(())
 }
 
-/// [`fetch_content`] for the content as `key` seals it, in chunks `list`.
+/// Fetches an encrypted folder's sealed chunks over blobs/2 for the scheduler that unencrypted
+/// downloads use, so an encrypted download asks every peer that shares the folder what it holds,
+/// spreads its chunks across them and keeps several requests under way to each (ADR 0032,
+/// ADR 0023). The scheduler names chunks by hash; here each chunk's ID stands in for it, as
+/// `ChunkHash(id.0)`, since only its ID is known until it is opened.
+struct SealedSource {
+    node: std::sync::Arc<tidefell_net::Node>,
+    folder: tidefell_proto::FolderId,
+    inner: std::sync::Arc<Inner>,
+    key: FolderKey,
+    /// Whether any peer answered, so content none of them sent is unobtainable, rather than out
+    /// of reach (ADR 0040).
+    answered: std::sync::atomic::AtomicBool,
+}
+
+impl SealedSource {
+    fn endpoint(peer: &DeviceId) -> std::result::Result<tidefell_net::EndpointId, String> {
+        tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())
+    }
+
+    fn check_paused(&self) -> std::result::Result<(), String> {
+        match self.inner.is_paused(&self.folder) {
+            true => Err(format!("syncing of folder {} is paused", self.folder)),
+            false => Ok(()),
+        }
+    }
+
+    fn answered(&self) -> bool {
+        self.answered.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl tidefell_fetch::ChunkSource for SealedSource {
+    type Peer = DeviceId;
+
+    async fn availability(
+        &self,
+        peer: &DeviceId,
+        manifest: &tidefell_proto::Manifest,
+    ) -> std::result::Result<Vec<ChunkHash>, String> {
+        use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
+        self.check_paused()?;
+        let endpoint = Self::endpoint(peer)?;
+        let mut held = Vec::new();
+        for part in manifest.chunks.chunks(MAX_BLOBS_PER_AVAILABILITY) {
+            let ids: Vec<BlobId> = part
+                .iter()
+                .map(|c| BlobId::from(ChunkId(c.hash.0)))
+                .collect();
+            let holds = self
+                .node
+                .blob_availability(endpoint, self.folder, &ids)
+                .await
+                .map_err(|e| e.to_string())?;
+            self.answered
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+            held.extend(
+                part.iter()
+                    .zip(holds)
+                    .filter(|(_, holds)| *holds)
+                    .map(|(c, _)| c.hash),
+            );
+        }
+        Ok(held)
+    }
+
+    async fn fetch(
+        &self,
+        peer: &DeviceId,
+        chunks: &[ChunkHash],
+    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
+        use tidefell_net::{BlobKind, BlobResult};
+        use tidefell_proto::blobs2::BlobId;
+        self.check_paused()?;
+        let wanted: Vec<(BlobId, BlobKind)> = chunks
+            .iter()
+            .map(|h| (BlobId::from(ChunkId(h.0)), BlobKind::SealedChunk))
+            .collect();
+        let results = self
+            .node
+            .fetch_blobs(Self::endpoint(peer)?, self.folder, &wanted)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.answered
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let mut fetched = tidefell_fetch::Fetched::default();
+        for result in results {
+            match result {
+                BlobResult::Found(id, sealed) => {
+                    let chunk_id = ChunkId(id.0);
+                    // A chunk that does not open, or is not what it was asked for (its ID is
+                    // checked against its plaintext), is as missing.
+                    if let Ok(plaintext) = self.key.open_chunk(&self.folder, &chunk_id, &sealed) {
+                        fetched.chunks.push((ChunkHash(chunk_id.0), plaintext));
+                    }
+                }
+                BlobResult::Missing(_) => {}
+                BlobResult::Busy(wait) => fetched.busy_for = Some(wait),
+            }
+        }
+        Ok(fetched)
+    }
+}
+
+/// The peers an encrypted `folder`'s content can come from: those it has a sync/2 session with.
+fn sealed_peers(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> Vec<DeviceId> {
+    node.encrypted_peers()
+        .into_iter()
+        .filter(|p| p.shared_folders().contains(&folder))
+        .map(|p| p.device())
+        .collect()
+}
+
+/// `list` as a manifest the scheduler takes, each chunk's ID in its hash's place.
+fn by_id(
+    content: tidefell_proto::ContentHash,
+    list: &[(ChunkId, u32)],
+) -> tidefell_proto::Manifest {
+    tidefell_proto::Manifest {
+        content,
+        chunks: list
+            .iter()
+            .map(|(id, len)| tidefell_proto::ChunkRef {
+                hash: ChunkHash(id.0),
+                len: *len,
+            })
+            .collect(),
+    }
+}
+
+/// [`fetch_content`] for the content as `key` seals it, in chunks `list`: what is not here yet
+/// into the block store, each chunk's ID recorded before it is stored, so compaction keeps it.
 async fn fetch_sealed(
     inner: &std::sync::Arc<Inner>,
     node: &std::sync::Arc<tidefell_net::Node>,
@@ -1327,93 +1431,71 @@ async fn fetch_sealed(
     key: &FolderKey,
     list: &[(ChunkId, u32)],
 ) -> std::result::Result<tidefell_proto::Manifest, String> {
-    use tidefell_net::{BlobKind, BlobResult};
-    use tidefell_proto::blobs2::BlobId;
-
-    let mut hashes: Vec<Option<ChunkHash>> = {
+    let source = std::sync::Arc::new(SealedSource {
+        node: node.clone(),
+        folder,
+        inner: inner.clone(),
+        key: key.clone(),
+        answered: Default::default(),
+    });
+    let here = |id: &ChunkHash| {
         let state = handle.lock();
-        list.iter()
-            .map(|(id, _)| {
-                state
-                    .chunk_ids
-                    .get(id)
-                    .map(|(hash, _)| *hash)
-                    .filter(|hash| crate::content::has_chunk(inner, &state, hash))
-            })
-            .collect()
+        state
+            .chunk_ids
+            .get(&ChunkId(id.0))
+            .is_some_and(|(hash, _)| crate::content::has_chunk(inner, &state, hash))
     };
-    let mut answered = false;
-    let peers: Vec<DeviceId> = node
-        .encrypted_peers()
-        .into_iter()
-        .filter(|p| p.shared_folders().contains(&folder))
-        .map(|p| p.device())
-        .collect();
-    for peer in peers {
-        let missing: Vec<usize> = (0..list.len()).filter(|i| hashes[*i].is_none()).collect();
-        if missing.is_empty() {
-            break;
+    let (manifest, peers) = (by_id(content, list), sealed_peers(node, folder));
+    let download = tidefell_fetch::fetch(
+        source.clone(),
+        &manifest,
+        &peers,
+        here,
+        tidefell_fetch::Config::default(),
+        |id, plaintext| {
+            let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
+            // Recorded first, so compaction knows the chunk is this download's as soon as it
+            // is in the store.
+            record_chunk_id(&mut handle.lock(), ChunkId(id.0), hash, key.id());
+            inner
+                .store
+                .lock()
+                .unwrap()
+                .put_verified(hash, &plaintext)
+                .map_err(|e| e.to_string())
+        },
+    );
+    let fetched = tokio::select! {
+        fetched = download => fetched,
+        () = crate::materialize::until_paused(inner, folder) => {
+            return Err("the folder was paused".to_owned());
         }
-        let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
-            continue;
-        };
-        for batch in missing.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST) {
-            let wanted: Vec<(BlobId, BlobKind)> = batch
-                .iter()
-                .map(|i| (BlobId::from(list[*i].0), BlobKind::SealedChunk))
-                .collect();
-            let Ok(results) = node.fetch_blobs(endpoint, folder, &wanted).await else {
-                break;
-            };
-            answered = true;
-            for result in results {
-                let BlobResult::Found(id, sealed) = result else {
-                    continue;
-                };
-                let chunk_id = ChunkId(id.0);
-                // A chunk that does not open, or is not what it was asked for, is as missing.
-                let Ok(plaintext) = key.open_chunk(&folder, &chunk_id, &sealed) else {
-                    continue;
-                };
-                let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
-                // Recorded first, so compaction knows the chunk is this download's as soon as
-                // it is in the store.
-                record_chunk_id(&mut handle.lock(), chunk_id, hash, key.id());
-                if inner
-                    .store
-                    .lock()
-                    .unwrap()
-                    .put_verified(hash, &plaintext)
-                    .is_err()
-                {
-                    continue;
-                }
-                for (i, (listed, _)) in list.iter().enumerate() {
-                    if *listed == chunk_id {
-                        hashes[i] = Some(hash);
-                    }
-                }
+    };
+    match fetched {
+        Ok(_) => {}
+        Err(tidefell_fetch::FetchError::Unobtainable(_)) => {
+            if source.answered() {
+                inner.unobtainable.lock().unwrap().insert((folder, content));
             }
+            return Err("some of its chunks are not available from any connected device".into());
         }
+        Err(e) => return Err(e.to_string()),
     }
-    if hashes.iter().any(Option::is_none) {
-        if answered {
-            inner.unobtainable.lock().unwrap().insert((folder, content));
-        }
-        return Err("some of its chunks are not available from any connected device".into());
-    }
-    let manifest = tidefell_proto::Manifest {
-        content,
-        chunks: list
+    let manifest = {
+        let state = handle.lock();
+        let chunks: Option<Vec<tidefell_proto::ChunkRef>> = list
             .iter()
-            .zip(hashes)
-            .filter_map(|((_, len), hash)| {
+            .map(|(id, len)| {
                 Some(tidefell_proto::ChunkRef {
-                    hash: hash?,
+                    hash: state.chunk_ids.get(id)?.0,
                     len: *len,
                 })
             })
-            .collect(),
+            .collect();
+        tidefell_proto::Manifest {
+            content,
+            chunks: chunks.ok_or("a chunk's ID was not recorded")?,
+        }
     };
     inner
         .unobtainable

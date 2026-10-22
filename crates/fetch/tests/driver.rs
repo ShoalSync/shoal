@@ -30,6 +30,8 @@ struct Sim {
     full: Vec<&'static str>,
     requests: Mutex<BTreeMap<&'static str, usize>>,
     queries: Mutex<BTreeMap<&'static str, usize>>,
+    /// Requests to each peer under way now, and the most at once.
+    outstanding: Mutex<BTreeMap<&'static str, (usize, usize)>>,
 }
 
 impl ChunkSource for Sim {
@@ -50,7 +52,14 @@ impl ChunkSource for Sim {
 
     async fn fetch(&self, peer: &&'static str, chunks: &[ChunkHash]) -> Result<Fetched, String> {
         *self.requests.lock().unwrap().entry(peer).or_default() += 1;
+        {
+            let mut outstanding = self.outstanding.lock().unwrap();
+            let (now, most) = outstanding.entry(peer).or_default();
+            *now += 1;
+            *most = (*most).max(*now);
+        }
         tokio::time::sleep(Duration::from_millis(10)).await;
+        self.outstanding.lock().unwrap().get_mut(peer).unwrap().0 -= 1;
         if let Some(left) = self.failures.get(peer) {
             if left.load(Ordering::SeqCst) > 0 {
                 left.fetch_sub(1, Ordering::SeqCst);
@@ -326,4 +335,26 @@ async fn a_lone_peer_without_the_chunks_leaves_them_unobtainable() {
         "{result:?}"
     );
     assert_eq!(queries(&sim, "a"), 1);
+}
+
+/// A large download keeps several requests to a peer under way at once, so a round trip is
+/// waited out once per many requests (ADR 0032).
+#[tokio::test(start_paused = true)]
+async fn requests_to_a_peer_overlap() {
+    let mut sim = Sim::default();
+    sim.holdings.insert("a", (1..=40).map(h).collect());
+    let sim = Arc::new(sim);
+    let report = fetch(
+        sim.clone(),
+        &manifest(40),
+        &["a"],
+        |_| false,
+        Config::default(),
+        |_, _| Ok(()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 40);
+    let most = sim.outstanding.lock().unwrap()["a"].1;
+    assert!(most >= 5, "at most {most} requests at once");
 }

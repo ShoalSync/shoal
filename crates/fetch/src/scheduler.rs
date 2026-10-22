@@ -9,8 +9,13 @@ use tidefell_proto::{ChunkHash, Manifest};
 /// Scheduler limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Config {
-    /// Most chunks in flight to one peer at a time.
+    /// Most chunks in flight to one peer at a time. Enough to keep several requests to it
+    /// outstanding at once, so a round trip is waited out once per many requests rather than
+    /// once per request (ADR 0032).
     pub max_in_flight_per_peer: usize,
+    /// Most bytes of chunks in flight to one peer at a time, by their lengths in the manifest;
+    /// a single chunk larger than this still goes on its own.
+    pub max_bytes_in_flight_per_peer: u64,
     /// Most chunks in one request (blobs/1 allows 64).
     pub max_chunks_per_request: usize,
     /// First backoff after a failure; doubles per consecutive failure.
@@ -24,7 +29,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            max_in_flight_per_peer: 16,
+            max_in_flight_per_peer: 64,
+            max_bytes_in_flight_per_peer: 16 << 20,
             max_chunks_per_request: 8,
             initial_backoff: Duration::from_millis(200),
             max_backoff: Duration::from_secs(10),
@@ -47,6 +53,7 @@ struct PeerState {
     /// Chunk hashes this peer is believed to hold.
     has: BTreeSet<ChunkHash>,
     in_flight: usize,
+    in_flight_bytes: u64,
     failures: u32,
     available_at: Option<Instant>,
     dropped: bool,
@@ -58,6 +65,8 @@ pub struct Scheduler<P> {
     config: Config,
     /// Distinct chunks still needed, with their position of first appearance (for stable order).
     needed: BTreeMap<ChunkHash, usize>,
+    /// Each needed chunk's length.
+    lens: HashMap<ChunkHash, u64>,
     in_flight: HashMap<ChunkHash, P>,
     peers: HashMap<P, PeerState>,
 }
@@ -66,14 +75,17 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
     /// Schedules the chunks of `manifest` for which `have` returns false.
     pub fn new(manifest: &Manifest, have: impl Fn(&ChunkHash) -> bool, config: Config) -> Self {
         let mut needed = BTreeMap::new();
+        let mut lens = HashMap::new();
         for (i, chunk) in manifest.chunks.iter().enumerate() {
             if !have(&chunk.hash) {
                 needed.entry(chunk.hash).or_insert(i);
+                lens.insert(chunk.hash, u64::from(chunk.len));
             }
         }
         Self {
             config,
             needed,
+            lens,
             in_flight: HashMap::new(),
             peers: HashMap::new(),
         }
@@ -84,6 +96,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
         let state = self.peers.entry(peer).or_insert(PeerState {
             has: BTreeSet::new(),
             in_flight: 0,
+            in_flight_bytes: 0,
             failures: 0,
             available_at: None,
             dropped: false,
@@ -156,6 +169,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
 
         let mut planned: BTreeMap<P, Vec<ChunkHash>> = BTreeMap::new();
         for (_, _, hash) in candidates {
+            let len = self.lens.get(&hash).copied().unwrap_or(0);
             // The holder with capacity and the fewest chunks in flight; ties by peer order.
             let choice = self
                 .peers
@@ -164,14 +178,16 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
                     Self::usable(s, now)
                         && s.has.contains(&hash)
                         && s.in_flight < self.config.max_in_flight_per_peer
+                        && (s.in_flight == 0
+                            || s.in_flight_bytes.saturating_add(len)
+                                <= self.config.max_bytes_in_flight_per_peer)
                 })
                 .min_by(|(pa, a), (pb, b)| a.in_flight.cmp(&b.in_flight).then(pa.cmp(pb)))
                 .map(|(p, _)| p.clone());
             let Some(peer) = choice else { continue };
-            self.peers
-                .get_mut(&peer)
-                .expect("chosen peer exists")
-                .in_flight += 1;
+            let state = self.peers.get_mut(&peer).expect("chosen peer exists");
+            state.in_flight += 1;
+            state.in_flight_bytes += len;
             self.in_flight.insert(hash, peer.clone());
             planned.entry(peer).or_default().push(hash);
         }
@@ -195,8 +211,10 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
             return false;
         }
         self.in_flight.remove(hash);
+        let len = self.lens.get(hash).copied().unwrap_or(0);
         if let Some(state) = self.peers.get_mut(peer) {
             state.in_flight -= 1;
+            state.in_flight_bytes = state.in_flight_bytes.saturating_sub(len);
         }
         true
     }
@@ -376,5 +394,39 @@ mod tests {
         let mut s = Scheduler::new(&manifest(&[1, 2]), |_| false, config());
         s.set_availability(1, [h(1)]);
         assert_eq!(s.unobtainable(), vec![h(2)]);
+    }
+
+    #[test]
+    fn bytes_in_flight_are_bounded() {
+        let now = Instant::now();
+        let manifest = Manifest {
+            content: ContentHash([0; 32]),
+            chunks: (1..=4)
+                .map(|n| ChunkRef {
+                    hash: h(n),
+                    len: 6 << 20,
+                })
+                .collect(),
+        };
+        let mut s = Scheduler::new(&manifest, |_| false, Config::default());
+        s.set_availability(1, (1..=4).map(h));
+        // Two 6 MiB chunks fit in 16 MiB; a third would not.
+        let first: usize = s.next_requests(now).iter().map(|r| r.chunks.len()).sum();
+        assert_eq!(first, 2);
+        s.received(&1, &h(1));
+        let second: usize = s.next_requests(now).iter().map(|r| r.chunks.len()).sum();
+        assert_eq!(second, 1);
+
+        // A chunk larger than the bound still goes, on its own.
+        let huge = Manifest {
+            content: ContentHash([0; 32]),
+            chunks: vec![ChunkRef {
+                hash: h(9),
+                len: 64 << 20,
+            }],
+        };
+        let mut s = Scheduler::new(&huge, |_| false, Config::default());
+        s.set_availability(1, [h(9)]);
+        assert_eq!(s.next_requests(now).len(), 1);
     }
 }

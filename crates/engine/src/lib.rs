@@ -64,6 +64,7 @@ pub mod diagnostics;
 mod encrypted;
 mod engine;
 mod evict;
+mod fill;
 mod history;
 mod ignores;
 mod local;

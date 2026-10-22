@@ -967,3 +967,81 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     engine_holder.shutdown().await;
     engine_s.shutdown().await;
 }
+
+/// An encrypted download spreads across the peers that hold it, as an unencrypted one does
+/// (ADR 0032): with a member and a storage peer both holding the whole file, each sends part.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_encrypted_download_spreads_across_peers_that_both_hold_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([19; 32]);
+    let operator = UserKey::from_seed([20; 32]);
+    let author = Member::new(dir.path(), "author", 150);
+    let mut fetcher = Member::new(dir.path(), "fetcher", 151);
+    fetcher.mode = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let ids = [author.key.id(), fetcher.key.id()];
+    let storage_key = DeviceKey::from_seed([152; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        152,
+        &operator,
+        &[user.id()],
+        &network,
+        &ids,
+        1 << 30,
+    )
+    .await;
+    let engine_author = author
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[ids[1], storage_key],
+        )
+        .await;
+    let big = noise(16 << 20, 0x5851_f42d_4c95_7f2d);
+    author.write("big.bin", &big);
+    engine_author.scan(FOLDER).await.unwrap();
+    eventually_for("the storage peer keeps it", 120, || {
+        let s = stored(&engine_s);
+        s.versions == 1 && s.missing_chunks == 0
+    })
+    .await;
+    let engine_fetcher = fetcher
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[ids[0], storage_key],
+        )
+        .await;
+    eventually_for("the fetcher lists it, with the key", 120, || {
+        paths(&engine_fetcher).len() == 1 && generation(&engine_fetcher).is_some()
+    })
+    .await;
+
+    let (author_before, storage_before) = (served(&engine_author), served(&engine_s));
+    let mut got = Vec::new();
+    engine_fetcher
+        .fetch(FOLDER, "big.bin", None, &mut |_, data| {
+            got.extend_from_slice(data);
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert!(got == big, "the content is the file's");
+    let (from_author, from_storage) = (
+        served(&engine_author) - author_before,
+        served(&engine_s) - storage_before,
+    );
+    eprintln!("chunks from the member: {from_author}, from the storage peer: {from_storage}");
+    assert!(from_author > 0.0 && from_storage > 0.0);
+
+    engine_fetcher.shutdown().await;
+    engine_author.shutdown().await;
+    engine_s.shutdown().await;
+}

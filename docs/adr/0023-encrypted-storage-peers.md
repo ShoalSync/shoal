@@ -180,8 +180,10 @@ fixes the folder database (ADR 0034):
 - **Plaintext inside, sealed at the edge.** A member keeps chunks as today, by the BLAKE3 hash of
   their plaintext, and keeps per folder which chunk ID, under which key, each one is. It seals a
   chunk when it serves it, which gives the same bytes every time, and opens and checks one when
-  it fetches it, then stores it by its plaintext hash. Manifests, assembly, materialising,
-  eviction and confirmed copies work on plaintext as before.
+  it fetches it, then stores it by its plaintext hash (since ADR 0032's amendment of
+  2026-10-22, through the scheduler unencrypted downloads use, from every peer that holds it).
+  Manifests, assembly, materialising, eviction and confirmed copies work on plaintext as
+  before.
 - **One folder model.** The folder's versions (`meta`) are the decrypted `EntryVersion`s, as for a
   plaintext folder. What each was received as is either a signed `EntryVersion` or a signed
   `SealedVersion`; that form is what the database keeps beside the decrypted version, what is
