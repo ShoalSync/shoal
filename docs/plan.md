@@ -447,6 +447,18 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   assets signed with the project's release key (`cosign.pub`, ADR 0041). Runtime settings are
   format 8, which 0.21 does not read; plaintext folders' databases are unchanged. The FFI's
   folder calls take an encryption argument.
+- `v0.23.0` completes Phase 8 (ADR 0042): the Windows client. `tidefelld` runs on Windows, its
+  API on a named pipe; a partial folder is a Cloud Files sync root, its files placeholders that
+  Explorer shows and fills on demand; `tidefell-tray` starts and supervises the daemon, sets up
+  or joins a device and approves others; a per-user MSI, not Authenticode-signed (its cosign
+  signature is the one to check). Transfers keep many requests under way at once, to each
+  peer, encrypted downloads too, through one scheduler (ADR 0032). Storage priorities (ADR
+  0023's amendment of 2026-10-22): a storage peer's total quota and folder priorities, members
+  rank files 0 to 255 in `.tidefellpriorities`, given to storage peers over
+  `tidefell/storage/1`; `tidefell folder storage` and `storage-drop`, the API's priorities
+  endpoints, and the tray's Storage window. Runtime settings are unchanged (format 8); folder
+  databases gain two tables, which 0.22 does not read. The FFI gains `priorities`,
+  `setPriority`, `storageReport` and `storageDrop`.
 - Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
   asked of the peer that sent it before it is applied; versions by authors not vouched for are
   refused, and those whose certificate request went unanswered come again. Replicas take over

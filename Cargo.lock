@@ -4092,7 +4092,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-api"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "axum",
  "getrandom 0.4.3",
@@ -4109,7 +4109,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-chunker"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "fastcdc",
@@ -4119,7 +4119,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-cli"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "clap",
  "serde",
@@ -4135,7 +4135,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-crypto"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -4151,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-daemon"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "clap",
  "getrandom 0.4.3",
@@ -4174,7 +4174,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-engine"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "aho-corasick",
  "blake3",
@@ -4212,7 +4212,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fetch"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "thiserror 2.0.21",
  "tidefell-proto",
@@ -4221,7 +4221,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-ffi"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "serde_json",
  "tempfile",
@@ -4234,7 +4234,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fs-cfapi"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "cloud-filter",
  "nt-time",
@@ -4251,7 +4251,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-fs-fuse"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "fuser",
  "libc",
@@ -4265,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-identity"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -4278,7 +4278,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-meta"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -4293,7 +4293,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-net"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "ipnet",
@@ -4313,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-proto"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -4327,7 +4327,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-sdk"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -4341,7 +4341,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-sim"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "blake3",
  "rustix",
@@ -4357,7 +4357,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-store"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.21",
@@ -4367,7 +4367,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-tray"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "native-windows-gui",
  "serde_json",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "tidefell-web"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "argon2",
  "askama",
@@ -5664,7 +5664,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "serde_json",
  "uniffi",
