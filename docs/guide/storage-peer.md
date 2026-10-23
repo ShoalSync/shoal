@@ -114,7 +114,9 @@ tidefell folder priority <folder id> Photos/ --clear  # back to 128
 tidefell folder priorities <folder id>
 ```
 
-Patterns are as in `.tidefellignore`, and the last rule that matches a file wins. A device
+On Windows the tray's **Storage…** window does the same, and shows what each storage peer keeps
+([Windows](windows.md#what-storage-peers-keep)). Patterns are as in `.tidefellignore`, and the
+last rule that matches a file wins. A device
 without the file on disk, as a partial replica may be, fetches it to read and edit it. The storage
 peer learns which files are ranked above others, though not which files they are.
 

@@ -92,7 +92,7 @@ paranoid-android = "0.2"
 # code here; and the Cloud Files API, safely wrapped.
 winapi-util = "0.1"
 # The tray app's icon, menu and windows (ADR 0042's amendment).
-native-windows-gui = { version = "1.0.13", default-features = false, features = ["tray-notification", "message-window", "menu", "notice", "cursor"] }
+native-windows-gui = { version = "1.0.13", default-features = false, features = ["tray-notification", "message-window", "menu", "notice", "cursor", "tree-view", "combobox", "listbox"] }
 cloud-filter = "0.0.6"
 nt-time = "0.8"
 

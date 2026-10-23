@@ -3,38 +3,15 @@
 //! `tidefelld` has been built, as `cargo test --workspace` builds it, or where `TIDEFELLD`
 //! names one; skipped otherwise.
 
-use std::path::Path;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod common;
-use common::{local_config, tidefelld};
+use common::{set_up, tidefelld};
 use tidefell_sdk::Client;
-use tidefell_tray::supervisor::{supervise, Command as Ask, Paths, Snapshot};
+use tidefell_tray::supervisor::{supervise, Command as Ask, Snapshot};
 use tidefell_tray::view::Daemon;
 use tokio::sync::mpsc;
-
-fn setup(daemon: &Path, dir: &Path) -> Paths {
-    let data_dir = dir.join("data");
-    let out = Command::new(daemon)
-        .args(["init", "--name", "tray-test", "--data-dir"])
-        .arg(&data_dir)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let config = dir.join("tidefelld.toml");
-    std::fs::write(&config, local_config(&data_dir)).unwrap();
-    Paths {
-        daemon: daemon.to_owned(),
-        data_dir,
-        config,
-    }
-}
 
 async fn until(
     latest: &Arc<Mutex<Option<Snapshot>>>,
@@ -57,7 +34,7 @@ async fn the_tray_runs_the_daemon() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let paths = setup(&daemon, dir.path());
+    let paths = set_up(&daemon, dir.path());
     let client = Client::local(Client::socket_path(&paths.data_dir));
     let latest = Arc::new(Mutex::new(None));
     let (commands, receiver) = mpsc::channel(8);
@@ -110,7 +87,7 @@ async fn a_daemon_that_cannot_start_is_reported() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let mut paths = setup(&daemon, dir.path());
+    let mut paths = set_up(&daemon, dir.path());
     // Not set up: no configuration.
     paths.config = dir.path().join("missing.toml");
     let latest = Arc::new(Mutex::new(None));

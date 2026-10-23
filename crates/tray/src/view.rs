@@ -22,10 +22,17 @@ pub enum Daemon {
 /// A folder in the tray's menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderItem {
+    /// Its ID.
+    pub id: String,
     /// Its name and state, as the menu shows it.
     pub label: String,
+    /// Its name.
+    pub name: String,
     /// Where it is, to open in Explorer.
     pub path: PathBuf,
+    /// Whether it is an encrypted folder this device is a member device of, with storage
+    /// peers: its Storage window is offered.
+    pub storage: bool,
 }
 
 /// What the tray shows.
@@ -119,12 +126,19 @@ fn item(folder: &Folder) -> FolderItem {
         )),
         _ => None,
     };
+    let storage = folder
+        .encryption
+        .as_ref()
+        .is_some_and(|e| e.stored.is_none() && !e.storage_peers.is_empty());
     FolderItem {
+        id: folder.id.clone(),
         label: match state {
             Some(state) => format!("{name} ({state})"),
-            None => name,
+            None => name.clone(),
         },
+        name,
         path,
+        storage,
     }
 }
 
@@ -186,6 +200,7 @@ mod tests {
         assert!(up.running && !up.paused);
         assert_eq!(up.folders[0].label, "Photos");
         assert_eq!(up.folders[0].path, PathBuf::from("C:/Users/me/Photos"));
+        assert!(!up.folders[0].storage);
 
         let alone = view(
             &Daemon::Running,
@@ -208,6 +223,27 @@ mod tests {
         let broken = [folder("C:/x/Docs", serde_json::json!({"state": "error"}))];
         let attention = view(&Daemon::Running, Some(&status(connected())), &broken);
         assert_eq!(attention.summary, "1 folder needs attention");
+
+        let sealed = [
+            folder(
+                "C:/x/Vault",
+                serde_json::json!({"encryption": {"storage_peers": ["s"]}}),
+            ),
+            folder("C:/x/Alone", serde_json::json!({"encryption": {}})),
+            folder(
+                "C:/x/Held",
+                serde_json::json!({"encryption": {"storage_peers": ["s"], "stored": {
+                    "versions": 0, "superseded": 0, "bytes": 0, "quota_bytes": 0,
+                    "missing_chunks": 0}}}),
+            ),
+        ];
+        let shown = view(&Daemon::Running, Some(&status(connected())), &sealed);
+        let storage: Vec<bool> = shown.folders.iter().map(|f| f.storage).collect();
+        assert_eq!(
+            storage,
+            [true, false, false],
+            "only members, with storage peers"
+        );
 
         let paused = view(
             &Daemon::Running,

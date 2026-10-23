@@ -214,6 +214,10 @@ jobs:
           mkdir -p "$CARGO_TARGET_DIR" || unset CARGO_TARGET_DIR
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo test --locked -p tidefell-fs-cfapi --test primitives -- --ignored --nocapture --test-threads=1
+          # The tray's Storage window, drawn in the runner's desktop session: its picture is in
+          # the log, as base64 PNG on `SHOT storage` lines.
+          cargo build --locked -p tidefell-daemon
+          TIDEFELL_SCREENSHOT=1 cargo test --locked -p tidefell-tray --test storage -- --nocapture
           cargo test --locked --workspace --no-fail-fast
 
   # The Windows installer (ADR 0042), built on Linux with wixl from placeholder programs, for the

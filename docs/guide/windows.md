@@ -51,11 +51,26 @@ is, without online-only files, and its log says why.
 
 ## The tray's menu
 
-- What Tidefell is doing, and each folder, which opens in Explorer.
+- What Tidefell is doing, and each folder: **Open in Explorer**, and, for an encrypted folder
+  with storage peers, **Storage…** (below).
 - **Pause syncing** and **Resume syncing**, for the whole device.
 - **Add a device…**: approve a new device from the pairing code it shows. Only a device that
   holds your user key can.
 - **Quit Tidefell** stops the daemon, after it has let go of the cloud folders.
+
+## What storage peers keep
+
+An encrypted folder's **Storage…** window ranks what its [storage peers](storage-peer.md) keep
+when they run short of room. On the left is the folder's tree, each file and folder with its
+priority, 0 to 255: higher is kept first, 0 is never stored there, and 128 is the default. Choose
+one, type a priority and **Set**; a folder's priority covers what is in it, unless something in
+it has its own. **Use the default** removes the one set there. The rules are kept in the
+folder's `.tidefellpriorities`, so your other devices rank the same.
+
+On the right is what each storage peer holds, and for each priority how much of it. A storage
+peer never drops anything to make room; to make room for what is ranked higher, choose it, a
+priority, and **Drop…**: it asks first, and again, listing them, if a file would go that has no
+copy known anywhere else.
 
 ## Good to know
 

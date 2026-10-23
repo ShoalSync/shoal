@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::approve::{Approval, Approving};
 use crate::setup::{self, Joining};
+use crate::storage::{self, Answer, Request, Row, Session};
 use crate::supervisor::{self, Command, Paths, Snapshot};
 use crate::view::{view, View};
 
@@ -23,14 +24,20 @@ enum Action {
     Join,
     AddDevice,
     Open(PathBuf),
+    /// An encrypted folder's Storage window: its ID and name.
+    Storage(String, String),
     Pause,
     Resume,
     Restart,
     Quit,
 }
 
-/// A menu shown, and its items with what each does.
-type Shown = (nwg::Menu, Vec<(nwg::MenuItem, Option<Action>)>);
+/// A menu shown, its folders' submenus, and its items with what each does.
+type Shown = (
+    nwg::Menu,
+    Vec<nwg::Menu>,
+    Vec<(nwg::MenuItem, Option<Action>)>,
+);
 
 struct Tray {
     window: nwg::MessageWindow,
@@ -57,6 +64,55 @@ struct Tray {
     approve: RefCell<Option<ApproveDialog>>,
     /// What the approve dialog's buttons asked, done on the next notice.
     approve_asked: RefCell<Option<Asked>>,
+    /// Wakes the UI with what the daemon answered the Storage window.
+    storage_notice: nwg::Notice,
+    storage_answers: Arc<Mutex<Vec<Answer>>>,
+    storage: RefCell<Option<StorageWindow>>,
+    /// What the Storage window asked, done on the next notice.
+    storage_asked: RefCell<Vec<StorageAsked>>,
+}
+
+/// What the Storage window asked.
+#[derive(Clone, Copy)]
+enum StorageAsked {
+    Selected,
+    Set,
+    Default,
+    Drop,
+    Close,
+}
+
+/// An encrypted folder's Storage window: its tree with each entry's priority, and what each
+/// storage peer keeps.
+struct StorageWindow {
+    window: nwg::Window,
+    tree: nwg::TreeView,
+    /// The tree's items, in the order of `rows`.
+    items: Vec<nwg::TreeItem>,
+    rows: Vec<Row>,
+    selected: nwg::Label,
+    source: nwg::Label,
+    priority: nwg::TextInput,
+    set: nwg::Button,
+    default: nwg::Button,
+    _priority_hint: nwg::Label,
+    _peers_label: nwg::Label,
+    usage: nwg::ListBox<String>,
+    peer: nwg::ComboBox<String>,
+    _below_label: nwg::Label,
+    below: nwg::TextInput,
+    drop: nwg::Button,
+    status: nwg::Label,
+    handler: nwg::EventHandler,
+    /// The storage peers' device IDs, in the order `peer` lists them.
+    devices: Vec<String>,
+    session: Session,
+}
+
+impl Drop for StorageWindow {
+    fn drop(&mut self) {
+        nwg::unbind_event_handler(&self.handler);
+    }
 }
 
 /// What a button of the approve dialog asked.
@@ -113,7 +169,26 @@ pub fn run(paths: Paths) -> Result<(), String> {
 
 /// [`run`], giving `started` a way to ask what the menu asks, once the icon shows.
 pub fn run_with(paths: Paths, started: impl FnOnce(mpsc::Sender<Command>)) -> Result<(), String> {
+    run_opening(paths, None, started)
+}
+
+/// [`run_with`], opening the Storage window of folder `storage`, its ID and name, at once.
+pub fn run_opening(
+    paths: Paths,
+    storage: Option<(&str, &str)>,
+    started: impl FnOnce(mpsc::Sender<Command>),
+) -> Result<(), String> {
     nwg::init().map_err(|e| e.to_string())?;
+    // Windows' own font for dialogs, not the old default nwg would otherwise give its controls.
+    let mut font = nwg::Font::default();
+    if nwg::Font::builder()
+        .family("Segoe UI")
+        .size(17)
+        .build(&mut font)
+        .is_ok()
+    {
+        nwg::Font::set_global_default(Some(font));
+    }
     let mut window = nwg::MessageWindow::default();
     nwg::MessageWindow::builder()
         .build(&mut window)
@@ -146,6 +221,12 @@ pub fn run_with(paths: Paths, started: impl FnOnce(mpsc::Sender<Command>)) -> Re
     nwg::Notice::builder()
         .parent(&window)
         .build(&mut approve_notice)
+        .map_err(|e| e.to_string())?;
+
+    let mut storage_notice = nwg::Notice::default();
+    nwg::Notice::builder()
+        .parent(&window)
+        .build(&mut storage_notice)
         .map_err(|e| e.to_string())?;
 
     let latest = Arc::new(Mutex::new(None));
@@ -185,6 +266,10 @@ pub fn run_with(paths: Paths, started: impl FnOnce(mpsc::Sender<Command>)) -> Re
         approving: Arc::new(Mutex::new(Vec::new())),
         approve: RefCell::new(None),
         approve_asked: RefCell::new(None),
+        storage_notice,
+        storage_answers: Arc::new(Mutex::new(Vec::new())),
+        storage: RefCell::new(None),
+        storage_asked: RefCell::new(Vec::new()),
     });
     let handler = nwg::full_bind_event_handler(&app.window.handle, {
         let app = Rc::downgrade(&app);
@@ -196,6 +281,7 @@ pub fn run_with(paths: Paths, started: impl FnOnce(mpsc::Sender<Command>)) -> Re
                 nwg::Event::OnNotice if handle == app.notice.handle => app.refresh(),
                 nwg::Event::OnNotice if handle == app.join_notice.handle => app.joined(),
                 nwg::Event::OnNotice if handle == app.approve_notice.handle => app.approved(),
+                nwg::Event::OnNotice if handle == app.storage_notice.handle => app.stored(),
                 nwg::Event::OnContextMenu if handle == app.tray.handle => app.show_menu(),
                 nwg::Event::OnMousePress(nwg::MousePressEvent::MousePressLeftUp)
                     if handle == app.tray.handle =>
@@ -207,6 +293,9 @@ pub fn run_with(paths: Paths, started: impl FnOnce(mpsc::Sender<Command>)) -> Re
             }
         }
     });
+    if let Some((id, name)) = storage {
+        Tray::open_storage(&app, id, name);
+    }
     started(app.commands.clone());
     nwg::dispatch_thread_events();
     nwg::unbind_event_handler(&handler);
@@ -263,29 +352,53 @@ impl Tray {
             return;
         }
         let mut items = Vec::new();
-        let mut add = |text: &str, action: Option<Action>| {
+        let mut add_to = |parent: &nwg::Menu, text: &str, action: Option<Action>| {
             let mut item = nwg::MenuItem::default();
             if nwg::MenuItem::builder()
                 .text(text)
                 .disabled(action.is_none())
-                .parent(&menu)
+                .parent(parent)
                 .build(&mut item)
                 .is_ok()
             {
                 items.push((item, action));
             }
         };
-        add(&shown.summary, None);
+        add_to(&menu, &shown.summary, None);
         if shown.setup {
-            add("Set up as my first device…", Some(Action::FirstDevice));
-            add("Join my other devices…", Some(Action::Join));
+            add_to(
+                &menu,
+                "Set up as my first device…",
+                Some(Action::FirstDevice),
+            );
+            add_to(&menu, "Join my other devices…", Some(Action::Join));
         }
+        let mut submenus = Vec::new();
         for folder in &shown.folders {
-            add(
-                &format!("Open {}", folder.label),
+            let mut sub = nwg::Menu::default();
+            if nwg::Menu::builder()
+                .text(&folder.label)
+                .parent(&menu)
+                .build(&mut sub)
+                .is_err()
+            {
+                continue;
+            }
+            add_to(
+                &sub,
+                "Open in Explorer",
                 Some(Action::Open(folder.path.clone())),
             );
+            if folder.storage {
+                add_to(
+                    &sub,
+                    "Storage…",
+                    Some(Action::Storage(folder.id.clone(), folder.name.clone())),
+                );
+            }
+            submenus.push(sub);
         }
+        let mut add = |text: &str, action: Option<Action>| add_to(&menu, text, action);
         if shown.running {
             add("Add a device…", Some(Action::AddDevice));
             if shown.paused {
@@ -299,12 +412,12 @@ impl Tray {
         add("Quit Tidefell", Some(Action::Quit));
         let (x, y) = nwg::GlobalCursor::position();
         menu.popup(x, y);
-        *self.menu.borrow_mut() = Some((menu, items));
+        *self.menu.borrow_mut() = Some((menu, submenus, items));
     }
 
     fn chosen(&self, app: &Rc<Tray>, handle: nwg::ControlHandle) {
         let menu = self.menu.borrow();
-        let Some((_, items)) = menu.as_ref() else {
+        let Some((_, _, items)) = menu.as_ref() else {
             return;
         };
         let Some((_, Some(action))) = items.iter().find(|(item, _)| item.handle == handle) else {
@@ -328,6 +441,12 @@ impl Tray {
             }
             Action::Open(path) => {
                 let _ = std::process::Command::new("explorer").arg(path).spawn();
+                return;
+            }
+            Action::Storage(id, name) => {
+                let (id, name) = (id.clone(), name.clone());
+                drop(menu);
+                Tray::open_storage(app, &id, &name);
                 return;
             }
             Action::Pause => Command::Pause,
@@ -681,5 +800,373 @@ impl ApproveDialog {
             handler,
             approval: None,
         })
+    }
+}
+
+impl Tray {
+    /// Opens an encrypted folder's Storage window, in place of one already open.
+    fn open_storage(app: &Rc<Tray>, id: &str, name: &str) {
+        *app.storage.borrow_mut() = None;
+        app.storage_answers.lock().unwrap().clear();
+        match StorageWindow::open(app, id, name) {
+            Ok(window) => *app.storage.borrow_mut() = Some(window),
+            Err(e) => {
+                nwg::error_message("Tidefell", &format!("Cannot open the Storage window: {e}"));
+            }
+        }
+    }
+
+    /// Does what the Storage window asked, and shows what the daemon answered.
+    fn stored(&self) {
+        let asked = std::mem::take(&mut *self.storage_asked.borrow_mut());
+        for asked in asked {
+            match asked {
+                StorageAsked::Close => {
+                    *self.storage.borrow_mut() = None;
+                    return;
+                }
+                StorageAsked::Selected => {
+                    if let Some(window) = self.storage.borrow().as_ref() {
+                        window.show_selected();
+                    }
+                }
+                StorageAsked::Set | StorageAsked::Default => {
+                    let open = self.storage.borrow();
+                    let Some(window) = open.as_ref() else {
+                        return;
+                    };
+                    let Some(row) = window.selected_row() else {
+                        window.status.set_text("Choose a file or folder first.");
+                        continue;
+                    };
+                    let priority = match asked {
+                        StorageAsked::Set => match storage::parse_priority(&window.priority.text())
+                        {
+                            Ok(p) => Some(p),
+                            Err(e) => {
+                                window.status.set_text(&e);
+                                continue;
+                            }
+                        },
+                        _ => None,
+                    };
+                    window.status.set_text("Saving…");
+                    window.session.ask(Request::Set {
+                        pattern: storage::pattern_for(&row.path, row.directory),
+                        priority,
+                    });
+                }
+                StorageAsked::Drop => {
+                    let (device, below) = {
+                        let open = self.storage.borrow();
+                        let Some(window) = open.as_ref() else {
+                            return;
+                        };
+                        let Some(device) = window
+                            .peer
+                            .selection()
+                            .and_then(|i| window.devices.get(i).cloned())
+                        else {
+                            window.status.set_text("Choose a storage peer first.");
+                            continue;
+                        };
+                        match storage::parse_priority(&window.below.text()) {
+                            Ok(below) => (device, below),
+                            Err(e) => {
+                                window.status.set_text(&e);
+                                continue;
+                            }
+                        }
+                    };
+                    // Asked with nothing borrowed: a message box runs events of its own.
+                    if ask(&storage::drop_question(&device, below)) {
+                        if let Some(window) = self.storage.borrow().as_ref() {
+                            window.status.set_text("Asking the storage peer…");
+                            window.session.ask(Request::Drop {
+                                device,
+                                below,
+                                force: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        let answers = std::mem::take(&mut *self.storage_answers.lock().unwrap());
+        for answer in answers {
+            match answer {
+                Answer::Loaded(priorities, reports) => {
+                    let mut open = self.storage.borrow_mut();
+                    let Some(window) = open.as_mut() else {
+                        return;
+                    };
+                    window.show(&priorities, &reports);
+                    window.status.set_text("");
+                }
+                Answer::Dropped {
+                    device,
+                    below,
+                    result,
+                } => {
+                    let force = if result.done {
+                        nwg::simple_message("Tidefell", &storage::dropped(&result));
+                        false
+                    } else {
+                        ask(&storage::at_risk_question(&result))
+                    };
+                    if let Some(window) = self.storage.borrow().as_ref() {
+                        window.session.ask(if force {
+                            Request::Drop {
+                                device,
+                                below,
+                                force: true,
+                            }
+                        } else {
+                            Request::Load
+                        });
+                    }
+                }
+                Answer::Failed(reason) => {
+                    if let Some(window) = self.storage.borrow().as_ref() {
+                        window.status.set_text(&reason);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Asks `question`, Yes or No.
+fn ask(question: &str) -> bool {
+    nwg::message(&nwg::MessageParams {
+        title: "Tidefell",
+        content: question,
+        buttons: nwg::MessageButtons::YesNo,
+        icons: nwg::MessageIcons::Question,
+    }) == nwg::MessageChoice::Yes
+}
+
+impl StorageWindow {
+    fn open(app: &Rc<Tray>, id: &str, name: &str) -> Result<Self, String> {
+        let e = |e: nwg::NwgError| e.to_string();
+        let mut window = nwg::Window::default();
+        nwg::Window::builder()
+            .title(&format!("Storage: {name}"))
+            .size((860, 580))
+            .center(true)
+            .flags(nwg::WindowFlags::WINDOW | nwg::WindowFlags::VISIBLE)
+            .build(&mut window)
+            .map_err(e)?;
+        let mut tree = nwg::TreeView::default();
+        nwg::TreeView::builder()
+            .position((16, 16))
+            .size((440, 548))
+            .parent(&window)
+            .build(&mut tree)
+            .map_err(e)?;
+        let label = |text: &str, (x, y): (i32, i32), (w, h): (i32, i32), out: &mut nwg::Label| {
+            nwg::Label::builder()
+                .text(text)
+                .position((x, y))
+                .size((w, h))
+                .parent(&window)
+                .build(out)
+        };
+        let button = |text: &str, (x, y): (i32, i32), w: i32, out: &mut nwg::Button| {
+            nwg::Button::builder()
+                .text(text)
+                .position((x, y))
+                .size((w, 28))
+                .parent(&window)
+                .build(out)
+        };
+        let input = |(x, y): (i32, i32), w: i32, out: &mut nwg::TextInput| {
+            nwg::TextInput::builder()
+                .position((x, y))
+                .size((w, 26))
+                .parent(&window)
+                .build(out)
+        };
+        let (mut selected, mut source, mut priority_hint) = Default::default();
+        label(
+            "Choose a file or folder.",
+            (472, 16),
+            (372, 40),
+            &mut selected,
+        )
+        .map_err(e)?;
+        label("", (472, 58), (372, 22), &mut source).map_err(e)?;
+        label(
+            "Priority, 0 to 255: higher is kept first when a storage peer runs short of room; \
+             0 is never stored there.",
+            (472, 84),
+            (372, 40),
+            &mut priority_hint,
+        )
+        .map_err(e)?;
+        let mut priority = nwg::TextInput::default();
+        input((472, 128), 60, &mut priority).map_err(e)?;
+        let (mut set, mut default) = Default::default();
+        button("Set", (540, 127), 80, &mut set).map_err(e)?;
+        button("Use the default", (628, 127), 130, &mut default).map_err(e)?;
+        let mut peers_label = nwg::Label::default();
+        label(
+            "What each storage peer keeps, by priority:",
+            (472, 176),
+            (372, 22),
+            &mut peers_label,
+        )
+        .map_err(e)?;
+        let mut usage = nwg::ListBox::default();
+        nwg::ListBox::builder()
+            .collection(vec!["Asking the storage peers…".to_owned()])
+            .position((472, 200))
+            .size((372, 230))
+            .parent(&window)
+            .build(&mut usage)
+            .map_err(e)?;
+        let mut peer = nwg::ComboBox::default();
+        nwg::ComboBox::builder()
+            .position((472, 442))
+            .size((150, 26))
+            .parent(&window)
+            .build(&mut peer)
+            .map_err(e)?;
+        let mut below_label = nwg::Label::default();
+        label("below", (630, 446), (44, 22), &mut below_label).map_err(e)?;
+        let mut below = nwg::TextInput::default();
+        input((676, 442), 50, &mut below).map_err(e)?;
+        let mut drop = nwg::Button::default();
+        button("Drop…", (734, 441), 110, &mut drop).map_err(e)?;
+        let mut status = nwg::Label::default();
+        label("Loading…", (472, 484), (372, 80), &mut status).map_err(e)?;
+
+        let (answers, sender) = (app.storage_answers.clone(), app.storage_notice.sender());
+        let session = Session::start(&app.paths.data_dir, id, move |answer| {
+            answers.lock().unwrap().push(answer);
+            sender.notice();
+        });
+        session.ask(Request::Load);
+        let handler = nwg::full_bind_event_handler(&window.handle, {
+            let app = Rc::downgrade(app);
+            let handles = (
+                window.handle,
+                tree.handle,
+                set.handle,
+                default.handle,
+                drop.handle,
+            );
+            move |event, _, handle| {
+                let asked = match event {
+                    nwg::Event::OnWindowClose if handle == handles.0 => StorageAsked::Close,
+                    nwg::Event::OnTreeItemSelectionChanged if handle == handles.1 => {
+                        StorageAsked::Selected
+                    }
+                    nwg::Event::OnButtonClick if handle == handles.2 => StorageAsked::Set,
+                    nwg::Event::OnButtonClick if handle == handles.3 => StorageAsked::Default,
+                    nwg::Event::OnButtonClick if handle == handles.4 => StorageAsked::Drop,
+                    _ => return,
+                };
+                if let Some(app) = app.upgrade() {
+                    // Done on the next notice: a handler cannot unbind itself.
+                    app.storage_asked.borrow_mut().push(asked);
+                    app.storage_notice.sender().notice();
+                }
+            }
+        });
+        Ok(Self {
+            window,
+            tree,
+            items: Vec::new(),
+            rows: Vec::new(),
+            selected,
+            source,
+            priority,
+            set,
+            default,
+            _priority_hint: priority_hint,
+            _peers_label: peers_label,
+            usage,
+            peer,
+            _below_label: below_label,
+            below,
+            drop,
+            status,
+            handler,
+            devices: Vec::new(),
+            session,
+        })
+    }
+
+    /// The row of the item chosen in the tree, if one is.
+    fn selected_row(&self) -> Option<&Row> {
+        let item = self.tree.selected_item()?;
+        let index = usize::try_from(self.tree.item_param(&item)?).ok()?;
+        self.rows.get(index)
+    }
+
+    /// Shows the chosen item's priority, and where it comes from.
+    fn show_selected(&self) {
+        match self.selected_row() {
+            Some(row) => {
+                self.selected.set_text(&row.path);
+                self.source.set_text(&format!(
+                    "{} ({}), {}",
+                    row.priority,
+                    storage::word(row.priority),
+                    row.source
+                ));
+                self.priority.set_text(&row.priority.to_string());
+                self.set.set_enabled(true);
+                self.default.set_enabled(row.set_here);
+            }
+            None => {
+                self.selected.set_text("Choose a file or folder.");
+                self.source.set_text("");
+                self.set.set_enabled(false);
+                self.default.set_enabled(false);
+            }
+        }
+    }
+
+    /// Shows the folder's tree and what its storage peers keep, keeping the item chosen.
+    fn show(
+        &mut self,
+        priorities: &tidefell_sdk::types::Priorities,
+        reports: &[tidefell_sdk::types::StoragePeerReport],
+    ) {
+        let chosen = self.selected_row().map(|r| r.path.clone());
+        self.tree.clear();
+        self.rows = storage::rows(priorities);
+        self.items = Vec::with_capacity(self.rows.len());
+        for (index, row) in self.rows.iter().enumerate() {
+            let parent = row.parent.and_then(|p| self.items.get(p));
+            let item = self.tree.insert_item_with_param(
+                &row.label,
+                parent,
+                nwg::TreeInsert::Last,
+                index as isize,
+            );
+            self.items.push(item);
+        }
+        if let Some(index) = chosen.and_then(|c| self.rows.iter().position(|r| r.path == c)) {
+            self.tree.select_item(&self.items[index]);
+            self.tree.ensure_visible(&self.items[index]);
+        }
+        self.show_selected();
+        self.usage.set_collection(storage::usage(reports));
+        let chosen_peer = self
+            .peer
+            .selection()
+            .and_then(|i| self.devices.get(i).cloned());
+        self.devices = reports.iter().map(|r| r.device.clone()).collect();
+        self.peer
+            .set_collection(self.devices.iter().map(|d| storage::short(d)).collect());
+        let index = chosen_peer
+            .and_then(|c| self.devices.iter().position(|d| *d == c))
+            .or((!self.devices.is_empty()).then_some(0));
+        self.peer.set_selection(index);
+        self.drop.set_enabled(!self.devices.is_empty());
+        self.window.set_visible(true);
     }
 }
