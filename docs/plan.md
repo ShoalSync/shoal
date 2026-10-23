@@ -459,6 +459,11 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   endpoints, and the tray's Storage window. Runtime settings are unchanged (format 8); folder
   databases gain two tables, which 0.22 does not read. The FFI gains `priorities`,
   `setPriority`, `storageReport` and `storageDrop`.
+- `v0.23.1` fixes `tidefell-tray` not starting on Windows builds whose old common controls
+  (comctl32 5.82) do not export `GetWindowSubclass` by name: the tray now embeds a manifest
+  asking for version 6. A file that changed while a scan read it is read again two seconds
+  later, not at the next change or the hourly safety scan. `ctutils` 0.4.5 and `tokio` 1.53.3
+  (RUSTSEC-2026-0385, 0386). Nothing else changes; settings and databases are as in 0.23.0.
 - Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
   asked of the peer that sent it before it is applied; versions by authors not vouched for are
   refused, and those whose certificate request went unanswered come again. Replicas take over
