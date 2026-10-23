@@ -1307,6 +1307,102 @@ async fn a_storage_peer_fills_in_the_order_members_rank_files() {
     engine_s.shutdown().await;
 }
 
+/// A member device ranks files for the storage peers without the rules on disk: it reads and
+/// edits them as the API asks, and gives the ranking from them (ADR 0023's amendment of
+/// 2026-10-22).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_partial_member_ranks_files_without_the_rules_on_disk() {
+    let dir = tempfile::tempdir().unwrap();
+    let network = Network::new();
+    let user = UserKey::from_seed([27; 32]);
+    let operator = UserKey::from_seed([28; 32]);
+    let a = Member::new(dir.path(), "a", 190);
+    let mut b = Member::new(dir.path(), "b", 192);
+    b.mode = ReplicaMode::Partial {
+        budget_bytes: 1 << 30,
+    };
+    let storage_key = DeviceKey::from_seed([191; 32]).id();
+    let (_, engine_s) = storage_peer(
+        dir.path(),
+        191,
+        &operator,
+        &[user.id()],
+        &network,
+        &[b.key.id()],
+        u64::MAX,
+    )
+    .await;
+    engine_s.set_storage_quota(Some(0));
+    // `a` knows of no storage peer, so only `b` gives them the ranking.
+    let engine_a = a
+        .start_with(&user, &[user.id()], &[], &network, &[b.key.id()])
+        .await;
+    a.write("first.bin", &noise(1 << 16, 6));
+    a.write("disc.iso", &noise(1 << 16, 7));
+    a.write("Photos/raw/b.cr2", &noise(1 << 16, 8));
+    a.write(".tidefellpriorities", b"# rank\n200 first.bin\n0 *.iso\n");
+    engine_a.scan(FOLDER).await.unwrap();
+    let engine_b = b
+        .start_with(
+            &user,
+            &[user.id()],
+            &[storage_key],
+            &network,
+            &[a.key.id(), storage_key],
+        )
+        .await;
+    eventually_for("b lists the files, with the key", 60, || {
+        paths(&engine_b).len() == 4 && generation(&engine_b).is_some()
+    })
+    .await;
+    assert!(b.read(".tidefellpriorities").is_none(), "b keeps no files");
+    eventually_for("the storage peer has the ranking from b", 60, || {
+        stored(&engine_s).ranked == 4
+    })
+    .await;
+
+    let ranked = engine_b.priorities(FOLDER).await.unwrap();
+    assert_eq!(
+        ranked.rules,
+        [(200, "first.bin".to_owned()), (0, "*.iso".to_owned())]
+    );
+    let entry = |p: &tidefell_engine::Priorities, path: &str| {
+        let e = p.entries.iter().find(|e| e.path == path).unwrap();
+        (e.priority, e.rule)
+    };
+    assert_eq!(entry(&ranked, "first.bin"), (200, Some(0)));
+    assert_eq!(entry(&ranked, "disc.iso"), (0, Some(1)));
+    assert_eq!(entry(&ranked, ".tidefellpriorities"), (128, None));
+    // Its directories too, recorded as entries or not.
+    assert_eq!(entry(&ranked, "Photos"), (128, None));
+    assert_eq!(entry(&ranked, "Photos/raw"), (128, None));
+
+    assert!(matches!(
+        engine_b.set_priority(FOLDER, "[z-a]", Some(1)).await,
+        Err(tidefell_engine::Error::Invalid(_))
+    ));
+    let ranked = engine_b
+        .set_priority(FOLDER, "first.bin", Some(10))
+        .await
+        .unwrap();
+    assert_eq!(entry(&ranked, "first.bin"), (10, Some(1)));
+    eventually_for("a has b's rules", 60, || {
+        a.read(".tidefellpriorities").as_deref() == Some(&b"# rank\n0 *.iso\n10 first.bin\n"[..])
+    })
+    .await;
+    assert!(
+        !paths(&engine_a).iter().any(|p| p.contains("conflict")),
+        "b's rules replaced a's, not beside them: {:?}",
+        paths(&engine_a)
+    );
+    let ranked = engine_a.priorities(FOLDER).await.unwrap();
+    assert_eq!(entry(&ranked, "first.bin"), (10, Some(1)));
+
+    engine_a.shutdown().await;
+    engine_b.shutdown().await;
+    engine_s.shutdown().await;
+}
+
 /// Members see what a storage peer keeps of each priority, and drop from it only when asked,
 /// never what has no copy elsewhere unless forced (ADR 0023's amendment of 2026-10-22).
 #[tokio::test(flavor = "multi_thread")]

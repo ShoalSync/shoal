@@ -161,9 +161,9 @@ pub use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
 pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, EncryptionInfo, Event, FileInfo, FolderInfo,
-    FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, ProblemKind,
-    RebuildInfo, RecycleSummary, RecycledInfo, StorageDrop, StorageLevel, StoragePeerReport,
-    StorageUsage, StoredInfo, VersionInfo, VersionKind, WithdrawnFile,
+    FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, Priorities,
+    ProblemKind, RankedEntry, RebuildInfo, RecycleSummary, RecycledInfo, StorageDrop, StorageLevel,
+    StoragePeerReport, StorageUsage, StoredInfo, VersionInfo, VersionKind, WithdrawnFile,
 };
 
 /// Engine errors.

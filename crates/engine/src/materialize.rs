@@ -1173,6 +1173,25 @@ async fn fetch_content(
     id: FolderId,
     write: &PendingWrite,
 ) -> Result<Option<Manifest>> {
+    // Kept from compaction from before the chunks already here are counted, until the caller's
+    // [`Fetching`] lets go of them once written: compaction could otherwise remove them in
+    // between, having found them unneeded just before.
+    inner.fetching.lock().unwrap().insert(write.content);
+    let fetched = fetch_content_kept(inner, node, handle, id, write).await;
+    if !matches!(fetched, Ok(Some(_))) {
+        inner.fetching.lock().unwrap().remove(&write.content);
+    }
+    fetched
+}
+
+/// [`fetch_content`], its content already kept from compaction.
+async fn fetch_content_kept(
+    inner: &Arc<Inner>,
+    node: &Arc<Node>,
+    handle: &FolderHandle,
+    id: FolderId,
+    write: &PendingWrite,
+) -> Result<Option<Manifest>> {
     let peers: Vec<DeviceId> = node
         .peers()
         .into_iter()

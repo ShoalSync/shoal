@@ -401,6 +401,9 @@ pub(crate) fn keeps(state: &FolderState, entry: &EntryId, kind: &EntryKind) -> b
 /// folder's too, before its manifest is made from them (ADR 0023). Returns the number of chunks
 /// removed.
 pub(crate) fn compact(inner: &Inner) -> usize {
+    // Listed before what is needed is worked out: a download records what it needs before it
+    // stores a chunk, so a chunk stored since, which that could miss, is not a candidate.
+    let held: Vec<ChunkHash> = inner.store.lock().unwrap().hashes().copied().collect();
     let mut needed: HashSet<ChunkHash> = HashSet::new();
     for handle in inner.handles() {
         let mut state = handle.lock();
@@ -422,11 +425,7 @@ pub(crate) fn compact(inner: &Inner) -> usize {
         }
     }
     let mut store = inner.store.lock().unwrap();
-    let unneeded: Vec<ChunkHash> = store
-        .hashes()
-        .filter(|h| !needed.contains(h))
-        .copied()
-        .collect();
+    let unneeded: Vec<ChunkHash> = held.into_iter().filter(|h| !needed.contains(h)).collect();
     for hash in &unneeded {
         let _ = store.remove(hash);
     }

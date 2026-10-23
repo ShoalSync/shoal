@@ -21,12 +21,12 @@ use tidefell_sdk::types::{
     Event, FetchRequest, Fetched, File, Folder, FolderEncryption, FolderPeer, FolderState,
     HeldDeletes, HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings,
     LossPreview, Mode, NewEncryption, NewFolder, NewMember, NewStoragePeer, OpenedVersion,
-    Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest, Problem,
-    ProblemKind, Rebuild, RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest,
-    ResolveRequest, RetentionUpdate, Revocation, RevokePreviewQuery, RevokeRequest, Status,
-    StorageDropRequest, StorageDropResult, StorageLevel, StoragePeerReport, StoredFolder,
-    SyncOptions, Transfer, Version, VersionKind, VersionRequest, WithdrawalsDecision,
-    WithdrawnFile,
+    Operation, PairRequest, Pairing, PathKind, PathProblem, Peer, PeerState, PinRequest,
+    Priorities, PriorityEntry, PriorityRule, PriorityUpdate, Problem, ProblemKind, Rebuild,
+    RecycleBinSummary, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest, RetentionUpdate,
+    Revocation, RevokePreviewQuery, RevokeRequest, Status, StorageDropRequest, StorageDropResult,
+    StorageLevel, StoragePeerReport, StoredFolder, SyncOptions, Transfer, Version, VersionKind,
+    VersionRequest, WithdrawalsDecision, WithdrawnFile,
 };
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::{Stream, StreamExt};
@@ -60,6 +60,8 @@ type AppState = State<Arc<Engine>>;
         remove_member,
         add_storage_peer,
         remove_storage_peer,
+        priorities,
+        set_priority,
         storage_report,
         storage_drop,
         scan,
@@ -128,6 +130,10 @@ type AppState = State<Arc<Engine>>;
         NewMember,
         NewEncryption,
         NewStoragePeer,
+        Priorities,
+        PriorityRule,
+        PriorityEntry,
+        PriorityUpdate,
         StorageLevel,
         StoragePeerReport,
         StorageDropRequest,
@@ -605,6 +611,56 @@ pub(crate) async fn remove_storage_peer(
     let id = parse("folder", &id)?;
     engine.remove_storage_peer(id, parse("storage peer", &device)?)?;
     Ok(Json(folder_info(&engine, id)?))
+}
+
+fn priorities_info(p: engine::Priorities) -> Priorities {
+    Priorities {
+        rules: p
+            .rules
+            .into_iter()
+            .map(|(priority, pattern)| PriorityRule { priority, pattern })
+            .collect(),
+        entries: p
+            .entries
+            .into_iter()
+            .map(|e| PriorityEntry {
+                path: e.path,
+                directory: e.directory,
+                priority: e.priority,
+                rule: e.rule.and_then(|i| u32::try_from(i).ok()),
+            })
+            .collect(),
+    }
+}
+
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// and what they give each current file and directory.
+#[utoipa::path(get, path = "/v1/folders/{id}/priorities", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    responses((status = 200, body = Priorities), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn priorities(
+    State(engine): AppState,
+    Path(id): Path<String>,
+) -> ApiResult<Json<Priorities>> {
+    let p = engine.priorities(parse("folder", &id)?).await?;
+    Ok(Json(priorities_info(p)))
+}
+
+/// Sets or removes the rule for one pattern in an encrypted folder's `.tidefellpriorities`,
+/// keeping its other lines; the file syncs to the members' other devices.
+#[utoipa::path(put, path = "/v1/folders/{id}/priorities", tag = "folders",
+    params(("id" = String, Path, description = "Folder ID")),
+    request_body = PriorityUpdate,
+    responses((status = 200, body = Priorities), (status = 400, body = ApiError), (status = 404, body = ApiError)))]
+pub(crate) async fn set_priority(
+    State(engine): AppState,
+    Path(id): Path<String>,
+    Json(update): Json<PriorityUpdate>,
+) -> ApiResult<Json<Priorities>> {
+    let p = engine
+        .set_priority(parse("folder", &id)?, &update.pattern, update.priority)
+        .await?;
+    Ok(Json(priorities_info(p)))
 }
 
 /// What each of an encrypted folder's storage peers keeps of it, by priority (ADR 0023): asked

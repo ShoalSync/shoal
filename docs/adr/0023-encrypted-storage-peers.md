@@ -292,9 +292,10 @@ is ever dropped unless a user asks.
 - **Hints, from rules to entries.** A storage peer cannot read paths, so a member device that
   holds the key works out each current entry's priority from the rules and sends the storage
   peer the entries' IDs and priorities, over a connection that is that device's, from a device
-  its member list vouches for, as blobs/2's requests are. Every member device with the rules on
-  disk does so when the rules or the entries change and it is connected to the storage peer;
-  the rules being the same, so are the hints. The storage peer keeps, for each entry, the
+  its member list vouches for, as blobs/2's requests are. Every member device does so when the
+  rules or the entries change and it is connected to the storage peer, fetching the rules into
+  memory where it does not have them on disk, as a partial replica may not (from 2026-10-23;
+  before, only devices with the file on disk did); the rules being the same, so are the hints. The storage peer keeps, for each entry, the
   priority given last by the clock of the device that gave it, and drops one whose entry it no
   longer keeps.
 - **A protocol of its own, `tidefell/storage/1`,** for hints and what follows, not new sync/2
@@ -335,6 +336,28 @@ is ever dropped unless a user asks.
   the scheduler with a source of its own that keeps chunks sealed, as a storage peer holds no
   key); the rules file, the hints and `tidefell/storage/1` (spec, vectors, CLI); `Usage` and the
   status; dropping, with its check for copies.
+
+### Ranking from the apps (2026-10-23)
+
+Decided with the project's owner: the apps rank files without the command line, and never by
+adding entries to Explorer's context menu.
+
+- **The daemon owns the rules file.** `GET /v1/folders/{id}/priorities` gives the rules and the
+  priority each current file and directory has under them, with the rule that gives it; `PUT`
+  sets or removes the rule for one pattern, keeping the file's other lines, and refuses a
+  pattern that is not one. Apps do not parse the file. Two devices editing it at once make a
+  conflict copy, as any file does.
+- **Windows:** a "Storage…" item under each encrypted folder in the tray's menu opens a window of
+  the folder's tree with each entry's priority, editable, and each storage peer's usage, with
+  dropping below a priority, the files at risk listed before it is confirmed.
+- **Explorer shows, read only, what the window sets.** Checked on the Windows runner (Windows 11
+  25H2, unpackaged and unelevated): a sync root takes custom item property definitions
+  (`StorageProviderItemPropertyDefinition`), also when registered again in place over one
+  without them, its placeholders staying as they were; `StorageProviderItemProperties.SetAsync`
+  sets one on a placeholder; and Explorer shows it as an icon in the Status column, beside the
+  sync state, not as a column of its own. Not yet done.
+- **Android:** a Storage screen for each encrypted folder, as the Windows window, and a priority
+  picker when a file or directory is pressed and held.
 
 ## Consequences
 

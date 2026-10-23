@@ -573,6 +573,47 @@ pub struct StorageDropResult {
     pub at_risk: Vec<String>,
 }
 
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// and what they give each current file and directory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct Priorities {
+    /// The rules in the file's order; the last that matches a path wins.
+    pub rules: Vec<PriorityRule>,
+    /// The current files and directories, sorted by path.
+    pub entries: Vec<PriorityEntry>,
+}
+
+/// A rule ranking the paths that match a pattern for an encrypted folder's storage peers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PriorityRule {
+    /// 0 to 255, higher kept first; 0 never stored on a storage peer.
+    pub priority: u8,
+    /// Paths it covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+    pub pattern: String,
+}
+
+/// A file or directory's storage priority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PriorityEntry {
+    /// Path within the folder.
+    pub path: String,
+    /// Whether it is a directory.
+    pub directory: bool,
+    /// 0 to 255; 128 where no rule matches.
+    pub priority: u8,
+    /// The index in `rules` of the rule that gives it, or none for the default.
+    pub rule: Option<u32>,
+}
+
+/// Sets or removes the rule for one pattern in an encrypted folder's `.tidefellpriorities`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct PriorityUpdate {
+    /// Paths the rule covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+    pub pattern: String,
+    /// 0 to 255, or none to remove the rule.
+    pub priority: Option<u8>,
+}
+
 /// A file or directory to pin or unpin on a partial replica (ADR 0029).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PinRequest {

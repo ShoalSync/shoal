@@ -9,8 +9,10 @@ use tidefell_proto::sync::EntryKind;
 use tidefell_proto::{ChunkId, ContentHash, DeviceId, FolderId};
 
 use super::Engine;
-use crate::priorities::{Rules, PRIORITIES_FILE};
-use crate::views::{StorageDrop, StorageLevel, StoragePeerReport, StorageUsage};
+use crate::priorities::{self, Rules, PRIORITIES_FILE};
+use crate::views::{
+    Priorities, RankedEntry, StorageDrop, StorageLevel, StoragePeerReport, StorageUsage,
+};
 use crate::{copies, Error, Result};
 
 /// A current file of an encrypted folder: its path, priority, content, and chunks with their
@@ -26,25 +28,131 @@ impl Engine {
     /// The folder's rules: from disk, or fetched into memory where this device does not have
     /// them on disk, as a partial replica may not; none if the folder has no such file.
     async fn rules(&self, folder: FolderId) -> Result<Option<Rules>> {
-        let (root, listed) = {
+        let root = self.inner.folder(&folder)?.lock().config.path.clone();
+        Ok(priorities::text(&self.inner, &self.node, folder, None)
+            .await?
+            .map(|text| Rules::parse(&root, &text)))
+    }
+
+    /// Fails unless this device is a member device of `folder`, an encrypted folder: the
+    /// devices that rank what its storage peers keep.
+    fn member_of_encrypted(&self, folder: FolderId) -> Result<()> {
+        let handle = self.inner.folder(&folder)?;
+        let state = handle.lock();
+        if state.config.encryption.is_none() {
+            return Err(Error::Invalid("the folder is not encrypted".into()));
+        }
+        if state.config.is_stored() {
+            return Err(Error::Invalid(
+                "this device stores the folder; its members rank it".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// An encrypted folder's storage priorities: its rules, and the priority each current file
+    /// and directory has under them, with the rule that gives it; every directory a file is in
+    /// is listed, whether or not it is recorded as an entry of its own.
+    pub async fn priorities(&self, folder: FolderId) -> Result<Priorities> {
+        self.member_of_encrypted(folder)?;
+        let rules = self.rules(folder).await?;
+        let handle = self.inner.folder(&folder)?;
+        let state = handle.lock();
+        let mut entries: Vec<RankedEntry> = state
+            .meta
+            .entries()
+            .filter_map(|v| {
+                let directory = match v.kind {
+                    EntryKind::File { .. } => false,
+                    EntryKind::Directory => true,
+                    EntryKind::Symlink { .. } | EntryKind::Tombstone => return None,
+                };
+                let (priority, rule) = rules
+                    .as_ref()
+                    .map_or((DEFAULT_PRIORITY, None), |r| r.ranking(v.path, directory));
+                Some(RankedEntry {
+                    path: v.path.to_owned(),
+                    directory,
+                    priority,
+                    rule,
+                })
+            })
+            .collect();
+        // Every directory files are in, recorded as an entry of its own or not.
+        let listed: HashSet<String> = entries
+            .iter()
+            .filter(|e| e.directory)
+            .map(|e| e.path.clone())
+            .collect();
+        let mut parents = std::collections::BTreeSet::new();
+        for entry in &entries {
+            let mut path = entry.path.as_str();
+            while let Some((parent, _)) = path.rsplit_once('/') {
+                if !listed.contains(parent) {
+                    parents.insert(parent.to_owned());
+                }
+                path = parent;
+            }
+        }
+        for path in parents {
+            let (priority, rule) = rules
+                .as_ref()
+                .map_or((DEFAULT_PRIORITY, None), |r| r.ranking(&path, true));
+            entries.push(RankedEntry {
+                path,
+                directory: true,
+                priority,
+                rule,
+            });
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(Priorities {
+            rules: rules.as_ref().map_or_else(Vec::new, |r| {
+                r.listed()
+                    .map(|(p, pattern)| (p, pattern.to_owned()))
+                    .collect()
+            }),
+            entries,
+        })
+    }
+
+    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to `priority`,
+    /// or removes it for `None`, keeping the file's other lines. The file syncs as any other, so
+    /// the members' other devices rank the same; where it is not on disk it is placed there
+    /// first.
+    pub async fn set_priority(
+        &self,
+        folder: FolderId,
+        pattern: &str,
+        priority: Option<u8>,
+    ) -> Result<Priorities> {
+        self.member_of_encrypted(folder)?;
+        priorities::check_rule(pattern).map_err(Error::Invalid)?;
+        // The current version on disk first, even on a partial replica, so the new one
+        // replaces it rather than conflicting with it.
+        let listed = {
             let handle = self.inner.folder(&folder)?;
             let state = handle.lock();
-            let listed = state.meta.find_path(PRIORITIES_FILE).is_some();
-            (state.config.path.clone(), listed)
+            state.meta.find_path(PRIORITIES_FILE).is_some()
         };
-        if let Ok(text) = std::fs::read_to_string(root.join(PRIORITIES_FILE)) {
-            return Ok(Some(Rules::parse(&root, &text)));
-        }
-        if !listed {
-            return Ok(None);
-        }
-        let mut text = Vec::new();
-        self.fetch(folder, PRIORITIES_FILE, None, &mut |_, data| {
-            text.extend_from_slice(data);
-            Ok(())
-        })
-        .await?;
-        Ok(Some(Rules::parse(&root, &String::from_utf8_lossy(&text))))
+        let text = if listed {
+            let local = self.open(folder, PRIORITIES_FILE).await?;
+            let text = std::fs::read_to_string(&local).map_err(crate::io_err(&local));
+            self.close(folder, PRIORITIES_FILE)?;
+            text?
+        } else {
+            String::new()
+        };
+        let source = std::env::temp_dir().join(format!(
+            "tidefell-priorities-{:016x}",
+            u64::from_le_bytes(crate::random_bytes()?)
+        ));
+        std::fs::write(&source, priorities::set_rule(&text, pattern, priority))
+            .map_err(crate::io_err(&source))?;
+        let written = self.write(folder, PRIORITIES_FILE, &source).await;
+        let _ = std::fs::remove_file(&source);
+        written?;
+        self.priorities(folder).await
     }
 
     /// The folder's current files with their priorities, and their chunks.

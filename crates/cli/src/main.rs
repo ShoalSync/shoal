@@ -410,31 +410,6 @@ enum FolderCommand {
     },
 }
 
-/// The file at a folder's root that ranks its files for storage peers (ADR 0023).
-const PRIORITIES_FILE: &str = ".tidefellpriorities";
-
-/// `text`, a priorities file, with its rule for `pattern` replaced by one at `priority`, or
-/// removed for `None`. Comments and other rules stay as they are.
-fn set_priority_rule(text: &str, pattern: &str, priority: Option<u8>) -> String {
-    let mut lines: Vec<String> = text
-        .lines()
-        .filter(|line| {
-            let line = line.trim();
-            line.split_once(char::is_whitespace)
-                .is_none_or(|(_, p)| p.trim() != pattern || line.starts_with('#'))
-        })
-        .map(str::to_owned)
-        .collect();
-    if let Some(priority) = priority {
-        lines.push(format!("{priority} {pattern}"));
-    }
-    let mut out = lines.join("\n");
-    if !out.is_empty() {
-        out.push('\n');
-    }
-    out
-}
-
 /// A retention period given on the command line.
 #[derive(Clone, Copy)]
 enum Retention {
@@ -1051,25 +1026,11 @@ async fn run(cli: Cli) -> Result<(), String> {
                 priority,
                 clear,
             } => {
-                let folder = client.folder(&id).await.map_err(e)?;
-                // On a partial replica the rules may not be on disk: fetched first, so they
-                // are added to, not replaced.
-                let synced = client.files(&id).await.map_err(e)?;
-                if synced
-                    .iter()
-                    .any(|f| f.path == PRIORITIES_FILE && !f.on_disk)
-                {
-                    client.fetch(&id, PRIORITIES_FILE).await.map_err(e)?;
-                }
-                let path = std::path::Path::new(&folder.path).join(PRIORITIES_FILE);
-                let text = match std::fs::read_to_string(&path) {
-                    Ok(text) => text,
-                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
-                    Err(err) => return Err(format!("{}: {err}", path.display())),
-                };
                 let priority = if clear { None } else { priority };
-                std::fs::write(&path, set_priority_rule(&text, &pattern, priority))
-                    .map_err(|err| format!("{}: {err}", path.display()))?;
+                client
+                    .set_priority(&id, &pattern, priority)
+                    .await
+                    .map_err(e)?;
                 print(json, &(), |_| match priority {
                     Some(p) => format!("{pattern} ranked {p} for the folder's storage peers"),
                     None => format!("the rule for {pattern} is removed"),
@@ -1114,25 +1075,14 @@ async fn run(cli: Cli) -> Result<(), String> {
                 });
             }
             FolderCommand::Priorities { id } => {
-                let folder = client.folder(&id).await.map_err(e)?;
-                let path = std::path::Path::new(&folder.path).join(PRIORITIES_FILE);
-                let text = std::fs::read_to_string(&path).unwrap_or_default();
-                let rules: Vec<(u8, String)> = text
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty() && !l.starts_with('#'))
-                    .filter_map(|l| {
-                        let (p, pattern) = l.split_once(char::is_whitespace)?;
-                        Some((p.parse().ok()?, pattern.trim().to_owned()))
-                    })
-                    .collect();
-                print(json, &rules, |rules| {
+                let priorities = client.priorities(&id).await.map_err(e)?;
+                print(json, &priorities.rules, |rules| {
                     if rules.is_empty() {
                         "no rules: every file is ranked 128".to_owned()
                     } else {
                         rules
                             .iter()
-                            .map(|(p, pattern)| format!("{p:>3} {pattern}"))
+                            .map(|r| format!("{:>3} {}", r.priority, r.pattern))
                             .collect::<Vec<_>>()
                             .join("\n")
                     }
@@ -1361,24 +1311,5 @@ fn main() -> ExitCode {
             eprintln!("tidefell: {e}");
             ExitCode::FAILURE
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::set_priority_rule;
-
-    #[test]
-    fn a_rule_replaces_the_one_for_its_pattern() {
-        let text = "# what to keep\n200 Photos/\n0 *.iso\n";
-        assert_eq!(
-            set_priority_rule(text, "Photos/", Some(150)),
-            "# what to keep\n0 *.iso\n150 Photos/\n"
-        );
-        assert_eq!(
-            set_priority_rule(text, "*.iso", None),
-            "# what to keep\n200 Photos/\n"
-        );
-        assert_eq!(set_priority_rule("", "docs/", Some(10)), "10 docs/\n");
     }
 }

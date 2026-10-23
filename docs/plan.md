@@ -948,3 +948,6 @@ their quota in that order, and nothing held is dropped unless a user asks.
    sending hints over `tidefell/storage/1` (spec, vectors).
 3. **Usage.** What a storage peer holds and lacks by priority, in `tidefell folder storage`.
 4. **Dropping.** `tidefell folder storage-drop`, refusing files with no other copy unless told.
+5. **Ranking from the apps** (the amendment's section of 2026-10-23). The daemon's priorities
+   endpoints, members without the rules on disk giving the ranking; the tray's Storage window
+   on Windows; the Explorer status icons; the Android Storage screen.

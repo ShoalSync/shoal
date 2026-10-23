@@ -14,9 +14,10 @@ use crate::types::{
     DiagnosticsRequest, Event, FetchRequest, Fetched, File, Folder, HeldDeletes,
     HeldDeletesDecision, HeldWithdrawals, KnownPeer, Limits, LogLevel, LogSettings, LossPreview,
     NewFolder, NewMember, NewStoragePeer, OpenedVersion, PairRequest, Pairing, PathProblem, Peer,
-    PinRequest, Problem, Recycled, RemoveHereRequest, RenameRequest, ResolveRequest,
-    RetentionUpdate, Revocation, RevokeRequest, Status, StorageDropRequest, StorageDropResult,
-    StoragePeerReport, SyncOptions, Version, VersionRequest, WithdrawalsDecision,
+    PinRequest, Priorities, PriorityUpdate, Problem, Recycled, RemoveHereRequest, RenameRequest,
+    ResolveRequest, RetentionUpdate, Revocation, RevokeRequest, Status, StorageDropRequest,
+    StorageDropResult, StoragePeerReport, SyncOptions, Version, VersionRequest,
+    WithdrawalsDecision,
 };
 
 /// Client errors.
@@ -352,7 +353,31 @@ impl Client {
         .await
     }
 
-    /// Removes a storage peer from an encrypted folder.
+    /// An encrypted folder's storage priorities: its rules, and what they give each current
+    /// file and directory (ADR 0023).
+    pub async fn priorities(&self, folder: &str) -> Result<Priorities, Error> {
+        self.get(&format!("/v1/folders/{folder}/priorities")).await
+    }
+
+    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to
+    /// `priority`, or removes it for `None`.
+    pub async fn set_priority(
+        &self,
+        folder: &str,
+        pattern: &str,
+        priority: Option<u8>,
+    ) -> Result<Priorities, Error> {
+        self.call(
+            Method::PUT,
+            &format!("/v1/folders/{folder}/priorities"),
+            Some(&PriorityUpdate {
+                pattern: pattern.to_owned(),
+                priority,
+            }),
+        )
+        .await
+    }
+
     /// What each of an encrypted folder's storage peers keeps of it, by priority (ADR 0023).
     pub async fn storage_report(&self, folder: &str) -> Result<Vec<StoragePeerReport>, Error> {
         self.get(&format!("/v1/folders/{folder}/storage")).await
@@ -375,6 +400,7 @@ impl Client {
         .await
     }
 
+    /// Removes a storage peer from an encrypted folder.
     pub async fn remove_storage_peer(&self, folder: &str, device: &str) -> Result<Folder, Error> {
         self.call(
             Method::DELETE,

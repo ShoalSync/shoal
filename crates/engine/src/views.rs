@@ -157,6 +157,27 @@ pub struct StorageDrop {
     pub done: bool,
 }
 
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its
+/// `.tidefellpriorities`, and what they give each current file and directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Priorities {
+    /// Each rule's priority and pattern, in the file's order; the last that matches wins.
+    pub rules: Vec<(u8, String)>,
+    /// The current files and directories, sorted by path.
+    pub entries: Vec<RankedEntry>,
+}
+
+/// A file or directory's storage priority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankedEntry {
+    pub path: String,
+    pub directory: bool,
+    /// 0 to 255, higher kept first; 0 never stored on a storage peer.
+    pub priority: u8,
+    /// The index in [`Priorities::rules`] of the rule that gives it, or none for the default.
+    pub rule: Option<usize>,
+}
+
 /// A folder's rebuild (ADR 0034): its metadata was started over, from the files on disk and
 /// what peers send.
 #[derive(Debug, Clone, PartialEq, Eq)]

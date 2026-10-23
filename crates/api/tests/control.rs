@@ -9,7 +9,7 @@ use tidefell_engine::{Engine, EngineConfig, RelayConfig};
 use tidefell_identity::{DeviceKey, UserKey};
 use tidefell_sdk::types::{
     Direction, ErrorKind, Event, Folder, FolderEncryption, KnownPeer, Limits, LocalDeletes,
-    NewEncryption, NewFolder, SyncOptions,
+    NewEncryption, NewFolder, PriorityRule, SyncOptions,
 };
 use tidefell_sdk::{Client, Error};
 
@@ -457,6 +457,7 @@ async fn control_api_end_to_end() {
         "/v1/folders/{id}/resolve",
         "/v1/folders/{id}/versions/open",
         "/v1/shutdown",
+        "/v1/folders/{id}/priorities",
         "/v1/folders/{id}/storage",
         "/v1/folders/{id}/storage/{device}/drop",
     ] {
@@ -647,6 +648,34 @@ async fn encrypted_folders_through_the_api() {
     assert!(plain.encryption.is_none());
     assert_eq!(
         api_error(client.add_storage_peer(&plain.id, &store).await),
+        ErrorKind::BadRequest
+    );
+
+    // Its members rank its files for the storage peers; a plain folder has no such ranking.
+    let ranked = client.priorities(&created.id).await.unwrap();
+    assert!(ranked.rules.is_empty());
+    let ranked = client
+        .set_priority(&created.id, "*.iso", Some(0))
+        .await
+        .unwrap();
+    assert_eq!(
+        ranked.rules,
+        vec![PriorityRule {
+            priority: 0,
+            pattern: "*.iso".into()
+        }]
+    );
+    let ranked = client
+        .set_priority(&created.id, "*.iso", None)
+        .await
+        .unwrap();
+    assert!(ranked.rules.is_empty());
+    assert_eq!(
+        api_error(client.set_priority(&created.id, "[z-a]", Some(1)).await),
+        ErrorKind::BadRequest
+    );
+    assert_eq!(
+        api_error(client.priorities(&plain.id).await),
         ErrorKind::BadRequest
     );
 
