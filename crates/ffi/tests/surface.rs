@@ -223,6 +223,15 @@ async fn pair_join_open_and_save() {
         node.copies(offer.id.clone(), "nope.jpg".into()),
         Err(tidefell_ffi::TidefellError::NotFound { .. })
     ));
+    // Storage priorities are for encrypted folders, which this one is not.
+    assert!(matches!(
+        node.priorities(offer.id.clone()).await,
+        Err(tidefell_ffi::TidefellError::Invalid { .. })
+    ));
+    assert!(matches!(
+        node.storage_report(offer.id.clone()).await,
+        Err(tidefell_ffi::TidefellError::Invalid { .. })
+    ));
     // Deleting sends it to the recycle bin, which this device can keep longer or empty.
     node.delete(offer.id.clone(), "camera/new.jpg".into())
         .await

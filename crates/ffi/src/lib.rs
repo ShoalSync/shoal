@@ -124,6 +124,26 @@ fn parse<T: std::str::FromStr>(what: &str, text: &str) -> Result<T> {
         .map_err(|_| invalid(format!("{what} {text:?} is not valid")))
 }
 
+fn priorities(p: tidefell_engine::Priorities) -> Priorities {
+    Priorities {
+        rules: p
+            .rules
+            .into_iter()
+            .map(|(priority, pattern)| PriorityRule { priority, pattern })
+            .collect(),
+        entries: p
+            .entries
+            .into_iter()
+            .map(|e| PriorityEntry {
+                path: e.path,
+                directory: e.directory,
+                priority: e.priority,
+                rule: e.rule.and_then(|i| u32::try_from(i).ok()),
+            })
+            .collect(),
+    }
+}
+
 /// Which relays to use.
 #[derive(Debug, Clone, uniffi::Enum)]
 pub enum Relay {
@@ -934,6 +954,81 @@ pub struct Copy {
     pub confirmed_ms: i64,
 }
 
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// and what they give each current file and directory.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct Priorities {
+    /// The rules in the file's order; the last that matches a path wins.
+    pub rules: Vec<PriorityRule>,
+    /// The current files and directories, sorted by path; every directory a file is in.
+    pub entries: Vec<PriorityEntry>,
+}
+
+/// A rule ranking the paths that match a pattern for an encrypted folder's storage peers.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PriorityRule {
+    /// 0 to 255, higher kept first; 0 never stored on a storage peer.
+    pub priority: u8,
+    /// Paths it covers, as in `.tidefellignore`.
+    pub pattern: String,
+}
+
+/// A file or directory's storage priority.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PriorityEntry {
+    /// Path within the folder.
+    pub path: String,
+    /// Whether it is a directory.
+    pub directory: bool,
+    /// 0 to 255; 128 where no rule matches.
+    pub priority: u8,
+    /// The index in `rules` of the rule that gives it, or none for the default.
+    pub rule: Option<u32>,
+}
+
+/// What one storage peer of an encrypted folder keeps of it, as a member sees it (ADR 0023).
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct StoragePeerReport {
+    /// Its device ID.
+    pub device: String,
+    /// Whether it is connected now; one that is not says nothing more.
+    pub connected: bool,
+    /// Its quota for the folder, in sealed bytes, if it said.
+    pub quota_bytes: Option<u64>,
+    /// The sealed bytes it holds of the folder, if it said.
+    pub held_bytes: Option<u64>,
+    /// The room it has left for the folder, if it said.
+    pub room_bytes: Option<u64>,
+    /// By priority, highest first.
+    pub levels: Vec<StorageLevel>,
+    /// Why it said nothing, if it was asked.
+    pub error: Option<String>,
+}
+
+/// The files of one priority, and what a storage peer holds of them.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct StorageLevel {
+    pub priority: u8,
+    pub files: u64,
+    /// Their bytes.
+    pub bytes: u64,
+    /// What the storage peer holds of them.
+    pub held_bytes: u64,
+}
+
+/// What asking a storage peer to drop did.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct StorageDropResult {
+    /// Whether it was asked: not if a file was at risk and it was not forced.
+    pub done: bool,
+    /// Chunks it removed.
+    pub dropped_chunks: u64,
+    /// Sealed bytes it removed.
+    pub dropped_bytes: u64,
+    /// Files that would be dropped with no copy known elsewhere.
+    pub at_risk: Vec<String>,
+}
+
 /// Which kind of version a [`Version`] is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum VersionKind {
@@ -1398,6 +1493,83 @@ impl Node {
                 confirmed_ms: c.confirmed_ms,
             })
             .collect())
+    }
+
+    /// An encrypted folder's storage priorities: its rules, and what they give each current
+    /// file and directory (ADR 0023).
+    pub async fn priorities(&self, folder: String) -> Result<Priorities> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        let p = on_runtime(async move { engine.priorities(folder).await }).await??;
+        Ok(priorities(p))
+    }
+
+    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to
+    /// `priority`, or removes it for none, keeping the file's other lines.
+    pub async fn set_priority(
+        &self,
+        folder: String,
+        pattern: String,
+        priority: Option<u8>,
+    ) -> Result<Priorities> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        let p = on_runtime(async move { engine.set_priority(folder, &pattern, priority).await })
+            .await??;
+        Ok(priorities(p))
+    }
+
+    /// What each of an encrypted folder's storage peers keeps of it, by priority: asked of
+    /// each connected now (ADR 0023).
+    pub async fn storage_report(&self, folder: String) -> Result<Vec<StoragePeerReport>> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        let reports = on_runtime(async move { engine.storage_report(folder).await }).await??;
+        Ok(reports
+            .into_iter()
+            .map(|r| StoragePeerReport {
+                device: r.device.to_string(),
+                connected: r.connected,
+                quota_bytes: r.usage.map(|u| u.quota_bytes),
+                held_bytes: r.usage.map(|u| u.held_bytes),
+                room_bytes: r.usage.map(|u| u.room_bytes),
+                levels: r
+                    .levels
+                    .into_iter()
+                    .map(|l| StorageLevel {
+                        priority: l.priority,
+                        files: l.files as u64,
+                        bytes: l.bytes,
+                        held_bytes: l.held_bytes,
+                    })
+                    .collect(),
+                error: r.error,
+            })
+            .collect())
+    }
+
+    /// Asks storage peer `device` to forget what it holds of the folder's files ranked below
+    /// `below`, as the user asks: never done otherwise. Unless `force`, nothing is dropped if a
+    /// file has no copy known elsewhere; those are listed.
+    pub async fn storage_drop(
+        &self,
+        folder: String,
+        device: String,
+        below: u8,
+        force: bool,
+    ) -> Result<StorageDropResult> {
+        let engine = self.engine()?;
+        let folder: FolderId = parse("folder ID", &folder)?;
+        let device = parse("storage peer", &device)?;
+        let outcome =
+            on_runtime(async move { engine.storage_drop(folder, device, below, force).await })
+                .await??;
+        Ok(StorageDropResult {
+            done: outcome.done,
+            dropped_chunks: outcome.dropped_chunks,
+            dropped_bytes: outcome.dropped_bytes,
+            at_risk: outcome.at_risk,
+        })
     }
 
     /// The upload and download limits in force.
