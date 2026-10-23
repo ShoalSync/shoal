@@ -49,6 +49,11 @@ const RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const SAFETY_SCAN: Duration = Duration::from_secs(3600);
 /// How often an unavailable folder's root is checked again, at most (ADR 0037).
 const RECHECK_INTERVAL: Duration = Duration::from_secs(60);
+/// How soon a file that changed while a scan read it is read again; doubled each time it is
+/// still changing, up to [`CHANGING_RECHECK_MAX`], so one written for long is not read over and
+/// over. A writer finishing is usually seen by the watch first.
+const CHANGING_RECHECK: Duration = Duration::from_secs(2);
+const CHANGING_RECHECK_MAX: Duration = Duration::from_secs(60);
 /// How often to purge expired recycle-bin items.
 const PURGE_INTERVAL: Duration = Duration::from_secs(3600);
 /// How long after starting a database too large to check when opened is checked (ADR 0035).
@@ -612,6 +617,10 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
             // a drive mounted over an empty directory is watched once it is back (ADR 0037).
             let mut unwatched = inner.watch;
             let mut wanted = Wanted::Full;
+            // Files that changed while the last scan read them, and how long to wait before
+            // reading them again.
+            let mut changing: Vec<String> = Vec::new();
+            let mut recheck = CHANGING_RECHECK;
             loop {
                 // Watched before scanning, so nothing changed during the scan is missed.
                 if unwatched && inner.folder(&id).is_ok_and(|h| h.available().is_ok()) {
@@ -630,10 +639,27 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                     Wanted::Full => None,
                     Wanted::Scope(scope) => Some(scope.clone()),
                 };
+                let covered = scope.clone();
                 match run_scan(&inner, id, scope, None).await {
-                    Ok(dirs) => {
+                    Ok(mut outcome) => {
+                        // Those this scan did not look at are still to be read again.
+                        let unread = changing.iter().filter(|p| {
+                            covered.as_ref().is_some_and(|s| !s.contains(p))
+                                && !outcome.changing.contains(p)
+                        });
+                        let unread: Vec<String> = unread.cloned().collect();
+                        // Still changing after a recheck: wait longer before the next one.
+                        recheck = if outcome.changing.is_empty() {
+                            CHANGING_RECHECK
+                        } else if outcome.changing.iter().any(|p| changing.contains(p)) {
+                            (recheck * 2).min(CHANGING_RECHECK_MAX)
+                        } else {
+                            recheck
+                        };
+                        outcome.changing.extend(unread);
+                        changing = outcome.changing;
                         if let Some(w) = &mut watch {
-                            if let Err(e) = w.add(&dirs) {
+                            if let Err(e) = w.add(&outcome.dirs) {
                                 not_watched(&inner, id, e);
                                 watch = None;
                             }
@@ -654,6 +680,9 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                         let ignores = handle.lock().ignores.clone();
                         tokio::select! {
                             () = rescan => Wanted::Full,
+                            () = tokio::time::sleep(recheck), if !changing.is_empty() => {
+                                Wanted::Scope(changing_scope(&changing))
+                            }
                             next = w.next(&ignores) => match next {
                                 Some(wanted) => wanted,
                                 None => {
@@ -675,10 +704,12 @@ fn spawn_scanner(inner: &Arc<Inner>, id: FolderId, handle: &FolderHandle) {
                             interval
                         };
                         tokio::select! {
-                            () = rescan => {}
-                            () = tokio::time::sleep(wait) => {}
+                            () = rescan => Wanted::Full,
+                            () = tokio::time::sleep(recheck), if !changing.is_empty() => {
+                                Wanted::Scope(changing_scope(&changing))
+                            }
+                            () = tokio::time::sleep(wait) => Wanted::Full,
                         }
-                        Wanted::Full
                     }
                 };
             }
@@ -1541,7 +1572,7 @@ async fn run_scan(
     id: FolderId,
     scope: Option<Scope>,
     saved: Option<String>,
-) -> Result<Vec<PathBuf>> {
+) -> Result<ScanOutcome> {
     let handle = inner.folder(&id)?;
     let _guard = handle.disk().await?;
     let (inner2, handle2) = (inner.clone(), handle.clone());
@@ -1600,7 +1631,27 @@ async fn run_scan(
     for path in scanned.conflicts {
         inner.emit(Event::ConflictDetected { folder: id, path });
     }
-    Ok(scanned.dirs)
+    Ok(ScanOutcome {
+        dirs: scanned.dirs,
+        changing: scanned.changing,
+    })
+}
+
+/// What a scan leaves the folder's scan loop to do.
+struct ScanOutcome {
+    /// The directories walked, to watch.
+    dirs: Vec<PathBuf>,
+    /// Files that changed while they were read, to read again soon.
+    changing: Vec<String>,
+}
+
+/// The scope that reads `changing` again: the directories they are in.
+fn changing_scope(changing: &[String]) -> Scope {
+    let mut scope = Scope::default();
+    for rel in changing {
+        scope.add(rel.rsplit_once('/').map_or("", |(dir, _)| dir), false);
+    }
+    scope
 }
 
 async fn run_evict(inner: &Arc<Inner>, id: FolderId) -> Result<()> {

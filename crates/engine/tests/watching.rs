@@ -186,6 +186,57 @@ async fn a_file_written_continuously_is_still_picked_up() {
     writer.await.unwrap();
 }
 
+/// A file that changes while a scan reads it is read again soon, with nothing else to say so:
+/// here the folder is not watched and its scan interval is an hour.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_file_changing_while_scanned_is_read_again() {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let dir = tempfile::tempdir().unwrap();
+    let user = UserKey::from_seed([6; 32]);
+    let a = Replica::new(dir.path(), "a", 44);
+    // Large enough that reading it takes longer than the writer's pauses.
+    a.write("growing.bin", &vec![7u8; 64 << 20]);
+    let writing = Arc::new(AtomicBool::new(true));
+    let writer = std::thread::spawn({
+        let (path, writing) = (a.root.join("growing.bin"), writing.clone());
+        move || {
+            let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+            while writing.load(Ordering::Relaxed) {
+                file.write_all(b"more").unwrap();
+                file.flush().unwrap();
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    });
+
+    let engine = a.start(&user, false).await;
+    eventually("the scan sees the file change as it reads it", || {
+        engine
+            .path_problems(FOLDER)
+            .unwrap()
+            .iter()
+            .any(|p| p.path == "growing.bin")
+    })
+    .await;
+    assert!(!recorded(&engine, "growing.bin"));
+    writing.store(false, Ordering::Relaxed);
+    writer.join().unwrap();
+    let start = Instant::now();
+    eventually("it is read again once it stops changing", || {
+        recorded(&engine, "growing.bin")
+    })
+    .await;
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "took {:?}",
+        start.elapsed()
+    );
+    assert!(engine.path_problems(FOLDER).unwrap().is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn without_watching_nothing_is_noticed() {
     let dir = tempfile::tempdir().unwrap();

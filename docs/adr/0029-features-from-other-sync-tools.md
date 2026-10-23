@@ -87,6 +87,9 @@ by amending this ADR.
   - Changes wait at most five seconds to settle, so a file written continuously is still picked
     up. The following need a full scan: more than 4096 changed paths, a change to the ignore
     file or a file it includes, and a lost event queue.
+  - A file that changes while a scan reads it is not recorded then; its directory is scanned
+    again two seconds later, whether or not the folder is watched, waiting twice as long each
+    time it is still changing, up to a minute (2026-10-23).
   - A folder on a network or FUSE filesystem is not watched, because other machines' changes are
     not reported there. The same goes for a folder with such a filesystem mounted on a
     directory inside it, which is found by its device ID. It is scanned on its interval, and

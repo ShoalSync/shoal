@@ -392,6 +392,8 @@ pub(crate) struct Scanned {
     pub(crate) conflicts: Vec<String>,
     /// Whether the set of paths with problems changed (ADR 0030).
     pub(crate) problems_changed: bool,
+    /// Files that changed while this scan read them, to be read again soon.
+    pub(crate) changing: Vec<String>,
 }
 
 /// True if `entry`'s current version is a file at `rel`: deleting the file there deletes it.
@@ -939,6 +941,11 @@ pub(crate) fn scan(
         .filter_map(|d| relative(&root, d))
         .map(|rel| dir_key(&rel))
         .collect();
+    let changing = failures
+        .iter()
+        .filter(|f| f.kind == ProblemKind::ChangedWhileWriting && !f.carried)
+        .map(|f| f.path.clone())
+        .collect();
     let problems_changed = handle.activity.lock().unwrap().settle(
         &[Operation::Scan],
         |path| {
@@ -956,6 +963,7 @@ pub(crate) fn scan(
         dirs,
         conflicts,
         problems_changed,
+        changing,
     })
 }
 
