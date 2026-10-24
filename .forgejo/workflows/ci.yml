@@ -195,6 +195,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Clear sync roots earlier runs left
+        shell: powershell
+        run: ./scripts/windows-clear-test-sync-roots.ps1
       - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
         with:
           name: windows-installer
@@ -219,6 +222,10 @@ jobs:
           cargo build --locked -p tidefell-daemon
           TIDEFELL_SCREENSHOT=1 cargo test --locked -p tidefell-tray --test storage -- --nocapture
           cargo test --locked --workspace --no-fail-fast
+      - name: Clear the sync roots this run left
+        if: always()
+        shell: powershell
+        run: ./scripts/windows-clear-test-sync-roots.ps1
 
   # The Windows installer (ADR 0042), built on Linux with wixl from placeholder programs, for the
   # Windows job to install and uninstall.

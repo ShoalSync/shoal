@@ -41,6 +41,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: Clear sync roots earlier runs left
+        shell: powershell
+        run: ./scripts/windows-clear-test-sync-roots.ps1
       - name: Approve, list, open
         shell: bash
         env:
@@ -51,3 +54,7 @@ jobs:
           cargo build --locked --package tidefell-daemon
           TIDEFELLD="$CARGO_TARGET_DIR/debug/tidefelld.exe" cargo test --locked \
             --package tidefell-tray --test exit_criterion -- --ignored --nocapture
+      - name: Clear the sync roots this run left
+        if: always()
+        shell: powershell
+        run: ./scripts/windows-clear-test-sync-roots.ps1
