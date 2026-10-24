@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use tidefell_chunker::hash_chunk;
 use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkHash, ContentHash, EntryId, Manifest};
+use tidefell_proto::{ChunkHash, ContentHash, DeviceId, EntryId, Manifest};
 use tracing::{debug, info};
 
 use crate::config::{Direction, ReplicaMode};
@@ -333,8 +333,10 @@ fn tidy_unneeded(state: &mut FolderState) {
 /// Contents this folder references that are on disk nowhere, so their chunks belong in the
 /// block store: recycle-bin items and conflict copies, and live versions this replica is going
 /// to write. Placeholders, files dropped from this device and every file of a send-only replica
-/// are not written, so their chunks are not kept.
-fn store_only(state: &FolderState) -> HashSet<ContentHash> {
+/// are not written, so their chunks are not kept; except a live version this device, `me`, made
+/// and does not have on disk, such as one it put back from history after a revocation's time of
+/// loss (ADR 0040): its block store may hold the only copy, which other devices fetch from it.
+fn store_only(state: &FolderState, me: DeviceId) -> HashSet<ContentHash> {
     let materialised: HashSet<EntryId> = state.local.values().map(|l| l.entry).collect();
     let mut out = HashSet::new();
     let mut add = |kind: &EntryKind| {
@@ -345,7 +347,7 @@ fn store_only(state: &FolderState) -> HashSet<ContentHash> {
         }
     };
     for version in state.meta.entries() {
-        if writes(state, &version.entry, version.path, &materialised) {
+        if writes(state, &version.entry, version.path, &materialised) || version.author() == me {
             add(version.kind);
         }
         for conflict in state.meta.conflicts(&version.entry) {
@@ -409,7 +411,10 @@ pub(crate) fn compact(inner: &Inner) -> usize {
         let mut state = handle.lock();
         tidy_kept(&mut state);
         let fetching = inner.fetching.lock().unwrap().clone();
-        for content in store_only(&state).iter().chain(fetching.iter()) {
+        for content in store_only(&state, inner.key.id())
+            .iter()
+            .chain(fetching.iter())
+        {
             if let Some(manifest) = state.manifests.get(content) {
                 needed.extend(manifest.chunks.iter().map(|c| c.hash));
             }

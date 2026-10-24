@@ -583,7 +583,10 @@ fn take_over_once(
 
 /// Puts back the content kept in `put_back.previous` as a change of this device's, building on
 /// the version it withdraws. Its chunks go to the block store first, so this device can write the
-/// file and serve it. Returns false if the entry changed meanwhile: the next takeover decides
+/// file and serve it; they are kept from compaction from before they are stored, by their
+/// manifest and the content being marked fetched, as a download's are: otherwise a compaction
+/// between storing them and recording the version could remove them, leaving a version no
+/// device can supply. Returns false if the entry changed meanwhile: the next takeover decides
 /// again.
 fn put_back_one(inner: &Inner, handle: &FolderHandle, put_back: PutBack) -> Result<bool> {
     let PutBack {
@@ -594,31 +597,52 @@ fn put_back_one(inner: &Inner, handle: &FolderHandle, put_back: PutBack) -> Resu
     } = put_back;
     let root = handle.lock().config.path.clone();
     let file = crate::history::history_dir(&root).join(&previous.file);
-    let reader = std::io::BufReader::new(std::fs::File::open(&file).map_err(crate::io_err(&file))?);
-    let manifest =
+    let read = |sink: &mut dyn FnMut(tidefell_proto::ChunkHash, &[u8]) -> std::io::Result<()>| {
+        let reader =
+            std::io::BufReader::new(std::fs::File::open(&file).map_err(crate::io_err(&file))?);
         tidefell_chunker::chunk_reader(reader, tidefell_chunker::Params::DEFAULT, |chunk, data| {
-            inner
-                .store
-                .lock()
-                .unwrap()
-                .put_verified(chunk.hash, data)
-                .map_err(std::io::Error::other)
+            sink(chunk.hash, data)
         })
-        .map_err(crate::io_err(&file))?;
+        .map_err(crate::io_err(&file))
+    };
+    // What the kept file holds, before anything is stored.
+    let manifest = read(&mut |_, _| Ok(()))?;
     if manifest.content != previous.content {
         warn!(path = %path, "a kept version no longer holds what it did; not put back");
         return Ok(false);
     }
-    let mut state = handle.lock();
-    if state.meta.current_vector(&entry) != base
-        && !state
-            .meta
-            .open_conflicts(&entry)
-            .any(|c| c.version.version == base)
+    let changed = |state: &FolderState| {
+        state.meta.current_vector(&entry) != base
+            && !state
+                .meta
+                .open_conflicts(&entry)
+                .any(|c| c.version.version == base)
+    };
     {
+        let mut state = handle.lock();
+        if changed(&state) {
+            return Ok(false);
+        }
+        state.add_manifest(manifest);
+        inner.fetching.lock().unwrap().insert(previous.content);
+    }
+    let _kept = crate::materialize::Fetching(inner, previous.content);
+    let stored = read(&mut |hash, data| {
+        inner
+            .store
+            .lock()
+            .unwrap()
+            .put_verified(hash, data)
+            .map_err(std::io::Error::other)
+    })?;
+    if stored.content != previous.content {
+        warn!(path = %path, "a kept version changed while it was put back; not put back");
         return Ok(false);
     }
-    state.add_manifest(manifest);
+    let mut state = handle.lock();
+    if changed(&state) {
+        return Ok(false);
+    }
     let kind = EntryKind::File {
         content: previous.content,
         size: previous.size,

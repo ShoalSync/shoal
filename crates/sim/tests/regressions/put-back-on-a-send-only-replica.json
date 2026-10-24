@@ -1,0 +1,135 @@
+[
+  "Encrypted",
+  {
+    "Wait": {
+      "ms": 127
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 6,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Partition": {
+      "sides": 5
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 190,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 181,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Wait": {
+      "ms": 282
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 181,
+      "size": "Large",
+      "scan": true
+    }
+  },
+  {
+    "Scan": {
+      "device": 1
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 111,
+      "size": "Large",
+      "scan": true
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 75,
+      "size": "Tiny",
+      "scan": false
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 112,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "Revoke": {
+      "by": 1,
+      "device": 125,
+      "lost_ago_ms": 450
+    }
+  },
+  {
+    "Write": {
+      "device": 2,
+      "path": 46,
+      "size": "Tiny",
+      "scan": true
+    }
+  },
+  {
+    "SendOnly": {
+      "device": 0,
+      "on": true
+    }
+  },
+  {
+    "Write": {
+      "device": 0,
+      "path": 18,
+      "size": "Large",
+      "scan": false
+    }
+  },
+  {
+    "Scan": {
+      "device": 0
+    }
+  },
+  "Heal",
+  {
+    "Write": {
+      "device": 1,
+      "path": 27,
+      "size": "Small",
+      "scan": true
+    }
+  },
+  {
+    "Restart": {
+      "device": 0
+    }
+  },
+  {
+    "Write": {
+      "device": 1,
+      "path": 196,
+      "size": "Tiny",
+      "scan": true
+    }
+  }
+]

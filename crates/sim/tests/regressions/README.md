@@ -23,3 +23,8 @@ of steps a failing seed was shortened to.
   new file there was written over.
 - `deleted-while-set-aside.json`: a file the user deleted just as the engine set it aside for
   another entry's file lost its record, so the delete was never recorded.
+- `put-back-on-a-send-only-replica.json`: a version a revocation's time of loss put back from
+  history, on a replica that was send-only, was this device's only copy in its block store,
+  which compaction released, as content of a send-only replica only passes through; and a
+  compaction between storing a put-back version's chunks and recording the version could
+  remove them. No device could then supply it. Fails about one run in 30 without the fix.

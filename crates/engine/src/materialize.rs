@@ -1375,7 +1375,7 @@ async fn is_full_replica(inner: &Inner, node: &Node, peer: DeviceId, folder: Fol
 }
 
 /// Forgets that a content is being downloaded when dropped.
-struct Fetching<'a>(&'a Inner, ContentHash);
+pub(crate) struct Fetching<'a>(pub(crate) &'a Inner, pub(crate) ContentHash);
 
 impl Drop for Fetching<'_> {
     fn drop(&mut self) {
