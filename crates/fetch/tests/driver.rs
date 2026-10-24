@@ -28,6 +28,8 @@ struct Sim {
     busy: HashMap<&'static str, AtomicU32>,
     /// Peers that say they hold everything (ADR 0032).
     full: Vec<&'static str>,
+    /// Peers that never answer a request for a chunk.
+    stalls: Vec<&'static str>,
     requests: Mutex<BTreeMap<&'static str, usize>>,
     queries: Mutex<BTreeMap<&'static str, usize>>,
     /// Requests to each peer under way now, and the most at once.
@@ -57,6 +59,9 @@ impl ChunkSource for Sim {
             let (now, most) = outstanding.entry(peer).or_default();
             *now += 1;
             *most = (*most).max(*now);
+        }
+        if self.stalls.contains(peer) {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
         self.outstanding.lock().unwrap().get_mut(peer).unwrap().0 -= 1;
@@ -357,4 +362,37 @@ async fn requests_to_a_peer_overlap() {
     assert_eq!(report.chunks, 40);
     let most = sim.outstanding.lock().unwrap()["a"].1;
     assert!(most >= 5, "at most {most} requests at once");
+}
+
+/// A peer that stops answering holds up the end of a download only until the chunks it was
+/// asked for are asked of another holder too (`Config::hedge_after`).
+#[tokio::test(start_paused = true)]
+async fn a_stalled_peer_does_not_hold_up_the_end() {
+    let mut sim = Sim::default();
+    sim.holdings.insert("a", (1..=4).map(h).collect());
+    sim.holdings.insert("b", (1..=4).map(h).collect());
+    sim.stalls.push("a");
+    let sim = Arc::new(sim);
+    let started = tokio::time::Instant::now();
+    let mut stored = Vec::new();
+    let report = fetch(
+        sim.clone(),
+        &manifest(4),
+        &["a", "b"],
+        |_| false,
+        Config::default(),
+        |hash, _| {
+            stored.push(hash);
+            Ok(())
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(report.chunks, 4);
+    assert_eq!(report.per_peer.get("b"), Some(&4));
+    stored.sort();
+    stored.dedup();
+    assert_eq!(stored.len(), 4, "each chunk stored once");
+    let took = started.elapsed();
+    assert!(took < Config::default().hedge_after * 2, "took {took:?}");
 }

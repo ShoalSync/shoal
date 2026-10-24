@@ -169,3 +169,19 @@ Peers are still chosen by the fewest chunks in flight, not by measured speed: a 
 answers sooner and is handed more, but each peer has the same limit, and the last chunks of a
 download are not asked of a second peer when the first is slow. Both are left for later.
 
+
+## Amendment: a stalled peer, and one that struggles (2026-10-24)
+
+Choosing the holder with the fewest chunks in flight already favours a faster peer. Two gaps
+remained: a peer that stops answering held up the end of a download until its requests failed,
+and one that kept failing or answered busy was given as much as before once it was usable again.
+
+- **Hedging, in the endgame only.** Once every chunk still needed is in flight, one outstanding
+  for `hedge_after` (2 s) is asked of one more holder with room, oldest first, and the first
+  copy to arrive is taken; the other only frees its peer, and is not stored twice. Before the
+  endgame nothing is asked twice: a chunk waiting for room is a better use of it.
+- **A window per peer.** Each peer may have at most its window of chunks in flight, under
+  `max_in_flight_per_peer`: it starts there, halves when the peer fails or answers busy, and
+  grows by one for each chunk it sends. A peer that is fine keeps what it had.
+
+Measured as before, against main on the same machine at the same time, transfers are unchanged.

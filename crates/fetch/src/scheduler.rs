@@ -24,6 +24,10 @@ pub struct Config {
     pub max_backoff: Duration,
     /// Consecutive failures after which a peer is dropped.
     pub max_failures: u32,
+    /// Once every chunk still needed is in flight, how long one may be outstanding before it
+    /// is asked of a second peer too, the first answer to come being taken: so a stalled peer
+    /// does not hold up the end of a download.
+    pub hedge_after: Duration,
 }
 
 impl Default for Config {
@@ -35,6 +39,7 @@ impl Default for Config {
             initial_backoff: Duration::from_millis(200),
             max_backoff: Duration::from_secs(10),
             max_failures: 5,
+            hedge_after: Duration::from_secs(2),
         }
     }
 }
@@ -54,6 +59,9 @@ struct PeerState {
     has: BTreeSet<ChunkHash>,
     in_flight: usize,
     in_flight_bytes: u64,
+    /// Most chunks in flight to it now: [`Config::max_in_flight_per_peer`] at first, halved
+    /// each time it fails or says it is busy, and one more for each chunk it sends.
+    window: usize,
     failures: u32,
     available_at: Option<Instant>,
     dropped: bool,
@@ -67,7 +75,8 @@ pub struct Scheduler<P> {
     needed: BTreeMap<ChunkHash, usize>,
     /// Each needed chunk's length.
     lens: HashMap<ChunkHash, u64>,
-    in_flight: HashMap<ChunkHash, P>,
+    /// The peers each chunk in flight was asked of, and when: one, or two once hedged.
+    in_flight: HashMap<ChunkHash, Vec<(P, Instant)>>,
     peers: HashMap<P, PeerState>,
 }
 
@@ -97,6 +106,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
             has: BTreeSet::new(),
             in_flight: 0,
             in_flight_bytes: 0,
+            window: self.config.max_in_flight_per_peer,
             failures: 0,
             available_at: None,
             dropped: false,
@@ -139,14 +149,33 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
             .collect()
     }
 
-    /// The earliest time after `now` at which a backed-off peer becomes usable again.
+    /// Whether `hash` is still needed: false for a hedged chunk's second copy.
+    pub fn wanted(&self, hash: &ChunkHash) -> bool {
+        self.needed.contains_key(hash)
+    }
+
+    /// The earliest time after `now` at which a backed-off peer becomes usable again, or a
+    /// chunk in flight could be hedged.
     pub fn next_wakeup(&self, now: Instant) -> Option<Instant> {
-        self.peers
+        let backed_off = self
+            .peers
             .values()
             .filter(|s| !s.dropped)
-            .filter_map(|s| s.available_at)
-            .filter(|t| *t > now)
-            .min()
+            .filter_map(|s| s.available_at);
+        let hedges = self
+            .in_flight
+            .values()
+            .filter(|asked| asked.len() == 1)
+            .map(|asked| asked[0].1 + self.config.hedge_after);
+        backed_off.chain(hedges).filter(|t| *t > now).min()
+    }
+
+    /// Whether `state` can take one more chunk of `len` bytes.
+    fn has_room(&self, state: &PeerState, len: u64) -> bool {
+        state.in_flight < state.window.min(self.config.max_in_flight_per_peer)
+            && (state.in_flight == 0
+                || state.in_flight_bytes.saturating_add(len)
+                    <= self.config.max_bytes_in_flight_per_peer)
     }
 
     /// Plans new requests at time `now`, marking their chunks in flight.
@@ -171,25 +200,35 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
         for (_, _, hash) in candidates {
             let len = self.lens.get(&hash).copied().unwrap_or(0);
             // The holder with capacity and the fewest chunks in flight; ties by peer order.
-            let choice = self
-                .peers
-                .iter()
-                .filter(|(_, s)| {
-                    Self::usable(s, now)
-                        && s.has.contains(&hash)
-                        && s.in_flight < self.config.max_in_flight_per_peer
-                        && (s.in_flight == 0
-                            || s.in_flight_bytes.saturating_add(len)
-                                <= self.config.max_bytes_in_flight_per_peer)
-                })
-                .min_by(|(pa, a), (pb, b)| a.in_flight.cmp(&b.in_flight).then(pa.cmp(pb)))
-                .map(|(p, _)| p.clone());
-            let Some(peer) = choice else { continue };
-            let state = self.peers.get_mut(&peer).expect("chosen peer exists");
-            state.in_flight += 1;
-            state.in_flight_bytes += len;
-            self.in_flight.insert(hash, peer.clone());
+            let Some(peer) = self.least_busy(&hash, len, now, None) else {
+                continue;
+            };
+            self.assign(&peer, hash, len, now);
             planned.entry(peer).or_default().push(hash);
+        }
+
+        // The endgame: every chunk still needed is in flight. One outstanding too long is asked
+        // of a second holder with room, oldest first.
+        let endgame = self.needed.keys().all(|h| self.in_flight.contains_key(h));
+        if endgame {
+            let mut late: Vec<(Instant, ChunkHash)> = self
+                .in_flight
+                .iter()
+                .filter(|(_, asked)| {
+                    asked.len() == 1 && asked[0].1 + self.config.hedge_after <= now
+                })
+                .map(|(h, asked)| (asked[0].1, *h))
+                .collect();
+            late.sort();
+            for (_, hash) in late {
+                let len = self.lens.get(&hash).copied().unwrap_or(0);
+                let first = self.in_flight[&hash][0].0.clone();
+                let Some(peer) = self.least_busy(&hash, len, now, Some(&first)) else {
+                    continue;
+                };
+                self.assign(&peer, hash, len, now);
+                planned.entry(peer).or_default().push(hash);
+            }
         }
 
         planned
@@ -206,11 +245,49 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
             .collect()
     }
 
+    /// The holder of `hash` with room for it and the fewest chunks in flight, other than
+    /// `besides`; ties by peer order.
+    fn least_busy(
+        &self,
+        hash: &ChunkHash,
+        len: u64,
+        now: Instant,
+        besides: Option<&P>,
+    ) -> Option<P> {
+        self.peers
+            .iter()
+            .filter(|(p, s)| {
+                Some(*p) != besides
+                    && Self::usable(s, now)
+                    && s.has.contains(hash)
+                    && self.has_room(s, len)
+            })
+            .min_by(|(pa, a), (pb, b)| a.in_flight.cmp(&b.in_flight).then(pa.cmp(pb)))
+            .map(|(p, _)| p.clone())
+    }
+
+    fn assign(&mut self, peer: &P, hash: ChunkHash, len: u64, now: Instant) {
+        let state = self.peers.get_mut(peer).expect("chosen peer exists");
+        state.in_flight += 1;
+        state.in_flight_bytes += len;
+        self.in_flight
+            .entry(hash)
+            .or_default()
+            .push((peer.clone(), now));
+    }
+
+    /// Lets go of `hash` as asked of `peer`. False if it was not.
     fn release(&mut self, peer: &P, hash: &ChunkHash) -> bool {
-        if self.in_flight.get(hash) != Some(peer) {
+        let Some(asked) = self.in_flight.get_mut(hash) else {
             return false;
+        };
+        let Some(at) = asked.iter().position(|(p, _)| p == peer) else {
+            return false;
+        };
+        asked.remove(at);
+        if asked.is_empty() {
+            self.in_flight.remove(hash);
         }
-        self.in_flight.remove(hash);
         let len = self.lens.get(hash).copied().unwrap_or(0);
         if let Some(state) = self.peers.get_mut(peer) {
             state.in_flight -= 1;
@@ -220,11 +297,14 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
     }
 
     /// `peer` delivered `hash` (already verified).
+    /// A hedged chunk's second copy, arriving after the first, only frees its peer.
     pub fn received(&mut self, peer: &P, hash: &ChunkHash) {
         if self.release(peer, hash) {
             self.needed.remove(hash);
+            let max = self.config.max_in_flight_per_peer;
             if let Some(state) = self.peers.get_mut(peer) {
                 state.failures = 0;
+                state.window = (state.window + 1).min(max);
             }
         }
     }
@@ -246,6 +326,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
         }
         if let Some(state) = self.peers.get_mut(peer) {
             state.available_at = Some(state.available_at.map_or(until, |at| at.max(until)));
+            state.window = (state.window / 2).max(1);
         }
     }
 
@@ -256,6 +337,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
             self.release(peer, hash);
         }
         if let Some(state) = self.peers.get_mut(peer) {
+            state.window = (state.window / 2).max(1);
             state.failures += 1;
             if state.failures >= self.config.max_failures {
                 state.dropped = true;
@@ -428,5 +510,94 @@ mod tests {
         let mut s = Scheduler::new(&huge, |_| false, Config::default());
         s.set_availability(1, [h(9)]);
         assert_eq!(s.next_requests(now).len(), 1);
+    }
+
+    #[test]
+    fn a_late_chunk_is_asked_again_only_in_the_endgame() {
+        let t0 = Instant::now();
+        let hedge = Config::default().hedge_after;
+        let mut s = Scheduler::new(&manifest(&[1, 2]), |_| false, config());
+        s.set_availability(1, [h(1), h(2)]);
+        s.set_availability(2, [h(1), h(2)]);
+        let first = s.next_requests(t0);
+        let first_of = |hash: ChunkHash| {
+            first
+                .iter()
+                .find(|r| r.chunks.contains(&hash))
+                .map(|r| r.peer)
+                .unwrap()
+        };
+        let (one, two) = (first_of(h(1)), first_of(h(2)));
+        assert_ne!(one, two, "spread over both");
+        assert!(s.next_requests(t0 + hedge / 2).is_empty(), "not late yet");
+        assert_eq!(s.next_wakeup(t0), Some(t0 + hedge));
+        // Late: each is asked of the other peer too.
+        let again = s.next_requests(t0 + hedge);
+        let mut asked: Vec<(u8, ChunkHash)> = again
+            .into_iter()
+            .flat_map(|r| r.chunks.into_iter().map(move |c| (r.peer, c)))
+            .collect();
+        asked.sort();
+        let mut expected = vec![(two, h(1)), (one, h(2))];
+        expected.sort();
+        assert_eq!(asked, expected);
+        // The second answers are taken; the first, coming later, only free their peers.
+        s.received(&two, &h(1));
+        s.received(&one, &h(2));
+        assert!(s.is_complete());
+        assert!(!s.wanted(&h(1)));
+        s.received(&one, &h(1));
+        s.received(&two, &h(2));
+        assert_eq!(s.in_flight(), 0);
+        assert!(s.next_requests(t0 + hedge * 2).is_empty());
+    }
+
+    #[test]
+    fn no_chunk_is_asked_twice_while_others_wait() {
+        let t0 = Instant::now();
+        let hedge = Config::default().hedge_after;
+        let one_at_a_time = Config {
+            max_in_flight_per_peer: 1,
+            ..config()
+        };
+        let mut s = Scheduler::new(&manifest(&[1, 2]), |_| false, one_at_a_time);
+        s.set_availability(1, [h(1), h(2)]);
+        assert_eq!(s.next_requests(t0).len(), 1);
+        // Chunk 2 waits for room, not yet in flight: no hedging, however late chunk 1 is.
+        s.set_availability(2, [h(2)]);
+        let later = s.next_requests(t0 + hedge * 3);
+        let chunks: Vec<ChunkHash> = later.into_iter().flat_map(|r| r.chunks).collect();
+        assert_eq!(chunks, [h(2)]);
+    }
+
+    #[test]
+    fn a_failing_peer_is_given_fewer_chunks() {
+        let t0 = Instant::now();
+        let eight = Config {
+            max_in_flight_per_peer: 8,
+            initial_backoff: Duration::ZERO,
+            ..config()
+        };
+        let chunks: Vec<u8> = (1..=20).collect();
+        let mut s = Scheduler::new(&manifest(&chunks), |_| false, eight);
+        s.set_availability(1, chunks.iter().map(|&n| h(n)));
+        let asked: Vec<ChunkHash> = s
+            .next_requests(t0)
+            .into_iter()
+            .flat_map(|r| r.chunks)
+            .collect();
+        assert_eq!(asked.len(), 8);
+        s.failed(&1, &asked, t0);
+        let asked: Vec<ChunkHash> = s
+            .next_requests(t0)
+            .into_iter()
+            .flat_map(|r| r.chunks)
+            .collect();
+        assert_eq!(asked.len(), 4, "halved");
+        for hash in &asked {
+            s.received(&1, hash);
+        }
+        let more: usize = s.next_requests(t0).iter().map(|r| r.chunks.len()).sum();
+        assert_eq!(more, 8, "grown back by one per chunk received");
     }
 }

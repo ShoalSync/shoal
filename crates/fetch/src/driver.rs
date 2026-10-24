@@ -172,6 +172,10 @@ pub async fn fetch<S: ChunkSource>(
                 let mut missing = false;
                 for hash in &request.chunks {
                     match delivered.remove(hash) {
+                        // A hedged chunk's second copy: the first is in already.
+                        Some(_) if !scheduler.wanted(hash) => {
+                            scheduler.received(&request.peer, hash);
+                        }
                         Some(data) => {
                             report.chunks += 1;
                             report.bytes += data.len() as u64;
