@@ -63,13 +63,13 @@ fn an_unpackaged_program_registers_a_sync_root_and_hydrates_a_placeholder() {
     // folder, such as AppData, where temporary directories are.
     let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
     let dir = tempfile::Builder::new()
-        .prefix("Tidefell spike ")
+        .prefix("Shoal spike ")
         .tempdir_in(profile)
         .unwrap();
-    let root = dir.path().join("Tidefell spike");
+    let root = dir.path().join("Shoal spike");
     std::fs::create_dir(&root).unwrap();
 
-    let id = SyncRootIdBuilder::new("TidefellSpike")
+    let id = SyncRootIdBuilder::new("ShoalSpike")
         .user_security_id(SecurityId::current_user().unwrap())
         .account_name("spike")
         .build();
@@ -78,7 +78,7 @@ fn an_unpackaged_program_registers_a_sync_root_and_hydrates_a_placeholder() {
     }
     let registered = id.register(
         SyncRootInfo::default()
-            .with_display_name("Tidefell spike")
+            .with_display_name("Shoal spike")
             .with_hydration_type(HydrationType::Full)
             .with_population_type(PopulationType::AlwaysFull)
             .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
@@ -107,7 +107,7 @@ fn an_unpackaged_program_registers_a_sync_root_and_hydrates_a_placeholder() {
         id.is_registered()
     );
 
-    let content = b"hello from a tidefell placeholder".to_vec();
+    let content = b"hello from a shoal placeholder".to_vec();
     let connection = Session::new()
         .connect(
             &root,

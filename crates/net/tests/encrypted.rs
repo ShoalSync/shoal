@@ -8,16 +8,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::{
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::{
     Backend, BlobKind, BlobResult, EncryptedBackend, IndexPage, ItemPage, Node, NodeConfig,
     RelayConfig,
 };
-use tidefell_proto::blobs2::BlobId;
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::sync2::{ChunkList, EncryptionKey, Item, KeyGrant, SealedVersion};
-use tidefell_proto::{
+use shoal_proto::blobs2::BlobId;
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::sync2::{ChunkList, EncryptionKey, Item, KeyGrant, SealedVersion};
+use shoal_proto::{
     ChunkHash, ChunkId, ContentHash, DeviceId, EntryId, FolderId, KeyId, Manifest, Signed, UserId,
 };
 use tokio::sync::watch;

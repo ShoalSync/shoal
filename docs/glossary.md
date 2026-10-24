@@ -1,12 +1,12 @@
 # Glossary
 
-Every Tidefell repository uses these terms in the sense defined here. Code identifiers follow
+Every Shoal repository uses these terms in the sense defined here. Code identifiers follow
 the same names (`Folder`, `Replica`, `Tombstone`, ...). If you need a new term, add it here in
 the same pull request that introduces it.
 
 | Term | Meaning |
 | --- | --- |
-| **Peer** | Any running Tidefell node: daemon, desktop, Android app or web peer. All peers speak the same protocols. |
+| **Peer** | Any running Shoal node: daemon, desktop, Android app or web peer. All peers speak the same protocols. |
 | **Device** | A peer's durable identity: an Ed25519 key pair generated on first run. A device belongs to exactly one user. `DeviceId` is the public key, and is also the device's iroh endpoint ID. |
 | **User** | A person's identity: an Ed25519 key pair that signs device certificates. `UserId` is the public key. Folder membership is granted to users, not devices. |
 | **Folder** | A directory tree shared between a set of devices. Identified by a random 32-byte `FolderId`. The unit of membership and sync. |
@@ -18,7 +18,7 @@ the same pull request that introduces it.
 | **Placeholder** | A file that is visible in a partial replica's file system but whose content is not stored locally. Opening it fetches the content on demand. |
 | **Pin** | A file or directory a partial replica keeps on disk (ADR 0029): fetched in the background, kept up to date and never evicted, and not counted against the budget. Pins are per device. Not to be confused with a file *held open*, which is only kept while in use. |
 | **Materialised** | A partial replica's file whose content has been fetched and written to disk. Eviction turns it back into a placeholder. |
-| **Mount point** | The directory where `tidefelld` shows a folder through FUSE. Opening a placeholder there fetches it; the folder's own directory is then only backing storage. |
+| **Mount point** | The directory where `shoald` shows a folder through FUSE. Opening a placeholder there fetches it; the folder's own directory is then only backing storage. |
 | **Chunk** | A contiguous piece of file content produced by FastCDC. Identified by its BLAKE3 hash (`ChunkHash`). Chunks are content-addressed and deduplicated. |
 | **Manifest** | The ordered list of chunks (hash and length) that make up one version of a file's content. |
 | **Content hash** | BLAKE3 hash of a file's full content. Identifies a manifest. |
@@ -44,12 +44,12 @@ the same pull request that introduces it.
 | **Confirmed copy** | A full replica, other than this device, that has reported holding every chunk of a file this device made. Partial replicas evict such a file only once it has one (ADR 0022). |
 | **Swarm fetch** | Downloading one file's chunks from several peers at once. |
 | **Rarest-first** | Fetch ordering that requests the chunks held by the fewest peers first. |
-| **ALPN** | The QUIC protocol identifier negotiated per connection, e.g. `tidefell/sync/1`. One spec per ALPN. |
+| **ALPN** | The QUIC protocol identifier negotiated per connection, e.g. `shoal/sync/1`. One spec per ALPN. |
 | **Relay** | An iroh relay server used when direct connections between peers fail. |
 | **Address lookup** | Resolving a `DeviceId` to current network addresses, via DNS/pkarr or local discovery. |
 | **Web peer** | A peer that also serves the browser UI and manages user accounts and sessions. |
 | **Web account** | A username and password on one web peer, linked to a user. It sees exactly the folders that user is a member of. |
-| **Control socket** | `<data_dir>/control.sock`, where a daemon serves its REST API to local tools such as `tidefell`. |
+| **Control socket** | `<data_dir>/control.sock`, where a daemon serves its REST API to local tools such as `shoal`. |
 | **Signed envelope** | A wire message wrapped with the signer's public key and an Ed25519 signature. |
 | **Pairing** | Adding a new device to a user over the network with `pair/2`: a device holding the user key certifies the new device after the person confirms a code on both. |
 | **Pairing code** | What a new device shows to be paired: its device ID, a one-time secret and its addresses. Shown as a QR code or text. Expires after ten minutes or one use. |

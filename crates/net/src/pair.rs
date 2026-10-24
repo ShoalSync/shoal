@@ -1,4 +1,4 @@
-//! `tidefell/pair/2`: adding a new device to a user. See `specs/pair-v2.md` and ADR 0015.
+//! `shoal/pair/2`: adding a new device to a user. See `specs/pair-v2.md` and ADR 0015.
 //!
 //! The new device runs a [`PairingServer`], a pairing-only endpoint that shows a
 //! [`PairingCode`]. A device holding the user key calls [`crate::Node::pair`] with the code, shows
@@ -11,10 +11,10 @@ use std::time::{Duration, Instant};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use tidefell_identity::pairing;
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
-use tidefell_proto::{DeviceId, PublicKey, Signed, ALPN_PAIR_V2};
+use shoal_identity::pairing;
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::pair::{FolderOffer, PairErrorCode, PairMessage, PairingCode};
+use shoal_proto::{DeviceId, PublicKey, Signed, ALPN_PAIR_V2};
 use tokio::sync::mpsc;
 use tracing::debug;
 

@@ -1,11 +1,11 @@
-//! Pairing secrets, proofs and confirmation codes for `tidefell/pair/2` (see
+//! Pairing secrets, proofs and confirmation codes for `shoal/pair/2` (see
 //! `specs/pair-v2.md`).
 
-use tidefell_proto::DeviceId;
+use shoal_proto::DeviceId;
 
 use crate::Error;
 
-const KEY_CONTEXT: &str = "tidefell pair/1 secret";
+const KEY_CONTEXT: &str = "shoal pair/1 secret";
 
 fn key(secret: &[u8; 16]) -> [u8; 32] {
     blake3::derive_key(KEY_CONTEXT, secret)
@@ -77,8 +77,8 @@ mod tests {
         assert_eq!(code, EXPECTED_CODE);
     }
 
-    const EXPECTED_PROOF_PREFIX: &str = "d4eeaef2fda0daad";
-    const EXPECTED_CODE: &str = "101467";
+    const EXPECTED_PROOF_PREFIX: &str = "646fd70565f0f8e7";
+    const EXPECTED_CODE: &str = "742911";
 
     fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|b| format!("{b:02x}")).collect()

@@ -1,6 +1,6 @@
-# Tidefell
+# Shoal
 
-Tidefell is open-source, peer-to-peer file sync with the feel of Dropbox, OneDrive or
+Shoal is open-source, peer-to-peer file sync with the feel of Dropbox, OneDrive or
 Nextcloud, but with no central server.
 
 - **Every device is a peer.** Some run as *full replicas* that keep everything (a NAS, a home
@@ -13,7 +13,7 @@ Nextcloud, but with no central server.
 - **Deletes are recoverable.** Deleted files go to a recycle bin and are kept for a
   [retention period](guide/recycle-bin.md#retention) each device chooses per folder.
 
-This book covers installing and running Tidefell, self-hosting it, the protocols it speaks,
+This book covers installing and running Shoal, self-hosting it, the protocols it speaks,
 and how the project is organised. Terms in *italics* are defined in the
 [glossary](glossary.md).
 
@@ -23,5 +23,5 @@ and how the project is organised. Terms in *italics* are defined in the
 ## Where things live
 
 These pages are built from the `docs/` directory of the
-[monorepo](https://github.com/tidefell/tidefell). Each release publishes the book built from
+[monorepo](https://github.com/ShoalSync/shoal). Each release publishes the book built from
 its tag, so the documentation always matches the version it describes.

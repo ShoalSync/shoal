@@ -1,4 +1,4 @@
-//! A device's identity files in its data directory, shared by `tidefelld` and the mobile apps.
+//! A device's identity files in its data directory, shared by `shoald` and the mobile apps.
 //!
 //! ```text
 //! <data>/device.key    this device's key (created on first use)
@@ -8,9 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::Signed;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::Signed;
 
 use crate::{Error, Result};
 
@@ -29,7 +29,7 @@ pub fn user_key_path(data_dir: &Path) -> PathBuf {
     data_dir.join("user.key")
 }
 
-fn identity_err(path: &Path) -> impl FnOnce(tidefell_identity::Error) -> Error + '_ {
+fn identity_err(path: &Path) -> impl FnOnce(shoal_identity::Error) -> Error + '_ {
     move |e| Error::Invalid(format!("{}: {e}", path.display()))
 }
 
@@ -47,7 +47,7 @@ pub fn certificate(data_dir: &Path, key: &DeviceKey) -> Result<Option<Signed<Dev
     if !path.exists() {
         return Ok(None);
     }
-    let certificate = tidefell_identity::load_certificate(&path).map_err(identity_err(&path))?;
+    let certificate = shoal_identity::load_certificate(&path).map_err(identity_err(&path))?;
     let body = certificate
         .verify_certificate()
         .map_err(|e| Error::Invalid(format!("{}: {e}", path.display())))?;
@@ -63,7 +63,7 @@ pub fn certificate(data_dir: &Path, key: &DeviceKey) -> Result<Option<Signed<Dev
 /// Stores this device's certificate.
 pub fn save_certificate(data_dir: &Path, certificate: &Signed<DeviceCertificate>) -> Result<()> {
     let path = certificate_path(data_dir);
-    tidefell_identity::save_certificate(&path, certificate).map_err(identity_err(&path))
+    shoal_identity::save_certificate(&path, certificate).map_err(identity_err(&path))
 }
 
 /// Loads the user key, if this device holds one.

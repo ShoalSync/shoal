@@ -1,16 +1,16 @@
-//! The supervisor against a real `tidefelld`: it starts the daemon, pauses and resumes it
+//! The supervisor against a real `shoald`: it starts the daemon, pauses and resumes it
 //! through its API, starts it again when it stops unasked, and stops it on quitting. Runs where
-//! `tidefelld` has been built, as `cargo test --workspace` builds it, or where `TIDEFELLD`
+//! `shoald` has been built, as `cargo test --workspace` builds it, or where `SHOALD`
 //! names one; skipped otherwise.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod common;
-use common::{set_up, tidefelld};
-use tidefell_sdk::Client;
-use tidefell_tray::supervisor::{supervise, Command as Ask, Snapshot};
-use tidefell_tray::view::Daemon;
+use common::{set_up, shoald};
+use shoal_sdk::Client;
+use shoal_tray::supervisor::{supervise, Command as Ask, Snapshot};
+use shoal_tray::view::Daemon;
 use tokio::sync::mpsc;
 
 async fn until(
@@ -29,8 +29,8 @@ async fn until(
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_tray_runs_the_daemon() {
-    let Some(daemon) = tidefelld() else {
-        eprintln!("skipping: tidefelld is not built");
+    let Some(daemon) = shoald() else {
+        eprintln!("skipping: shoald is not built");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -82,8 +82,8 @@ async fn the_tray_runs_the_daemon() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_daemon_that_cannot_start_is_reported() {
-    let Some(daemon) = tidefelld() else {
-        eprintln!("skipping: tidefelld is not built");
+    let Some(daemon) = shoald() else {
+        eprintln!("skipping: shoald is not built");
         return;
     };
     let dir = tempfile::tempdir().unwrap();

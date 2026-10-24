@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use tidefell_sdk::types::{Folder, FolderState, Status};
+use shoal_sdk::types::{Folder, FolderState, Status};
 
 /// Where the daemon is, as the supervisor sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,10 +55,10 @@ pub struct View {
 /// The tray's view of `daemon`, with its `status` and `folders` once it answers.
 pub fn view(daemon: &Daemon, status: Option<&Status>, folders: &[Folder]) -> View {
     let summary = match (daemon, status) {
-        (Daemon::NotSetUp, _) => "Tidefell is not set up on this device".to_owned(),
-        (Daemon::Starting, _) | (Daemon::Running, None) => "Tidefell is starting".to_owned(),
-        (Daemon::Stopping, _) => "Tidefell is stopping".to_owned(),
-        (Daemon::Failed(reason), _) => format!("Tidefell stopped: {reason}"),
+        (Daemon::NotSetUp, _) => "Shoal is not set up on this device".to_owned(),
+        (Daemon::Starting, _) | (Daemon::Running, None) => "Shoal is starting".to_owned(),
+        (Daemon::Stopping, _) => "Shoal is stopping".to_owned(),
+        (Daemon::Failed(reason), _) => format!("Shoal stopped: {reason}"),
         (Daemon::Running, Some(status)) => summary(status, folders),
     };
     let running = matches!(daemon, Daemon::Running) && status.is_some();
@@ -257,13 +257,13 @@ mod tests {
     #[test]
     fn offers_nothing_while_the_daemon_does_not_answer() {
         for (daemon, summary) in [
-            (Daemon::NotSetUp, "Tidefell is not set up on this device"),
-            (Daemon::Starting, "Tidefell is starting"),
-            (Daemon::Running, "Tidefell is starting"),
-            (Daemon::Stopping, "Tidefell is stopping"),
+            (Daemon::NotSetUp, "Shoal is not set up on this device"),
+            (Daemon::Starting, "Shoal is starting"),
+            (Daemon::Running, "Shoal is starting"),
+            (Daemon::Stopping, "Shoal is stopping"),
             (
                 Daemon::Failed("its configuration is not valid".into()),
-                "Tidefell stopped: its configuration is not valid",
+                "Shoal stopped: its configuration is not valid",
             ),
         ] {
             let shown = view(&daemon, None, &[]);

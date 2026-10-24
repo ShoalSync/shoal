@@ -1,4 +1,4 @@
-//! `tidefell/blobs/2`: encrypted folders' sealed chunks and list blobs. See `specs/blobs-v2.md`.
+//! `shoal/blobs/2`: encrypted folders' sealed chunks and list blobs. See `specs/blobs-v2.md`.
 //!
 //! The requester checks what anyone can: a list blob against its ID, and each blob's size. A
 //! sealed chunk is opened and checked by whoever holds the folder key, above this crate.
@@ -7,12 +7,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use tidefell_proto::blobs2::{
+use shoal_proto::blobs2::{
     BlobId, BlobsErrorCode, BlobsMessage, MAX_BLOBS_PER_AVAILABILITY, MAX_BLOBS_PER_REQUEST,
     MAX_SEALED_CHUNK,
 };
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::{FolderId, Signed};
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::{FolderId, Signed};
 
 use crate::backend::EncryptedBackend;
 use crate::limits::RateLimiter;
@@ -241,7 +241,7 @@ pub(crate) async fn fetch_blobs(
                 let fits = match kind {
                     BlobKind::SealedChunk => data.len() <= MAX_SEALED_CHUNK,
                     BlobKind::List => {
-                        data.len() <= tidefell_proto::blobs2::MAX_LIST_BLOB
+                        data.len() <= shoal_proto::blobs2::MAX_LIST_BLOB
                             && blake3::hash(&data).as_bytes() == id.as_bytes()
                     }
                 };

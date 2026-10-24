@@ -1,14 +1,14 @@
 [package]
-name = "tidefell-cli"
+name = "shoal-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: binary `tidefell`"
+description = "Shoal: binary `shoal`"
 publish = false
 
 [[bin]]
-name = "tidefell"
+name = "shoal"
 path = "src/main.rs"
 
 [lints]
@@ -19,14 +19,14 @@ clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 zip.workspace = true
-tidefell-sdk.workspace = true
+shoal-sdk.workspace = true
 tokio = { workspace = true, features = ["rt"] }
 
 [dev-dependencies]
 serde_json.workspace = true
 zip.workspace = true
 tempfile.workspace = true
-tidefell-api.workspace = true
-tidefell-engine.workspace = true
-tidefell-identity.workspace = true
+shoal-api.workspace = true
+shoal-engine.workspace = true
+shoal-identity.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

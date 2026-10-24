@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The Windows installer (ADR 0042): a per-user MSI, needing no administrator rights. It installs
-  tidefell-tray, tidefelld and tidefell under %LOCALAPPDATA%\Programs\Tidefell, adds that to the
+  shoal-tray, shoald and shoal under %LOCALAPPDATA%\Programs\Shoal, adds that to the
   user's PATH, starts the tray at sign-in, and puts it in the Start menu. Built with wixl
   (msitools) by msi.sh, with Version and BinDir defined. Uninstalling leaves the data directory,
-  %LOCALAPPDATA%\Tidefell, and the folders.
+  %LOCALAPPDATA%\Shoal, and the folders.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <!-- The upgrade code is Tidefell's for ever: an install of any version replaces another. -->
-  <Product Id="*" Name="Tidefell" Manufacturer="Tidefell" Version="$(var.Version)" Language="1033"
+  <!-- The upgrade code is Shoal's for ever: an install of any version replaces another. -->
+  <Product Id="*" Name="Shoal" Manufacturer="Shoal" Version="$(var.Version)" Language="1033"
            UpgradeCode="f0262bf5-13f5-473f-b5d0-63e6f2707757">
     <Package InstallerVersion="500" Compressed="yes" InstallScope="perUser"
-             Description="Tidefell file sync" Comments="Tidefell $(var.Version)"/>
+             Description="Shoal file sync" Comments="Shoal $(var.Version)"/>
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of Tidefell is already installed."/>
-    <Media Id="1" Cabinet="tidefell.cab" EmbedCab="yes"/>
+                  DowngradeErrorMessage="A newer version of Shoal is already installed."/>
+    <Media Id="1" Cabinet="shoal.cab" EmbedCab="yes"/>
     <!-- Per user, whoever runs it. -->
     <Property Id="ALLUSERS" Value="2"/>
     <Property Id="MSIINSTALLPERUSER" Value="1"/>
@@ -24,21 +24,22 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="LocalAppDataFolder">
         <Directory Id="ProgramsDir" Name="Programs">
-          <Directory Id="INSTALLDIR" Name="Tidefell">
+          <Directory Id="INSTALLDIR" Name="Shoal">
             <Component Id="Programs" Guid="*">
               <!-- A per-user component's key is a registry value. -->
-              <RegistryValue Root="HKCU" Key="Software\Tidefell" Name="InstallDir" Type="string"
+              <RegistryValue Root="HKCU" Key="Software\Shoal" Name="InstallDir" Type="string"
                              Value="[INSTALLDIR]" KeyPath="yes"/>
-              <File Id="tray" Name="tidefell-tray.exe" Source="$(var.BinDir)/tidefell-tray.exe"/>
-              <File Id="daemon" Name="tidefelld.exe" Source="$(var.BinDir)/tidefelld.exe"/>
-              <File Id="cli" Name="tidefell.exe" Source="$(var.BinDir)/tidefell.exe"/>
-              <File Id="license" Name="LICENSE.txt" Source="$(var.BinDir)/LICENSE"/>
+              <File Id="tray" Name="shoal-tray.exe" Source="$(var.BinDir)/shoal-tray.exe"/>
+              <File Id="daemon" Name="shoald.exe" Source="$(var.BinDir)/shoald.exe"/>
+              <File Id="cli" Name="shoal.exe" Source="$(var.BinDir)/shoal.exe"/>
+              <File Id="licenseMit" Name="LICENSE-MIT.txt" Source="$(var.BinDir)/LICENSE-MIT"/>
+              <File Id="licenseApache" Name="LICENSE-APACHE.txt" Source="$(var.BinDir)/LICENSE-APACHE"/>
               <File Id="readme" Name="README.md" Source="$(var.BinDir)/README.md"/>
               <RemoveFolder Id="RemoveInstallDir" On="uninstall"/>
               <!-- The tray at sign-in. -->
               <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
-                             Name="Tidefell" Type="string" Value="&quot;[INSTALLDIR]tidefell-tray.exe&quot;"/>
-              <!-- tidefell and tidefelld in a new console. The name's "-" removes it on
+                             Name="Shoal" Type="string" Value="&quot;[INSTALLDIR]shoal-tray.exe&quot;"/>
+              <!-- shoal and shoald in a new console. The name's "-" removes it on
                    uninstalling: wixl does not add it for Permanent="no", as WiX does. -->
               <Environment Id="Path" Name="-PATH" Value="[INSTALLDIR]" Part="last" Action="set"
                            System="no" Permanent="no"/>
@@ -48,15 +49,15 @@
       </Directory>
       <Directory Id="ProgramMenuFolder">
         <Component Id="StartMenu" Guid="*">
-          <Shortcut Id="TrayShortcut" Name="Tidefell" Description="Tidefell file sync"
-                    Target="[INSTALLDIR]tidefell-tray.exe" WorkingDirectory="INSTALLDIR"/>
-          <RegistryValue Root="HKCU" Key="Software\Tidefell" Name="StartMenu" Type="integer"
+          <Shortcut Id="TrayShortcut" Name="Shoal" Description="Shoal file sync"
+                    Target="[INSTALLDIR]shoal-tray.exe" WorkingDirectory="INSTALLDIR"/>
+          <RegistryValue Root="HKCU" Key="Software\Shoal" Name="StartMenu" Type="integer"
                          Value="1" KeyPath="yes"/>
         </Component>
       </Directory>
     </Directory>
 
-    <Feature Id="Tidefell" Level="1">
+    <Feature Id="Shoal" Level="1">
       <ComponentRef Id="Programs"/>
       <ComponentRef Id="StartMenu"/>
     </Feature>

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
-use tidefell_proto::{ChunkHash, Manifest};
+use shoal_proto::{ChunkHash, Manifest};
 
 /// Scheduler limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -356,7 +356,7 @@ impl<P: Clone + Eq + Hash + Ord> Scheduler<P> {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::{ChunkRef, ContentHash};
+    use shoal_proto::{ChunkRef, ContentHash};
 
     use super::*;
 

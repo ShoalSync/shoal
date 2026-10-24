@@ -7,12 +7,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Encryption, Engine, EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::Network;
-use tidefell_proto::{DeviceId, FolderId, UserId};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::Network;
+use shoal_proto::{DeviceId, FolderId, UserId};
 
 const FOLDER: FolderId = FolderId([43; 32]);
 
@@ -223,7 +223,7 @@ async fn an_encrypted_folders_content_is_fetched_without_being_placed() {
         })
         .await;
     assert!(
-        matches!(gone, Err(tidefell_engine::Error::Unavailable(_))),
+        matches!(gone, Err(shoal_engine::Error::Unavailable(_))),
         "{gone:?}"
     );
     assert!(!wrote);
@@ -434,9 +434,9 @@ async fn storage_peer(
             confirm_deletes: Default::default(),
             encryption: Some(Encryption {
                 storage_peers: Vec::new(),
-                stored: Some(tidefell_engine::Stored {
+                stored: Some(shoal_engine::Stored {
                     quota_bytes,
-                    priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
+                    priority: shoal_engine::Stored::DEFAULT_PRIORITY,
                 }),
             }),
         }],
@@ -450,7 +450,7 @@ async fn storage_peer(
     (key, engine)
 }
 
-fn stored(engine: &Engine) -> tidefell_engine::StoredInfo {
+fn stored(engine: &Engine) -> shoal_engine::StoredInfo {
     engine
         .folders()
         .into_iter()
@@ -825,7 +825,7 @@ fn served(engine: &Engine) -> f64 {
     engine
         .metrics()
         .lines()
-        .find_map(|l| l.strip_prefix("tidefell_chunks_served_total "))
+        .find_map(|l| l.strip_prefix("shoal_chunks_served_total "))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0)
 }
@@ -885,11 +885,11 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     // The file, and its first part cut where one of its chunks ends: that part, as a file of its
     // own, is the same chunks, so the same sealed chunk IDs.
     let big = noise(16 << 20, 0x2545_f491_4f6c_dd1d);
-    let chunks = tidefell_chunker::manifest_of(&big, tidefell_chunker::Params::DEFAULT).chunks;
+    let chunks = shoal_chunker::manifest_of(&big, shoal_chunker::Params::DEFAULT).chunks;
     let half = chunks.len() / 2;
     let cut: usize = chunks[..half].iter().map(|c| c.len as usize).sum();
     assert_eq!(
-        tidefell_chunker::manifest_of(&big[..cut], tidefell_chunker::Params::DEFAULT).chunks,
+        shoal_chunker::manifest_of(&big[..cut], shoal_chunker::Params::DEFAULT).chunks,
         chunks[..half],
         "the first part is the file's first chunks"
     );
@@ -1061,7 +1061,7 @@ async fn stored_folders_fill_in_order_of_priority_under_a_total_quota() {
     let operator = UserKey::from_seed([22; 32]);
     let member_key = DeviceKey::from_seed([160; 32]);
     let storage_key = DeviceKey::from_seed([161; 32]);
-    let encrypted = |storage_peers: Vec<DeviceId>, stored: Option<tidefell_engine::Stored>| {
+    let encrypted = |storage_peers: Vec<DeviceId>, stored: Option<shoal_engine::Stored>| {
         Some(Encryption {
             storage_peers,
             stored,
@@ -1133,7 +1133,7 @@ async fn stored_folders_fill_in_order_of_priority_under_a_total_quota() {
     let stored = |priority| {
         encrypted(
             Vec::new(),
-            Some(tidefell_engine::Stored {
+            Some(shoal_engine::Stored {
                 quota_bytes: u64::MAX,
                 priority,
             }),
@@ -1206,7 +1206,7 @@ async fn stored_folders_fill_in_order_of_priority_under_a_total_quota() {
 }
 
 /// Members rank what a storage peer keeps (ADR 0023's amendment of 2026-10-22): with rules in
-/// `.tidefellpriorities`, a member device gives the storage peer each file's priority, and it
+/// `.shoalpriorities`, a member device gives the storage peer each file's priority, and it
 /// fills its quota highest first and never fetches a file ranked 0. With the author gone,
 /// another member then gets the first file whole from it, and neither of the others.
 #[tokio::test(flavor = "multi_thread")]
@@ -1250,7 +1250,7 @@ async fn a_storage_peer_fills_in_the_order_members_rank_files() {
     a.write("disc.iso", &never);
     a.write("last.bin", &last);
     a.write(
-        ".tidefellpriorities",
+        ".shoalpriorities",
         b"# rank\n200 first.bin\n0 *.iso\n50 last.bin\n",
     );
     engine_a.scan(FOLDER).await.unwrap();
@@ -1340,7 +1340,7 @@ async fn a_partial_member_ranks_files_without_the_rules_on_disk() {
     a.write("first.bin", &noise(1 << 16, 6));
     a.write("disc.iso", &noise(1 << 16, 7));
     a.write("Photos/raw/b.cr2", &noise(1 << 16, 8));
-    a.write(".tidefellpriorities", b"# rank\n200 first.bin\n0 *.iso\n");
+    a.write(".shoalpriorities", b"# rank\n200 first.bin\n0 *.iso\n");
     engine_a.scan(FOLDER).await.unwrap();
     let engine_b = b
         .start_with(
@@ -1355,7 +1355,7 @@ async fn a_partial_member_ranks_files_without_the_rules_on_disk() {
         paths(&engine_b).len() == 4 && generation(&engine_b).is_some()
     })
     .await;
-    assert!(b.read(".tidefellpriorities").is_none(), "b keeps no files");
+    assert!(b.read(".shoalpriorities").is_none(), "b keeps no files");
     eventually_for("the storage peer has the ranking from b", 60, || {
         stored(&engine_s).ranked == 4
     })
@@ -1366,20 +1366,20 @@ async fn a_partial_member_ranks_files_without_the_rules_on_disk() {
         ranked.rules,
         [(200, "first.bin".to_owned()), (0, "*.iso".to_owned())]
     );
-    let entry = |p: &tidefell_engine::Priorities, path: &str| {
+    let entry = |p: &shoal_engine::Priorities, path: &str| {
         let e = p.entries.iter().find(|e| e.path == path).unwrap();
         (e.priority, e.rule)
     };
     assert_eq!(entry(&ranked, "first.bin"), (200, Some(0)));
     assert_eq!(entry(&ranked, "disc.iso"), (0, Some(1)));
-    assert_eq!(entry(&ranked, ".tidefellpriorities"), (128, None));
+    assert_eq!(entry(&ranked, ".shoalpriorities"), (128, None));
     // Its directories too, recorded as entries or not.
     assert_eq!(entry(&ranked, "Photos"), (128, None));
     assert_eq!(entry(&ranked, "Photos/raw"), (128, None));
 
     assert!(matches!(
         engine_b.set_priority(FOLDER, "[z-a]", Some(1)).await,
-        Err(tidefell_engine::Error::Invalid(_))
+        Err(shoal_engine::Error::Invalid(_))
     ));
     let ranked = engine_b
         .set_priority(FOLDER, "first.bin", Some(10))
@@ -1387,7 +1387,7 @@ async fn a_partial_member_ranks_files_without_the_rules_on_disk() {
         .unwrap();
     assert_eq!(entry(&ranked, "first.bin"), (10, Some(1)));
     eventually_for("a has b's rules", 60, || {
-        a.read(".tidefellpriorities").as_deref() == Some(&b"# rank\n0 *.iso\n10 first.bin\n"[..])
+        a.read(".shoalpriorities").as_deref() == Some(&b"# rank\n0 *.iso\n10 first.bin\n"[..])
     })
     .await;
     assert!(
@@ -1444,10 +1444,7 @@ async fn members_see_and_drop_what_a_storage_peer_keeps() {
     a.write("first.bin", &first);
     a.write("disc.iso", &never);
     a.write("last.bin", &last);
-    a.write(
-        ".tidefellpriorities",
-        b"200 first.bin\n0 *.iso\n50 last.bin\n",
-    );
+    a.write(".shoalpriorities", b"200 first.bin\n0 *.iso\n50 last.bin\n");
     engine_a.scan(FOLDER).await.unwrap();
     let engine_b = start(&b, a.key.id()).await;
     eventually_for(

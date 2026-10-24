@@ -4,7 +4,7 @@ use std::fmt;
 
 use chacha20poly1305::aead::{Aead, Payload};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
-use tidefell_proto::{ChunkId, DeviceId, EntryId, FolderId, KeyId};
+use shoal_proto::{ChunkId, DeviceId, EntryId, FolderId, KeyId};
 
 use crate::{pad, random, unpad, Error, Result};
 
@@ -53,17 +53,17 @@ impl FolderKey {
     /// The key `key` as generation `generation`.
     pub fn new(key: [u8; 32], generation: u64) -> Self {
         let derive = |context| blake3::derive_key(context, &key);
-        let full_id = derive("tidefell 2026-10-18 folder key id");
+        let full_id = derive("shoal 2026-10-24 folder key id");
         let mut id = [0u8; KeyId::LEN];
         id.copy_from_slice(&full_id[..KeyId::LEN]);
         Self {
             key,
             generation,
             id: KeyId(id),
-            chunk_id_key: derive("tidefell 2026-10-18 chunk id"),
-            chunk_key: derive("tidefell 2026-10-18 chunk key"),
-            chunk_nonce_key: derive("tidefell 2026-10-18 chunk nonce"),
-            metadata_key: derive("tidefell 2026-10-18 metadata key"),
+            chunk_id_key: derive("shoal 2026-10-24 chunk id"),
+            chunk_key: derive("shoal 2026-10-24 chunk key"),
+            chunk_nonce_key: derive("shoal 2026-10-24 chunk nonce"),
+            metadata_key: derive("shoal 2026-10-24 metadata key"),
         }
     }
 
@@ -101,7 +101,7 @@ impl FolderKey {
 
     fn chunk_aad(&self, folder: &FolderId, id: &ChunkId) -> Vec<u8> {
         [
-            b"tidefell/chunk/1".as_slice(),
+            b"shoal/chunk/1".as_slice(),
             folder.as_bytes(),
             self.id.as_bytes(),
             id.as_bytes(),
@@ -154,7 +154,7 @@ impl FolderKey {
 
     fn payload_aad(&self, folder: &FolderId, entry: &EntryId, author: &DeviceId) -> Vec<u8> {
         [
-            b"tidefell/version/1".as_slice(),
+            b"shoal/version/1".as_slice(),
             folder.as_bytes(),
             entry.as_bytes(),
             author.as_bytes(),

@@ -9,8 +9,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use tidefell_fetch::{fetch, ChunkSource, Config, FetchError};
-use tidefell_proto::{ChunkHash, ChunkRef, ContentHash, DeviceId, Manifest};
+use shoal_fetch::{fetch, ChunkSource, Config, FetchError};
+use shoal_proto::{ChunkHash, ChunkRef, ContentHash, DeviceId, Manifest};
 use tokio::task::JoinHandle;
 
 /// About how much of a fill one window holds.

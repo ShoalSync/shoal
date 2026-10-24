@@ -3346,16 +3346,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidefell-chunker"
+name = "shoal-chunker"
 version = "0.23.1"
 dependencies = [
  "blake3",
  "fastcdc",
- "tidefell-proto",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-crypto"
+name = "shoal-crypto"
 version = "0.23.1"
 dependencies = [
  "blake3",
@@ -3365,12 +3365,12 @@ dependencies = [
  "postcard",
  "sha2",
  "thiserror 2.0.21",
- "tidefell-proto",
+ "shoal-proto",
  "x25519-dalek",
 ]
 
 [[package]]
-name = "tidefell-engine"
+name = "shoal-engine"
 version = "0.23.1"
 dependencies = [
  "aho-corasick",
@@ -3390,14 +3390,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "tidefell-chunker",
- "tidefell-crypto",
- "tidefell-fetch",
- "tidefell-identity",
- "tidefell-meta",
- "tidefell-net",
- "tidefell-proto",
- "tidefell-store",
+ "shoal-chunker",
+ "shoal-crypto",
+ "shoal-fetch",
+ "shoal-identity",
+ "shoal-meta",
+ "shoal-net",
+ "shoal-proto",
+ "shoal-store",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3407,27 +3407,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidefell-fetch"
+name = "shoal-fetch"
 version = "0.23.1"
 dependencies = [
  "thiserror 2.0.21",
- "tidefell-proto",
+ "shoal-proto",
  "tokio",
 ]
 
 [[package]]
-name = "tidefell-fuzz"
+name = "shoal-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
  "postcard",
- "tidefell-engine",
- "tidefell-meta",
- "tidefell-proto",
+ "shoal-engine",
+ "shoal-meta",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-identity"
+name = "shoal-identity"
 version = "0.23.1"
 dependencies = [
  "blake3",
@@ -3435,11 +3435,11 @@ dependencies = [
  "getrandom 0.4.3",
  "postcard",
  "thiserror 2.0.21",
- "tidefell-proto",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-meta"
+name = "shoal-meta"
 version = "0.23.1"
 dependencies = [
  "blake3",
@@ -3448,11 +3448,11 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror 2.0.21",
- "tidefell-proto",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-net"
+name = "shoal-net"
 version = "0.23.1"
 dependencies = [
  "blake3",
@@ -3464,14 +3464,14 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror 2.0.21",
- "tidefell-identity",
- "tidefell-proto",
+ "shoal-identity",
+ "shoal-proto",
  "tokio",
  "tracing",
 ]
 
 [[package]]
-name = "tidefell-proto"
+name = "shoal-proto"
 version = "0.23.1"
 dependencies = [
  "blake3",
@@ -3483,12 +3483,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidefell-store"
+name = "shoal-store"
 version = "0.23.1"
 dependencies = [
  "thiserror 2.0.21",
- "tidefell-chunker",
- "tidefell-proto",
+ "shoal-chunker",
+ "shoal-proto",
 ]
 
 [[package]]

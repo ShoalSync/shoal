@@ -3,51 +3,51 @@
 A *folder* is a directory tree synced between devices. It has a random ID and a list of member
 users; every device of a member user may sync it.
 
-`tidefell` talks to the daemon on the same machine through `<data_dir>/control.sock`. Pass
-`--data-dir` (or set `TIDEFELL_DATA_DIR`) if the data directory is not
-`~/.local/share/tidefell`, and `--json` for machine-readable output.
+`shoal` talks to the daemon on the same machine through `<data_dir>/control.sock`. Pass
+`--data-dir` (or set `SHOAL_DATA_DIR`) if the data directory is not
+`~/.local/share/shoal`, and `--json` for machine-readable output.
 
 ## Creating and joining
 
 On the first device:
 
 ```sh
-tidefell folder create ~/Photos
+shoal folder create ~/Photos
 ```
 
 This prints the new folder's ID. On each of your other devices, join it at a local path:
 
 ```sh
-tidefell folder join <folder id> /srv/photos
+shoal folder join <folder id> /srv/photos
 ```
 
 Both commands take `--retention-days` (how long deleted files stay in the recycle bin, default
-30; 0 keeps them forever; change it later with `tidefell folder retention`, see
+30; 0 keeps them forever; change it later with `shoal folder retention`, see
 [the recycle bin](recycle-bin.md#retention)) and `--member` to set the members explicitly. By
 default the only member is your own user.
 
 ### Folders on removable or network drives
 
-Creating or joining a folder creates its directory and writes `.tidefell/folder` in it, naming
-the folder. After that, Tidefell never creates the directory again. If the directory or that file
+Creating or joining a folder creates its directory and writes `.shoal/folder` in it, naming
+the folder. After that, Shoal never creates the directory again. If the directory or that file
 is missing, as when the drive holding it is not mounted, the folder is **unavailable**: nothing is
-scanned, written or deleted there, and `tidefell status` says why. Once the drive is back, the
+scanned, written or deleted there, and `shoal status` says why. Once the drive is back, the
 folder syncs again by itself, within a minute. Without this, an empty mount point would look like
 every file had been deleted, and the deletes would reach your other devices.
 
-Folders created before this check was added are given the file the first time Tidefell starts, if
-their directory holds any file Tidefell already knew about.
+Folders created before this check was added are given the file the first time Shoal starts, if
+their directory holds any file Shoal already knew about.
 
 ### Many files deleted at once
 
-If one scan finds at least 100 files deleted, more than half of the folder, Tidefell sends none
+If one scan finds at least 100 files deleted, more than half of the folder, Shoal sends none
 of those deletes and waits: a drive that went away, or a mistake, looks the same as deleting them.
-`tidefell status`, the web folder page and the app say how many are waiting. Then either:
+`shoal status`, the web folder page and the app say how many are waiting. Then either:
 
 ```sh
-tidefell folder deletes <folder id>           # which files
-tidefell folder deletes <folder id> confirm   # delete them on every device (each keeps them in its recycle bin)
-tidefell folder deletes <folder id> restore   # bring them back from your other devices
+shoal folder deletes <folder id>           # which files
+shoal folder deletes <folder id> confirm   # delete them on every device (each keeps them in its recycle bin)
+shoal folder deletes <folder id> restore   # bring them back from your other devices
 ```
 
 Putting the files back yourself also ends the wait. `confirm_deletes_over` in the
@@ -56,13 +56,13 @@ as it is found.
 
 ## Sharing with other people
 
-Add another user as a member, using the user ID they get from `tidefelld id`:
+Add another user as a member, using the user ID they get from `shoald id`:
 
 ```sh
-tidefell folder share <folder id> <their user id>
+shoal folder share <folder id> <their user id>
 ```
 
-They then join the folder on their devices with `tidefell folder join`. `tidefell folder
+They then join the folder on their devices with `shoal folder join`. `shoal folder
 unshare` removes a member; their devices stop receiving changes.
 
 ## Encrypted folders
@@ -73,34 +73,34 @@ provider, can keep a copy without reading it. Choose this when the folder is cre
 device then adds or joins it the same way:
 
 ```sh
-tidefell folder create ~/Papers --encrypted
-tidefell folder join <folder id> ~/Papers --encrypted     # on your other devices
+shoal folder create ~/Papers --encrypted
+shoal folder join <folder id> ~/Papers --encrypted     # on your other devices
 ```
 
 A device that joins gets the folder's key from a member device that holds it, once the two have
-synced; `tidefell status` shows `waiting for its key` until then, and the key generation after.
+synced; `shoal status` shows `waiting for its key` until then, and the key generation after.
 Pairing a new device offers it the folder as encrypted, so the app joins it the right way.
 
 Removing a member, or revoking a device, makes the next generation of the key, which the devices
 that remain share: what is written after that is sealed with it, so the removed member or the
 revoked device cannot read it. What it could already read, it keeps.
 
-`--storage-peer <device id>` names a storage peer when the folder is made; `tidefell folder
+`--storage-peer <device id>` names a storage peer when the folder is made; `shoal folder
 store-with` and `unstore-with` add and remove one later. In the configuration file, a folder is
 encrypted with an `[folders.encryption]` table, which can list `storage_peers`.
 
 ## Day to day
 
 ```sh
-tidefell folder list                 # folders on this device
-tidefell files <folder id>           # live files, with sizes and modification times
-tidefell folder scan <folder id>     # pick up local changes now instead of at the next scan
-tidefell events                      # follow changes as they happen
-tidefell status                      # this device, its user and the daemon version
+shoal folder list                 # folders on this device
+shoal files <folder id>           # live files, with sizes and modification times
+shoal folder scan <folder id>     # pick up local changes now instead of at the next scan
+shoal events                      # follow changes as they happen
+shoal status                      # this device, its user and the daemon version
 ```
 
 Folders listed in the configuration file are managed there and cannot be changed with
-`tidefell`. Folders created or joined with `tidefell` are stored in the data directory and
+`shoal`. Folders created or joined with `shoal` are stored in the data directory and
 survive restarts.
 
 ## Conflicts
@@ -112,18 +112,18 @@ that make the same change do not conflict, and neither does a delete against an 
 the edit wins.
 
 ```sh
-tidefell conflicts                                   # files waiting for a decision
-tidefell history <folder id> notes.txt --open conflict:<id>   # a read-only copy to compare
-tidefell resolve <folder id> notes.txt --keep conflict:<id>   # keep that version
-tidefell resolve <folder id> notes.txt --keep current         # keep the one shown now
-tidefell resolve <folder id> notes.txt --keep-both
+shoal conflicts                                   # files waiting for a decision
+shoal history <folder id> notes.txt --open conflict:<id>   # a read-only copy to compare
+shoal resolve <folder id> notes.txt --keep conflict:<id>   # keep that version
+shoal resolve <folder id> notes.txt --keep current         # keep the one shown now
+shoal resolve <folder id> notes.txt --keep-both
 ```
 
 Keeping one version sends the others to every device's recycle bin, where they stay restorable
 for its retention period; restoring one makes it a file of its own. Keeping both keeps the
 current version as the file and each other version beside it, named after the device that made
-it and the day, as in `notes (Laptop, 2026-09-27).txt`. `tidefell status` counts the files
-waiting in each folder, and `tidefell events` reports each new conflict.
+it and the day, as in `notes (Laptop, 2026-09-27).txt`. `shoal status` counts the files
+waiting in each folder, and `shoal events` reports each new conflict.
 
 Deleting a file that has a conflict does not decide it: the other version comes back as the
 file.
@@ -133,7 +133,7 @@ file.
 Not every drive can store every name. A phone's storage, SD cards, and Mac and Windows drives
 treat `Photo.jpg` and `photo.jpg` as one file, and FAT drives and Windows refuse characters
 such as `:` and `?`. Each device finds out what its drive does when a folder opens, and
-`tidefell doctor` shows it.
+`shoal doctor` shows it.
 
 - Two files whose names differ only in case are both kept on such a device: one under its own
   name and the other as `photo (conflict <id>).jpg`. Every other device keeps both names as
@@ -142,7 +142,7 @@ such as `:` and `?`. Each device finds out what its drive does when a folder ope
   that says why. Rename it everywhere to a name every device can keep:
 
   ```sh
-  tidefell rename <folder id> "notes: draft.txt" "notes - draft.txt"
+  shoal rename <folder id> "notes: draft.txt" "notes - draft.txt"
   ```
 
   The web peer and the app offer the same next to the problem.
@@ -150,7 +150,7 @@ such as `:` and `?`. Each device finds out what its drive does when a folder ope
 
 ## Ignoring files
 
-A `.tidefellignore` file at a folder's root lists paths this device neither sends nor writes.
+A `.shoalignore` file at a folder's root lists paths this device neither sends nor writes.
 It uses gitignore syntax:
 
 ```text
@@ -173,15 +173,15 @@ build/
 - Ignoring a file that already synced deletes nothing. This device stops sending changes to
   it, and deletes from other devices leave it alone.
 - Patterns are read again at every scan.
-- A file you save through Tidefell itself, in a [mounted folder](mounting.md), by uploading in
+- A file you save through Shoal itself, in a [mounted folder](mounting.md), by uploading in
   the browser or from the Android file picker, is synced even at an ignored path.
 
 ## Pausing and limiting
 
 ```sh
-tidefell pause <folder id>     # or `tidefell pause` for every folder on this device
-tidefell resume <folder id>
-tidefell limits --upload 1024 --download 4096    # KiB/s until the daemon restarts; 0 for none
+shoal pause <folder id>     # or `shoal pause` for every folder on this device
+shoal resume <folder id>
+shoal limits --upload 1024 --download 4096    # KiB/s until the daemon restarts; 0 for none
 ```
 
 A paused folder still notices your changes, but sends and receives nothing until you resume it,
@@ -194,14 +194,14 @@ A device with little space can keep only some of a folder's files. Add `--partia
 creating or joining:
 
 ```sh
-tidefell folder join <folder id> ~/Photos --partial 5000000000
+shoal folder join <folder id> ~/Photos --partial 5000000000
 ```
 
-Every file still appears in `tidefell files`, but files made on other devices are
+Every file still appears in `shoal files`, but files made on other devices are
 *placeholders* until you fetch them:
 
 ```sh
-tidefell fetch <folder id> 2024/beach.jpg    # prints where the file is on disk
+shoal fetch <folder id> 2024/beach.jpg    # prints where the file is on disk
 ```
 
 Files you create or edit on the device are synced as usual. When the folder's files on disk
@@ -212,12 +212,12 @@ full replica the folder can grow past its budget.
 To keep a file or a whole directory on the device, for use offline, pin it:
 
 ```sh
-tidefell pin <folder id> 2024/holiday     # fetched now, kept up to date, never evicted
-tidefell pins <folder id>
-tidefell unpin <folder id> 2024/holiday
+shoal pin <folder id> 2024/holiday     # fetched now, kept up to date, never evicted
+shoal pins <folder id>
+shoal unpin <folder id> 2024/holiday
 ```
 
-Pinned files do not count against the budget; `tidefell status` shows how much they take.
+Pinned files do not count against the budget; `shoal status` shows how much they take.
 
 ## Send-only folders and deletes that stay on one device
 
@@ -233,8 +233,8 @@ Two settings change how a folder syncs on one device. Other devices keep their o
 Set them when creating or joining a folder, or change them later:
 
 ```sh
-tidefell folder join <folder id> ~/Camera --direction send-only --local-deletes this-device
-tidefell folder sync <folder id> --direction both
+shoal folder join <folder id> ~/Camera --direction send-only --local-deletes this-device
+shoal folder sync <folder id> --direction both
 ```
 
 To delete a file everywhere from such a device, delete it with the app or the API rather than
@@ -245,7 +245,7 @@ To free space on one device while keeping a file on the others, remove it from t
 only:
 
 ```sh
-tidefell remove-here <folder id> 2024/beach.jpg
+shoal remove-here <folder id> 2024/beach.jpg
 ```
 
 The file moves to this device's [recycle bin](recycle-bin.md), marked `removed here`, and is
@@ -258,8 +258,8 @@ Every device keeps track of which full replicas, such as a NAS or an
 [always-on peer](always-on.md), have confirmed holding the files it made. Until one has, the
 device may hold the only copy:
 
-- `tidefell files` marks such files `only on this device`;
-- `tidefell status` counts them per folder;
+- `shoal files` marks such files `only on this device`;
+- `shoal status` counts them per folder;
 - the web peer marks them `only on this server`.
 
 Another partial replica holding a file does not count, because it may drop the file again. A
@@ -274,16 +274,16 @@ from any program.
 Each folder's metadata is a database in the metadata directory. If it is damaged or lost, the
 folder is rebuilt: the files on disk are matched to what other devices send, and the recycle
 bin and previous versions come back from the small `.json` files kept beside them in
-`.tidefell/`. The folder shows as *rebuilding* until a device sharing it has sent its index;
+`.shoal/`. The folder shows as *rebuilding* until a device sharing it has sent its index;
 until then files only on this device are not synced, and nothing is deleted. Other folders sync
 throughout. Pins, sync options and retention are kept with the device's settings, not the
 folder's metadata, so a rebuild keeps them.
 
-The databases are checked when the daemon starts, every day, and by `tidefell doctor`. To
+The databases are checked when the daemon starts, every day, and by `shoal doctor`. To
 rebuild a folder whose metadata seems wrong:
 
 ```sh
-tidefell folder rebuild <folder id>
+shoal folder rebuild <folder id>
 ```
 
 The old database is kept beside the new one as `<folder id>.corrupt-<time>`.
@@ -291,7 +291,7 @@ The old database is kept beside the new one as `<folder id>.corrupt-<time>`.
 ## Leaving a folder
 
 ```sh
-tidefell folder remove <folder id>
+shoal folder remove <folder id>
 ```
 
 The device stops syncing the folder and forgets its metadata. Files on disk are kept.

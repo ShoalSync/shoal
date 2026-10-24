@@ -33,7 +33,7 @@ def main():
         ("dropped", variant(7, u(1234), u(321_000_000))),
     ]
     out = {
-        "alpn": "tidefell/storage/1",
+        "alpn": "shoal/storage/1",
         "spec": "specs/storage-v1.md",
         "encoding": "varint length prefix + postcard",
         "vectors": [{"name": name, "frame": frame(body).hex()} for name, body in messages],

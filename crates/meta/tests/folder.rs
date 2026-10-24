@@ -1,8 +1,8 @@
 use ed25519_dalek::SigningKey;
-use tidefell_meta::Wire;
-use tidefell_meta::{Applied, Error, Folder, Retention};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
+use shoal_meta::Wire;
+use shoal_meta::{Applied, Error, Folder, Retention};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId, Signed};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 const DAY_MS: i64 = 86_400_000;
@@ -417,7 +417,7 @@ fn equal_vectors_with_different_content_converge() {
 
 #[test]
 fn counters_have_a_ceiling() {
-    let ceiling = tidefell_proto::MAX_COUNTER;
+    let ceiling = shoal_proto::MAX_COUNTER;
     let mut b = replica(2);
     // A peer may not send a counter above the ceiling, for any device.
     let over = version_with(1, file(1), 1, &[(1, 1), (2, ceiling + 1)]);
@@ -437,9 +437,9 @@ fn counters_have_a_ceiling() {
 }
 
 #[test]
-fn tidefell_directory_is_reserved() {
+fn shoal_directory_is_reserved() {
     let mut a = replica(1);
-    for path in [".tidefell", ".tidefell/tmp/x", ".tidefell/mount/y"] {
+    for path in [".shoal", ".shoal/tmp/x", ".shoal/mount/y"] {
         assert!(
             matches!(
                 a.local_change(&key(1), E, path, file(1), 1),
@@ -449,7 +449,7 @@ fn tidefell_directory_is_reserved() {
         );
     }
     // Only the first component is reserved.
-    a.local_change(&key(1), E, "docs/.tidefell", file(1), 1)
+    a.local_change(&key(1), E, "docs/.shoal", file(1), 1)
         .unwrap();
 }
 
@@ -491,7 +491,7 @@ fn a_change_on_a_stale_base_leaves_a_hole() {
     assert_eq!(third.get(&device(1)), 3);
     assert!(!third.contains(&device(1), 2));
     assert_eq!(a.conflicts(&E).len(), 1);
-    assert_eq!(a.conflicts(&E)[0].id, tidefell_meta::copy_id(&second));
+    assert_eq!(a.conflicts(&E)[0].id, shoal_meta::copy_id(&second));
 }
 
 /// A and B edit apart and B's edit wins. Edits to the winner, on any device, keep A's version
@@ -540,7 +540,7 @@ fn a_conflict_lasts_through_later_edits() {
     for replica in [&a, &b, &c] {
         let conflicts: Vec<_> = replica.open_conflicts(&E).collect();
         assert_eq!(conflicts.len(), 1, "A's version is still there");
-        assert_eq!(conflicts[0].id, tidefell_meta::copy_id(&va));
+        assert_eq!(conflicts[0].id, shoal_meta::copy_id(&va));
         assert_eq!(replica.current(&E), c.current(&E));
     }
 }
@@ -616,7 +616,7 @@ fn resolving_keeps_the_other_version_in_the_recycle_bin() {
         .local_change_from(&key(2), E, &all, "notes.txt", file(3), 4)
         .unwrap();
     a.apply_remote(resolve, NOW + 5).unwrap();
-    let id = tidefell_meta::copy_id(&va);
+    let id = shoal_meta::copy_id(&va);
     for r in [&a, &b] {
         assert!(r.conflicts(&E).is_empty());
         let kept = r.recycle_bin().get(&id).expect("A's version is in the bin");
@@ -665,7 +665,7 @@ fn an_edit_made_before_the_resolve_survives_it() {
     b.apply_remote(edit, NOW).unwrap();
     c.apply_remote(resolve, NOW).unwrap();
     for r in [&b, &c] {
-        assert!(r.recycle_bin().get(&tidefell_meta::copy_id(&va)).is_some());
+        assert!(r.recycle_bin().get(&shoal_meta::copy_id(&va)).is_some());
         assert_eq!(r.current(&E).unwrap().to_version().kind, file(5));
         assert_eq!(r.open_conflicts(&E).count(), 1, "the edit and the resolve");
     }
@@ -674,7 +674,7 @@ fn an_edit_made_before_the_resolve_survives_it() {
 #[test]
 fn keeping_both_leaves_nothing_in_the_bin_whatever_arrives_first() {
     let (_, mut b, _, va, _) = conflicted();
-    let id = tidefell_meta::copy_id(&va);
+    let id = shoal_meta::copy_id(&va);
     let (copy, _) = b
         .local_change_from(
             &key(2),
@@ -709,7 +709,7 @@ fn keeping_the_other_version_bins_the_winner() {
         .local_change_from(&key(1), E, &all, "notes.txt", file(2), 4)
         .unwrap();
     b.apply_remote(resolve, NOW).unwrap();
-    let id = tidefell_meta::copy_id(&vb);
+    let id = shoal_meta::copy_id(&vb);
     for r in [&a, &b] {
         assert_eq!(r.current(&E).unwrap().to_version().kind, file(2));
         assert_eq!(r.recycle_bin().get(&id).unwrap().version.kind, file(3));
@@ -739,7 +739,7 @@ fn ordinary_edits_bin_nothing() {
 
 #[test]
 fn changes_are_noted_for_the_activity_log() {
-    use tidefell_meta::ChangeKind;
+    use shoal_meta::ChangeKind;
 
     let mut a = replica(1);
     let mut b = replica(2);

@@ -7,7 +7,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_proto::{ChunkHash, Manifest};
+use shoal_proto::{ChunkHash, Manifest};
 use tokio::task::{JoinError, JoinSet};
 use tokio::time::Instant;
 

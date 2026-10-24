@@ -1,4 +1,4 @@
-package org.tidefell.ffi
+package org.shoalsync.ffi
 
 import java.io.File as JFile
 import java.net.ServerSocket
@@ -17,11 +17,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
- * The Android flow on the JVM: pair with a real `tidefelld` that holds the user key, join its
+ * The Android flow on the JVM: pair with a real `shoald` that holds the user key, join its
  * folder as a partial replica, open a placeholder and save a file back.
  */
 class PairAndSyncTest {
-    private val bin = JFile(System.getProperty("tidefell.bin"))
+    private val bin = JFile(System.getProperty("shoal.bin"))
     private val network =
         Network(relay = Relay.Disabled, addressLookup = false, localDiscovery = false, bind = "127.0.0.1:0")
 
@@ -51,16 +51,16 @@ class PairAndSyncTest {
 
     @Test
     fun pairJoinOpenAndSave() = runBlocking {
-        val root = Files.createTempDirectory("tidefell-jvm").toFile()
+        val root = Files.createTempDirectory("shoal-jvm").toFile()
         try {
-            // The laptop: tidefelld with the user key and a folder holding one file.
+            // The laptop: shoald with the user key and a folder holding one file.
             val laptopData = root.resolve("laptop/data")
             val laptopFolder = root.resolve("laptop/Photos").apply { mkdirs() }
             laptopFolder.resolve("beach.jpg").writeText("sand and sea")
-            run("$bin/tidefelld", "init", "--data-dir", laptopData.path, "--name", "laptop")
-            val user = field(run("$bin/tidefelld", "id", "--data-dir", laptopData.path), "user")
-            val folderId = run("$bin/tidefelld", "new-folder-id").trim()
-            val config = root.resolve("laptop/tidefelld.toml")
+            run("$bin/shoald", "init", "--data-dir", laptopData.path, "--name", "laptop")
+            val user = field(run("$bin/shoald", "id", "--data-dir", laptopData.path), "user")
+            val folderId = run("$bin/shoald", "new-folder-id").trim()
+            val config = root.resolve("laptop/shoald.toml")
             config.writeText(
                 """
                 data_dir = "${laptopData.path}"
@@ -79,8 +79,8 @@ class PairAndSyncTest {
                 scan_interval_secs = 1
                 """.trimIndent(),
             )
-            val daemon = ProcessBuilder("$bin/tidefelld", "run", "--config", config.path)
-                .apply { environment()["RUST_LOG"] = "info,tidefell_net=debug,tidefell_engine=debug" }
+            val daemon = ProcessBuilder("$bin/shoald", "run", "--config", config.path)
+                .apply { environment()["RUST_LOG"] = "info,shoal_net=debug,shoal_engine=debug" }
                 .redirectErrorStream(true)
                 .redirectOutput(root.resolve("laptop/daemon.log"))
                 .start()
@@ -89,18 +89,18 @@ class PairAndSyncTest {
 
                 // The phone.
                 val phoneData = root.resolve("phone").path
-                assertTrue(initDiagnostics(phoneData, "info,tidefell_net=debug,tidefell_engine=debug"))
+                assertTrue(initDiagnostics(phoneData, "info,shoal_net=debug,shoal_engine=debug"))
                 log(LogLevel.INFO, "PairAndSyncTest", "the app's own message")
-                val logFile = JFile(phoneData, "logs/tidefell.log")
+                val logFile = JFile(phoneData, "logs/shoal.log")
                 assertTrue(logFile.readText().contains("the app's own message"))
                 val device = deviceId(phoneData)
                 assertFalse(isPaired(phoneData))
-                assertFailsWith<TidefellException.NotPaired> { Node.start(phoneData, network) }
+                assertFailsWith<ShoalException.NotPaired> { Node.start(phoneData, network) }
 
                 val pairing = Pairing.start(phoneData, network, "JVM phone")
                 assertTrue(pairing.code().startsWith("TFP1-"))
                 val approve = async(kotlinx.coroutines.Dispatchers.IO) {
-                    run("$bin/tidefell", "--data-dir", laptopData.path, "pair", "--yes", pairing.code())
+                    run("$bin/shoal", "--data-dir", laptopData.path, "pair", "--yes", pairing.code())
                 }
                 val confirming = assertIs<PairingUpdate.Confirming>(pairing.nextUpdate())
                 assertEquals("laptop", confirming.approverName)
@@ -146,7 +146,7 @@ class PairAndSyncTest {
                 val local = node.open(offer.id, "beach.jpg")
                 assertContentEquals("sand and sea".toByteArray(), JFile(local).readBytes())
                 node.close(offer.id, "beach.jpg")
-                assertFailsWith<TidefellException.NotFound> { node.open(offer.id, "nope.jpg") }
+                assertFailsWith<ShoalException.NotFound> { node.open(offer.id, "nope.jpg") }
 
                 // A photo taken on the phone reaches the laptop.
                 val source = root.resolve("camera.tmp").apply { writeText("new photo") }

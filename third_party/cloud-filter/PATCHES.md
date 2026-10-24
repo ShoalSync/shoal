@@ -1,9 +1,9 @@
-# cloud-filter: Tidefell's patches
+# cloud-filter: Shoal's patches
 
 This is `cloud-filter` 0.0.6 as published on crates.io. It is commit `1cde645` of
 <https://github.com/ho-229/cloud-filter-rs>; upstream `main` adds only example changes since.
 
-Tidefell uses it through `[patch.crates-io]` in the workspace `Cargo.toml`. The copy sits
+Shoal uses it through `[patch.crates-io]` in the workspace `Cargo.toml`. The copy sits
 outside the workspace, so the workspace's `unsafe_code = "forbid"` does not apply to it. The
 crate's tests and `Cargo.lock` are left out.
 
@@ -38,8 +38,8 @@ Mentioning that may help the maintainer accept the change.
 **Evidence:**
 - Every claim below was observed on Windows 11 25H2, under an ordinary user with no package
   identity.
-- It comes from Tidefell's spike: `crates/fs-cfapi/tests/primitives.rs`. Run it with
-  `cargo test -p tidefell-fs-cfapi --test primitives -- --ignored --nocapture`.
+- It comes from Shoal's spike: `crates/fs-cfapi/tests/primitives.rs`. Run it with
+  `cargo test -p shoal-fs-cfapi --test primitives -- --ignored --nocapture`.
 - The `primitive:` lines it prints are the findings quoted here.
 - The spike can be adapted into a test for upstream, which has a `tests/behavior` harness.
 
@@ -140,7 +140,7 @@ process at once. Three 5 s fetches answered from their own threads finished at 5
 pointer.
 
 The fix passes `x as *mut _`, as `Placeholder::update` already does. Passing `None`, as
-Tidefell does, was never affected.
+Shoal does, was never affected.
 
 ### 5. Ranges to dehydrate are passed only when there are none
 
@@ -216,7 +216,7 @@ with their values as tooltips: `StorageProviderItemPropertyDefinition` in the re
 item_property_definitions`, and `properties::set_item_properties`, with the `windows` crate's
 `implement` feature for the list it takes. Checked on Windows 11 25H2 by an unpackaged,
 unelevated process, also registering again in place over a root without the definition.
-Tidefell shows storage priorities with it (ADR 0023). Not sent upstream yet.
+Shoal shows storage priorities with it (ADR 0023). Not sent upstream yet.
 
 ## Also observed, not patched
 

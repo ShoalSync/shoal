@@ -1,7 +1,7 @@
-//! `tidefell`: command-line control of a local Tidefell daemon.
+//! `shoal`: command-line control of a local Shoal daemon.
 //!
-//! Talks to `tidefelld` over its control endpoint (`<data_dir>/control.sock`, or on Windows a
-//! named pipe named from the data directory) through the `tidefell-sdk` client only.
+//! Talks to `shoald` over its control endpoint (`<data_dir>/control.sock`, or on Windows a
+//! named pipe named from the data directory) through the `shoal-sdk` client only.
 
 mod format;
 
@@ -10,16 +10,14 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
-use tidefell_sdk::types::{
-    Direction, HeldDeletes, KnownPeer, LocalDeletes, NewFolder, SyncOptions,
-};
-use tidefell_sdk::Client;
+use shoal_sdk::types::{Direction, HeldDeletes, KnownPeer, LocalDeletes, NewFolder, SyncOptions};
+use shoal_sdk::Client;
 
 #[derive(Parser)]
-#[command(name = "tidefell", version, about = "Control a Tidefell peer")]
+#[command(name = "shoal", version, about = "Control a Shoal peer")]
 struct Cli {
     /// The daemon's data directory; its control socket is `<data_dir>/control.sock`.
-    /// Defaults to $TIDEFELL_DATA_DIR, then ~/.local/share/tidefell (%LOCALAPPDATA%\Tidefell
+    /// Defaults to $SHOAL_DATA_DIR, then ~/.local/share/shoal (%LOCALAPPDATA%\Shoal
     /// on Windows).
     #[arg(long, global = true)]
     data_dir: Option<PathBuf>,
@@ -81,7 +79,7 @@ enum Command {
     },
     /// Show the daemon's log level, or change it until the daemon restarts.
     LogLevel {
-        /// A level filter, such as `debug` or `info,tidefell_net=debug`.
+        /// A level filter, such as `debug` or `info,shoal_net=debug`.
         level: Option<String>,
     },
     /// Manage folders.
@@ -175,7 +173,7 @@ enum Command {
         /// Keep real paths and folder names.
         #[arg(long)]
         include_paths: bool,
-        /// Where to write it; `tidefell-diagnostics-<time>.zip` here if left out.
+        /// Where to write it; `shoal-diagnostics-<time>.zip` here if left out.
         #[arg(long, short)]
         output: Option<std::path::PathBuf>,
     },
@@ -199,7 +197,7 @@ enum Command {
         folder: String,
         /// Path within the folder.
         path: String,
-        /// The version to keep (`current` or `conflict:…`, from `tidefell conflicts`). The
+        /// The version to keep (`current` or `conflict:…`, from `shoal conflicts`). The
         /// others go to every device's recycle bin.
         #[arg(
             long,
@@ -348,7 +346,7 @@ enum FolderCommand {
         /// Whether other devices' changes are written here.
         #[arg(long, value_enum)]
         direction: Option<DirectionArg>,
-        /// What deleting a file here, outside Tidefell, does.
+        /// What deleting a file here, outside Shoal, does.
         #[arg(long, value_enum)]
         local_deletes: Option<LocalDeletesArg>,
     },
@@ -366,12 +364,12 @@ enum FolderCommand {
     },
     /// Rank the files matching PATTERN for the folder's storage peers: 0 to 255, higher kept
     /// first when one runs short of room, 0 never stored there; 128 if no rule says. The rule
-    /// goes in the folder's `.tidefellpriorities`, which syncs to the members' other devices
-    /// (ADR 0023). Patterns are as in `.tidefellignore`; the last that matches wins.
+    /// goes in the folder's `.shoalpriorities`, which syncs to the members' other devices
+    /// (ADR 0023). Patterns are as in `.shoalignore`; the last that matches wins.
     Priority {
         /// Folder ID.
         id: String,
-        /// Paths the rule covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+        /// Paths the rule covers, as in `.shoalignore`, such as `Photos/` or `*.iso`.
         pattern: String,
         /// The priority, 0 to 255.
         #[arg(required_unless_present = "clear")]
@@ -436,13 +434,13 @@ struct FolderOptions {
     #[arg(long, default_value_t = 30)]
     retention_days: u32,
     /// Keep only BYTES of other devices' files on disk: the rest are placeholders, fetched
-    /// with `tidefell fetch` (a partial replica).
+    /// with `shoal fetch` (a partial replica).
     #[arg(long, value_name = "BYTES")]
     partial: Option<u64>,
     /// Whether other devices' changes are written here.
     #[arg(long, value_enum, default_value_t = DirectionArg::Both)]
     direction: DirectionArg,
-    /// What deleting a file here, outside Tidefell, does.
+    /// What deleting a file here, outside Shoal, does.
     #[arg(long, value_enum, default_value_t = LocalDeletesArg::Everywhere)]
     local_deletes: LocalDeletesArg,
     /// Encrypt the folder, so storage peers can hold it without reading it (ADR 0023). Every
@@ -455,7 +453,7 @@ struct FolderOptions {
     storage_peers: Vec<String>,
 }
 
-/// What `tidefell folder deletes` does with held deletes.
+/// What `shoal folder deletes` does with held deletes.
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum DeletesArg {
     /// Delete the files on every device, each keeping them in its recycle bin.
@@ -556,7 +554,7 @@ enum PeerCommand {
 }
 
 fn default_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("TIDEFELL_DATA_DIR") {
+    if let Some(dir) = std::env::var_os("SHOAL_DATA_DIR") {
         return dir.into();
     }
     #[cfg(windows)]
@@ -565,14 +563,14 @@ fn default_data_dir() -> PathBuf {
         let local = std::env::var_os("LOCALAPPDATA")
             .map(PathBuf::from)
             .unwrap_or_default();
-        local.join("Tidefell")
+        local.join("Shoal")
     }
     #[cfg(not(windows))]
     {
         let home = std::env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_default();
-        home.join(".local/share/tidefell")
+        home.join(".local/share/shoal")
     }
 }
 
@@ -608,10 +606,10 @@ fn now_ms() -> i64 {
 
 /// Finds a recycle-bin item by entry ID, or by path (the most recent deletion wins).
 fn find_recycled<'a>(
-    bin: &'a [tidefell_sdk::types::Recycled],
+    bin: &'a [shoal_sdk::types::Recycled],
     folder: &str,
     what: &str,
-) -> Result<&'a tidefell_sdk::types::Recycled, String> {
+) -> Result<&'a shoal_sdk::types::Recycled, String> {
     bin.iter()
         .find(|r| r.entry == what)
         .or_else(|| bin.iter().find(|r| r.path == what))
@@ -629,7 +627,7 @@ fn new_folder(
         path: path.display().to_string(),
         members: options.members,
         retention_days: options.retention_days,
-        mode: options.partial.map(|_| tidefell_sdk::types::Mode::Partial),
+        mode: options.partial.map(|_| shoal_sdk::types::Mode::Partial),
         budget_bytes: options.partial,
         scan_interval_secs: None,
         sync: SyncOptions {
@@ -637,7 +635,7 @@ fn new_folder(
             local_deletes: options.local_deletes.into(),
         },
         encryption: (options.encrypted || !options.storage_peers.is_empty()).then_some(
-            tidefell_sdk::types::NewEncryption {
+            shoal_sdk::types::NewEncryption {
                 storage_peers: options.storage_peers,
             },
         ),
@@ -650,14 +648,14 @@ async fn run(cli: Cli) -> Result<(), String> {
     });
     let client = Client::local(&socket);
     let json = cli.json;
-    let e = |e: tidefell_sdk::Error| e.to_string();
+    let e = |e: shoal_sdk::Error| e.to_string();
     match cli.command {
         Command::Status => {
             #[derive(Serialize)]
             struct StatusView {
                 #[serde(flatten)]
-                status: tidefell_sdk::types::Status,
-                folders: Vec<tidefell_sdk::types::Folder>,
+                status: shoal_sdk::types::Status,
+                folders: Vec<shoal_sdk::types::Folder>,
             }
             let view = StatusView {
                 status: client.status().await.map_err(e)?,
@@ -723,7 +721,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 let secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
-                std::path::PathBuf::from(format!("tidefell-diagnostics-{secs}.zip"))
+                std::path::PathBuf::from(format!("shoal-diagnostics-{secs}.zip"))
             });
             std::fs::write(&output, &zip).map_err(|e| format!("{}: {e}", output.display()))?;
             let entries = format::zip_entries(&zip);
@@ -871,7 +869,7 @@ async fn run(cli: Cli) -> Result<(), String> {
             print(json, &settings, |l| l.level.clone());
         }
         Command::Storage => {
-            let stored: Vec<tidefell_sdk::types::Folder> = client
+            let stored: Vec<shoal_sdk::types::Folder> = client
                 .folders()
                 .await
                 .map_err(e)?
@@ -1124,9 +1122,7 @@ async fn run(cli: Cli) -> Result<(), String> {
         Command::RemoveHere { folder, path } => {
             client.remove_here(&folder, &path).await.map_err(e)?;
             print(json, &(), |_| {
-                format!(
-                    "removed {path} from this device; restore it with `tidefell recycle restore`"
-                )
+                format!("removed {path} from this device; restore it with `shoal recycle restore`")
             });
         }
         Command::Pair { code, name, yes } => {
@@ -1206,7 +1202,7 @@ async fn run(cli: Cli) -> Result<(), String> {
                 let known = client.known_peers().await.map_err(e)?;
                 #[derive(Serialize)]
                 struct Peers {
-                    connected: Vec<tidefell_sdk::types::Peer>,
+                    connected: Vec<shoal_sdk::types::Peer>,
                     known: Vec<KnownPeer>,
                 }
                 print(json, &Peers { connected, known }, |p| {
@@ -1301,14 +1297,14 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(e) => {
-            eprintln!("tidefell: {e}");
+            eprintln!("shoal: {e}");
             return ExitCode::FAILURE;
         }
     };
     match runtime.block_on(run(cli)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("tidefell: {e}");
+            eprintln!("shoal: {e}");
             ExitCode::FAILURE
         }
     }

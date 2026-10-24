@@ -311,7 +311,7 @@ mod tests {
         assert!(is_unc(Path::new(r"\\?\UNC\server\share\folder")));
         assert!(!is_unc(Path::new(r"\\?\C:\Users\ci\folder")));
         assert!(!is_unc(Path::new(r"C:\Users\ci\folder")));
-        assert!(!is_unc(Path::new(r"\\.\pipe\tidefell")));
+        assert!(!is_unc(Path::new(r"\\.\pipe\shoal")));
     }
 
     #[test]

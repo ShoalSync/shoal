@@ -1,4 +1,4 @@
-//! Starting and supervising `tidefelld` (ADR 0042): the tray is what starts it again when it
+//! Starting and supervising `shoald` (ADR 0042): the tray is what starts it again when it
 //! stops, as a service manager would.
 
 use std::collections::VecDeque;
@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
 use std::time::{Duration, Instant};
 
-use tidefell_sdk::types::{Folder, Status};
-use tidefell_sdk::Client;
+use shoal_sdk::types::{Folder, Status};
+use shoal_sdk::Client;
 use tokio::sync::mpsc;
 
 use crate::view::Daemon;
 
-/// The environment `tidefelld` runs best with: its allocator reads it as the process loads
+/// The environment `shoald` runs best with: its allocator reads it as the process loads
 /// (ADR 0035). The same as the engine's `ALLOCATOR_SETTINGS`, which a test checks, without
 /// linking the engine into the tray.
 pub const ALLOCATOR_SETTINGS: [(&str, &str); 2] = [
@@ -39,7 +39,7 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Where the daemon and its files are.
 #[derive(Debug, Clone)]
 pub struct Paths {
-    /// `tidefelld` itself.
+    /// `shoald` itself.
     pub daemon: PathBuf,
     /// Its data directory.
     pub data_dir: PathBuf,
@@ -48,26 +48,26 @@ pub struct Paths {
 }
 
 impl Paths {
-    /// The installed layout: `tidefelld` beside the tray, the data directory where the CLI
-    /// looks for it (`$TIDEFELL_DATA_DIR`, else `%LOCALAPPDATA%\Tidefell`), and the
+    /// The installed layout: `shoald` beside the tray, the data directory where the CLI
+    /// looks for it (`$SHOAL_DATA_DIR`, else `%LOCALAPPDATA%\Shoal`), and the
     /// configuration file in it.
     pub fn installed() -> Self {
-        let data_dir = std::env::var_os("TIDEFELL_DATA_DIR")
+        let data_dir = std::env::var_os("SHOAL_DATA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| {
                 std::env::var_os("LOCALAPPDATA")
                     .map(PathBuf::from)
                     .unwrap_or_default()
-                    .join("Tidefell")
+                    .join("Shoal")
             });
         let daemon = std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(Path::to_owned))
             .unwrap_or_default()
-            .join(format!("tidefelld{}", std::env::consts::EXE_SUFFIX));
+            .join(format!("shoald{}", std::env::consts::EXE_SUFFIX));
         Self {
             daemon,
-            config: data_dir.join("tidefelld.toml"),
+            config: data_dir.join("shoald.toml"),
             data_dir,
         }
     }
@@ -75,7 +75,7 @@ impl Paths {
     /// Where the daemon's standard error goes: what it says before its logs start, as when its
     /// configuration is not valid.
     pub fn stderr(&self) -> PathBuf {
-        self.data_dir.join("tidefelld.stderr.log")
+        self.data_dir.join("shoald.stderr.log")
     }
 }
 
@@ -105,7 +105,7 @@ pub struct Snapshot {
     pub error: Option<String>,
 }
 
-/// Keeps `tidefelld` running until told to quit: one already answering on the control pipe,
+/// Keeps `shoald` running until told to quit: one already answering on the control pipe,
 /// as one started by hand, is used as it is; otherwise one is started with
 /// [`ALLOCATOR_SETTINGS`] in its environment, and started again when it stops, waiting longer
 /// each time, until it has failed [`MAX_FAILURES`] times in two minutes. `publish` is given
@@ -216,7 +216,7 @@ async fn ask<T, E: std::fmt::Display>(
     call: impl std::future::Future<Output = Result<T, E>>,
 ) -> Option<String> {
     match tokio::time::timeout(REQUEST_TIMEOUT, call).await {
-        Err(_) => Some("Tidefell did not answer".to_owned()),
+        Err(_) => Some("Shoal did not answer".to_owned()),
         Ok(Err(e)) => Some(e.to_string()),
         Ok(Ok(_)) => None,
     }
@@ -272,7 +272,7 @@ fn last_line(path: &Path) -> Option<String> {
     let line = text
         .lines()
         .rev()
-        .find_map(|l| l.strip_prefix("tidefelld: "))
+        .find_map(|l| l.strip_prefix("shoald: "))
         .or_else(|| text.lines().rev().find(|l| !l.trim().is_empty()))?
         .trim();
     Some(line.chars().take(200).collect())
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn the_allocator_settings_are_the_engines() {
-        assert_eq!(ALLOCATOR_SETTINGS, tidefell_engine::ALLOCATOR_SETTINGS);
+        assert_eq!(ALLOCATOR_SETTINGS, shoal_engine::ALLOCATOR_SETTINGS);
     }
 
     #[test]
@@ -294,11 +294,7 @@ mod tests {
         assert_eq!(last_line(&path), None);
         fs::write(&path, "starting\nsomething went wrong\n\n").unwrap();
         assert_eq!(last_line(&path).as_deref(), Some("something went wrong"));
-        fs::write(
-            &path,
-            "tidefelld: config.toml: TOML parse error\n  |\n1 | x\n",
-        )
-        .unwrap();
+        fs::write(&path, "shoald: config.toml: TOML parse error\n  |\n1 | x\n").unwrap();
         assert_eq!(
             last_line(&path).as_deref(),
             Some("config.toml: TOML parse error")

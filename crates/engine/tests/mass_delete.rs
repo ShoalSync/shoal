@@ -6,11 +6,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     ConfirmDeletes, Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([38; 32]);
 const FILES: usize = 150;

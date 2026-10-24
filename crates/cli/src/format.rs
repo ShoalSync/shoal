@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use tidefell_sdk::types::{
+use shoal_sdk::types::{
     Activity, ChangeKind, Check, CheckLevel, Crash, CrashReport, Direction, Event, File, Folder,
     FolderState, KnownPeer, Limits, LocalDeletes, LogSettings, Mode, Operation, PathKind,
     PathProblem, Peer, PeerState, Problem, ProblemKind, Rebuild, Recycled, Status, SyncOptions,
@@ -117,7 +117,7 @@ pub(crate) fn parse_time(text: &str) -> Result<i64, String> {
 pub(crate) fn loss_preview(
     device: &str,
     lost_ms: i64,
-    previews: &[tidefell_sdk::types::LossPreview],
+    previews: &[shoal_sdk::types::LossPreview],
 ) -> String {
     let mut out = format!(
         "Revoking {device} as lost at {} UTC would, on this device:",
@@ -163,7 +163,7 @@ pub(crate) fn loss_preview(
     out
 }
 
-pub(crate) fn held_withdrawals(held: &[tidefell_sdk::types::HeldWithdrawals]) -> String {
+pub(crate) fn held_withdrawals(held: &[shoal_sdk::types::HeldWithdrawals]) -> String {
     if held.is_empty() {
         return "no withdrawals wait for a decision".into();
     }
@@ -198,14 +198,14 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
         );
     }
     if s.paused {
-        out.push_str("\nsyncing paused on this device: `tidefell resume` to continue");
+        out.push_str("\nsyncing paused on this device: `shoal resume` to continue");
     }
     if let Some(c) = &s.crash {
         let _ = write!(
             out,
-            "\nTidefell stopped unexpectedly at {}: {}\n  crash file: {}\n  \
-             `tidefell crashes --report` writes it up for the project's tracker; \
-             `tidefell crashes --dismiss` then stops this notice",
+            "\nShoal stopped unexpectedly at {}: {}\n  crash file: {}\n  \
+             `shoal crashes --report` writes it up for the project's tracker; \
+             `shoal crashes --dismiss` then stops this notice",
             time(c.time_ms),
             c.message,
             c.file
@@ -240,7 +240,7 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if f.problems > 0 {
                 let _ = write!(
                     out,
-                    "\n    {} path(s) with problems: `tidefell problems {}`",
+                    "\n    {} path(s) with problems: `shoal problems {}`",
                     f.problems, f.id
                 );
             }
@@ -262,7 +262,7 @@ pub(crate) fn status(s: &Status, folders: &[Folder]) -> String {
             if f.paused {
                 let _ = write!(
                     out,
-                    "\n    syncing paused: `tidefell resume {}` to continue",
+                    "\n    syncing paused: `shoal resume {}` to continue",
                     f.id
                 );
             }
@@ -326,7 +326,7 @@ fn folder_state(f: &Folder) -> String {
             None => {
                 let _ = write!(line, " ({}; {})", r.reason, waiting_for(r));
             }
-            // A rebuild is news for a week (ADR 0034); `tidefell folder list` always says.
+            // A rebuild is news for a week (ADR 0034); `shoal folder list` always says.
             Some(at) if now_ms() - at < 7 * 24 * 3600 * 1000 => {
                 let _ = write!(line, "; {}", rebuild(r));
             }
@@ -339,7 +339,7 @@ fn folder_state(f: &Folder) -> String {
     if f.held_deletes > 0 {
         let _ = write!(
             line,
-            "; {} deleted files held: `tidefell folder deletes {}`",
+            "; {} deleted files held: `shoal folder deletes {}`",
             f.held_deletes, f.id
         );
     }
@@ -410,7 +410,7 @@ pub(crate) fn activity(activity: &[Activity]) -> String {
         .join("\n")
 }
 
-/// `tidefell doctor`'s checks, one per line, with advice under warnings and failures.
+/// `shoal doctor`'s checks, one per line, with advice under warnings and failures.
 pub(crate) fn checks(checks: &[Check]) -> String {
     checks
         .iter()
@@ -517,7 +517,7 @@ pub(crate) fn encryption(f: &Folder) -> Option<String> {
 }
 
 /// What a storage peer stores of a folder, in a line.
-fn stored_line(s: &tidefell_sdk::types::StoredFolder) -> String {
+fn stored_line(s: &shoal_sdk::types::StoredFolder) -> String {
     let missing = match s.missing_chunks {
         0 => String::new(),
         n => format!(", {n} chunk(s) still to fetch"),
@@ -557,7 +557,7 @@ pub(crate) fn stored(folders: &[Folder]) -> String {
 fn conflict_note(f: &Folder) -> Option<String> {
     (f.conflicts > 0).then(|| {
         format!(
-            "{} file(s) with conflicts waiting for a decision: tidefell conflicts {}",
+            "{} file(s) with conflicts waiting for a decision: shoal conflicts {}",
             f.conflicts, f.id
         )
     })
@@ -604,7 +604,7 @@ pub(crate) fn emptied(items: &[Recycled]) -> String {
 
 pub(crate) fn folders(folders: &[Folder]) -> String {
     if folders.is_empty() {
-        return "no folders; create one with `tidefell folder create <path>`".into();
+        return "no folders; create one with `shoal folder create <path>`".into();
     }
     let mut out = String::new();
     for f in folders {
@@ -674,13 +674,13 @@ pub(crate) fn held_deletes(id: &str, paths: &[String]) -> String {
     }
     let _ = write!(
         out,
-        "`tidefell folder deletes {id} confirm` deletes them on every device;\n\
-         `tidefell folder deletes {id} restore` brings them back from your other devices"
+        "`shoal folder deletes {id} confirm` deletes them on every device;\n\
+         `shoal folder deletes {id} restore` brings them back from your other devices"
     );
     out
 }
 
-/// The answer to `tidefell folder rebuild`.
+/// The answer to `shoal folder rebuild`.
 pub(crate) fn rebuilding(f: &Folder) -> String {
     let what = f.rebuild.as_ref().map(rebuild).unwrap_or_default();
     format!(
@@ -696,7 +696,7 @@ pub(crate) fn created(f: &Folder) -> String {
         ""
     };
     format!(
-        "created folder {}\nat {}\n\nOn your other devices, run:\n  tidefell folder join {} <path>{encrypted}",
+        "created folder {}\nat {}\n\nOn your other devices, run:\n  shoal folder join {} <path>{encrypted}",
         f.id, f.path, f.id
     )
 }
@@ -844,7 +844,7 @@ pub(crate) fn versions(versions: &[Version]) -> String {
         .join("\n")
 }
 
-/// A file with versions that conflict, for `tidefell conflicts`.
+/// A file with versions that conflict, for `shoal conflicts`.
 #[derive(serde::Serialize)]
 pub(crate) struct Conflict {
     pub(crate) folder: String,
@@ -866,7 +866,7 @@ pub(crate) fn conflicts(conflicts: &[Conflict]) -> String {
                 .cloned()
                 .collect();
             format!(
-                "{} {}\n{}\n  decide with: tidefell resolve {} {:?} --keep <version> (or --keep-both)",
+                "{} {}\n{}\n  decide with: shoal resolve {} {:?} --keep <version> (or --keep-both)",
                 c.folder,
                 c.path,
                 versions(&waiting)
@@ -949,7 +949,7 @@ pub(crate) fn problems(problems: &[Problem]) -> String {
     out
 }
 
-pub(crate) fn revocations(list: &[tidefell_sdk::types::Revocation]) -> String {
+pub(crate) fn revocations(list: &[shoal_sdk::types::Revocation]) -> String {
     if list.is_empty() {
         return "no revoked devices".into();
     }
@@ -963,7 +963,7 @@ pub(crate) fn revocations(list: &[tidefell_sdk::types::Revocation]) -> String {
 }
 
 /// What each storage peer keeps of a folder, by priority.
-pub(crate) fn storage(reports: &[tidefell_sdk::types::StoragePeerReport]) -> String {
+pub(crate) fn storage(reports: &[shoal_sdk::types::StoragePeerReport]) -> String {
     if reports.is_empty() {
         return "the folder has no storage peers".to_owned();
     }
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn storage_by_priority() {
-        use tidefell_sdk::types::{StorageLevel, StoragePeerReport};
+        use shoal_sdk::types::{StorageLevel, StoragePeerReport};
         let level = |priority, bytes, held_bytes| StorageLevel {
             priority,
             files: 1,
@@ -1109,10 +1109,10 @@ mod tests {
         assert!(only_here(&folder).unwrap().ends_with("until one does)"));
 
         // On a storage peer, a stored folder says what it holds, not that it waits for a key.
-        folder.encryption = Some(tidefell_sdk::types::FolderEncryption {
+        folder.encryption = Some(shoal_sdk::types::FolderEncryption {
             storage_peers: Vec::new(),
             key_generation: None,
-            stored: Some(tidefell_sdk::types::StoredFolder {
+            stored: Some(shoal_sdk::types::StoredFolder {
                 versions: 3,
                 superseded: 1,
                 bytes: 1_000_000,
@@ -1141,8 +1141,8 @@ mod tests {
         assert!(text.starts_with("25 files were found deleted at once"));
         assert!(text.contains("  file-19\n") && !text.contains("file-20\n"));
         assert!(text.contains("and 5 more"));
-        assert!(text.contains("tidefell folder deletes f confirm"));
-        assert!(text.contains("tidefell folder deletes f restore"));
+        assert!(text.contains("shoal folder deletes f confirm"));
+        assert!(text.contains("shoal folder deletes f restore"));
     }
 
     #[test]
@@ -1186,11 +1186,11 @@ mod tests {
     fn crash_reports() {
         let mut report = CrashReport {
             title: "Crash: boom".into(),
-            body: "Tidefell stopped unexpectedly: boom\n".into(),
+            body: "Shoal stopped unexpectedly: boom\n".into(),
             url: None,
         };
         let text = crash_report(&report);
-        assert!(text.starts_with("Title: Crash: boom\n\nTidefell stopped unexpectedly: boom\n"));
+        assert!(text.starts_with("Title: Crash: boom\n\nShoal stopped unexpectedly: boom\n"));
         assert!(text.contains("Nothing has been sent"));
         report.url = Some("https://example.org/issues/new?title=x".into());
         assert!(crash_report(&report).ends_with("\nhttps://example.org/issues/new?title=x"));

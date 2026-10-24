@@ -6,8 +6,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tidefell_chunker::{chunk_reader, Params};
-use tidefell_proto::{ContentHash, EntryId};
+use shoal_chunker::{chunk_reader, Params};
+use shoal_proto::{ContentHash, EntryId};
 
 use crate::scan::{stat, RESERVED_DIR};
 use crate::state::{FolderState, LocalFile};
@@ -212,7 +212,7 @@ pub(crate) fn adopt(
             state.meta.current(&entry).is_some_and(|v| {
                 matches!(
                     v.kind,
-                    tidefell_proto::sync::EntryKind::File {
+                    shoal_proto::sync::EntryKind::File {
                         executable: true,
                         ..
                     }
@@ -393,10 +393,10 @@ mod tests {
     fn purging_hands_still_needed_content_to_the_kept_files() {
         use std::time::Duration;
 
-        use tidefell_identity::DeviceKey;
-        use tidefell_meta::Retention;
-        use tidefell_proto::sync::EntryKind;
-        use tidefell_proto::{EntryId, FolderId, UserId};
+        use shoal_identity::DeviceKey;
+        use shoal_meta::Retention;
+        use shoal_proto::sync::EntryKind;
+        use shoal_proto::{EntryId, FolderId, UserId};
 
         use crate::config::{FolderConfig, ReplicaMode};
 

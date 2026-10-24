@@ -1,5 +1,5 @@
 //! Setting up this device, before the daemon can run: as the first of your devices, with a new
-//! user key, or as a new one joining them by pairing (ADR 0015). Both run `tidefelld`, which
+//! user key, or as a new one joining them by pairing (ADR 0015). Both run `shoald`, which
 //! makes the data directory, and then write the configuration.
 
 use std::fs;
@@ -13,7 +13,7 @@ use crate::supervisor::Paths;
 pub fn config_text(paths: &Paths) -> String {
     // A TOML literal string keeps a Windows path's backslashes.
     format!(
-        "# Written by the Tidefell tray app. See the configuration guide for the rest.\n\
+        "# Written by the Shoal tray app. See the configuration guide for the rest.\n\
          data_dir = '{}'\n",
         paths.data_dir.display()
     )
@@ -78,7 +78,7 @@ pub enum Joining {
     Failed(String),
 }
 
-/// One line `tidefelld pair` prints, as it matters here.
+/// One line `shoald pair` prints, as it matters here.
 pub fn parse_line(line: &str) -> Option<Joining> {
     let (name, value) = line.split_once(':')?;
     let value = value.trim().to_owned();
@@ -89,7 +89,7 @@ pub fn parse_line(line: &str) -> Option<Joining> {
     }
 }
 
-/// Setting this device up by pairing: `tidefelld pair` running, waiting for a device with your
+/// Setting this device up by pairing: `shoald pair` running, waiting for a device with your
 /// user key to approve it. Dropping it stops waiting.
 pub struct Join {
     child: Child,
@@ -106,7 +106,7 @@ impl Join {
         Self::start_with(paths, name, &[], events)
     }
 
-    /// [`Join::start`], passing `tidefelld pair` the further `args`, as `--no-relay`.
+    /// [`Join::start`], passing `shoald pair` the further `args`, as `--no-relay`.
     pub fn start_with(
         paths: &Paths,
         name: &str,
@@ -158,12 +158,12 @@ impl Drop for Join {
     }
 }
 
-/// What `tidefelld` said as it failed, in its standard error.
+/// What `shoald` said as it failed, in its standard error.
 fn said(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     text.lines()
         .rev()
-        .find_map(|l| l.strip_prefix("tidefelld: "))
+        .find_map(|l| l.strip_prefix("shoald: "))
         .or_else(|| text.lines().rev().find(|l| !l.trim().is_empty()))
         .map_or_else(|| "it stopped".to_owned(), |l| l.trim().to_owned())
 }
@@ -189,7 +189,7 @@ mod tests {
     #[test]
     fn a_failure_says_why() {
         assert_eq!(
-            said(b"tidefelld: the pairing code expired\n"),
+            said(b"shoald: the pairing code expired\n"),
             "the pairing code expired"
         );
         assert_eq!(said(b"something else\n\n"), "something else");

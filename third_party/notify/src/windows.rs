@@ -351,7 +351,7 @@ unsafe extern "system" fn handle_event(
                 return;
             }
         }
-        // Tidefell: an overflow is reported as a rescan and the watch kept, as notify 9 does
+        // Shoal: an overflow is reported as a rescan and the watch kept, as notify 9 does
         // (third_party/notify/PATCHES.md).
         ERROR_SUCCESS | ERROR_NOTIFY_ENUM_DIR => {
             // Success, continue to handle the event
@@ -377,7 +377,7 @@ unsafe extern "system" fn handle_event(
         request.action_tx,
     );
 
-    // Tidefell: Windows reports discarded notification details as either a zero-byte successful
+    // Shoal: Windows reports discarded notification details as either a zero-byte successful
     // completion or ERROR_NOTIFY_ENUM_DIR; the buffer then holds nothing to read.
     if error_code == ERROR_NOTIFY_ENUM_DIR || bytes_written == 0 {
         if let Ok(mut guard) = request.event_handler.lock() {

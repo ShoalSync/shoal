@@ -1,14 +1,14 @@
 [package]
-name = "tidefell-daemon"
+name = "shoal-daemon"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: binary `tidefelld`: headless peer for Linux servers and NAS"
+description = "Shoal: binary `shoald`: headless peer for Linux servers and NAS"
 publish = false
 
 [[bin]]
-name = "tidefelld"
+name = "shoald"
 path = "src/main.rs"
 
 [lints]
@@ -17,24 +17,24 @@ workspace = true
 [dependencies]
 clap.workspace = true
 getrandom.workspace = true
-tidefell-api.workspace = true
-tidefell-sdk.workspace = true
-tidefell-web.workspace = true
+shoal-api.workspace = true
+shoal-sdk.workspace = true
+shoal-web.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tidefell-engine.workspace = true
-tidefell-identity.workspace = true
-tidefell-proto.workspace = true
+shoal-engine.workspace = true
+shoal-identity.workspace = true
+shoal-proto.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 toml.workspace = true
 tracing.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
-tidefell-fs-fuse.workspace = true
+shoal-fs-fuse.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-tidefell-fs-cfapi.workspace = true
+shoal-fs-cfapi.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

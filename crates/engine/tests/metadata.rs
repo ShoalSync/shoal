@@ -5,11 +5,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, Error, FolderConfig, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([34; 32]);
 
@@ -43,7 +43,7 @@ async fn start(
     config: EngineConfig,
     key: &DeviceKey,
     user: &UserKey,
-) -> tidefell_engine::Result<Engine> {
+) -> shoal_engine::Result<Engine> {
     let certificate = user.certify(key.id(), "test", 0);
     Engine::start(config, key.clone(), certificate).await
 }

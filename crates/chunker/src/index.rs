@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use tidefell_proto::{ChunkHash, ContentHash, Manifest};
+use shoal_proto::{ChunkHash, ContentHash, Manifest};
 
 /// Maps chunks to the contents that contain them.
 #[derive(Debug, Default, Clone)]
@@ -77,7 +77,7 @@ impl ChunkIndex {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::ChunkRef;
+    use shoal_proto::ChunkRef;
 
     use super::*;
 

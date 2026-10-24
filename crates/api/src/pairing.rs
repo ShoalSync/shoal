@@ -7,12 +7,10 @@ use std::time::{Duration, Instant};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
-use tidefell_engine::pairing::{parse_code, PendingPairing};
-use tidefell_engine::Engine;
-use tidefell_identity::UserKey;
-use tidefell_sdk::types::{
-    ApiError, ApprovePairing, ErrorKind, PairRequest, Pairing, RevokeRequest,
-};
+use shoal_engine::pairing::{parse_code, PendingPairing};
+use shoal_engine::Engine;
+use shoal_identity::UserKey;
+use shoal_sdk::types::{ApiError, ApprovePairing, ErrorKind, PairRequest, Pairing, RevokeRequest};
 
 use crate::handlers::ApiFailure;
 
@@ -146,7 +144,7 @@ pub(crate) async fn revoke(
             "this device does not hold the user key, so it cannot revoke devices",
         ));
     };
-    let device: tidefell_engine::DeviceId = device
+    let device: shoal_engine::DeviceId = device
         .parse()
         .map_err(|_| ApiFailure::bad_request(format!("invalid device ID {device:?}")))?;
     engine.revoke_device(user, device, request.lost_ms)?;

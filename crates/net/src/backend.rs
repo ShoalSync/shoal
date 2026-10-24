@@ -1,10 +1,10 @@
 //! The storage and policy interface a [`crate::Node`] needs. Implemented by `engine`.
 
-use tidefell_proto::blobs2::BlobId;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::sync2::Item;
-use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
+use shoal_proto::blobs2::BlobId;
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::sync2::Item;
+use shoal_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
 
 /// A page of a folder's index, for an `IndexBatch`.
@@ -133,7 +133,7 @@ pub struct ItemPage {
     pub items: Vec<Item>,
 }
 
-/// What a node needs for encrypted folders (`tidefell/sync/2`, `tidefell/blobs/2`), beside a
+/// What a node needs for encrypted folders (`shoal/sync/2`, `shoal/blobs/2`), beside a
 /// [`Backend`], which still answers for the device: its certificate, clock, revocations and the
 /// certificates it holds. Implemented by `engine` on member devices, and by a storage peer.
 ///
@@ -200,7 +200,7 @@ pub trait EncryptedBackend: Send + Sync + 'static {
         folder: &FolderId,
         from: DeviceId,
         issued_ms: i64,
-        hints: &[tidefell_proto::storage::Hint],
+        hints: &[shoal_proto::storage::Hint],
     ) -> bool {
         let _ = (folder, from, issued_ms, hints);
         false

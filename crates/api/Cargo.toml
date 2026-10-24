@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-api"
+name = "shoal-api"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: REST + gRPC surface for CLI, web and apps"
+description = "Shoal: REST + gRPC surface for CLI, web and apps"
 publish = false
 
 [lints]
@@ -13,10 +13,10 @@ workspace = true
 [dependencies]
 axum.workspace = true
 getrandom.workspace = true
-tidefell-engine.workspace = true
-tidefell-identity.workspace = true
-tidefell-proto.workspace = true
-tidefell-sdk.workspace = true
+shoal-engine.workspace = true
+shoal-identity.workspace = true
+shoal-proto.workspace = true
+shoal-sdk.workspace = true
 tokio = { workspace = true, features = ["net"] }
 tokio-stream.workspace = true
 tracing.workspace = true

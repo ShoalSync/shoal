@@ -1,1 +1,1 @@
-//! Tidefell `cli` crate: binary `tidefell`.
+//! Shoal `cli` crate: binary `shoal`.

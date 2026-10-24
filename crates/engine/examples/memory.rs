@@ -1,6 +1,6 @@
 //! Measures the engine's memory on a synthetic folder (ADR 0035).
 //!
-//! `cargo run --release -p tidefell-engine --example memory -- run <files> <bytes>` generates a
+//! `cargo run --release -p shoal-engine --example memory -- run <files> <bytes>` generates a
 //! folder of `files` sparse files, `bytes` in all, then measures a separate engine process on it:
 //! resident memory after it opens the folder, after a full scan, after repeated status reads (and
 //! the longest of those), and idle. Linux only.
@@ -13,13 +13,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use tidefell_engine::synth::{generate, SynthFolder};
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::synth::{generate, SynthFolder};
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 #[global_allocator]
-static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+static ALLOCATOR: shoal_engine::Allocator = shoal_engine::Allocator;
 
 const FOLDER: FolderId = FolderId([42; 32]);
 
@@ -117,7 +117,7 @@ async fn measure(dir: &Path) -> u64 {
 
 fn main() {
     // Measured as the engine runs (ADR 0035).
-    tidefell_engine::with_allocator_settings();
+    shoal_engine::with_allocator_settings();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("run") => {

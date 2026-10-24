@@ -4,8 +4,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::{Signed, SignedKind};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::{Signed, SignedKind};
 
 fuzz_target!(|data: &[u8]| {
     let _ = EntryVersion::decode(data);

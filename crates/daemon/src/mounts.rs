@@ -4,9 +4,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_engine::{Engine, Event};
-use tidefell_fs_fuse::{EngineFolder, Mount};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, Event};
+use shoal_fs_fuse::{EngineFolder, Mount};
+use shoal_proto::FolderId;
 use tokio::sync::broadcast::error::RecvError;
 use tokio::task::JoinHandle;
 
@@ -37,8 +37,8 @@ impl Mounts {
                 EngineFolder::new(engine.clone(), folder, tokio::runtime::Handle::current());
             // Inside the engine's reserved directory, which scans skip, on the folder's own
             // filesystem so recording a write is a rename.
-            let staging = path.join(".tidefell").join("mount");
-            let mount = tidefell_fs_fuse::mount(backend, &mountpoint, staging).map_err(|e| {
+            let staging = path.join(".shoal").join("mount");
+            let mount = shoal_fs_fuse::mount(backend, &mountpoint, staging).map_err(|e| {
                 format!(
                     "cannot mount folder {folder} at {}: {e}",
                     mountpoint.display()

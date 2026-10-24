@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Status · Tidefell{% endblock %}
+{% block title %}Status · Shoal{% endblock %}
 {% block nav %}{% include "nav.html" %}{% endblock %}
 {% block content %}
 <p><a href="/">← Folders</a></p>
@@ -7,7 +7,7 @@
 <p class="muted mono">{{ device }}</p>
 {% if let Some(c) = crash %}
 <div class="notice">
-  <p>Tidefell stopped unexpectedly at {{ c.time }}: {{ c.message }}</p>
+  <p>Shoal stopped unexpectedly at {{ c.time }}: {{ c.message }}</p>
   <p class="muted">The crash file is <span class="mono">{{ c.file }}</span> on this server.</p>
   <p><a href="/status/crashes/report?id={{ c.id }}">Report this crash</a></p>
   <form method="post" action="/status/crashes/dismiss" class="inline">

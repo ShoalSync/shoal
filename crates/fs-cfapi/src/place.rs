@@ -5,7 +5,7 @@ use std::os::windows::fs::MetadataExt;
 use std::path::{Component, Path, Prefix};
 
 use cloud_filter::root::active_roots;
-use tidefell_proto::FolderId;
+use shoal_proto::FolderId;
 
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
@@ -102,7 +102,7 @@ mod tests {
     fn a_folder_in_the_profile_can_be_one() {
         let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
         let root = tempfile::Builder::new()
-            .prefix("Tidefell place ")
+            .prefix("Shoal place ")
             .tempdir_in(profile)
             .unwrap();
         assert_eq!(unusable(root.path(), FolderId([7; 32])), None);
@@ -114,7 +114,7 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        let inside = hidden.join("Tidefell");
+        let inside = hidden.join("Shoal");
         fs::create_dir(&inside).unwrap();
         let problem = unusable(&inside, FolderId([7; 32])).unwrap();
         assert!(problem.contains("hidden"), "{problem}");

@@ -1,4 +1,4 @@
-//! Tidefell `chunker` crate: FastCDC content-defined chunking, BLAKE3 hashing, chunk index.
+//! Shoal `chunker` crate: FastCDC content-defined chunking, BLAKE3 hashing, chunk index.
 //!
 //! Content is split with FastCDC (2020), so an insertion in the middle of a file only changes
 //! the chunks around it. Every chunk is identified by its BLAKE3 hash, and the whole file by the
@@ -9,7 +9,7 @@ mod index;
 use std::io::{self, Read};
 
 use fastcdc::v2020::StreamCDC;
-use tidefell_proto::{ChunkHash, ChunkRef, ContentHash, Manifest};
+use shoal_proto::{ChunkHash, ChunkRef, ContentHash, Manifest};
 
 pub use index::ChunkIndex;
 

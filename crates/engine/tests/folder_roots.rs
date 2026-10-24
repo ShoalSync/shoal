@@ -6,9 +6,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([37; 32]);
 
@@ -124,7 +124,7 @@ async fn an_unmounted_folder_deletes_nothing() {
         b.read("photos/one.jpg").is_some() && b.read("two.txt").is_some()
     })
     .await;
-    assert!(a.root.join(".tidefell/folder").exists());
+    assert!(a.root.join(".shoal/folder").exists());
     assert_eq!(unavailable(&engine_a), None);
 
     // Unmounted while running: the watch and later scans find the root gone.
@@ -153,7 +153,7 @@ async fn an_unmounted_folder_deletes_nothing() {
     );
     assert!(matches!(
         engine_a.scan(FOLDER).await,
-        Err(tidefell_engine::Error::FolderUnavailable(..))
+        Err(shoal_engine::Error::FolderUnavailable(..))
     ));
 
     // Mounted again: syncing resumes, and nothing was lost on either side.
@@ -179,7 +179,7 @@ async fn folders_without_a_marker_are_adopted_only_if_recognised() {
     eventually("the file is recorded", || recorded(&engine, "kept.txt")).await;
     engine.shutdown().await;
 
-    let marker = a.root.join(".tidefell/folder");
+    let marker = a.root.join(".shoal/folder");
     fs::remove_file(&marker).unwrap();
     let engine = a.start(&user, false).await;
     assert_eq!(unavailable(&engine), None);

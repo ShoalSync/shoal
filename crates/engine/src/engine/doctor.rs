@@ -1,8 +1,8 @@
-//! `tidefell doctor` (ADR 0030): checks that report pass, warning or failure, with advice.
+//! `shoal doctor` (ADR 0030): checks that report pass, warning or failure, with advice.
 
 use std::path::Path;
 
-use tidefell_net::PathKind;
+use shoal_net::PathKind;
 
 use super::Engine;
 use crate::space::{self, size};
@@ -132,7 +132,7 @@ fn privacy_check(data_dir: &Path) -> Option<Check> {
                 ),
                 Some(
                     "Keep the data directory under your profile, as the default \
-                     (%LOCALAPPDATA%\\Tidefell) is, or limit its access to yourself.",
+                     (%LOCALAPPDATA%\\Shoal) is, or limit its access to yourself.",
                 ),
             )
         })
@@ -183,7 +183,7 @@ impl Engine {
                 CheckLevel::Failure,
                 format!("{path}: the metadata database is damaged: {e}"),
                 Some(
-                    "Run `tidefell folder rebuild` for the folder; it is also rebuilt at the \
+                    "Run `shoal folder rebuild` for the folder; it is also rebuilt at the \
                      daily check. Files on disk and the recycle bin are kept.",
                 ),
             );
@@ -227,7 +227,7 @@ impl Engine {
                 CheckLevel::Failure,
                 format!("folder {id} could not be opened: {error}"),
                 Some(
-                    "Fix what the error names and restart Tidefell. The folder is not synced \
+                    "Fix what the error names and restart Shoal. The folder is not synced \
                      meanwhile.",
                 ),
             ));
@@ -279,7 +279,7 @@ impl Engine {
                     "folder",
                     CheckLevel::Failure,
                     format!("{path} cannot be read and written: {e}"),
-                    Some("Give the user that runs Tidefell read and write access to the folder."),
+                    Some("Give the user that runs Shoal read and write access to the folder."),
                 ),
             });
             checks.push(self.metadata_check(folder));
@@ -409,11 +409,7 @@ mod tests {
     #[test]
     fn a_directory_in_the_profile_is_inside_it_whatever_its_case() {
         let profile = tempfile::tempdir().unwrap();
-        let data = profile
-            .path()
-            .join("AppData")
-            .join("Local")
-            .join("Tidefell");
+        let data = profile.path().join("AppData").join("Local").join("Shoal");
         std::fs::create_dir_all(&data).unwrap();
         assert!(inside(&data, profile.path()));
         let other = tempfile::tempdir().unwrap();

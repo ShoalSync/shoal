@@ -6,8 +6,8 @@ use std::io::Write;
 use std::path::Path;
 
 use ed25519_dalek::SigningKey;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::{DeviceId, Signed, UserId};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::{DeviceId, Signed, UserId};
 
 use crate::{Error, Result};
 
@@ -126,13 +126,13 @@ key_type!(
     /// A device's key pair. Its public key is the `DeviceId` and the iroh endpoint ID.
     DeviceKey,
     DeviceId,
-    "tidefell-device-key 1"
+    "shoal-device-key 1"
 );
 key_type!(
     /// A user's key pair, used to certify the user's devices.
     UserKey,
     UserId,
-    "tidefell-user-key 1"
+    "shoal-user-key 1"
 );
 
 impl UserKey {
@@ -218,7 +218,7 @@ mod tests {
         assert!(matches!(UserKey::load(&path), Err(Error::MalformedKey(_))));
 
         let bad = dir.path().join("bad.key");
-        fs::write(&bad, "tidefell-user-key 1\nzz\n").unwrap();
+        fs::write(&bad, "shoal-user-key 1\nzz\n").unwrap();
         assert!(matches!(UserKey::load(&bad), Err(Error::MalformedKey(_))));
     }
 }

@@ -30,11 +30,11 @@ A folder key is 32 random bytes. Each has a **generation**, a `u64` starting at 
 16-byte **key ID** derived from the key:
 
 ```
-key_id           = derive_key("tidefell 2026-10-18 folder key id", folder_key)[0..16]
-chunk_id_key     = derive_key("tidefell 2026-10-18 chunk id", folder_key)
-chunk_key        = derive_key("tidefell 2026-10-18 chunk key", folder_key)
-chunk_nonce_key  = derive_key("tidefell 2026-10-18 chunk nonce", folder_key)
-metadata_key     = derive_key("tidefell 2026-10-18 metadata key", folder_key)
+key_id           = derive_key("shoal 2026-10-24 folder key id", folder_key)[0..16]
+chunk_id_key     = derive_key("shoal 2026-10-24 chunk id", folder_key)
+chunk_key        = derive_key("shoal 2026-10-24 chunk key", folder_key)
+chunk_nonce_key  = derive_key("shoal 2026-10-24 chunk nonce", folder_key)
+metadata_key     = derive_key("shoal 2026-10-24 metadata key", folder_key)
 ```
 
 The key ID names a key without revealing it, and lets a device that receives a key check that it
@@ -52,7 +52,7 @@ members can compute it:
 chunk_id = keyed_hash(chunk_id_key, plaintext)
 nonce    = keyed_hash(chunk_nonce_key, chunk_id)[0..24]
 padded   = plaintext || 0x01 || 0x00 * n      (the least n ≥ 0 making len(padded) a multiple of 4096)
-aad      = "tidefell/chunk/1" || folder || key_id || chunk_id
+aad      = "shoal/chunk/1" || folder || key_id || chunk_id
 sealed   = seal(chunk_key, nonce, aad, padded)
 ```
 
@@ -91,7 +91,7 @@ other kind it is empty.
 
 ```
 padded = postcard(SealedPayload) || 0x01 || 0x00 * n   (the least n ≥ 0 making len(padded) a multiple of 64)
-aad    = "tidefell/version/1" || folder || entry || author || key_id
+aad    = "shoal/version/1" || folder || entry || author || key_id
 sealed = nonce || seal(metadata_key, nonce, aad, padded)
 ```
 
@@ -130,7 +130,7 @@ Kind `sync/2/key-grant`; signed by the granting device. `recipient_key` is the e
 the folder key is sealed to, and `enc` and `sealed` are HPKE's encapsulated key and ciphertext:
 
 ```
-info          = "tidefell/key-grant/1" || folder || u64(generation) || key || recipient || recipient_key
+info          = "shoal/key-grant/1" || folder || u64(generation) || key || recipient || recipient_key
 (enc, sealed) = HPKE.Seal(recipient_key, info, aad = "", plaintext = folder_key)
 ```
 

@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{DeviceId, EntryId, FolderId, VersionVector};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{DeviceId, EntryId, FolderId, VersionVector};
 
 use crate::folder::StoredVersion;
 
@@ -205,7 +205,7 @@ impl PartialEq<EntryVersion> for Current<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidefell_proto::ContentHash;
+    use shoal_proto::ContentHash;
 
     fn stored(version: VersionVector) -> StoredVersion {
         StoredVersion {

@@ -5,10 +5,10 @@ use std::fs;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use tidefell_engine::pairing::{self, PairingEvent};
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::pairing::{self, PairingEvent};
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([12; 32]);
 

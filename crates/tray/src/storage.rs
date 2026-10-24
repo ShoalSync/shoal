@@ -9,8 +9,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
 
-use tidefell_sdk::types::{Priorities, PriorityEntry, StorageDropResult, StoragePeerReport};
-use tidefell_sdk::Client;
+use shoal_sdk::types::{Priorities, PriorityEntry, StorageDropResult, StoragePeerReport};
+use shoal_sdk::Client;
 
 /// A file or directory priority that no rule sets.
 pub const DEFAULT_PRIORITY: u8 = 128;
@@ -323,7 +323,7 @@ impl Session {
             let load = || async {
                 let priorities = client.priorities(&folder).await?;
                 let reports = client.storage_report(&folder).await?;
-                Ok::<_, tidefell_sdk::Error>(Answer::Loaded(priorities, reports))
+                Ok::<_, shoal_sdk::Error>(Answer::Loaded(priorities, reports))
             };
             while let Ok(request) = asked.recv() {
                 let answer = runtime.block_on(async {
@@ -362,7 +362,7 @@ impl Session {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_sdk::types::{PriorityRule, StorageLevel};
+    use shoal_sdk::types::{PriorityRule, StorageLevel};
 
     use super::*;
 

@@ -1,11 +1,11 @@
-//! `tidefell/sync/2`: encrypted folders' sessions, run by [`crate::session`] over sync/2's
+//! `shoal/sync/2`: encrypted folders' sessions, run by [`crate::session`] over sync/2's
 //! messages and an [`EncryptedBackend`]. See `specs/sync-v2.md`.
 
 use std::sync::Arc;
 
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::sync2::{ErrorCode, Item, SyncMessage, MAX_BATCH_BYTES, MAX_BATCH_ITEMS};
-use tidefell_proto::{DeviceId, FolderId, Signed};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::sync2::{ErrorCode, Item, SyncMessage, MAX_BATCH_BYTES, MAX_BATCH_ITEMS};
+use shoal_proto::{DeviceId, FolderId, Signed};
 use tokio::sync::watch;
 use tracing::debug;
 
@@ -150,7 +150,7 @@ impl Protocol for V2 {
                         <= MAX_BATCH_BYTES.saturating_add(2)
             }
             SyncMessage::Hello { revocations, .. } => {
-                revocations.len() <= tidefell_proto::sync2::MAX_HELLO_REVOCATIONS
+                revocations.len() <= shoal_proto::sync2::MAX_HELLO_REVOCATIONS
             }
             _ => true,
         }

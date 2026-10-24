@@ -1,6 +1,6 @@
 # Threat model
 
-What Tidefell protects, from whom, and what it does not (ADR 0038). It describes the code as it
+What Shoal protects, from whom, and what it does not (ADR 0038). It describes the code as it
 is: each gap is listed with what is planned for it, or why it stays. A change that touches any of
 this updates this page in the same pull request; the pull request template asks.
 
@@ -33,7 +33,7 @@ this updates this page in the same pull request; the pull request template asks.
   cannot make versions in another device's name.
 - **Keys at rest.** `device.key` and `user.key` are written owner-only (0600). The user key is
   needed only to certify new devices; a phone never holds it.
-- **Local control.** `tidefelld`'s control API is a Unix socket readable and writable by its owner
+- **Local control.** `shoald`'s control API is a Unix socket readable and writable by its owner
   only (ADR 0010); there is no network API. Metrics, if turned on, are served on the address
   configured for them, without authentication: keep that address local.
 - **Pairing** (ADR 0015). A pairing code carries a 128-bit secret and the new device's ID, lasts
@@ -123,7 +123,7 @@ A user taken out of a folder's member list.
 - **Can** do everything its user's devices can until it is cut off: it holds a valid device
   certificate and key. Anyone who can read its storage has the device key.
 - **Cannot** sync with a replica that has heard it was revoked (ADR 0040, from 0.20):
-  `tidefell device revoke` on the device holding the user key signs a revocation, which every
+  `shoal device revoke` on the device holding the user key signs a revocation, which every
   peer passes on in its `Hello`, before anything else is exchanged, and keeps for good. A revoked
   device is refused at the handshake, told why, and syncs with no one once it knows.
 - **Cannot** get its changes in through another device (from 0.21): its versions are refused by
@@ -165,7 +165,7 @@ Anyone with a share link's URL.
 ### Other users on the same machine
 
 - **Cannot** read the device or user key (0600) or use the control socket (0600, owner only).
-  The NixOS module runs `tidefelld` as its own user with a data directory only it can enter
+  The NixOS module runs `shoald` as its own user with a data directory only it can enter
   (0700), and with systemd's sandboxing.
 - **Cannot** enter the data directory, or a separate `metadata_dir`, at all: each is created
   readable by its owner alone (0700), and an existing one is made so when the engine starts, which keeps the logs, the databases and
@@ -194,7 +194,7 @@ Dependencies, the build machines and the release process.
   on a runner that runs nothing else, so changing the workflow takes a reviewed change on `main`.
 - **Pull-request jobs run as a user of their own,** with no sudo and no access to developers'
   keys or tokens (ADR 0041). They reach the private monorepo only with a deploy key that can read
-  `tidefell/tidefell` and nothing else, so a hostile pull request can read the source it already
+  `shoal/shoal` and nothing else, so a hostile pull request can read the source it already
   has, not push or publish.
 - **Gap: the release runner shares a machine with the pull-request runners.** Separate users
   are a wall against accidents and cache poisoning; a pull request that escapes its user through

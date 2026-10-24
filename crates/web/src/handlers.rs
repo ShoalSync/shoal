@@ -11,8 +11,8 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::Form;
 use serde::Deserialize;
-use tidefell_engine::{FolderInfo, VersionKind};
-use tidefell_proto::{EntryId, FolderId, UserId};
+use shoal_engine::{FolderInfo, VersionKind};
+use shoal_proto::{EntryId, FolderId, UserId};
 
 use crate::format::{query_value, size, time};
 use crate::pages;
@@ -21,7 +21,7 @@ use crate::AppState;
 
 type AppStateRef = State<Arc<AppState>>;
 
-const COOKIE: &str = "tidefell_session";
+const COOKIE: &str = "shoal_session";
 
 pub(crate) fn render(page: impl Template) -> Response {
     match page.render() {
@@ -251,7 +251,7 @@ pub(crate) async fn logout(
     let mut response = Redirect::to("/login").into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_static("tidefell_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
+        HeaderValue::from_static("shoal_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"),
     );
     response
 }
@@ -283,8 +283,8 @@ pub(crate) async fn folders(State(state): AppStateRef, headers: HeaderMap) -> Re
 }
 
 /// What failed and why, such as "write: permission denied".
-fn problem_what(p: &tidefell_engine::PathProblem) -> String {
-    use tidefell_engine::{Operation, ProblemKind};
+fn problem_what(p: &shoal_engine::PathProblem) -> String {
+    use shoal_engine::{Operation, ProblemKind};
     let operation = match p.operation {
         Operation::Scan => "read",
         Operation::Fetch => "fetch",
@@ -304,7 +304,7 @@ fn problem_what(p: &tidefell_engine::PathProblem) -> String {
 
 /// What a folder is doing, in a few words: "syncing: 3 files, 2.0 MiB to fetch" (ADR 0030).
 pub(crate) fn folder_state(f: &FolderInfo) -> String {
-    use tidefell_engine::FolderState;
+    use shoal_engine::FolderState;
     let mut line = match f.state {
         FolderState::Idle => "up to date".to_owned(),
         FolderState::Scanning => "looking for changes".to_owned(),
@@ -394,7 +394,7 @@ pub(crate) async fn folder(
         held_deletes: folder.held_deletes,
         held_withdrawals: held_withdrawals(&state, folder.id),
         low_space: folder.low_space.clone(),
-        partial: matches!(folder.mode, tidefell_engine::ReplicaMode::Partial { .. }),
+        partial: matches!(folder.mode, shoal_engine::ReplicaMode::Partial { .. }),
         pinned_size: size(folder.pinned_bytes),
         conflicts: folder.conflicts,
         state: {
@@ -420,7 +420,7 @@ pub(crate) async fn folder(
             .map(|p| pages::ProblemRow {
                 what: problem_what(&p),
                 // A name this server's drive cannot store can be renamed everywhere (ADR 0033).
-                rename: p.kind == tidefell_engine::ProblemKind::NameNotAllowed,
+                rename: p.kind == shoal_engine::ProblemKind::NameNotAllowed,
                 path: p.path,
                 message: p.message,
                 since: time(p.since_ms),
@@ -468,7 +468,7 @@ pub(crate) async fn open_file(
 ) -> Result<tokio::fs::File, Box<Response>> {
     let local = match state.engine.open(folder, path).await {
         Ok(local) => local,
-        Err(tidefell_engine::Error::Unavailable(_)) => {
+        Err(shoal_engine::Error::Unavailable(_)) => {
             return Err(Box::new(
                 (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -568,7 +568,7 @@ pub(crate) async fn activity(
         .unwrap_or_default()
         .into_iter()
         .map(|a| {
-            use tidefell_engine::ChangeKind;
+            use shoal_engine::ChangeKind;
             pages::ActivityRow {
                 time: time(a.time_ms),
                 what: match a.kind {
@@ -817,7 +817,7 @@ pub(crate) async fn unpin(
 /// The revoked devices whose changes after their loss wait for a decision in `folder`.
 fn held_withdrawals(
     state: &AppState,
-    folder: tidefell_engine::FolderId,
+    folder: shoal_engine::FolderId,
 ) -> Vec<pages::HeldWithdrawalRow> {
     const SHOWN: usize = 10;
     let revocations = state.engine.revocations();
@@ -862,7 +862,7 @@ pub(crate) async fn decide_withdrawals(
     let Some(folder) = visible_folder(&state, &session, &id) else {
         return not_found();
     };
-    let Ok(device) = form.device.parse::<tidefell_engine::DeviceId>() else {
+    let Ok(device) = form.device.parse::<shoal_engine::DeviceId>() else {
         return error(StatusCode::BAD_REQUEST, "Unknown device", &form.device);
     };
     let withdraw = match form.action.as_str() {

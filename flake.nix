@@ -1,10 +1,10 @@
 {
-  description = "Tidefell: open-source peer-to-peer file sync";
+  description = "Shoal: open-source peer-to-peer file sync";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     # Builds the dependencies once per Cargo.lock as their own derivation, so a change to
-    # Tidefell's own code rebuilds only its crates.
+    # Shoal's own code rebuilds only its crates.
     crane.url = "github:ipetkov/crane";
     # The MSRV toolchain for the MSRV check.
     rust-overlay = {
@@ -70,7 +70,7 @@
               sed "s|${vendored}|$out|g" ${vendored}/config.toml > $out/config.toml
             '';
           commonArgs = {
-            pname = "tidefell";
+            pname = "shoal";
             inherit (workspace) version;
             # Everything a build or test reads.
             inherit src cargoVendorDir;
@@ -108,7 +108,7 @@
               cargoArtifacts = devArtifacts;
               doInstallCargoArtifacts = false;
               # The FUSE, mount and simulation tests (run outside the sandbox: they need /dev/fuse
-              # or take long), tidefell-ffi with tidefelld and tidefell for the Kotlin tests, and
+              # or take long), shoal-ffi with shoald and shoal for the Kotlin tests, and
               # the Kotlin bindings generated from that library. Built workspace-wide, as the
               # dependencies were: one package alone would enable other features of them and
               # build them again.
@@ -116,7 +116,7 @@
                 cargo test --locked --profile dev --workspace --no-run \
                   --message-format json-render-diagnostics > tests.json
                 cargo build --locked --profile dev --workspace
-                target/debug/uniffi-bindgen generate --library target/debug/libtidefell_ffi.so \
+                target/debug/uniffi-bindgen generate --library target/debug/libshoal_ffi.so \
                   --language kotlin --no-format --out-dir kotlin
               '';
               installPhaseCommand = ''
@@ -125,14 +125,14 @@
                   and (.target.name | IN("kernel", "mount", "seeds")))
                   | "\(.target.name) \(.executable)"' tests.json |
                   while read -r name executable; do cp "$executable" "$out/tests/$name"; done
-                cp target/debug/tidefelld target/debug/tidefell $out/bin/
-                cp target/debug/libtidefell_ffi.so $out/lib/
+                cp target/debug/shoald target/debug/shoal $out/bin/
+                cp target/debug/libshoal_ffi.so $out/lib/
                 cp -r kotlin $out/kotlin
               '';
             }
           );
 
-          # tidefell-ffi for Android (ADR 0014), as the AAR ships it: each ABI its own derivation,
+          # shoal-ffi for Android (ADR 0014), as the AAR ships it: each ABI its own derivation,
           # on dependencies built once per Cargo.lock, with the NDK that CI and releases use and
           # the rustc of the other builds. Only on x86_64 Linux, the NDK's host.
           android =
@@ -218,7 +218,7 @@
                   # What cargo-ndk sets: the NDK's clang links, and builds the C that ring and
                   # blake3 carry.
                   args = commonArgs // {
-                    pname = "tidefell-ffi-${a.abi}";
+                    pname = "shoal-ffi-${a.abi}";
                     CARGO_PROFILE = "mobile";
                     CARGO_BUILD_TARGET = a.target;
                     "CARGO_TARGET_${lib.toUpper under}_LINKER" = clang;
@@ -226,7 +226,7 @@
                     "CXX_${under}" = "${clang}++";
                     "AR_${under}" = "${bin}/llvm-ar";
                     "RANLIB_${under}" = "${bin}/llvm-ranlib";
-                    cargoExtraArgs = "--locked --package tidefell-ffi";
+                    cargoExtraArgs = "--locked --package shoal-ffi";
                     doCheck = false;
                     # Stripped by the mobile profile; the host's tools would not read the ELF.
                     dontFixup = true;
@@ -237,38 +237,38 @@
                   // {
                     cargoArtifacts = androidLib.buildDepsOnly (args // { cargoCheckCommand = "true"; });
                     doInstallCargoArtifacts = false;
-                    buildPhaseCargoCommand = "cargo build --locked --profile mobile --target ${a.target} --package tidefell-ffi";
+                    buildPhaseCargoCommand = "cargo build --locked --profile mobile --target ${a.target} --package shoal-ffi";
                     installPhaseCommand = ''
                       mkdir -p $out/${a.abi}
-                      cp target/${a.target}/mobile/libtidefell_ffi.so $out/${a.abi}/
+                      cp target/${a.target}/mobile/libshoal_ffi.so $out/${a.abi}/
                     '';
                   }
                 );
             in
             {
               inherit ndk ndkRoot;
-              # libtidefell_ffi.so for each ABI, laid out as an AAR's jniLibs.
+              # libshoal_ffi.so for each ABI, laid out as an AAR's jniLibs.
               jniLibs = pkgs.symlinkJoin {
-                name = "tidefell-ffi-android-${workspace.version}";
+                name = "shoal-ffi-android-${workspace.version}";
                 paths = map forAbi abis;
               };
             };
         in
         {
           inherit ciHost android;
-          # `tidefelld` and `tidefell` binaries. The version is the workspace version (ADR 0005).
+          # `shoald` and `shoal` binaries. The version is the workspace version (ADR 0005).
           package = craneLib.buildPackage (
             commonArgs
             // {
               inherit cargoArtifacts;
-              cargoExtraArgs = "--locked --package tidefell-daemon --package tidefell-cli";
+              cargoExtraArgs = "--locked --package shoal-daemon --package shoal-cli";
               # The test check runs the tests; building the package does not repeat them.
               doCheck = false;
               meta = {
                 description = "Open-source peer-to-peer file sync";
-                homepage = "https://github.com/tidefell/tidefell";
-                license = pkgs.lib.licenses.agpl3Only;
-                mainProgram = "tidefell";
+                homepage = "https://github.com/ShoalSync/shoal";
+                license = [ pkgs.lib.licenses.mit pkgs.lib.licenses.asl20 ];
+                mainProgram = "shoal";
               };
             }
           );
@@ -344,12 +344,12 @@
           system = nixpkgs.lib.nixosSystem {
             system = "x86_64-linux";
             modules = [
-              self.nixosModules.tidefelld
+              self.nixosModules.shoald
               {
                 boot.isContainer = true;
                 system.stateVersion = "25.11";
                 networking.hostName = "check";
-                services.tidefelld = {
+                services.shoald = {
                   enable = true;
                   openFirewall = true;
                   settings = {
@@ -360,7 +360,7 @@
                     folders = [
                       {
                         id = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
-                        path = "/srv/tidefell/photos";
+                        path = "/srv/shoal/photos";
                         members = [ "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" ];
                         retention_days = 30;
                       }
@@ -373,35 +373,35 @@
           pkgs = nixpkgs.legacyPackages.x86_64-linux;
         in
         assert system.config.networking.firewall.allowedUDPPorts == [ 7777 ];
-        pkgs.runCommand "tidefelld-module-check" { } ''
-          unit=${system.config.systemd.units."tidefelld.service".unit}/tidefelld.service
-          grep -q 'tidefelld run --config' "$unit"
-          grep -qx 'ReadWritePaths=/var/lib/tidefell' "$unit"
-          grep -qx 'ReadWritePaths=/srv/tidefell/photos' "$unit"
+        pkgs.runCommand "shoald-module-check" { } ''
+          unit=${system.config.systemd.units."shoald.service".unit}/shoald.service
+          grep -q 'shoald run --config' "$unit"
+          grep -qx 'ReadWritePaths=/var/lib/shoal' "$unit"
+          grep -qx 'ReadWritePaths=/srv/shoal/photos' "$unit"
           touch $out
         '';
     in
     {
       packages = forAllSystems (pkgs: rec {
-        tidefell = (rust pkgs).package;
-        default = tidefell;
+        shoal = (rust pkgs).package;
+        default = shoal;
         # What CI's FUSE, simulation and Kotlin jobs run, built once (see `ciHost`).
         ci-host = (rust pkgs).ciHost;
       }
       // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
-        # tidefell-ffi's Android libraries, and the NDK they are built with (see `android`).
-        tidefell-ffi-android = (rust pkgs).android.jniLibs;
+        # shoal-ffi's Android libraries, and the NDK they are built with (see `android`).
+        shoal-ffi-android = (rust pkgs).android.jniLibs;
         android-ndk = (rust pkgs).android.ndk;
         # The Windows installer, made from placeholder programs: CI installs and uninstalls it on
         # the Windows runner. Releases make the real one from their Windows build the same way.
-        windows-installer-test = pkgs.runCommand "tidefell-installer-test" {
+        windows-installer-test = pkgs.runCommand "shoal-installer-test" {
           nativeBuildInputs = [ pkgs.msitools ];
         } ''
           mkdir bin $out
-          for file in tidefell-tray.exe tidefelld.exe tidefell.exe LICENSE README.md; do
+          for file in shoal-tray.exe shoald.exe shoal.exe LICENSE-MIT LICENSE-APACHE README.md; do
             echo placeholder > "bin/$file"
           done
-          bash ${./packaging/windows}/msi.sh "$PWD/bin" 0.0.0 $out/tidefell-test.msi
+          bash ${./packaging/windows}/msi.sh "$PWD/bin" 0.0.0 $out/shoal-test.msi
         '';
       });
 
@@ -413,7 +413,7 @@
         (rust pkgs).checks
         // lintChecks pkgs
         // {
-          package = self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
+          package = self.packages.${pkgs.stdenv.hostPlatform.system}.shoal;
         }
         // nixpkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           nixos-module = nixosModuleCheck;
@@ -435,10 +435,10 @@
       });
 
       nixosModules = rec {
-        tidefelld = import ./nix/module.nix {
-          defaultPackage = pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}.tidefell;
+        shoald = import ./nix/module.nix {
+          defaultPackage = pkgs: self.packages.${pkgs.stdenv.hostPlatform.system}.shoal;
         };
-        default = tidefelld;
+        default = shoald;
       };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);

@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::FolderId;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::FolderId;
 
 use super::Engine;
 use crate::history::history_dir;

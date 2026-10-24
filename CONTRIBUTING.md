@@ -1,16 +1,16 @@
-# Contributing to Tidefell
+# Contributing to Shoal
 
-Thanks for your interest in Tidefell. This document covers how changes get in.
+Thanks for your interest in Shoal. This document covers how changes get in.
 
-## Contributor License Agreement
+## Licence of contributions
 
-All contributions require a signed Contributor License Agreement (see `CLA.md` in the
-Tidefell monorepo). You keep the copyright to your work; the CLA grants Tidefell a licence to
-distribute and relicense contributions. Pull requests cannot be merged until the CLA is signed.
+Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in
+the work by you, as defined in the Apache-2.0 license, shall be dual licensed under MIT OR
+Apache-2.0, without any additional terms or conditions.
 
 ## Workflow
 
-Tidefell uses trunk-based development:
+Shoal uses trunk-based development:
 
 - `main` is always releasable. Nobody pushes to it directly.
 - Work on short-lived branches and open a pull request against `main` early.

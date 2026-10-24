@@ -4,17 +4,17 @@ Read this before changing anything in this repository.
 
 ## Owns
 
-This monorepo is the **source of truth** for Tidefell. It owns:
+This monorepo is the **source of truth** for Shoal. It owns:
 
 - All Rust code (`crates/`, `xtask/`).
 - Wire protocol specs and golden test vectors (`specs/`).
 - Glossary, ADRs, repository map and user/admin docs (`docs/`).
-- Every artifact that other repositories consume: the `org.tidefell:tidefell-ffi` AAR, release
+- Every artifact that other repositories consume: the `org.shoalsync:shoal-ffi` AAR, release
   binaries, the Nix flake, config JSON Schema, OpenAPI and built docs.
 
 ## Consumes
 
-Nothing from the other Tidefell repositories.
+Nothing from the other Shoal repositories.
 
 ## Change order
 
@@ -26,7 +26,7 @@ A change that affects a downstream repository is tracked by one issue here, labe
 
 - **Vocabulary:** use the terms in [docs/glossary.md](docs/glossary.md). Add new terms there.
 - **Crate boundaries** (checked by `cargo xtask check-deps`):
-  - `proto` and `sdk` are MIT OR Apache-2.0 and never depend on an AGPL crate.
+  - every workspace crate is MIT OR Apache-2.0 (ADR 0044).
   - `engine` never depends on `fs-fuse` or `web`.
   - `ffi` depends only on `sdk` and `engine` among workspace crates.
 - **Wire changes:** update `specs/<alpn>.md` and `specs/vectors/` in the same pull request.

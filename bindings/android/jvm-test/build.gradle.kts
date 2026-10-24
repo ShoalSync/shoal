@@ -1,5 +1,5 @@
-// Runs the generated Kotlin bindings on the JVM against the host build of tidefell-ffi, and a
-// real tidefelld, so the Kotlin surface is tested in monorepo CI without an Android device.
+// Runs the generated Kotlin bindings on the JVM against the host build of shoal-ffi, and a
+// real shoald, so the Kotlin surface is tested in monorepo CI without an Android device.
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
@@ -8,19 +8,19 @@ plugins {
 val repo: File = rootDir.resolve("../..").canonicalFile
 val cargoTarget: File = repo.resolve("target/debug")
 val generated = layout.buildDirectory.dir("generated/uniffi")
-// A host build made elsewhere, as CI's Nix package `ci-host` is (-Ptidefell.host=<its path>):
+// A host build made elsewhere, as CI's Nix package `ci-host` is (-Pshoal.host=<its path>):
 // its lib/, bin/ and generated kotlin/ instead of building them here.
-val prebuilt: File? = (findProperty("tidefell.host") as String?)?.let(::File)
+val prebuilt: File? = (findProperty("shoal.host") as String?)?.let(::File)
 val libDir: File = prebuilt?.resolve("lib") ?: cargoTarget
 val binDir: File = prebuilt?.resolve("bin") ?: cargoTarget
 
 val cargoBuild by tasks.registering(Exec::class) {
-    description = "Builds tidefell-ffi, tidefelld and tidefell for the host."
+    description = "Builds shoal-ffi, shoald and shoal for the host."
     onlyIf { prebuilt == null }
     workingDir = repo
     commandLine(
         "cargo", "build", "--locked",
-        "-p", "tidefell-ffi", "-p", "tidefell-daemon", "-p", "tidefell-cli",
+        "-p", "shoal-ffi", "-p", "shoal-daemon", "-p", "shoal-cli",
     )
 }
 
@@ -29,7 +29,7 @@ val generateBindings by tasks.registering(Exec::class) {
     onlyIf { prebuilt == null }
     dependsOn(cargoBuild)
     workingDir = repo
-    val library = cargoTarget.resolve(System.mapLibraryName("tidefell_ffi"))
+    val library = cargoTarget.resolve(System.mapLibraryName("shoal_ffi"))
     inputs.file(library)
     outputs.dir(generated)
     doFirst { delete(generated) }
@@ -58,7 +58,7 @@ tasks.test {
     useJUnitPlatform()
     dependsOn(cargoBuild)
     systemProperty("jna.library.path", libDir.path)
-    systemProperty("tidefell.bin", binDir.path)
+    systemProperty("shoal.bin", binDir.path)
     testLogging {
         events("passed", "failed")
         showStandardStreams = true

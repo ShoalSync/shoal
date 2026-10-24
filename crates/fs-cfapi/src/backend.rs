@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use tidefell_engine::Engine;
-use tidefell_proto::{ContentHash, EntryId, FolderId};
+use shoal_engine::Engine;
+use shoal_proto::{ContentHash, EntryId, FolderId};
 
 /// A live file in the folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,8 +85,8 @@ impl EngineFolder {
     }
 }
 
-fn engine_error(e: tidefell_engine::Error) -> BackendError {
-    use tidefell_engine::Error;
+fn engine_error(e: shoal_engine::Error) -> BackendError {
+    use shoal_engine::Error;
     match e {
         Error::NoSuchFile(_) => BackendError::NotFound,
         Error::Unavailable(_) | Error::Paused(_) => BackendError::Unavailable,

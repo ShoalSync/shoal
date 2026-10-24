@@ -1,4 +1,4 @@
-# Kotlin bindings (ADR 0004). The package matches the org.tidefell namespace (ADR 0002).
+# Kotlin bindings (ADR 0004). The package matches the org.shoalsync namespace (ADR 0002).
 [bindings.kotlin]
-package_name = "org.tidefell.ffi"
-cdylib_name = "tidefell_ffi"
+package_name = "org.shoalsync.ffi"
+cdylib_name = "shoal_ffi"

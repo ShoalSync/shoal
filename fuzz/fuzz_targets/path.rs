@@ -5,7 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 use std::path::{Component, Path};
 
-use tidefell_proto::sync::is_valid_path;
+use shoal_proto::sync::is_valid_path;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(path) = std::str::from_utf8(data) else {

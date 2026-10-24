@@ -7,7 +7,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
 use serde::Deserialize;
-use tidefell_engine::{Resolution, VersionKind};
+use shoal_engine::{Resolution, VersionKind};
 
 use crate::format::{query_value, size, time};
 use crate::handlers::{
@@ -92,7 +92,7 @@ pub(crate) async fn open(
         .await
     {
         Ok(copy) => copy,
-        Err(tidefell_engine::Error::Unavailable(_)) => {
+        Err(shoal_engine::Error::Unavailable(_)) => {
             return error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Not available",

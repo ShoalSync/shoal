@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, PublicKey};
 
-/// Prefix of every signed byte string, so Tidefell signatures cannot be confused with signatures
+/// Prefix of every signed byte string, so Shoal signatures cannot be confused with signatures
 /// from other protocols.
-pub const SIGNATURE_DOMAIN: &[u8] = b"tidefell/sig/1\0";
+pub const SIGNATURE_DOMAIN: &[u8] = b"shoal/sig/1\0";
 
 /// A message type that can be signed. `KIND` separates signatures over different types, so a
 /// signature over one type never verifies as another.

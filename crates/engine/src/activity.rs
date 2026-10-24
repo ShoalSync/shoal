@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use tidefell_proto::{ContentHash, DeviceId};
+use shoal_proto::{ContentHash, DeviceId};
 
 use crate::views::{Operation, PathProblem, ProblemKind};
 use crate::Error;

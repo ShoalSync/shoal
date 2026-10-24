@@ -1,6 +1,6 @@
 //! Files removed from this device only, kept for the recycle bin (ADR 0025).
 //!
-//! Removing a file here moves it into `<folder>/.tidefell/recycle/` and drops its entry from
+//! Removing a file here moves it into `<folder>/.shoal/recycle/` and drops its entry from
 //! this device: other devices keep it, and it is not downloaded again until opened. The file
 //! waits there until the folder's retention expires or the recycle bin is emptied, and
 //! restoring it moves it back.
@@ -8,7 +8,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tidefell_proto::EntryId;
+use shoal_proto::EntryId;
 use tracing::{debug, warn};
 
 use crate::scan::{stat, unchanged, RESERVED_DIR};

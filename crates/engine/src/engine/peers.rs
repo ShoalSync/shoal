@@ -1,7 +1,7 @@
 //! Peers: connected sessions, remembered addresses and pairing.
 
-use tidefell_net::{EndpointAddr, EndpointId};
-use tidefell_proto::DeviceId;
+use shoal_net::{EndpointAddr, EndpointId};
+use shoal_proto::DeviceId;
 
 use super::Engine;
 use crate::config::PeerAddr;
@@ -60,7 +60,7 @@ impl Engine {
     }
 
     /// File content sent and received since the engine started (ADR 0030).
-    pub fn transfer(&self) -> tidefell_net::Transfer {
+    pub fn transfer(&self) -> shoal_net::Transfer {
         self.node.transfer()
     }
 
@@ -99,7 +99,7 @@ impl Engine {
     /// device has accepted the proof; show the confirmation code, then approve or decline.
     pub async fn pair(
         &self,
-        code: &tidefell_proto::pair::PairingCode,
+        code: &shoal_proto::pair::PairingCode,
     ) -> Result<crate::pairing::PendingPairing> {
         let session = self.node.pair(code).await?;
         Ok(crate::pairing::PendingPairing::new(

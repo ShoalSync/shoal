@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use tidefell_net::{Backend, EncryptedBackend, IndexPage, ItemPage};
-use tidefell_proto::blobs2::BlobId;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::sync2::Item;
-use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
+use shoal_net::{Backend, EncryptedBackend, IndexPage, ItemPage};
+use shoal_proto::blobs2::BlobId;
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::sync2::Item;
+use shoal_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
 use tracing::{debug, warn};
 
@@ -195,10 +195,10 @@ impl Backend for EngineBackend {
         let mut touched = std::collections::BTreeSet::new();
         let takeover;
         // Checking signatures is most of the work, and needs no lock (ADR 0034).
-        let verified: Vec<tidefell_meta::Verified> = versions
+        let verified: Vec<shoal_meta::Verified> = versions
             .into_iter()
             .filter_map(
-                |version| match tidefell_meta::verify_remote(*folder, version) {
+                |version| match shoal_meta::verify_remote(*folder, version) {
                     Ok(verified) => Some(verified),
                     Err(e) => {
                         debug!(%peer, error = %e, "rejected a version");
@@ -238,7 +238,7 @@ impl Backend for EngineBackend {
                     }
                 }
                 match state.meta.apply_verified(version, now) {
-                    Ok(applied) if applied != tidefell_meta::Applied::Stale => {
+                    Ok(applied) if applied != shoal_meta::Applied::Stale => {
                         changed = true;
                         touched.extend(entry);
                     }
@@ -352,7 +352,7 @@ impl Backend for EngineBackend {
         let handle = self.0.folder(folder).ok()?;
         let state = handle.lock();
         let manifest = state.manifests.get(content)?;
-        let availability = tidefell_store::Availability::from_fn(manifest.chunks.len(), |i| {
+        let availability = shoal_store::Availability::from_fn(manifest.chunks.len(), |i| {
             crate::content::has_chunk(&self.0, &state, &manifest.chunks[i].hash)
         });
         Some((availability.len() as u32, availability.as_bytes().to_vec()))
@@ -457,10 +457,10 @@ impl EncryptedBackend for EngineBackend {
     fn blob(&self, folder: &FolderId, id: &BlobId) -> Option<Vec<u8>> {
         let handle = self.0.folder(folder).ok()?;
         // A list blob, of a version this device holds (ADR 0023).
-        if let Some(list) = handle.lock().list_blobs.get(&tidefell_proto::ListId(id.0)) {
+        if let Some(list) = handle.lock().list_blobs.get(&shoal_proto::ListId(id.0)) {
             return Some(list.clone());
         }
-        let id = tidefell_proto::ChunkId(id.0);
+        let id = shoal_proto::ChunkId(id.0);
         // A storage peer serves a chunk as it stored it, sealed (ADR 0023).
         if let Some(store) = handle.lock().sealed_store.as_ref() {
             return store.get(&id);
@@ -471,11 +471,11 @@ impl EncryptedBackend for EngineBackend {
     fn holds(&self, folder: &FolderId, ids: &[BlobId]) -> Option<Vec<bool>> {
         let handle = self.0.folder(folder).ok()?;
         let mut state = handle.lock();
-        let ids: Vec<tidefell_proto::ChunkId> =
-            ids.iter().map(|id| tidefell_proto::ChunkId(id.0)).collect();
+        let ids: Vec<shoal_proto::ChunkId> =
+            ids.iter().map(|id| shoal_proto::ChunkId(id.0)).collect();
         let lists: Vec<bool> = ids
             .iter()
-            .map(|id| state.list_blobs.contains_key(&tidefell_proto::ListId(id.0)))
+            .map(|id| state.list_blobs.contains_key(&shoal_proto::ListId(id.0)))
             .collect();
         let chunks = match state.sealed_store.as_ref() {
             Some(store) => ids.iter().map(|id| store.has(id)).collect(),
@@ -493,7 +493,7 @@ impl EncryptedBackend for EngineBackend {
         folder: &FolderId,
         from: DeviceId,
         issued_ms: i64,
-        hints: &[tidefell_proto::storage::Hint],
+        hints: &[shoal_proto::storage::Hint],
     ) -> bool {
         let Ok(handle) = self.0.folder(folder) else {
             return false;

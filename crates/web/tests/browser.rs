@@ -9,10 +9,10 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{HeaderMap, Method, Request, StatusCode};
 use hyper_util::rt::TokioIo;
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
-use tidefell_web::{AccountStore, WebConfig};
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
+use shoal_web::{AccountStore, WebConfig};
 
 const FOLDER: FolderId = FolderId([5; 32]);
 
@@ -139,7 +139,7 @@ impl Browser {
         fields: &[(&str, &str)],
         files: &[(&str, &str, &[u8])],
     ) -> Page {
-        const BOUNDARY: &str = "tidefell-test-boundary";
+        const BOUNDARY: &str = "shoal-test-boundary";
         let mut body = Vec::new();
         for (name, value) in fields {
             body.extend_from_slice(
@@ -240,7 +240,7 @@ async fn web_peer_end_to_end() {
     tokio::spawn({
         let (engine, data_dir) = (engine.clone(), data_dir.clone());
         async move {
-            tidefell_web::serve(
+            shoal_web::serve(
                 listener,
                 engine,
                 &data_dir,
@@ -484,7 +484,7 @@ async fn serve_folder(
     let addr = listener.local_addr().unwrap();
     tokio::spawn({
         let engine = engine.clone();
-        async move { tidefell_web::serve(listener, engine, &data_dir, config).await }
+        async move { shoal_web::serve(listener, engine, &data_dir, config).await }
     });
     (engine, root, addr)
 }
@@ -617,7 +617,7 @@ async fn uploads_and_share_links() {
     let reserved = alice
         .upload(
             &upload,
-            &[("csrf", &csrf), ("dir", ".tidefell")],
+            &[("csrf", &csrf), ("dir", ".shoal")],
             &[("file", "x.txt", b"x")],
         )
         .await;
@@ -844,7 +844,7 @@ async fn upload_only_links() {
         .await;
     assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
     assert!(!root.join("inbox/big.bin").exists());
-    let staged = std::fs::read_dir(root.join(".tidefell/tmp"))
+    let staged = std::fs::read_dir(root.join(".shoal/tmp"))
         .unwrap()
         .filter_map(Result::ok)
         .filter(|e| e.file_name().to_string_lossy().starts_with("upload-"))
@@ -1169,7 +1169,7 @@ async fn status_and_problems() {
     assert!(checked.body.contains("engine state of 1 folder(s) loaded"));
 
     // A crash not dismissed yet can be written up for the tracker (ADR 0030).
-    let file = tidefell_engine::diagnostics::write_crash(
+    let file = shoal_engine::diagnostics::write_crash(
         &engine.data_dir().join("crashes"),
         "rust",
         "boom <b>",
@@ -1221,7 +1221,7 @@ async fn administrators_revoke_a_lost_device() {
     tokio::spawn({
         let (engine, data_dir, key) = (engine.clone(), tmp.path().join("data"), alice.clone());
         async move {
-            tidefell_web::serve_with_user_key(listener, engine, &data_dir, config, Some(key)).await
+            shoal_web::serve_with_user_key(listener, engine, &data_dir, config, Some(key)).await
         }
     });
     let laptop = laptop(tmp.path()).await;

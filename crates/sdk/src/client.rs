@@ -359,7 +359,7 @@ impl Client {
         self.get(&format!("/v1/folders/{folder}/priorities")).await
     }
 
-    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to
+    /// Sets the rule for `pattern` in an encrypted folder's `.shoalpriorities` to
     /// `priority`, or removes it for `None`.
     pub async fn set_priority(
         &self,
@@ -834,7 +834,7 @@ impl Client {
 
     /// The control endpoint of the daemon with data directory `data_dir`: its Unix socket,
     /// `<data_dir>/control.sock`, or on Windows the named pipe
-    /// `\\.\pipe\tidefell-<hash>`, from the directory's canonical path with case folded, so
+    /// `\\.\pipe\shoal-<hash>`, from the directory's canonical path with case folded, so
     /// the daemon and its clients agree however the path is spelled (ADR 0042).
     pub fn socket_path(data_dir: &Path) -> PathBuf {
         #[cfg(windows)]
@@ -845,7 +845,7 @@ impl Client {
             let hash = folded.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
                 (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
             });
-            PathBuf::from(format!(r"\\.\pipe\tidefell-{hash:016x}"))
+            PathBuf::from(format!(r"\\.\pipe\shoal-{hash:016x}"))
         }
         #[cfg(not(windows))]
         {

@@ -19,11 +19,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::{EndpointAddr, Node, NodeConfig};
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
-use tidefell_store::BlockStore;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::{EndpointAddr, Node, NodeConfig};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::{DeviceId, FolderId, Signed, UserId};
+use shoal_store::BlockStore;
 use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{AbortHandle, JoinSet};
 use tracing::{debug, error, info, warn};
@@ -153,14 +153,14 @@ pub(crate) struct Inner {
     pub(crate) key: DeviceKey,
     /// The device's key for opening grants of encrypted folders' keys, derived from `key`
     /// (ADR 0023).
-    pub(crate) encryption: tidefell_crypto::EncryptionSecret,
+    pub(crate) encryption: shoal_crypto::EncryptionSecret,
     /// Encrypted folders' contents that a fetch found no peer has whole, though one answered:
     /// a revoked device's version of one may be withdrawn (ADR 0023).
-    pub(crate) unobtainable: Mutex<HashSet<(FolderId, tidefell_proto::ContentHash)>>,
+    pub(crate) unobtainable: Mutex<HashSet<(FolderId, shoal_proto::ContentHash)>>,
     /// Each folder's storage priority rules last fetched here, by the version of
-    /// `.tidefellpriorities` they are, where it is not on disk: fetched once per version
+    /// `.shoalpriorities` they are, where it is not on disk: fetched once per version
     /// (ADR 0023's amendment of 2026-10-22).
-    pub(crate) rules_fetched: Mutex<HashMap<FolderId, (tidefell_proto::ContentHash, String)>>,
+    pub(crate) rules_fetched: Mutex<HashMap<FolderId, (shoal_proto::ContentHash, String)>>,
     pub(crate) certificate: Signed<DeviceCertificate>,
     /// The user this device belongs to, from its certificate.
     pub(crate) user: UserId,
@@ -171,7 +171,7 @@ pub(crate) struct Inner {
     pub(crate) floors: crate::space::Floors,
     pub(crate) store: Mutex<BlockStore>,
     /// Contents being downloaded, whose chunks the block store keeps until they are written.
-    pub(crate) fetching: Mutex<HashSet<tidefell_proto::ContentHash>>,
+    pub(crate) fetching: Mutex<HashSet<shoal_proto::ContentHash>>,
     /// How each folder whose files another component places frees one in place (ADR 0042).
     pub(crate) freers: Mutex<HashMap<FolderId, crate::Freer>>,
     /// On a storage peer, the most all stored folders keep together, if set (ADR 0023's
@@ -224,7 +224,7 @@ pub(crate) struct Inner {
     pub(crate) clock: Arc<crate::clock::Clock>,
     /// Chunks the records say a file holds that could not be read from it: fetched, not
     /// counted as here, until then.
-    pub(crate) unreadable: Mutex<HashSet<tidefell_proto::ChunkHash>>,
+    pub(crate) unreadable: Mutex<HashSet<shoal_proto::ChunkHash>>,
 }
 
 impl Inner {
@@ -568,7 +568,7 @@ enum Network {
     Iroh,
     /// Simulated, for the harness of ADR 0036.
     #[cfg(feature = "simulation")]
-    Memory(tidefell_net::Network),
+    Memory(shoal_net::Network),
 }
 
 /// Runs `task`, marking the engine failed if it panics instead of the loop silently ending.
@@ -785,7 +785,7 @@ impl Engine {
         config: EngineConfig,
         key: DeviceKey,
         certificate: Signed<DeviceCertificate>,
-        network: &tidefell_net::Network,
+        network: &shoal_net::Network,
     ) -> Result<Self> {
         Self::start_on(config, key, certificate, Network::Memory(network.clone())).await
     }
@@ -907,7 +907,7 @@ impl Engine {
 
         let backend = Arc::new(EngineBackend(inner.clone()));
         // Encrypted folders over sync/2 and blobs/2 (ADR 0023), from the same backend.
-        let encrypted: Arc<dyn tidefell_net::EncryptedBackend> = backend.clone();
+        let encrypted: Arc<dyn shoal_net::EncryptedBackend> = backend.clone();
         let node = Arc::new(match network {
             Network::Iroh => {
                 Node::spawn_with(
@@ -1092,7 +1092,7 @@ impl Engine {
     }
 
     /// What stopped the engine, if a task panicked (ADR 0030). Once set, the engine does no more
-    /// work and its owner should shut it down: `tidefelld` exits so its service manager restarts
+    /// work and its owner should shut it down: `shoald` exits so its service manager restarts
     /// it, and the bindings stop the node.
     pub fn failure(&self) -> Option<String> {
         self.inner.failure.borrow().clone()
@@ -1302,7 +1302,7 @@ impl Engine {
             let state = handle.lock();
             let retention = state.meta.recycle_bin().retention();
             let lost = crate::loss::effective_lost(lost_ms, now, retention);
-            let mut made: Vec<(String, u64, u64, tidefell_proto::EntryId)> = Vec::new();
+            let mut made: Vec<(String, u64, u64, shoal_proto::EntryId)> = Vec::new();
             for current in state.meta.entries() {
                 let versions = std::iter::once((
                     current.author(),
@@ -1322,7 +1322,7 @@ impl Engine {
                 }));
                 for (author, path, kind, sequence, entry) in versions {
                     if author == device {
-                        if let tidefell_proto::sync::EntryKind::File { size, .. } = kind {
+                        if let shoal_proto::sync::EntryKind::File { size, .. } = kind {
                             made.push((path, size, sequence, entry));
                         }
                     }

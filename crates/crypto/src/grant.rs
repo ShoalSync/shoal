@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use tidefell_proto::{DeviceId, FolderId, KeyId};
+use shoal_proto::{DeviceId, FolderId, KeyId};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{hpke, random, Error, FolderKey, Result};
@@ -38,7 +38,7 @@ impl EncryptionSecret {
     /// the same after its state is lost, so a member can be granted its folders' keys again.
     pub fn for_device(device_seed: &[u8; 32]) -> Self {
         Self::from_bytes(blake3::derive_key(
-            "tidefell 2026-10-18 device encryption key",
+            "shoal 2026-10-24 device encryption key",
             device_seed,
         ))
     }
@@ -66,7 +66,7 @@ impl GrantFor {
     /// HPKE's `info`: binds the grant to its folder, key and recipient.
     fn info(&self, generation: u64, key: &KeyId) -> Vec<u8> {
         [
-            b"tidefell/key-grant/1".as_slice(),
+            b"shoal/key-grant/1".as_slice(),
             self.folder.as_bytes(),
             &generation.to_be_bytes(),
             key.as_bytes(),

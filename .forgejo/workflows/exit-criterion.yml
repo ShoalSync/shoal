@@ -29,7 +29,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PATH="$(nix build --no-link --print-out-paths --print-build-logs .#tidefell)/bin:$PATH"
+          PATH="$(nix build --no-link --print-out-paths --print-build-logs .#shoal)/bin:$PATH"
           export PATH
           scripts/exit-criterion/linux.sh
 
@@ -47,13 +47,13 @@ jobs:
       - name: Approve, list, open
         shell: bash
         env:
-          TIDEFELL_EXIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TIDEFELL_EXIT_RUN: ${{ github.run_id }}
+          SHOAL_EXIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHOAL_EXIT_RUN: ${{ github.run_id }}
         run: |
-          export CARGO_TARGET_DIR=C:/ci/target/tidefell
-          cargo build --locked --package tidefell-daemon
-          TIDEFELLD="$CARGO_TARGET_DIR/debug/tidefelld.exe" cargo test --locked \
-            --package tidefell-tray --test exit_criterion -- --ignored --nocapture
+          export CARGO_TARGET_DIR=C:/ci/target/shoal
+          cargo build --locked --package shoal-daemon
+          SHOALD="$CARGO_TARGET_DIR/debug/shoald.exe" cargo test --locked \
+            --package shoal-tray --test exit_criterion -- --ignored --nocapture
       - name: Clear the sync roots this run left
         if: always()
         shell: powershell

@@ -3,14 +3,14 @@
 //! or a decision recycles on the replicas that stored the version it replaced), so it can differ
 //! with the order; what it holds is checked instead.
 
+use shoal_meta::Wire;
 use std::collections::BTreeMap;
-use tidefell_meta::Wire;
 
 use ed25519_dalek::SigningKey;
 use proptest::prelude::*;
-use tidefell_meta::{copy_id, Folder, Retention};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId};
+use shoal_meta::{copy_id, Folder, Retention};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 const NOW: i64 = 1_000;

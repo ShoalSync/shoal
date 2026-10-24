@@ -1,1 +1,1 @@
-//! Tidefell `daemon` crate: binary `tidefelld`: headless peer for Linux servers and NAS.
+//! Shoal `daemon` crate: binary `shoald`: headless peer for Linux servers and NAS.

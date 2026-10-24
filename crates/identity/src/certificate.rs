@@ -4,19 +4,19 @@
 //! Format (version 1):
 //!
 //! ```text
-//! tidefell-device-certificate 1
+//! shoal-device-certificate 1
 //! <lowercase hex of the postcard-encoded Signed<DeviceCertificate>>
 //! ```
 
 use std::fs;
 use std::path::Path;
 
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::Signed;
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::Signed;
 
 use crate::{Error, Result};
 
-const HEADER: &str = "tidefell-device-certificate 1";
+const HEADER: &str = "shoal-device-certificate 1";
 
 /// Encodes a certificate in the file format.
 pub fn encode_certificate(certificate: &Signed<DeviceCertificate>) -> String {

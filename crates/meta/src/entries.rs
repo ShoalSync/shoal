@@ -6,8 +6,8 @@
 use std::hash::BuildHasher;
 
 use hashbrown::HashTable;
+use shoal_proto::EntryId;
 use std::collections::hash_map::RandomState;
-use tidefell_proto::EntryId;
 
 use crate::folder::Entry;
 

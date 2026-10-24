@@ -5,10 +5,10 @@
 //! The measurement is slow, so it only runs when asked:
 //!
 //! ```text
-//! cargo test --release -p tidefell-engine --test transfer -- --ignored --nocapture
+//! cargo test --release -p shoal-engine --test transfer -- --ignored --nocapture
 //! ```
 //!
-//! `TIDEFELL_REQUEST_DELAY_MS` sets the delay (100 by default), and `TIDEFELL_LARGE_MIB` the
+//! `SHOAL_REQUEST_DELAY_MS` sets the delay (100 by default), and `SHOAL_LARGE_MIB` the
 //! large file's size (256 by default). The large file is also measured in an encrypted folder
 //! (ADR 0023), whose content goes over blobs/2.
 
@@ -18,12 +18,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tidefell_engine::{
+use shoal_engine::{
     Encryption, Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig,
     ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([32; 32]);
 
@@ -146,11 +146,11 @@ impl Requests {
             .collect();
         let get = |name: &str| samples.get(name).copied().unwrap_or(0.0);
         Self {
-            manifest: get(r#"tidefell_requests_total{kind="manifest"}"#),
-            availability: get(r#"tidefell_requests_total{kind="availability"}"#),
-            replica: get(r#"tidefell_requests_total{kind="replica"}"#),
-            chunks: get(r#"tidefell_requests_total{kind="chunks"}"#),
-            chunks_requested: get("tidefell_chunks_requested_total"),
+            manifest: get(r#"shoal_requests_total{kind="manifest"}"#),
+            availability: get(r#"shoal_requests_total{kind="availability"}"#),
+            replica: get(r#"shoal_requests_total{kind="replica"}"#),
+            chunks: get(r#"shoal_requests_total{kind="chunks"}"#),
+            chunks_requested: get("shoal_chunks_requested_total"),
         }
     }
 
@@ -212,11 +212,11 @@ async fn requests_are_counted() {
 
 /// The delay before every request, and the large file's size, as set for the measurement.
 fn measured() -> (Duration, usize) {
-    let delay = std::env::var("TIDEFELL_REQUEST_DELAY_MS")
+    let delay = std::env::var("SHOAL_REQUEST_DELAY_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .map_or(Duration::from_millis(100), Duration::from_millis);
-    let mib: usize = std::env::var("TIDEFELL_LARGE_MIB")
+    let mib: usize = std::env::var("SHOAL_LARGE_MIB")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(256);

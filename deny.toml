@@ -43,10 +43,10 @@ allow = [
 # never constrain the MIT/Apache crates.
 exceptions = [
     # UPnP port mapping client, via iroh -> portmapper -> igd-next. MPL-2.0 is file-level
-    # copyleft and compatible with AGPL-3.0; it only reaches the AGPL `net` crate.
+    # copyleft, its source is on crates.io, and it only reaches the `net` crate.
     { crate = "attohttpc", allow = ["MPL-2.0"] },
-    # uniffi generates the Kotlin bindings (ADR 0004). Reached only from the AGPL `ffi` crate
-    # and from `xtask`, which runs its bindings generator; never from `proto` or `sdk`.
+    # uniffi generates the Kotlin bindings (ADR 0004). Reached only from the `ffi` crate and
+    # from `xtask`, which runs its bindings generator; never from `proto` or `sdk`.
     { crate = "uniffi", allow = ["MPL-2.0"] },
     { crate = "uniffi_bindgen", allow = ["MPL-2.0"] },
     { crate = "uniffi_core", allow = ["MPL-2.0"] },

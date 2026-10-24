@@ -6,9 +6,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([31; 32]);
 
@@ -308,7 +308,7 @@ async fn a_file_held_open_gets_its_update_once_closed() {
         })
     })
     .await;
-    let tmp = b.root.join(".tidefell").join("tmp");
+    let tmp = b.root.join(".shoal").join("tmp");
     eventually("nothing fetched is left behind", || {
         fs::read_dir(&tmp).map_or(true, |d| d.count() == 0)
     })
@@ -325,7 +325,7 @@ async fn a_file_held_open_gets_its_update_once_closed() {
     .await;
     // The version replaced is kept once, beside its record, however many times its
     // replacement was tried.
-    let history = b.root.join(".tidefell").join("history");
+    let history = b.root.join(".shoal").join("history");
     let kept: Vec<_> = fs::read_dir(&history)
         .unwrap()
         .map(|e| e.unwrap().path())

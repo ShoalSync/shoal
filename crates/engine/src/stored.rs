@@ -6,8 +6,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tidefell_proto::sync2::{ChunkList, Item, SealedVersion};
-use tidefell_proto::{ChunkId, DeviceId, SignedKind as _};
+use shoal_proto::sync2::{ChunkList, Item, SealedVersion};
+use shoal_proto::{ChunkId, DeviceId, SignedKind as _};
 use tracing::{debug, info, warn};
 
 use crate::engine::{FolderHandle, Inner};
@@ -129,11 +129,11 @@ fn listed(state: &FolderState, current_only: bool) -> Vec<(ChunkId, u8)> {
 }
 
 /// The priority members gave `entry`, or the default.
-fn entry_priority(state: &FolderState, entry: &tidefell_proto::EntryId) -> u8 {
+fn entry_priority(state: &FolderState, entry: &shoal_proto::EntryId) -> u8 {
     state
         .storage_priorities
         .get(entry)
-        .map_or(tidefell_proto::storage::DEFAULT_PRIORITY, |p| p.priority)
+        .map_or(shoal_proto::storage::DEFAULT_PRIORITY, |p| p.priority)
 }
 
 fn listed_now(state: &FolderState, current_only: bool) -> Vec<(ChunkId, u8)> {
@@ -206,7 +206,7 @@ pub(crate) fn set_priorities(
     state: &mut FolderState,
     from: DeviceId,
     issued_ms: i64,
-    hints: &[tidefell_proto::storage::Hint],
+    hints: &[shoal_proto::storage::Hint],
 ) -> bool {
     let mut changed = false;
     for hint in hints {
@@ -274,7 +274,7 @@ fn priority(state: &FolderState) -> u8 {
 }
 
 /// The peers sharing `folder` over sync/2.
-fn peers_of(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> Vec<DeviceId> {
+fn peers_of(node: &shoal_net::Node, folder: shoal_proto::FolderId) -> Vec<DeviceId> {
     node.encrypted_peers()
         .into_iter()
         .filter(|p| p.shared_folders().contains(&folder))
@@ -287,8 +287,8 @@ fn peers_of(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> Vec<
 /// that a connected peer could send: it fills first (ADR 0023's amendment of 2026-10-22).
 fn others(
     inner: &Inner,
-    node: &tidefell_net::Node,
-    folder: tidefell_proto::FolderId,
+    node: &shoal_net::Node,
+    folder: shoal_proto::FolderId,
     ranked: u8,
 ) -> (u64, bool) {
     let mut held = 0u64;
@@ -315,21 +315,21 @@ fn others(
 /// for its hash, and a chunk's length is not known before it is fetched, so only the count of
 /// chunks in flight bounds a request.
 struct StoredSource {
-    node: std::sync::Arc<tidefell_net::Node>,
-    folder: tidefell_proto::FolderId,
+    node: std::sync::Arc<shoal_net::Node>,
+    folder: shoal_proto::FolderId,
 }
 
-impl tidefell_fetch::ChunkSource for StoredSource {
+impl shoal_fetch::ChunkSource for StoredSource {
     type Peer = DeviceId;
 
     async fn availability(
         &self,
         peer: &DeviceId,
-        manifest: &tidefell_proto::Manifest,
-    ) -> std::result::Result<Vec<tidefell_proto::ChunkHash>, String> {
-        use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
+        manifest: &shoal_proto::Manifest,
+    ) -> std::result::Result<Vec<shoal_proto::ChunkHash>, String> {
+        use shoal_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
         let endpoint =
-            tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
+            shoal_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
         let mut held = Vec::new();
         for part in manifest.chunks.chunks(MAX_BLOBS_PER_AVAILABILITY) {
             let ids: Vec<BlobId> = part
@@ -354,12 +354,12 @@ impl tidefell_fetch::ChunkSource for StoredSource {
     async fn fetch(
         &self,
         peer: &DeviceId,
-        chunks: &[tidefell_proto::ChunkHash],
-    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
-        use tidefell_net::{BlobKind, BlobResult};
-        use tidefell_proto::blobs2::BlobId;
+        chunks: &[shoal_proto::ChunkHash],
+    ) -> std::result::Result<shoal_fetch::Fetched, String> {
+        use shoal_net::{BlobKind, BlobResult};
+        use shoal_proto::blobs2::BlobId;
         let endpoint =
-            tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
+            shoal_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
         let wanted: Vec<(BlobId, BlobKind)> = chunks
             .iter()
             .map(|h| (BlobId::from(ChunkId(h.0)), BlobKind::SealedChunk))
@@ -369,14 +369,12 @@ impl tidefell_fetch::ChunkSource for StoredSource {
             .fetch_blobs(endpoint, self.folder, &wanted)
             .await
             .map_err(|e| e.to_string())?;
-        let mut fetched = tidefell_fetch::Fetched::default();
+        let mut fetched = shoal_fetch::Fetched::default();
         for result in results {
             match result {
                 // Only what was asked for: a peer cannot slip in another blob.
                 BlobResult::Found(id, sealed) if chunks.iter().any(|h| h.0 == id.0) => {
-                    fetched
-                        .chunks
-                        .push((tidefell_proto::ChunkHash(id.0), sealed));
+                    fetched.chunks.push((shoal_proto::ChunkHash(id.0), sealed));
                 }
                 BlobResult::Busy(wait) => fetched.busy_for = Some(wait),
                 _ => {}
@@ -395,7 +393,7 @@ const FULL: &str = "the quota is reached";
 /// lacks what it could fetch.
 pub(crate) async fn fetch(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
 ) -> Result<()> {
     let (folder, ranked, wanted) = {
@@ -437,23 +435,23 @@ pub(crate) async fn fetch(
     tiers.sort_unstable_by(|a, b| b.cmp(a));
     tiers.dedup();
     for tier in tiers {
-        let manifest = tidefell_proto::Manifest {
-            content: tidefell_proto::ContentHash([0; 32]),
+        let manifest = shoal_proto::Manifest {
+            content: shoal_proto::ContentHash([0; 32]),
             chunks: wanted
                 .iter()
                 .filter(|(_, p)| *p == tier)
-                .map(|(id, _)| tidefell_proto::ChunkRef {
-                    hash: tidefell_proto::ChunkHash(id.0),
+                .map(|(id, _)| shoal_proto::ChunkRef {
+                    hash: shoal_proto::ChunkHash(id.0),
                     len: 0,
                 })
                 .collect(),
         };
-        let result = tidefell_fetch::fetch(
+        let result = shoal_fetch::fetch(
             source.clone(),
             &manifest,
             &peers,
             |_| false,
-            tidefell_fetch::Config::default(),
+            shoal_fetch::Config::default(),
             |id, sealed| {
                 let mut state = handle.lock();
                 let full = over_quota(&state)
@@ -476,11 +474,11 @@ pub(crate) async fn fetch(
         )
         .await;
         match result {
-            Err(tidefell_fetch::FetchError::Sink(e)) if e == FULL => {
+            Err(shoal_fetch::FetchError::Sink(e)) if e == FULL => {
                 info!(%folder, "stored folder reached its quota; fetching no more of it");
                 break;
             }
-            Err(tidefell_fetch::FetchError::Sink(e)) => {
+            Err(shoal_fetch::FetchError::Sink(e)) => {
                 warn!(%folder, error = %e, "storing a sealed chunk failed");
                 break;
             }
@@ -507,7 +505,7 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
     // What it holds of an entry members keep from it stays: dropping is a user's to ask for.
     let keep: BTreeSet<ChunkId> = listed(state, false).into_iter().map(|(id, _)| id).collect();
     // And the list blobs no kept version names.
-    let lists: BTreeSet<tidefell_proto::ListId> = state
+    let lists: BTreeSet<shoal_proto::ListId> = state
         .items
         .values()
         .filter_map(|item| match item {
@@ -519,7 +517,7 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
             ChunkList::Inline(_) => Vec::new(),
         })
         .collect();
-    let gone: Vec<tidefell_proto::ListId> = state
+    let gone: Vec<shoal_proto::ListId> = state
         .list_blobs
         .keys()
         .filter(|id| !lists.contains(id))
@@ -529,7 +527,7 @@ pub(crate) fn collect(state: &mut FolderState) -> usize {
         state.list_blobs.remove(id);
     }
     // And the priorities of entries it keeps no version of.
-    let entries: BTreeSet<tidefell_proto::EntryId> = state
+    let entries: BTreeSet<shoal_proto::EntryId> = state
         .items
         .values()
         .filter_map(|item| match item {

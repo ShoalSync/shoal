@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::mpsc;
 
-use tidefell_sdk::Client;
+use shoal_sdk::Client;
 
 /// What approving shows, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]

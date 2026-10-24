@@ -1,4 +1,4 @@
-//! Messages of the `tidefell/storage/1` protocol: how members rank what a storage peer keeps of
+//! Messages of the `shoal/storage/1` protocol: how members rank what a storage peer keeps of
 //! an encrypted folder. See `specs/storage-v1.md`.
 //!
 //! Variant order is part of the wire format, as in [`crate::blobs`].
@@ -32,7 +32,7 @@ pub enum StorageErrorCode {
     ProtocolViolation,
 }
 
-/// A message on a `tidefell/storage/1` stream.
+/// A message on a `shoal/storage/1` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StorageMessage {
     Hello {

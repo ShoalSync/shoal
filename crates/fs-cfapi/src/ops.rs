@@ -8,13 +8,13 @@ use std::path::{Component, Path, PathBuf};
 use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder::{ConvertOptions, PinOptions, PinState, Placeholder, UpdateOptions};
 use cloud_filter::placeholder_file::PlaceholderFile;
-use tidefell_proto::{ContentHash, EntryId};
+use shoal_proto::{ContentHash, EntryId};
 
 use crate::backend::FileEntry;
 
 /// The folder's reserved directory, which the provider never touches: a placeholder moved into
 /// it stays out of sync, so Windows never frees it (ADR 0042).
-pub(crate) const RESERVED_DIR: &str = ".tidefell";
+pub(crate) const RESERVED_DIR: &str = ".shoal";
 
 const FILE_ATTRIBUTE_OFFLINE: u32 = 0x1000;
 const FILE_ATTRIBUTE_RECALL_ON_OPEN: u32 = 0x0004_0000;
@@ -285,17 +285,17 @@ mod tests {
 
     #[test]
     fn paths_map_both_ways_whatever_the_case_and_form() {
-        let root = Path::new(r"C:\Users\ci\Tidefell");
+        let root = Path::new(r"C:\Users\ci\Shoal");
         assert_eq!(
             to_abs(root, "docs/a.txt"),
-            Path::new(r"C:\Users\ci\Tidefell\docs\a.txt")
+            Path::new(r"C:\Users\ci\Shoal\docs\a.txt")
         );
         assert_eq!(
-            to_rel(root, Path::new(r"C:\Users\ci\Tidefell\docs\a.txt")).as_deref(),
+            to_rel(root, Path::new(r"C:\Users\ci\Shoal\docs\a.txt")).as_deref(),
             Some("docs/a.txt")
         );
         assert_eq!(
-            to_rel(root, Path::new(r"\\?\c:\users\CI\tidefell\docs\a.txt")).as_deref(),
+            to_rel(root, Path::new(r"\\?\c:\users\CI\shoal\docs\a.txt")).as_deref(),
             Some("docs/a.txt")
         );
         assert_eq!(to_rel(root, root), None);
@@ -314,9 +314,9 @@ mod tests {
 
     #[test]
     fn the_reserved_directory_is_its_own() {
-        assert!(reserved(".tidefell"));
-        assert!(reserved(".tidefell/history/x"));
-        assert!(!reserved(".tidefellish"));
-        assert!(!reserved("docs/.tidefell"));
+        assert!(reserved(".shoal"));
+        assert!(reserved(".shoal/history/x"));
+        assert!(!reserved(".shoalish"));
+        assert!(!reserved("docs/.shoal"));
     }
 }

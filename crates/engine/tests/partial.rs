@@ -6,11 +6,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, Error, FolderConfig, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([9; 32]);
 
@@ -888,7 +888,7 @@ fn served(engine: &Engine) -> f64 {
     engine
         .metrics()
         .lines()
-        .find_map(|l| l.strip_prefix("tidefell_chunks_served_total "))
+        .find_map(|l| l.strip_prefix("shoal_chunks_served_total "))
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.0)
 }

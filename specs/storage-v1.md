@@ -1,6 +1,6 @@
 # Storage protocol, version 1: what a storage peer keeps
 
-ALPN: `tidefell/storage/1`
+ALPN: `shoal/storage/1`
 
 Status: draft. Messages are implemented in `crates/proto`; golden encodings are in
 [`vectors/storage-v1.json`](vectors/storage-v1.json), made by

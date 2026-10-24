@@ -1,14 +1,14 @@
 //! Saving only what changed (ADR 0034): a folder rebuilt from what its journals stored is the
 //! folder it was, whatever happened in between and whenever it was saved.
 
+use shoal_meta::Wire;
 use std::collections::BTreeMap;
-use tidefell_meta::Wire;
 
 use ed25519_dalek::SigningKey;
 use proptest::prelude::*;
-use tidefell_meta::{Folder, Header, Journal, Recycled, Retention};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId};
+use shoal_meta::{Folder, Header, Journal, Recycled, Retention};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId};
 
 const FOLDER: FolderId = FolderId([9; 32]);
 
@@ -211,7 +211,7 @@ proptest! {
             let saved: Vec<(u64, EntryId)> = records
                 .versions
                 .iter()
-                .map(|(s, v)| (*s, tidefell_meta::copy_id(v)))
+                .map(|(s, v)| (*s, shoal_meta::copy_id(v)))
                 .collect();
             prop_assert_eq!(saved, replica.stored_ids());
         }

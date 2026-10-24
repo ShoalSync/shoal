@@ -4,9 +4,9 @@
 //! what is served, and what a conflict copy's ID hashes.
 
 use ed25519_dalek::SigningKey;
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::sync2::SealedVersion;
-use tidefell_proto::{DeviceId, Signed, SignedKind};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::sync2::SealedVersion;
+use shoal_proto::{DeviceId, Signed, SignedKind};
 
 use crate::{Error, Result};
 
@@ -68,8 +68,8 @@ impl Wire {
                 (sealed.author, signed.signer)
             }
         };
-        if tidefell_proto::PublicKey::from(author) != signer {
-            return Err(tidefell_proto::Error::SignerMismatch.into());
+        if shoal_proto::PublicKey::from(author) != signer {
+            return Err(shoal_proto::Error::SignerMismatch.into());
         }
         Ok(())
     }

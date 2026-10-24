@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-store"
+name = "shoal-store"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: block store, availability bitmaps, eviction, on-disk layout"
+description = "Shoal: block store, availability bitmaps, eviction, on-disk layout"
 publish = false
 
 [lints]
@@ -12,8 +12,8 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-tidefell-chunker.workspace = true
-tidefell-proto.workspace = true
+shoal-chunker.workspace = true
+shoal-proto.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

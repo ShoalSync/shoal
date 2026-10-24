@@ -4,7 +4,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tidefell_engine::fuzzing::open_folder;
+use shoal_engine::fuzzing::open_folder;
 
 fuzz_target!(|data: &[u8]| {
     // The first byte says where the metadata ends and the state begins.

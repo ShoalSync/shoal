@@ -1,7 +1,7 @@
 //! The Phase 4b exit criterion: a partial replica mounts a folder with FUSE, lists every
 //! file, fetches placeholders when they are read, and syncs changes made through the mount.
 //! Needs `/dev/fuse` (and `fusermount3` unless run as root); without them the test is
-//! skipped, unless `TIDEFELL_REQUIRE_FUSE` is set, as in CI.
+//! skipped, unless `SHOAL_REQUIRE_FUSE` is set, as in CI.
 #![cfg(target_os = "linux")]
 
 use std::fs;
@@ -10,17 +10,17 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The tidefelld this test runs: the one built with it, unless `TIDEFELLD` names another, as
+/// The shoald this test runs: the one built with it, unless `SHOALD` names another, as
 /// when CI runs this test built elsewhere.
 fn bin() -> String {
-    std::env::var("TIDEFELLD").unwrap_or_else(|_| env!("CARGO_BIN_EXE_tidefelld").to_owned())
+    std::env::var("SHOALD").unwrap_or_else(|_| env!("CARGO_BIN_EXE_shoald").to_owned())
 }
 
-fn tidefelld(args: &[&str]) -> String {
+fn shoald(args: &[&str]) -> String {
     let out = Command::new(bin()).args(args).output().unwrap();
     assert!(
         out.status.success(),
-        "tidefelld {args:?} failed: {}",
+        "shoald {args:?} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).unwrap()
@@ -46,8 +46,8 @@ fn fuse_available() -> bool {
                 .arg("--version")
                 .output()
                 .is_ok());
-    if !usable && std::env::var_os("TIDEFELL_REQUIRE_FUSE").is_some() {
-        panic!("TIDEFELL_REQUIRE_FUSE is set but FUSE is not usable here");
+    if !usable && std::env::var_os("SHOAL_REQUIRE_FUSE").is_some() {
+        panic!("SHOAL_REQUIRE_FUSE is set but FUSE is not usable here");
     }
     usable
 }
@@ -67,7 +67,7 @@ impl Daemon {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("tidefelld did not stop");
+        panic!("shoald did not stop");
     }
 
     fn kill(mut self) {
@@ -127,9 +127,9 @@ scan_interval_secs = 1
             peer_port = peer.port,
             folder = self.folder().display(),
         );
-        let path = self.dir.join("tidefelld.toml");
+        let path = self.dir.join("shoald.toml");
         fs::write(&path, config).unwrap();
-        tidefelld(&["config", "check", path.to_str().unwrap()]);
+        shoald(&["config", "check", path.to_str().unwrap()]);
         let log = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -138,7 +138,7 @@ scan_interval_secs = 1
         Daemon(
             Command::new(bin())
                 .args(["run", "--config", path.to_str().unwrap()])
-                .env("RUST_LOG", "info,tidefell_fs_fuse=debug")
+                .env("RUST_LOG", "info,shoal_fs_fuse=debug")
                 .stdout(Stdio::null())
                 .stderr(log)
                 .spawn()
@@ -149,7 +149,7 @@ scan_interval_secs = 1
 
 fn init(root: &Path, name: &str, user_key: &Path) -> Node {
     let dir = root.join(name);
-    let out = tidefelld(&[
+    let out = shoald(&[
         "init",
         "--data-dir",
         dir.join("data").to_str().unwrap(),
@@ -210,10 +210,10 @@ fn partial_replica_mounts_a_folder() {
     let nas = init(root.path(), "nas", &user_key);
     let laptop = init(root.path(), "laptop", &user_key);
     let user = field(
-        &tidefelld(&["id", "--data-dir", nas.dir.join("data").to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", nas.dir.join("data").to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
     fs::create_dir_all(nas.folder().join("docs")).unwrap();
     fs::write(nas.folder().join("beach.jpg"), b"sand and sea").unwrap();
     fs::write(nas.folder().join("docs/notes.txt"), b"first draft").unwrap();

@@ -1,7 +1,7 @@
 //! Deterministic conflict resolution between concurrent versions of one entry.
 
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{EntryId, SignedKind};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{EntryId, SignedKind};
 
 /// Ordering key for concurrent versions; the greatest key wins. See "Conflict resolution" in
 /// `specs/sync-v1.md`, and in `specs/sync-v2.md` for the last part: two encrypted versions that

@@ -6,14 +6,12 @@ use std::str::FromStr;
 
 use ed25519_dalek::SigningKey;
 use proptest::prelude::*;
-use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
-use tidefell_proto::frame;
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::pair::{
-    FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode,
-};
-use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion, ErrorCode, SyncMessage};
-use tidefell_proto::{
+use shoal_proto::blobs::{BlobsErrorCode, BlobsMessage};
+use shoal_proto::frame;
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::pair::{FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode};
+use shoal_proto::sync::{is_valid_path, EntryKind, EntryVersion, ErrorCode, SyncMessage};
+use shoal_proto::{
     ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, SignedKind,
     UserId, VersionVector,
 };
@@ -342,7 +340,7 @@ proptest! {
     /// other way round, and transitive.
     #[test]
     fn vectors_are_partially_ordered(a in vector(), b in vector(), c in vector()) {
-        use tidefell_proto::Causality::{After, Before, Concurrent, Equal};
+        use shoal_proto::Causality::{After, Before, Concurrent, Equal};
         let flip = |x| match x {
             Before => After,
             After => Before,

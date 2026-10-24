@@ -1,4 +1,4 @@
-//! Messages of the `tidefell/blobs/2` protocol, for encrypted folders' sealed chunks and list
+//! Messages of the `shoal/blobs/2` protocol, for encrypted folders' sealed chunks and list
 //! blobs. See `specs/blobs-v2.md`.
 //!
 //! Variant order is part of the wire format, as in [`crate::blobs`].
@@ -29,7 +29,7 @@ pub enum BlobsErrorCode {
     ProtocolViolation,
 }
 
-/// A message on a `tidefell/blobs/2` stream.
+/// A message on a `shoal/blobs/2` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlobsMessage {
     Hello {

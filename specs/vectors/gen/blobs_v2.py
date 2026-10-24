@@ -33,7 +33,7 @@ def main():
         ("busy", variant(9, u(1500))),
     ]
     out = {
-        "alpn": "tidefell/blobs/2",
+        "alpn": "shoal/blobs/2",
         "spec": "specs/blobs-v2.md",
         "encoding": "varint length prefix + postcard",
         "vectors": [{"name": name, "frame": frame(body).hex()} for name, body in messages],

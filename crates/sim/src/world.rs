@@ -5,22 +5,22 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::Network;
-use tidefell_proto::{DeviceId, FolderId};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::Network;
+use shoal_proto::{DeviceId, FolderId};
 
 use crate::ops::{path, Op, Rng};
 
 const FOLDER: FolderId = FolderId([7; 32]);
 /// The folder's reserved directory, where the engine keeps what it replaces (ADR 0027).
-const RESERVED: &str = ".tidefell";
-/// How long the engines get to agree once the network heals, unless `TIDEFELL_SIM_SETTLE_MS`
+const RESERVED: &str = ".shoal";
+/// How long the engines get to agree once the network heals, unless `SHOAL_SIM_SETTLE_MS`
 /// says otherwise.
 fn settle_time() -> Duration {
-    std::env::var("TIDEFELL_SIM_SETTLE_MS")
+    std::env::var("SHOAL_SIM_SETTLE_MS")
         .ok()
         .and_then(|ms| ms.parse().ok())
         .map_or(Duration::from_secs(60), Duration::from_millis)
@@ -121,7 +121,7 @@ pub async fn run(ops: &[Op], devices: u8, base: &Path) -> Result<(), Failure> {
         ..f
     });
     // Traces name each run by its directory, so a failure says which run's trace is its own.
-    if std::env::var_os("TIDEFELL_SIM_TRACE").is_some() {
+    if std::env::var_os("SHOAL_SIM_TRACE").is_some() {
         let run = dir
             .path()
             .file_name()
@@ -195,11 +195,11 @@ impl World {
                 scan_interval: Duration::from_secs(3600),
                 sync: Default::default(),
                 confirm_deletes: Default::default(),
-                encryption: Some(tidefell_engine::Encryption {
+                encryption: Some(shoal_engine::Encryption {
                     storage_peers: Vec::new(),
-                    stored: Some(tidefell_engine::Stored {
+                    stored: Some(shoal_engine::Stored {
                         quota_bytes: u64::MAX,
-                        priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
+                        priority: shoal_engine::Stored::DEFAULT_PRIORITY,
                     }),
                 }),
             }],
@@ -261,7 +261,7 @@ impl World {
             scan_interval: Duration::from_secs(3600),
             sync: Default::default(),
             confirm_deletes: Default::default(),
-            encryption: self.encrypted.then(|| tidefell_engine::Encryption {
+            encryption: self.encrypted.then(|| shoal_engine::Encryption {
                 storage_peers: vec![storage],
                 stored: None,
             }),
@@ -332,8 +332,8 @@ impl World {
 
     async fn apply(&mut self, step: usize, op: &Op) -> Result<(), String> {
         let count = self.devices.len();
-        // `TIDEFELL_SIM_SKIP` names kinds of step to leave out, to tell which a failure needs.
-        if let Ok(skip) = std::env::var("TIDEFELL_SIM_SKIP") {
+        // `SHOAL_SIM_SKIP` names kinds of step to leave out, to tell which a failure needs.
+        if let Ok(skip) = std::env::var("SHOAL_SIM_SKIP") {
             let kind = format!("{op:?}");
             if skip
                 .split(',')
@@ -491,9 +491,9 @@ impl World {
     }
 
     /// Notes the content each device has now, and fails if an engine has. Every device's files
-    /// go in the history, and with `TIDEFELL_SIM_TRACE` set are printed too.
+    /// go in the history, and with `SHOAL_SIM_TRACE` set are printed too.
     fn observe(&mut self, step: usize) -> Result<(), String> {
-        let trace = std::env::var_os("TIDEFELL_SIM_TRACE").is_some();
+        let trace = std::env::var_os("SHOAL_SIM_TRACE").is_some();
         for device in &mut self.devices {
             self.history.push(format!(
                 "after step {step}, {}: {}",
@@ -528,11 +528,11 @@ impl World {
     }
 
     fn send_only(&self, n: usize, on: bool) -> Result<(), String> {
-        let sync = tidefell_engine::SyncOptions {
+        let sync = shoal_engine::SyncOptions {
             direction: if on {
-                tidefell_engine::Direction::SendOnly
+                shoal_engine::Direction::SendOnly
             } else {
-                tidefell_engine::Direction::Both
+                shoal_engine::Direction::Both
             },
             ..Default::default()
         };

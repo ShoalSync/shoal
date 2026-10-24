@@ -1,7 +1,7 @@
 //! List blobs: an encrypted file's chunk IDs beyond what its version lists itself, in the clear so
 //! storage peers can keep them (`specs/encryption-v1.md`).
 
-use tidefell_proto::{ChunkId, ListId};
+use shoal_proto::{ChunkId, ListId};
 
 use crate::{Error, Result};
 

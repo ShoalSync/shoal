@@ -1,7 +1,7 @@
 //! Measures a storage peer (ADR 0023, ADR 0035): its resident memory and idle CPU once it stores
 //! an encrypted folder of many versions.
 //!
-//! `cargo run --release -p tidefell-engine --example stored -- run <files>` writes `files` small
+//! `cargo run --release -p shoal-engine --example stored -- run <files>` writes `files` small
 //! files into a member's encrypted folder, then runs the member in this process and a storage
 //! peer in another, over loopback. The storage peer reports its resident memory once it stores
 //! every version and chunk, how long its status takes, and its CPU while idle. Then a second
@@ -12,15 +12,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use tidefell_engine::{
+use shoal_engine::{
     Encryption, Engine, EngineConfig, FolderConfig, PeerAddr, RelayConfig, ReplicaMode, Retention,
     Stored,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 #[global_allocator]
-static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+static ALLOCATOR: shoal_engine::Allocator = shoal_engine::Allocator;
 
 const FOLDER: FolderId = FolderId([43; 32]);
 const MEMBER_PORT: u16 = 47711;
@@ -271,7 +271,7 @@ fn spawn(mode: &str, dir: &Path, files: usize) -> std::process::Child {
 }
 
 fn main() {
-    tidefell_engine::with_allocator_settings();
+    shoal_engine::with_allocator_settings();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("run") => {

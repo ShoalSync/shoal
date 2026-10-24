@@ -1,4 +1,4 @@
-//! Logging shared by `tidefelld` and the bindings (ADR 0030): readable standard error, a
+//! Logging shared by `shoald` and the bindings (ADR 0030): readable standard error, a
 //! rotating file of JSON lines, logcat on Android, a level that can change at runtime, and the
 //! most recent warnings and errors in memory.
 
@@ -27,7 +27,7 @@ const PROBLEMS: usize = 500;
 pub struct LogOptions {
     /// The directory whose `logs/` subdirectory holds the log files.
     pub data_dir: PathBuf,
-    /// Filter, such as `info` or `info,tidefell_net=debug`.
+    /// Filter, such as `info` or `info,shoal_net=debug`.
     pub level: String,
     /// Write the rotating file. `None` writes it unless the journal already keeps the logs.
     pub file: Option<bool>,
@@ -42,7 +42,7 @@ pub struct Problem {
     pub time_ms: i64,
     /// `WARN` or `ERROR`.
     pub level: String,
-    /// Where it was logged, such as `tidefell_engine::scan`.
+    /// Where it was logged, such as `shoal_engine::scan`.
     pub target: String,
     /// The message.
     pub message: String,
@@ -90,7 +90,7 @@ pub fn init_logging(options: &LogOptions) -> io::Result<bool> {
     #[cfg(target_os = "android")]
     let outputs = Layer::and_then(
         Layer::and_then(file, stderr),
-        paranoid_android::layer("tidefell"),
+        paranoid_android::layer("shoal"),
     );
     #[cfg(not(target_os = "android"))]
     let outputs = Layer::and_then(file, stderr);
@@ -103,7 +103,7 @@ pub fn init_logging(options: &LogOptions) -> io::Result<bool> {
     }
     let _ = LEVEL.set(handle);
     if writes_file {
-        let _ = FILE.set(logs.join("tidefell.log"));
+        let _ = FILE.set(logs.join("shoal.log"));
     }
     *CURRENT.lock().unwrap() = options.level.clone();
     Ok(true)
@@ -192,7 +192,7 @@ impl Visit for Fields {
     }
 }
 
-/// `tidefell.log`, moved to `tidefell.1.log` and so on when it reaches [`FILE_BYTES`].
+/// `shoal.log`, moved to `shoal.1.log` and so on when it reaches [`FILE_BYTES`].
 struct RotatingFile {
     dir: PathBuf,
     file: File,
@@ -202,7 +202,7 @@ struct RotatingFile {
 impl RotatingFile {
     fn open(dir: &Path) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
-        let path = dir.join("tidefell.log");
+        let path = dir.join("shoal.log");
         let file = OpenOptions::new().create(true).append(true).open(&path)?;
         let written = file.metadata()?.len();
         Ok(Self {
@@ -215,13 +215,13 @@ impl RotatingFile {
     fn rotate(&mut self) -> io::Result<()> {
         for n in (1..FILES).rev() {
             let from = if n == 1 {
-                self.dir.join("tidefell.log")
+                self.dir.join("shoal.log")
             } else {
-                self.dir.join(format!("tidefell.{}.log", n - 1))
+                self.dir.join(format!("shoal.{}.log", n - 1))
             };
-            let _ = fs::rename(from, self.dir.join(format!("tidefell.{n}.log")));
+            let _ = fs::rename(from, self.dir.join(format!("shoal.{n}.log")));
         }
-        self.file = File::create(self.dir.join("tidefell.log"))?;
+        self.file = File::create(self.dir.join("shoal.log"))?;
         self.written = 0;
         Ok(())
     }
@@ -325,7 +325,7 @@ pub fn write_crash(dir: &Path, source: &str, message: &str, details: &str) -> io
     let time_ms = crate::now_ms();
     let path = dir.join(format!("crash-{time_ms:013}-{source}.txt"));
     let text = format!(
-        "Tidefell stopped unexpectedly\nversion: {}\nplatform: {}-{}\ntime_ms: {time_ms}\nmessage: {}\n{details}\n",
+        "Shoal stopped unexpectedly\nversion: {}\nplatform: {}-{}\ntime_ms: {time_ms}\nmessage: {}\n{details}\n",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
@@ -388,7 +388,7 @@ pub struct CrashReport {
 }
 
 /// Checks a tracker's URL: its issues page over HTTP or HTTPS, without a query, such as
-/// `https://github.com/Tidefell/tidefell/issues`.
+/// `https://github.com/ShoalSync/shoal/issues`.
 pub fn check_report_url(url: &str) -> Result<(), String> {
     let rest = url
         .strip_prefix("https://")
@@ -421,7 +421,7 @@ pub fn crash_report(data_dir: &Path, id: &str, report_url: Option<&str>) -> Opti
     let message = text
         .lines()
         .find_map(|l| l.strip_prefix("message: "))
-        .unwrap_or("Tidefell stopped unexpectedly")
+        .unwrap_or("Shoal stopped unexpectedly")
         .trim();
     let mut title = format!("Crash: {message}");
     if title.chars().count() > 100 {
@@ -436,7 +436,7 @@ pub fn crash_report(data_dir: &Path, id: &str, report_url: Option<&str>) -> Opti
         .max()
         .unwrap_or(0);
     let fence = "`".repeat(longest.max(2) + 1);
-    let head = format!("Tidefell stopped unexpectedly: {message}\n\n{fence}\n");
+    let head = format!("Shoal stopped unexpectedly: {message}\n\n{fence}\n");
     let tail = |cut: bool| {
         let note = if cut {
             "(cut to fit a link: paste the rest of the crash file here)\n"
@@ -444,7 +444,7 @@ pub fn crash_report(data_dir: &Path, id: &str, report_url: Option<&str>) -> Opti
             ""
         };
         format!(
-            "{note}{fence}\n\nA diagnostics bundle helps: make one with `tidefell diagnostics`, \
+            "{note}{fence}\n\nA diagnostics bundle helps: make one with `shoal diagnostics`, \
              the web peer's status page or the app, look inside, and attach it here.\n"
         )
     };
@@ -483,7 +483,7 @@ pub fn crash_report(data_dir: &Path, id: &str, report_url: Option<&str>) -> Opti
 
 /// `text` with home directories replaced by `~`: `home`, and any `/home/<name>`,
 /// `/Users/<name>`, `/root` or `C:\Users\<name>`, which backtraces can name from the machine
-/// that built Tidefell.
+/// that built Shoal.
 fn strip_home(text: &str, home: Option<&Path>) -> String {
     let mut text = text.to_owned();
     if let Some(home) = home.and_then(Path::to_str).filter(|h| h.len() > 1) {
@@ -604,11 +604,11 @@ mod tests {
         assert_eq!(
             names,
             [
-                "tidefell.1.log",
-                "tidefell.2.log",
-                "tidefell.3.log",
-                "tidefell.4.log",
-                "tidefell.log"
+                "shoal.1.log",
+                "shoal.2.log",
+                "shoal.3.log",
+                "shoal.4.log",
+                "shoal.log"
             ]
         );
         for name in &names {
@@ -656,7 +656,7 @@ mod tests {
             Some("a/b.txt")
         );
 
-        let text = fs::read_to_string(dir.path().join("logs/tidefell.log")).unwrap();
+        let text = fs::read_to_string(dir.path().join("logs/shoal.log")).unwrap();
         let lines: Vec<serde_json::Value> = text
             .lines()
             .map(|l| serde_json::from_str(l).unwrap())
@@ -768,7 +768,7 @@ mod tests {
             report.body.contains("\n````\n"),
             "a fence longer than the text's"
         );
-        assert!(report.body.contains("tidefell diagnostics"));
+        assert!(report.body.contains("shoal diagnostics"));
         assert_eq!(report.url, None);
         // The app's own crashes, with free-form details.
         let app = crash_report(dir.path(), &found[1].id, None).unwrap();
@@ -828,7 +828,7 @@ mod tests {
 
     #[test]
     fn report_urls_are_checked() {
-        assert!(check_report_url("https://github.com/Tidefell/tidefell/issues").is_ok());
+        assert!(check_report_url("https://github.com/ShoalSync/shoal/issues").is_ok());
         assert!(check_report_url("http://git.local/o/r/issues").is_ok());
         for bad in [
             "ftp://x/issues",

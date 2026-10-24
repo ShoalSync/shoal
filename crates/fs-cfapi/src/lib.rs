@@ -1,4 +1,4 @@
-//! Tidefell `fs-cfapi` crate: Windows placeholders through the Cloud Files API (ADR 0042).
+//! Shoal `fs-cfapi` crate: Windows placeholders through the Cloud Files API (ADR 0042).
 //!
 //! A partial replica's folder is a sync root: files not on this device are placeholders that
 //! Explorer shows, and reading one fetches it through the engine. Deletes and renames other
@@ -23,7 +23,7 @@ use cloud_filter::root::{
     Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
     SyncRootInfo,
 };
-use tidefell_proto::FolderId;
+use shoal_proto::FolderId;
 
 pub use backend::{Backend, BackendError, EngineFolder, FileEntry, Sink};
 pub use ops::free;
@@ -31,7 +31,7 @@ pub use place::unusable;
 pub use reconcile::Reconciled;
 
 /// The provider's name, as Windows lists it.
-const PROVIDER: &str = "Tidefell";
+const PROVIDER: &str = "Shoal";
 
 /// A folder registered and connected as a sync root. Dropping it disconnects; the
 /// registration stays, so Explorer keeps showing the folder, until [`SyncRoot::unregister`].

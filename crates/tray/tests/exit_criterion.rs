@@ -3,7 +3,7 @@
 //! folder, approves the Linux daemon as a new device through the tray's own code; the shell's
 //! listing of the folder (Explorer's) shows the files it brings as placeholders; opening one
 //! fetches its content; and the two talk directly, over the LAN. Run by the exit-criterion
-//! workflow, which sets `TIDEFELL_EXIT_RUN` and the rest; ignored otherwise.
+//! workflow, which sets `SHOAL_EXIT_RUN` and the rest; ignored otherwise.
 #![cfg(windows)]
 
 use std::io::Write;
@@ -14,12 +14,12 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 mod common;
-use common::tidefelld;
-use tidefell_sdk::types::{Mode, NewFolder, PathKind};
-use tidefell_sdk::Client;
-use tidefell_tray::approve::{Approval, Approving};
-use tidefell_tray::setup::first_device;
-use tidefell_tray::supervisor::Paths;
+use common::shoald;
+use shoal_sdk::types::{Mode, NewFolder, PathKind};
+use shoal_sdk::Client;
+use shoal_tray::approve::{Approval, Approving};
+use shoal_tray::setup::first_device;
+use shoal_tray::supervisor::Paths;
 
 const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
 
@@ -45,12 +45,12 @@ fn mailbox(name: &str) -> Option<String> {
     writeln!(
         curl.stdin.take()?,
         "Authorization: token {}",
-        env("TIDEFELL_EXIT_TOKEN")
+        env("SHOAL_EXIT_TOKEN")
     )
     .ok()?;
     let out = curl.wait_with_output().ok()?;
     let statuses: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
-    let context = format!("exit-criterion/{}/{name}", env("TIDEFELL_EXIT_RUN"));
+    let context = format!("exit-criterion/{}/{name}", env("SHOAL_EXIT_RUN"));
     statuses
         .as_array()?
         .iter()
@@ -122,17 +122,17 @@ impl Drop for Daemon {
 #[test]
 #[ignore = "the exit criterion, run with its Linux half by its own workflow"]
 fn a_windows_partial_replica_with_a_linux_daemon() {
-    let run = env("TIDEFELL_EXIT_RUN");
-    let daemon = tidefelld().expect("tidefelld is built");
+    let run = env("SHOAL_EXIT_RUN");
+    let daemon = shoald().expect("shoald is built");
     let work = tempfile::tempdir().unwrap();
     let data_dir = work.path().join("data");
     let paths = Paths {
         daemon: daemon.clone(),
-        config: data_dir.join("tidefelld.toml"),
+        config: data_dir.join("shoald.toml"),
         data_dir: data_dir.clone(),
     };
     // In the profile, where the shell shows a sync root.
-    let root: PathBuf = PathBuf::from(env("USERPROFILE")).join(format!("Tidefell exit {run}"));
+    let root: PathBuf = PathBuf::from(env("USERPROFILE")).join(format!("Shoal exit {run}"));
     let _ = std::fs::remove_dir_all(&root);
 
     // The first of the user's devices, as the tray sets one up, with relays and discovery on.
@@ -143,7 +143,7 @@ fn a_windows_partial_replica_with_a_linux_daemon() {
             .arg("run")
             .arg("--config")
             .arg(&paths.config)
-            .env("RUST_LOG", "info,tidefell_fs_cfapi=debug")
+            .env("RUST_LOG", "info,shoal_fs_cfapi=debug")
             .stdout(Stdio::null())
             .stderr(log)
             .spawn()

@@ -8,12 +8,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, FolderState, Operation, PathKind, PeerAddr, ProblemKind,
     RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([43; 32]);
 
@@ -313,7 +313,7 @@ async fn a_read_only_folder_lists_every_file_it_cannot_write() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_doctor_checks_clocks_and_folders() {
-    use tidefell_engine::CheckLevel;
+    use shoal_engine::CheckLevel;
 
     let dir = tempfile::tempdir().unwrap();
     let user = UserKey::from_seed([1; 32]);
@@ -353,7 +353,7 @@ async fn the_doctor_checks_clocks_and_folders() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn each_device_logs_what_it_applied() {
-    use tidefell_engine::ChangeKind;
+    use shoal_engine::ChangeKind;
 
     let dir = tempfile::tempdir().unwrap();
     let user = UserKey::from_seed([1; 32]);
@@ -474,31 +474,31 @@ async fn metrics_count_a_sync() {
 
     // Loopback is the local network.
     let on_a = samples(&engine_a.metrics());
-    assert!(on_a[r#"tidefell_content_sent_bytes_total{network="local"}"#] >= 300_000.0);
+    assert!(on_a[r#"shoal_content_sent_bytes_total{network="local"}"#] >= 300_000.0);
     assert_eq!(
-        on_a[r#"tidefell_content_sent_bytes_total{network="remote"}"#],
+        on_a[r#"shoal_content_sent_bytes_total{network="remote"}"#],
         0.0
     );
-    assert!(on_a["tidefell_chunks_served_total"] >= 1.0);
+    assert!(on_a["shoal_chunks_served_total"] >= 1.0);
     let on_b = samples(&engine_b.metrics());
-    assert!(on_b[r#"tidefell_content_received_bytes_total{network="local"}"#] >= 300_000.0);
+    assert!(on_b[r#"shoal_content_received_bytes_total{network="local"}"#] >= 300_000.0);
     assert_eq!(
-        on_b[r#"tidefell_content_received_bytes_total{network="remote"}"#],
+        on_b[r#"shoal_content_received_bytes_total{network="remote"}"#],
         0.0
     );
-    assert_eq!(on_b[r#"tidefell_connections{path="direct"}"#], 1.0);
-    assert_eq!(on_b[r#"tidefell_connections{path="relay"}"#], 0.0);
+    assert_eq!(on_b[r#"shoal_connections{path="direct"}"#], 1.0);
+    assert_eq!(on_b[r#"shoal_connections{path="relay"}"#], 0.0);
     for reason in ["request", "busy", "missing", "unavailable", "storage"] {
         assert!(on_b.contains_key(&format!(
-            r#"tidefell_fetch_failures_total{{reason="{reason}"}}"#
+            r#"shoal_fetch_failures_total{{reason="{reason}"}}"#
         )));
     }
     // Folders by the first 8 characters of their ID.
     let folder = r#"{folder="2b2b2b2b"}"#;
-    assert_eq!(on_b[&format!("tidefell_folder_pending_files{folder}")], 0.0);
-    assert_eq!(on_b[&format!("tidefell_folder_problems{folder}")], 0.0);
-    assert!(on_b.contains_key(&format!("tidefell_folder_recycle_bin_bytes{folder}")));
-    assert!(on_a.contains_key(&format!("tidefell_folder_scan_duration_seconds{folder}")));
+    assert_eq!(on_b[&format!("shoal_folder_pending_files{folder}")], 0.0);
+    assert_eq!(on_b[&format!("shoal_folder_problems{folder}")], 0.0);
+    assert!(on_b.contains_key(&format!("shoal_folder_recycle_bin_bytes{folder}")));
+    assert!(on_a.contains_key(&format!("shoal_folder_scan_duration_seconds{folder}")));
     // iroh's own.
     assert!(on_b.keys().any(|k| k.starts_with("iroh_")), "{on_b:?}");
 
@@ -518,7 +518,7 @@ async fn metrics_count_a_sync() {
         })
         .unwrap();
     let with = samples(&engine_b.metrics());
-    assert!(with.contains_key(r#"tidefell_folder_problems{folder="cdcdcdcd"}"#));
+    assert!(with.contains_key(r#"shoal_folder_problems{folder="cdcdcdcd"}"#));
     engine_b.remove_folder(other).unwrap();
     let page = engine_b.metrics();
     assert!(!page.contains("cdcdcdcd"), "{page}");

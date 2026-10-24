@@ -7,7 +7,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use iroh::endpoint::{Connection, RecvStream, SendStream};
-use tidefell_proto::DeviceId;
+use shoal_proto::DeviceId;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use crate::{Error, Result};

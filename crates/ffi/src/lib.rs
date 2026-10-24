@@ -1,6 +1,6 @@
-//! Tidefell `ffi` crate: uniffi bindings → Kotlin (Android), later Swift (ADR 0004).
+//! Shoal `ffi` crate: uniffi bindings → Kotlin (Android), later Swift (ADR 0004).
 //!
-//! The surface is generated, never hand-written, on the Kotlin side (package `org.tidefell.ffi`):
+//! The surface is generated, never hand-written, on the Kotlin side (package `org.shoalsync.ffi`):
 //!
 //! - [`device_id`] and [`is_paired`] inspect a data directory.
 //! - A [`Pairing`] shows a pairing code and waits for a device holding the user key to
@@ -12,7 +12,7 @@
 //! any executor (Kotlin coroutines on Android).
 
 #[global_allocator]
-static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+static ALLOCATOR: shoal_engine::Allocator = shoal_engine::Allocator;
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-use tidefell_engine::diagnostics;
-use tidefell_engine::pairing::{self, PairingEvent, PairingServer};
-use tidefell_engine::{
+use shoal_engine::diagnostics;
+use shoal_engine::pairing::{self, PairingEvent, PairingServer};
+use shoal_engine::{
     device, Engine, EngineConfig, FolderId, NewFolder, PeerAddr, RelayConfig, RelayToken,
     ReplicaMode, Retention,
 };
@@ -38,7 +38,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .thread_name("tidefell")
+            .thread_name("shoal")
             .build()
             .expect("tokio runtime")
     })
@@ -51,14 +51,14 @@ async fn on_runtime<T: Send + 'static>(
     runtime()
         .spawn(future)
         .await
-        .map_err(|e| TidefellError::Failed {
+        .map_err(|e| ShoalError::Failed {
             detail: e.to_string(),
         })
 }
 
 /// Errors reported to the app.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
-pub enum TidefellError {
+pub enum ShoalError {
     /// A folder, file or entry does not exist.
     #[error("{detail}")]
     NotFound {
@@ -88,15 +88,15 @@ pub enum TidefellError {
     },
 }
 
-impl From<uniffi::UnexpectedUniFFICallbackError> for TidefellError {
+impl From<uniffi::UnexpectedUniFFICallbackError> for ShoalError {
     fn from(e: uniffi::UnexpectedUniFFICallbackError) -> Self {
         Self::Failed { detail: e.reason }
     }
 }
 
-impl From<tidefell_engine::Error> for TidefellError {
-    fn from(e: tidefell_engine::Error) -> Self {
-        use tidefell_engine::Error as E;
+impl From<shoal_engine::Error> for ShoalError {
+    fn from(e: shoal_engine::Error) -> Self {
+        use shoal_engine::Error as E;
         let detail = e.to_string();
         match e {
             E::UnknownFolder(_) | E::NoSuchFile(_) | E::NotRecycled(_) => Self::NotFound { detail },
@@ -111,10 +111,10 @@ impl From<tidefell_engine::Error> for TidefellError {
     }
 }
 
-type Result<T> = std::result::Result<T, TidefellError>;
+type Result<T> = std::result::Result<T, ShoalError>;
 
-fn invalid(message: impl Into<String>) -> TidefellError {
-    TidefellError::Invalid {
+fn invalid(message: impl Into<String>) -> ShoalError {
+    ShoalError::Invalid {
         detail: message.into(),
     }
 }
@@ -124,7 +124,7 @@ fn parse<T: std::str::FromStr>(what: &str, text: &str) -> Result<T> {
         .map_err(|_| invalid(format!("{what} {text:?} is not valid")))
 }
 
-fn priorities(p: tidefell_engine::Priorities) -> Priorities {
+fn priorities(p: shoal_engine::Priorities) -> Priorities {
     Priorities {
         rules: p
             .rules
@@ -206,7 +206,7 @@ impl Network {
 }
 
 /// Starts logging and crash recording (ADR 0030): JSON lines in `<data_dir>/logs/`, logcat on
-/// Android and standard error, at `level` (such as `info` or `info,tidefell_net=debug`), and a
+/// Android and standard error, at `level` (such as `info` or `info,shoal_net=debug`), and a
 /// crash file in `<data_dir>/crashes/` for every panic. Call it once, before anything else. Only
 /// the first call has an effect; it returns false for later ones.
 #[uniffi::export]
@@ -325,7 +325,7 @@ pub fn crash_report(
     }
     let url = report_url.or(diagnostics::DEFAULT_REPORT_URL.map(str::to_owned));
     let report = diagnostics::crash_report(&PathBuf::from(data_dir), &id, url.as_deref())
-        .ok_or(TidefellError::NotFound { detail: id })?;
+        .ok_or(ShoalError::NotFound { detail: id })?;
     Ok(CrashReport {
         title: report.title,
         body: report.body,
@@ -622,31 +622,31 @@ pub struct SyncOptions {
     pub local_deletes: LocalDeletes,
 }
 
-impl From<SyncOptions> for tidefell_engine::SyncOptions {
+impl From<SyncOptions> for shoal_engine::SyncOptions {
     fn from(s: SyncOptions) -> Self {
         Self {
             direction: match s.direction {
-                Direction::Both => tidefell_engine::Direction::Both,
-                Direction::SendOnly => tidefell_engine::Direction::SendOnly,
+                Direction::Both => shoal_engine::Direction::Both,
+                Direction::SendOnly => shoal_engine::Direction::SendOnly,
             },
             local_deletes: match s.local_deletes {
-                LocalDeletes::Everywhere => tidefell_engine::LocalDeletes::Everywhere,
-                LocalDeletes::ThisDevice => tidefell_engine::LocalDeletes::ThisDevice,
+                LocalDeletes::Everywhere => shoal_engine::LocalDeletes::Everywhere,
+                LocalDeletes::ThisDevice => shoal_engine::LocalDeletes::ThisDevice,
             },
         }
     }
 }
 
-impl From<tidefell_engine::SyncOptions> for SyncOptions {
-    fn from(s: tidefell_engine::SyncOptions) -> Self {
+impl From<shoal_engine::SyncOptions> for SyncOptions {
+    fn from(s: shoal_engine::SyncOptions) -> Self {
         Self {
             direction: match s.direction {
-                tidefell_engine::Direction::Both => Direction::Both,
-                tidefell_engine::Direction::SendOnly => Direction::SendOnly,
+                shoal_engine::Direction::Both => Direction::Both,
+                shoal_engine::Direction::SendOnly => Direction::SendOnly,
             },
             local_deletes: match s.local_deletes {
-                tidefell_engine::LocalDeletes::Everywhere => LocalDeletes::Everywhere,
-                tidefell_engine::LocalDeletes::ThisDevice => LocalDeletes::ThisDevice,
+                shoal_engine::LocalDeletes::Everywhere => LocalDeletes::Everywhere,
+                shoal_engine::LocalDeletes::ThisDevice => LocalDeletes::ThisDevice,
             },
         }
     }
@@ -954,7 +954,7 @@ pub struct Copy {
     pub confirmed_ms: i64,
 }
 
-/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.shoalpriorities`,
 /// and what they give each current file and directory.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Priorities {
@@ -969,7 +969,7 @@ pub struct Priorities {
 pub struct PriorityRule {
     /// 0 to 255, higher kept first; 0 never stored on a storage peer.
     pub priority: u8,
-    /// Paths it covers, as in `.tidefellignore`.
+    /// Paths it covers, as in `.shoalignore`.
     pub pattern: String,
 }
 
@@ -1165,7 +1165,7 @@ impl Node {
     }
 }
 
-fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
+fn folder_record(f: shoal_engine::FolderInfo) -> Folder {
     Folder {
         id: f.id.to_string(),
         path: f.path.display().to_string(),
@@ -1181,12 +1181,12 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
         pinned_bytes: f.pinned_bytes,
         conflicts: f.conflicts as u64,
         state: match f.state {
-            tidefell_engine::FolderState::Idle => FolderState::Idle,
-            tidefell_engine::FolderState::Scanning => FolderState::Scanning,
-            tidefell_engine::FolderState::Syncing => FolderState::Syncing,
-            tidefell_engine::FolderState::Paused => FolderState::Paused,
-            tidefell_engine::FolderState::Rebuilding => FolderState::Rebuilding,
-            tidefell_engine::FolderState::Error => FolderState::Error,
+            shoal_engine::FolderState::Idle => FolderState::Idle,
+            shoal_engine::FolderState::Scanning => FolderState::Scanning,
+            shoal_engine::FolderState::Syncing => FolderState::Syncing,
+            shoal_engine::FolderState::Paused => FolderState::Paused,
+            shoal_engine::FolderState::Rebuilding => FolderState::Rebuilding,
+            shoal_engine::FolderState::Error => FolderState::Error,
         },
         error: f.error,
         pending_files: f.pending_files as u64,
@@ -1218,7 +1218,7 @@ fn folder_record(f: tidefell_engine::FolderInfo) -> Folder {
     }
 }
 
-fn recycled_record(r: tidefell_engine::RecycledInfo) -> Recycled {
+fn recycled_record(r: shoal_engine::RecycledInfo) -> Recycled {
     Recycled {
         entry: r.entry.to_string(),
         path: r.path,
@@ -1238,7 +1238,7 @@ impl Node {
     pub async fn start(data_dir: String, network: Network) -> Result<Arc<Self>> {
         let data_dir = PathBuf::from(data_dir);
         let key = vault::device_key(&data_dir)?;
-        let certificate = device::certificate(&data_dir, &key)?.ok_or(TidefellError::NotPaired)?;
+        let certificate = device::certificate(&data_dir, &key)?.ok_or(ShoalError::NotPaired)?;
         let config = EngineConfig {
             data_dir,
             metadata_dir: None,
@@ -1374,7 +1374,7 @@ impl Node {
             .into_iter()
             .find(|f| f.id == id)
             .map(folder_record)
-            .ok_or(TidefellError::NotFound { detail: folder })
+            .ok_or(ShoalError::NotFound { detail: folder })
     }
 
     /// Changes how long this device keeps a folder's deleted files; 0 keeps them forever.
@@ -1388,7 +1388,7 @@ impl Node {
             .into_iter()
             .find(|f| f.id == id)
             .map(folder_record)
-            .ok_or(TidefellError::NotFound { detail: folder })
+            .ok_or(ShoalError::NotFound { detail: folder })
     }
 
     /// Stops syncing a folder. Files on disk are kept.
@@ -1504,7 +1504,7 @@ impl Node {
         Ok(priorities(p))
     }
 
-    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to
+    /// Sets the rule for `pattern` in an encrypted folder's `.shoalpriorities` to
     /// `priority`, or removes it for none, keeping the file's other lines.
     pub async fn set_priority(
         &self,
@@ -1584,7 +1584,7 @@ impl Node {
 
     /// Changes the upload and download limits until the node stops.
     pub fn set_limits(&self, limits: Limits) -> Result<()> {
-        self.engine()?.set_limits(tidefell_engine::Limits {
+        self.engine()?.set_limits(shoal_engine::Limits {
             upload: limits.upload,
             download: limits.download,
             limit_local: limits.limit_local,
@@ -1601,9 +1601,9 @@ impl Node {
             .map(|v| Version {
                 id: v.id,
                 kind: match v.kind {
-                    tidefell_engine::VersionKind::Current => VersionKind::Current,
-                    tidefell_engine::VersionKind::Previous => VersionKind::Previous,
-                    tidefell_engine::VersionKind::Conflict => VersionKind::Conflict,
+                    shoal_engine::VersionKind::Current => VersionKind::Current,
+                    shoal_engine::VersionKind::Previous => VersionKind::Previous,
+                    shoal_engine::VersionKind::Conflict => VersionKind::Conflict,
                 },
                 size: v.size,
                 modified_ms: v.modified_ms,
@@ -1646,9 +1646,9 @@ impl Node {
         let engine = self.engine()?;
         let folder = parse("folder ID", &folder)?;
         let resolution = if keep == "both" {
-            tidefell_engine::Resolution::KeepBoth
+            shoal_engine::Resolution::KeepBoth
         } else {
-            tidefell_engine::Resolution::Keep(keep)
+            shoal_engine::Resolution::Keep(keep)
         };
         on_runtime(async move { engine.resolve(folder, &path, resolution).await }).await??;
         Ok(())
@@ -1728,7 +1728,7 @@ impl Node {
             .into_iter()
             .next()
             .map(recycled_record)
-            .ok_or(TidefellError::NotFound { detail: entry })
+            .ok_or(ShoalError::NotFound { detail: entry })
     }
 
     /// Permanently deletes everything in this device's recycle bin for a folder, and returns
@@ -1802,7 +1802,7 @@ impl Node {
                 device: p.device.to_string(),
                 name: p.name,
                 connected: p.connected,
-                relayed: p.path.map(|path| path == tidefell_engine::PathKind::Relay),
+                relayed: p.path.map(|path| path == shoal_engine::PathKind::Relay),
                 rtt_ms: p.rtt_ms,
                 last_seen_ms: p.last_seen_ms,
                 last_error: p.last_error,
@@ -1821,7 +1821,7 @@ impl Node {
         include_paths: bool,
         app: Option<String>,
     ) -> Result<DiagnosticsBundle> {
-        let options = tidefell_engine::BundleOptions {
+        let options = shoal_engine::BundleOptions {
             include_paths,
             app: app.and_then(|a| serde_json::from_str(&a).ok()),
         };
@@ -1829,10 +1829,10 @@ impl Node {
             .engine()?
             .diagnostics(&options)
             .map_err(|e| invalid(e.to_string()))?;
-        let zip = tidefell_engine::zip_bundle(&entries).map_err(|e| invalid(e.to_string()))?;
+        let zip = shoal_engine::zip_bundle(&entries).map_err(|e| invalid(e.to_string()))?;
         let dir = PathBuf::from(dir);
         std::fs::create_dir_all(&dir).map_err(|e| invalid(e.to_string()))?;
-        let path = dir.join("tidefell-diagnostics.zip");
+        let path = dir.join("shoal-diagnostics.zip");
         std::fs::write(&path, zip).map_err(|e| invalid(e.to_string()))?;
         Ok(DiagnosticsBundle {
             path: path.display().to_string(),
@@ -1857,9 +1857,9 @@ impl Node {
             .map(|c| Check {
                 name: c.name,
                 level: match c.level {
-                    tidefell_engine::CheckLevel::Pass => CheckLevel::Pass,
-                    tidefell_engine::CheckLevel::Warning => CheckLevel::Warning,
-                    tidefell_engine::CheckLevel::Failure => CheckLevel::Failure,
+                    shoal_engine::CheckLevel::Pass => CheckLevel::Pass,
+                    shoal_engine::CheckLevel::Warning => CheckLevel::Warning,
+                    shoal_engine::CheckLevel::Failure => CheckLevel::Failure,
                 },
                 detail: c.detail,
                 advice: c.advice,
@@ -1881,7 +1881,7 @@ impl Node {
     /// What this device applied to a folder, newest first, at most `limit` changes: who changed
     /// which file, and whether the change came from a peer (ADR 0030).
     pub fn activity(&self, folder: String, limit: u32) -> Result<Vec<Activity>> {
-        use tidefell_engine::ChangeKind as Kind;
+        use shoal_engine::ChangeKind as Kind;
         Ok(self
             .engine()?
             .activity(parse("folder ID", &folder)?, limit as usize)?
@@ -1907,7 +1907,7 @@ impl Node {
 
     /// The folder's paths that failed to scan, fetch, write or delete (ADR 0030).
     pub fn path_problems(&self, folder: String) -> Result<Vec<PathProblem>> {
-        use tidefell_engine::{Operation as Op, ProblemKind as Kind};
+        use shoal_engine::{Operation as Op, ProblemKind as Kind};
         Ok(self
             .engine()?
             .path_problems(parse("folder ID", &folder)?)?
@@ -1974,7 +1974,7 @@ impl Node {
     pub fn subscribe(&self, listener: Box<dyn EventListener>) -> Result<()> {
         let mut events = self.engine()?.events();
         runtime().spawn(async move {
-            use tidefell_engine::Event as E;
+            use shoal_engine::Event as E;
             loop {
                 let event = match events.recv().await {
                     Ok(event) => event,
@@ -2063,7 +2063,7 @@ impl Node {
             sync: sync.into(),
             encryption: encryption
                 .map(|e| {
-                    Ok::<_, TidefellError>(tidefell_engine::Encryption {
+                    Ok::<_, ShoalError>(shoal_engine::Encryption {
                         storage_peers: e
                             .storage_peers
                             .iter()

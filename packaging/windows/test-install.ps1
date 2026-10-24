@@ -5,9 +5,9 @@ param([Parameter(Mandatory)] [string] $Msi)
 $ErrorActionPreference = 'Stop'
 $msi = (Resolve-Path $Msi).Path
 $logs = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { $env:TEMP }
-$dir = Join-Path $env:LOCALAPPDATA 'Programs\Tidefell'
+$dir = Join-Path $env:LOCALAPPDATA 'Programs\Shoal'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Tidefell.lnk'
+$shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Shoal.lnk'
 
 function Invoke-Msiexec([string] $What, [string[]] $Arguments) {
     $log = Join-Path $logs "$What.log"
@@ -26,7 +26,7 @@ function Invoke-Msiexec([string] $What, [string[]] $Arguments) {
 # What an earlier run that failed left on the user's PATH goes first: the runner is not
 # ephemeral.
 $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
-$kept = ($path -split ';' | Where-Object { $_ -and $_ -notlike '*Programs\Tidefell*' }) -join ';'
+$kept = ($path -split ';' | Where-Object { $_ -and $_ -notlike '*Programs\Shoal*' }) -join ';'
 if ($kept -ne $path) {
     "removing an earlier run's PATH entry"
     [Environment]::SetEnvironmentVariable('PATH', $kept, 'User')
@@ -34,19 +34,19 @@ if ($kept -ne $path) {
 
 Invoke-Msiexec 'install' @('/i', "`"$msi`"")
 try {
-    foreach ($file in 'tidefell-tray.exe', 'tidefelld.exe', 'tidefell.exe', 'LICENSE.txt', 'README.md') {
+    foreach ($file in 'shoal-tray.exe', 'shoald.exe', 'shoal.exe', 'LICENSE-MIT.txt', 'LICENSE-APACHE.txt', 'README.md') {
         if (-not (Test-Path (Join-Path $dir $file))) { throw "missing $dir\$file" }
     }
-    $run = (Get-ItemProperty $runKey -Name Tidefell -ErrorAction SilentlyContinue).Tidefell
-    if ($run -notlike '*tidefell-tray.exe*') { throw "no Run entry: $run" }
+    $run = (Get-ItemProperty $runKey -Name Shoal -ErrorAction SilentlyContinue).Shoal
+    if ($run -notlike '*shoal-tray.exe*') { throw "no Run entry: $run" }
     $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
-    if ($path -notlike '*Programs\Tidefell*') { throw "not on the user's PATH: $path" }
+    if ($path -notlike '*Programs\Shoal*') { throw "not on the user's PATH: $path" }
     if (-not (Test-Path $shortcut)) { throw "no Start menu shortcut" }
     'installed'
 
     # Installing again repairs it in place.
     Invoke-Msiexec 'reinstall' @('/i', "`"$msi`"")
-    if (-not (Test-Path (Join-Path $dir 'tidefelld.exe'))) { throw "gone after installing again" }
+    if (-not (Test-Path (Join-Path $dir 'shoald.exe'))) { throw "gone after installing again" }
 
 } catch {
     # Not left installed for the next run.
@@ -56,8 +56,8 @@ try {
 
 Invoke-Msiexec 'uninstall' @('/x', "`"$msi`"")
 if (Test-Path $dir) { throw "$dir is still there" }
-if (Get-ItemProperty $runKey -Name Tidefell -ErrorAction SilentlyContinue) { throw "Run entry left" }
+if (Get-ItemProperty $runKey -Name Shoal -ErrorAction SilentlyContinue) { throw "Run entry left" }
 if (Test-Path $shortcut) { throw "shortcut left" }
 $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
-if ($path -like '*Programs\Tidefell*') { throw "still on the user's PATH: $path" }
+if ($path -like '*Programs\Shoal*') { throw "still on the user's PATH: $path" }
 'uninstalled'

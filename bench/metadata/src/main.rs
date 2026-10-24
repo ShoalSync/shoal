@@ -13,10 +13,10 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use redb::{Database, Durability, ReadableDatabase, TableDefinition};
-use tidefell_identity::DeviceKey;
-use tidefell_meta::{Folder, Retention};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{ContentHash, EntryId, FolderId, Signed};
+use shoal_identity::DeviceKey;
+use shoal_meta::{Folder, Retention};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{ContentHash, EntryId, FolderId, Signed};
 
 const BATCH: usize = 512;
 const VERSIONS: TableDefinition<&[u8; 16], &[u8]> = TableDefinition::new("versions");

@@ -2,8 +2,8 @@
 
 use std::sync::OnceLock;
 
-use tidefell_proto::sync::{is_valid_path, EntryKind, EntryVersion};
-use tidefell_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
+use shoal_proto::sync::{is_valid_path, EntryKind, EntryVersion};
+use shoal_proto::{Causality, DeviceId, EntryId, FolderId, Signed, VersionVector};
 
 use crate::compact::{Current, Devices, Slim};
 use crate::layout::{Folding, Layout};
@@ -130,7 +130,7 @@ impl Full {
 /// from the version, so every replica, and every device that keeps both, uses the same ID.
 pub fn copy_id(signed: &Wire) -> EntryId {
     let mut hasher = blake3::Hasher::new();
-    hasher.update(b"tidefell conflict copy\n");
+    hasher.update(b"shoal conflict copy\n");
     hasher.update(signed.body());
     let mut id = [0; 16];
     id.copy_from_slice(&hasher.finalize().as_bytes()[..16]);
@@ -221,7 +221,7 @@ impl Verified {
     pub fn sealed(
         folder: FolderId,
         version: EntryVersion,
-        signed: Signed<tidefell_proto::sync2::SealedVersion>,
+        signed: Signed<shoal_proto::sync2::SealedVersion>,
     ) -> Result<Self> {
         if version.folder != folder {
             return Err(Error::WrongFolder);
@@ -574,7 +574,7 @@ impl Folder {
             .max(base.get(&self.device));
         let next = own
             .checked_add(1)
-            .filter(|&n| n <= tidefell_proto::MAX_COUNTER)
+            .filter(|&n| n <= shoal_proto::MAX_COUNTER)
             .ok_or(Error::CounterCeiling)?;
         let mut version = base.clone();
         version.add(self.device, next);

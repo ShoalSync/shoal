@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-fs-fuse"
+name = "shoal-fs-fuse"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: Linux placeholder filesystem"
+description = "Shoal: Linux placeholder filesystem"
 publish = false
 
 [lints]
@@ -16,8 +16,8 @@ libc = { workspace = true }
 
 [dependencies]
 thiserror = { workspace = true }
-tidefell-engine = { workspace = true }
-tidefell-proto = { workspace = true }
+shoal-engine = { workspace = true }
+shoal-proto = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
 

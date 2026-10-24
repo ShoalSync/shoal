@@ -53,7 +53,7 @@ There is no Windows release runner yet. Until there is, a release's Windows prog
 on the Windows CI runner (label `windows`), which also runs pull requests' jobs: from the
 release tag, with the release's pinned toolchain, in a target directory made afresh for the
 release rather than the one CI keeps. They are packaged (a zip, and the MSI that wixl builds from
-`packaging/windows/tidefell.wxs`) and signed on the release runner, so the release key never
+`packaging/windows/shoal.wxs`) and signed on the release runner, so the release key never
 reaches the Windows machine. What this does not protect against: a pull request's job that
 changed the Windows runner's toolchain, or anything else there that outlives a job, would reach
 the release's programs. The installer is not signed with Authenticode either, so Windows'

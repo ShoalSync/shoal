@@ -2,12 +2,12 @@
 
 use std::str::FromStr;
 
-use tidefell_engine as engine;
-use tidefell_engine::{
+use shoal_engine as engine;
+use shoal_engine::{
     CopyInfo, Direction, Event, FileInfo, FolderInfo, LocalDeletes, PeerAddr, PeerInfo,
     RecycledInfo, ReplicaMode, SyncOptions,
 };
-use tidefell_sdk::types as api;
+use shoal_sdk::types as api;
 
 use crate::handlers::ApiFailure;
 
@@ -275,13 +275,13 @@ pub(crate) fn event(e: Event) -> api::Event {
     }
 }
 
-pub(crate) fn version(v: tidefell_engine::VersionInfo) -> api::Version {
+pub(crate) fn version(v: shoal_engine::VersionInfo) -> api::Version {
     api::Version {
         id: v.id,
         kind: match v.kind {
-            tidefell_engine::VersionKind::Current => api::VersionKind::Current,
-            tidefell_engine::VersionKind::Previous => api::VersionKind::Previous,
-            tidefell_engine::VersionKind::Conflict => api::VersionKind::Conflict,
+            shoal_engine::VersionKind::Current => api::VersionKind::Current,
+            shoal_engine::VersionKind::Previous => api::VersionKind::Previous,
+            shoal_engine::VersionKind::Conflict => api::VersionKind::Conflict,
         },
         size: v.size,
         modified_ms: v.modified_ms,

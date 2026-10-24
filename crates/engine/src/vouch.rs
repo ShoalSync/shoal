@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::{DeviceId, FolderId, Signed, UserId};
 
 #[derive(Debug, Default)]
 pub(crate) struct Vouching {
@@ -216,7 +216,7 @@ impl Vouching {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidefell_identity::{DeviceKey, UserKey};
+    use shoal_identity::{DeviceKey, UserKey};
 
     fn certify(user: &UserKey, device: &DeviceKey, issued_ms: i64) -> Signed<DeviceCertificate> {
         user.certify(device.id(), "d", issued_ms)

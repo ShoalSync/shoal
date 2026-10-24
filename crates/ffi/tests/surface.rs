@@ -6,12 +6,12 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_engine::pairing::parse_code;
-use tidefell_engine::{
+use shoal_engine::pairing::parse_code;
+use shoal_engine::{
     DeviceKey, Engine, EngineConfig, FolderConfig, FolderId, RelayConfig, ReplicaMode, Retention,
     UserKey,
 };
-use tidefell_ffi::{
+use shoal_ffi::{
     device_id, is_paired, EventListener, Network, Node, NodeEvent, Pairing, PairingUpdate, Relay,
 };
 
@@ -92,7 +92,7 @@ async fn pair_join_open_and_save() {
     assert!(!is_paired(data.clone()).unwrap());
     assert!(matches!(
         Node::start(data.clone(), network()).await,
-        Err(tidefell_ffi::TidefellError::NotPaired)
+        Err(shoal_ffi::ShoalError::NotPaired)
     ));
 
     let pairing = Pairing::start(data.clone(), network(), "Pixel".into())
@@ -151,9 +151,9 @@ async fn pair_join_open_and_save() {
                     Some(10_000_000),
                     offer.members.clone(),
                     offer.retention_days,
-                    tidefell_ffi::SyncOptions {
-                        direction: tidefell_ffi::Direction::Both,
-                        local_deletes: tidefell_ffi::LocalDeletes::Everywhere,
+                    shoal_ffi::SyncOptions {
+                        direction: shoal_ffi::Direction::Both,
+                        local_deletes: shoal_ffi::LocalDeletes::Everywhere,
                     },
                     offer.encryption.clone(),
                 )
@@ -180,7 +180,7 @@ async fn pair_join_open_and_save() {
     node.close(offer.id.clone(), "beach.jpg".into()).unwrap();
     assert!(matches!(
         node.open(offer.id.clone(), "nope.jpg".into()).await,
-        Err(tidefell_ffi::TidefellError::NotFound { .. })
+        Err(shoal_ffi::ShoalError::NotFound { .. })
     ));
 
     // Saving a file on the phone reaches the laptop.
@@ -221,16 +221,16 @@ async fn pair_join_open_and_save() {
     assert_eq!(copies[0].device, laptop_key.id().to_string());
     assert!(matches!(
         node.copies(offer.id.clone(), "nope.jpg".into()),
-        Err(tidefell_ffi::TidefellError::NotFound { .. })
+        Err(shoal_ffi::ShoalError::NotFound { .. })
     ));
     // Storage priorities are for encrypted folders, which this one is not.
     assert!(matches!(
         node.priorities(offer.id.clone()).await,
-        Err(tidefell_ffi::TidefellError::Invalid { .. })
+        Err(shoal_ffi::ShoalError::Invalid { .. })
     ));
     assert!(matches!(
         node.storage_report(offer.id.clone()).await,
-        Err(tidefell_ffi::TidefellError::Invalid { .. })
+        Err(shoal_ffi::ShoalError::Invalid { .. })
     ));
     // Deleting sends it to the recycle bin, which this device can keep longer or empty.
     node.delete(offer.id.clone(), "camera/new.jpg".into())
@@ -259,7 +259,7 @@ async fn pair_join_open_and_save() {
     assert_eq!(discarded.path, "camera/new.jpg");
     assert!(matches!(
         node.discard(offer.id.clone(), bin[0].entry.clone()),
-        Err(tidefell_ffi::TidefellError::NotFound { .. })
+        Err(shoal_ffi::ShoalError::NotFound { .. })
     ));
     assert!(node.empty_recycle_bin(offer.id.clone()).unwrap().is_empty());
     assert_eq!(node.folders().unwrap()[0].recycled_files, 0);

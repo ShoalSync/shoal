@@ -31,8 +31,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, VersionVector};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId, VersionVector};
 use tracing::{info, warn};
 
 use crate::engine::{FolderHandle, Inner};
@@ -470,7 +470,7 @@ fn take_over_once(
     }
 
     // Content to take over is read back whole, with the folder's lock let go.
-    let mut to_read: BTreeMap<ContentHash, Vec<tidefell_proto::ChunkHash>> = BTreeMap::new();
+    let mut to_read: BTreeMap<ContentHash, Vec<shoal_proto::ChunkHash>> = BTreeMap::new();
     {
         let state = handle.lock();
         for (target, action, _) in &plan.acts {
@@ -597,10 +597,10 @@ fn put_back_one(inner: &Inner, handle: &FolderHandle, put_back: PutBack) -> Resu
     } = put_back;
     let root = handle.lock().config.path.clone();
     let file = crate::history::history_dir(&root).join(&previous.file);
-    let read = |sink: &mut dyn FnMut(tidefell_proto::ChunkHash, &[u8]) -> std::io::Result<()>| {
+    let read = |sink: &mut dyn FnMut(shoal_proto::ChunkHash, &[u8]) -> std::io::Result<()>| {
         let reader =
             std::io::BufReader::new(std::fs::File::open(&file).map_err(crate::io_err(&file))?);
-        tidefell_chunker::chunk_reader(reader, tidefell_chunker::Params::DEFAULT, |chunk, data| {
+        shoal_chunker::chunk_reader(reader, shoal_chunker::Params::DEFAULT, |chunk, data| {
             sink(chunk.hash, data)
         })
         .map_err(crate::io_err(&file))

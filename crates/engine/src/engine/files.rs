@@ -2,8 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{EntryId, FolderId};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{EntryId, FolderId};
 
 use super::{run_scan, Engine};
 use crate::scan::Scope;
@@ -18,7 +18,7 @@ impl Engine {
         let state = handle.lock();
         let vouching = self.inner.vouching.lock().unwrap();
         // Few devices make many files: look each name up once.
-        let mut names: std::collections::HashMap<tidefell_proto::DeviceId, String> =
+        let mut names: std::collections::HashMap<shoal_proto::DeviceId, String> =
             std::collections::HashMap::new();
         let mut files: Vec<FileInfo> = state
             .meta
@@ -154,7 +154,7 @@ impl Engine {
         &self,
         folder: FolderId,
         path: &str,
-        expected: Option<tidefell_proto::ContentHash>,
+        expected: Option<shoal_proto::ContentHash>,
         sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
     ) -> Result<()> {
         let path = &*recorded(path);
@@ -202,7 +202,7 @@ impl Engine {
         &self,
         folder: FolderId,
         path: &str,
-        content: tidefell_proto::ContentHash,
+        content: shoal_proto::ContentHash,
     ) -> Result<()> {
         let path = recorded(path);
         let handle = self.inner.folder(&folder)?;
@@ -254,7 +254,7 @@ impl Engine {
         // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
         let path = &*recorded(path);
         let path = path.trim_end_matches('/');
-        if !tidefell_proto::sync::is_valid_path(path) {
+        if !shoal_proto::sync::is_valid_path(path) {
             return Err(Error::Invalid(format!("invalid path {path:?}")));
         }
         let handle = self.inner.folder(&folder)?;
@@ -334,7 +334,7 @@ impl Engine {
     pub async fn write(&self, folder: FolderId, path: &str, source: &Path) -> Result<()> {
         // Paths are recorded in NFC, whatever form the caller used (ADR 0033).
         let path = &*recorded(path);
-        if !tidefell_proto::sync::is_valid_path(path) {
+        if !shoal_proto::sync::is_valid_path(path) {
             return Err(Error::Invalid(format!("invalid path {path:?}")));
         }
         let handle = self.inner.folder(&folder)?;
@@ -432,7 +432,7 @@ impl Engine {
     /// A live file already at a destination is deleted first.
     pub async fn rename(&self, folder: FolderId, from: &str, to: &str) -> Result<()> {
         let (from, to) = (&*recorded(from), &*recorded(to));
-        if !tidefell_proto::sync::is_valid_path(to) {
+        if !shoal_proto::sync::is_valid_path(to) {
             return Err(Error::Invalid(format!("invalid path {to:?}")));
         }
         if from == to {
@@ -467,7 +467,7 @@ impl Engine {
             }
             if let Some((_, _, dest, _, _)) = moves
                 .iter()
-                .find(|(_, _, dest, _, _)| !tidefell_proto::sync::is_valid_path(dest))
+                .find(|(_, _, dest, _, _)| !shoal_proto::sync::is_valid_path(dest))
             {
                 return Err(Error::Invalid(format!("invalid path {dest:?}")));
             }

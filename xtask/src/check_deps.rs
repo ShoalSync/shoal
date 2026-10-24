@@ -7,17 +7,14 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const PERMISSIVE: &str = "MIT OR Apache-2.0";
-const AGPL: &str = "AGPL-3.0-only";
+/// Every workspace crate's licence (ADR 0044).
+const LICENSE: &str = "MIT OR Apache-2.0";
 
-/// Crates that must stay permissively licensed.
-const PERMISSIVE_CRATES: &[&str] = &["tidefell-proto", "tidefell-sdk"];
+/// Crates that `shoal-engine` must never depend on, directly or transitively.
+const ENGINE_FORBIDDEN: &[&str] = &["shoal-fs-fuse", "shoal-fs-cfapi", "shoal-web"];
 
-/// Crates that `tidefell-engine` must never depend on, directly or transitively.
-const ENGINE_FORBIDDEN: &[&str] = &["tidefell-fs-fuse", "tidefell-fs-cfapi", "tidefell-web"];
-
-/// The only workspace crates `tidefell-ffi` may depend on directly.
-const FFI_ALLOWED: &[&str] = &["tidefell-sdk", "tidefell-engine"];
+/// The only workspace crates `shoal-ffi` may depend on directly.
+const FFI_ALLOWED: &[&str] = &["shoal-sdk", "shoal-engine"];
 
 struct Workspace {
     /// Package name to license expression, for workspace members.
@@ -119,38 +116,23 @@ fn check(ws: &Workspace) -> Vec<String> {
     let mut violations = Vec::new();
 
     for (name, license) in &ws.licenses {
-        let expected = if PERMISSIVE_CRATES.contains(&name.as_str()) {
-            PERMISSIVE
-        } else {
-            AGPL
-        };
-        if license != expected {
+        if license != LICENSE {
             violations.push(format!(
-                "{name}: license is {license:?}, expected {expected:?}"
+                "{name}: license is {license:?}, expected {LICENSE:?}"
             ));
         }
     }
 
-    for krate in PERMISSIVE_CRATES {
-        for dep in ws.closure(krate) {
-            if ws.licenses.get(&dep).map(String::as_str) != Some(PERMISSIVE) {
-                violations.push(format!(
-                    "{krate}: depends on {dep}, which is not {PERMISSIVE}"
-                ));
-            }
-        }
-    }
-
-    for dep in ws.closure("tidefell-engine") {
+    for dep in ws.closure("shoal-engine") {
         if ENGINE_FORBIDDEN.contains(&dep.as_str()) {
-            violations.push(format!("tidefell-engine: must not depend on {dep}"));
+            violations.push(format!("shoal-engine: must not depend on {dep}"));
         }
     }
 
-    for dep in ws.deps.get("tidefell-ffi").into_iter().flatten() {
+    for dep in ws.deps.get("shoal-ffi").into_iter().flatten() {
         if !FFI_ALLOWED.contains(&dep.as_str()) {
             violations.push(format!(
-                "tidefell-ffi: may depend only on {FFI_ALLOWED:?}, found {dep}"
+                "shoal-ffi: may depend only on {FFI_ALLOWED:?}, found {dep}"
             ));
         }
     }
@@ -164,24 +146,17 @@ mod tests {
 
     fn ws(edges: &[(&str, &str)]) -> Workspace {
         let names = [
-            "tidefell-proto",
-            "tidefell-sdk",
-            "tidefell-store",
-            "tidefell-engine",
-            "tidefell-web",
-            "tidefell-fs-fuse",
-            "tidefell-ffi",
+            "shoal-proto",
+            "shoal-sdk",
+            "shoal-store",
+            "shoal-engine",
+            "shoal-web",
+            "shoal-fs-fuse",
+            "shoal-ffi",
         ];
         let licenses = names
             .iter()
-            .map(|n| {
-                let lic = if PERMISSIVE_CRATES.contains(n) {
-                    PERMISSIVE
-                } else {
-                    AGPL
-                };
-                ((*n).to_owned(), lic.to_owned())
-            })
+            .map(|n| ((*n).to_owned(), LICENSE.to_owned()))
             .collect();
         let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (from, to) in edges {
@@ -195,35 +170,29 @@ mod tests {
     #[test]
     fn clean_graph_passes() {
         let ws = ws(&[
-            ("tidefell-sdk", "tidefell-proto"),
-            ("tidefell-engine", "tidefell-store"),
-            ("tidefell-ffi", "tidefell-sdk"),
-            ("tidefell-ffi", "tidefell-engine"),
+            ("shoal-sdk", "shoal-proto"),
+            ("shoal-engine", "shoal-store"),
+            ("shoal-ffi", "shoal-sdk"),
+            ("shoal-ffi", "shoal-engine"),
         ]);
         assert_eq!(check(&ws), Vec::<String>::new());
     }
 
     #[test]
-    fn permissive_crate_cannot_reach_agpl() {
-        let ws = ws(&[("tidefell-sdk", "tidefell-store")]);
-        assert_eq!(check(&ws).len(), 1);
-    }
-
-    #[test]
     fn engine_cannot_reach_web_transitively() {
         let ws = ws(&[
-            ("tidefell-engine", "tidefell-store"),
-            ("tidefell-store", "tidefell-web"),
+            ("shoal-engine", "shoal-store"),
+            ("shoal-store", "shoal-web"),
         ]);
         assert_eq!(
             check(&ws),
-            vec!["tidefell-engine: must not depend on tidefell-web"]
+            vec!["shoal-engine: must not depend on shoal-web"]
         );
     }
 
     #[test]
     fn ffi_limited_to_sdk_and_engine() {
-        let ws = ws(&[("tidefell-ffi", "tidefell-store")]);
+        let ws = ws(&[("shoal-ffi", "shoal-store")]);
         assert_eq!(check(&ws).len(), 1);
     }
 
@@ -231,7 +200,7 @@ mod tests {
     fn wrong_license_is_reported() {
         let mut ws = ws(&[]);
         ws.licenses
-            .insert("tidefell-store".into(), PERMISSIVE.into());
+            .insert("shoal-store".into(), "AGPL-3.0-only".into());
         assert_eq!(check(&ws).len(), 1);
     }
 }

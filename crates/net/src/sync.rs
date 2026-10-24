@@ -1,12 +1,12 @@
-//! `tidefell/sync/1`: plaintext folders' sessions, run by [`crate::session`] over sync/1's
+//! `shoal/sync/1`: plaintext folders' sessions, run by [`crate::session`] over sync/1's
 //! messages and a [`Backend`]. See `specs/sync-v1.md`. Manifest requests are sync/1's own.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::sync::{EntryVersion, ErrorCode, SyncMessage};
-use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest, Signed};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::sync::{EntryVersion, ErrorCode, SyncMessage};
+use shoal_proto::{ContentHash, DeviceId, FolderId, Manifest, Signed};
 use tokio::sync::watch;
 
 use crate::backend::Backend;

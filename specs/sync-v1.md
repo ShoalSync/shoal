@@ -1,6 +1,6 @@
 # Sync protocol, version 1
 
-ALPN: `tidefell/sync/1`
+ALPN: `shoal/sync/1`
 
 Status: draft. Messages are implemented in `crates/proto` (`sync` module); golden encodings are
 in [`vectors/sync-v1.json`](vectors/sync-v1.json).
@@ -9,11 +9,11 @@ in [`vectors/sync-v1.json`](vectors/sync-v1.json).
 
 Exchange folder metadata between two devices: which folders they share, which entry versions
 each is missing, and the manifests (chunk lists) of file content. Chunk bytes are transferred
-separately over `tidefell/blobs/1`.
+separately over `shoal/blobs/1`.
 
 ## Transport
 
-A QUIC connection negotiated with ALPN `tidefell/sync/1` over iroh. Both sides authenticate by
+A QUIC connection negotiated with ALPN `shoal/sync/1` over iroh. Both sides authenticate by
 their iroh endpoint key, which is the `DeviceId`.
 
 - **Main stream.** The connecting peer opens the first bidirectional stream and sends `Hello`.
@@ -89,7 +89,7 @@ body  = postcard(SyncMessage)
   enums are a varint variant index followed by fields; integers are varints (signed integers
   zig-zag encoded); strings and `Vec`s are varint length then contents; fixed-size identifiers
   are raw bytes with no length prefix; `bool` is one byte.
-- Field and variant order is fixed. Changing it requires `tidefell/sync/2`.
+- Field and variant order is fixed. Changing it requires `shoal/sync/2`.
 
 ## Identifiers
 
@@ -155,7 +155,7 @@ Attributable messages are sent in a signed envelope:
 
 ```
 Signed<T> = signer: [u8; 32] || body: bytes || signature: [u8; 64]
-signed bytes = "tidefell/sig/1\0" || u8(len(kind)) || kind || body
+signed bytes = "shoal/sig/1\0" || u8(len(kind)) || kind || body
 ```
 
 `body` is the postcard encoding of `T` and `signer` is an Ed25519 public key. Signatures are
@@ -196,7 +196,7 @@ follows `clock_ms`.
 | --- | --- | --- |
 | `folder` | `FolderId` | |
 | `entry` | `EntryId` | |
-| `path` | string | Relative, `/`-separated, NFC; non-empty components; no `.` or `..` components; first component not `.tidefell`; no `\` or NUL |
+| `path` | string | Relative, `/`-separated, NFC; non-empty components; no `.` or `..` components; first component not `.shoal`; no `\` or NUL |
 | `kind` | `EntryKind` | See below |
 | `modified_ms` | i64 | Milliseconds since Unix epoch, UTC |
 | `author` | `DeviceId` | Must equal the envelope signer |

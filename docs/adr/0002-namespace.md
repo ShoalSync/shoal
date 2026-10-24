@@ -1,6 +1,6 @@
 # 0002: `org.tidefell` namespace
 
-- Status: accepted
+- Status: superseded by [0043](0043-rename-to-shoal.md) (`org.shoalsync`)
 - Date: 2026-09-23
 
 ## Context

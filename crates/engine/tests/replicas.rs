@@ -5,12 +5,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, Event, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Resolution,
     Retention, VersionKind,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([42; 32]);
 
@@ -147,11 +147,7 @@ async fn sync_create_edit_delete() {
     .await;
     assert_eq!(status(&engine_a).files, status(&engine_b).files);
     assert!(
-        !b.root
-            .join(".tidefell/tmp")
-            .read_dir()
-            .unwrap()
-            .any(|_| true),
+        !b.root.join(".shoal/tmp").read_dir().unwrap().any(|_| true),
         "no temp files left"
     );
 

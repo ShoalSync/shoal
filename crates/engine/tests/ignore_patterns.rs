@@ -6,11 +6,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, FolderStatus, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([30; 32]);
 
@@ -101,7 +101,7 @@ async fn ignored_paths_stay_on_their_device() {
     let a = Replica::new(dir.path(), "a", 30);
     let b = Replica::new(dir.path(), "b", 31);
 
-    a.write(".tidefellignore", b"*.log\nbuild/\n");
+    a.write(".shoalignore", b"*.log\nbuild/\n");
     a.write("keep.txt", b"synced");
     a.write("debug.log", b"only on a");
     a.write("build/out/app.bin", b"only on a");
@@ -116,7 +116,7 @@ async fn ignored_paths_stay_on_their_device() {
     eventually("keep.txt reaches b", || b.read("keep.txt").is_some()).await;
     // Nothing ignored on a is recorded, so nothing of it reaches b.
     for path in [
-        ".tidefellignore",
+        ".shoalignore",
         "debug.log",
         "build/out/app.bin",
         ".DS_Store",
@@ -148,7 +148,7 @@ async fn ignored_paths_stay_on_their_device() {
         b.read("notes.txt").as_deref() == Some(b"first".as_slice())
     })
     .await;
-    a.write(".tidefellignore", b"*.log\nbuild/\nnotes.txt\n");
+    a.write(".shoalignore", b"*.log\nbuild/\nnotes.txt\n");
     a.write("notes.txt", b"second, private");
     engine_a.scan(FOLDER).await.unwrap();
     fs::remove_file(b.root.join("notes.txt")).unwrap();
@@ -186,8 +186,8 @@ async fn ignored_paths_stay_on_their_device() {
     let source = dir.path().join("ignore");
     fs::write(&source, b"*.log\n").unwrap();
     engine_a
-        .write(FOLDER, ".tidefellignore", &source)
+        .write(FOLDER, ".shoalignore", &source)
         .await
         .unwrap();
-    assert_eq!(listed(&engine_a, ".tidefellignore"), None);
+    assert_eq!(listed(&engine_a, ".shoalignore"), None);
 }

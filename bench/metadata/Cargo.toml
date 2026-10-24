@@ -1,21 +1,21 @@
 # What saving a folder's metadata costs today, and in redb and SQLite (ADR 0034 step 2). Run with
 # `cargo run --release` here; not part of the main workspace, so neither database is a
-# dependency of Tidefell until one is chosen.
+# dependency of Shoal until one is chosen.
 [package]
-name = "tidefell-metadata-bench"
+name = "shoal-metadata-bench"
 version = "0.0.0"
 edition = "2021"
 publish = false
-license = "AGPL-3.0-only"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 postcard = { version = "1", features = ["alloc"] }
 redb = "3"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tempfile = "3"
-tidefell-identity = { path = "../../crates/identity" }
-tidefell-meta = { path = "../../crates/meta" }
-tidefell-proto = { path = "../../crates/proto" }
+shoal-identity = { path = "../../crates/identity" }
+shoal-meta = { path = "../../crates/meta" }
+shoal-proto = { path = "../../crates/proto" }
 
 [workspace]
 members = ["."]

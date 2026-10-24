@@ -1,4 +1,4 @@
-//! Tidefell `fs-fuse` crate: Linux placeholder filesystem (ADR 0017).
+//! Shoal `fs-fuse` crate: Linux placeholder filesystem (ADR 0017).
 //!
 //! Mounts one folder with FUSE. Listings come from the folder's metadata, opening a file
 //! fetches it if it is a placeholder, and writes are staged and recorded when the file is
@@ -51,8 +51,8 @@ pub fn mount<B: Backend>(backend: B, mountpoint: &Path, staging_dir: PathBuf) ->
     let core = Arc::new(Core::new(backend, staging_dir, owner.uid(), owner.gid())?);
     let mut config = Config::default();
     config.mount_options = vec![
-        MountOption::FSName("tidefell".to_owned()),
-        MountOption::Subtype("tidefell".to_owned()),
+        MountOption::FSName("shoal".to_owned()),
+        MountOption::Subtype("shoal".to_owned()),
         MountOption::DefaultPermissions,
         MountOption::NoDev,
         MountOption::NoSuid,

@@ -1,6 +1,6 @@
 # Sync protocol, version 2: encrypted folders
 
-ALPN: `tidefell/sync/2`
+ALPN: `shoal/sync/2`
 
 Status: draft. Messages are to be implemented in `crates/proto`; golden encodings are in
 [`vectors/sync-v2.json`](vectors/sync-v2.json), made by
@@ -17,7 +17,7 @@ apply between them.
 Everything sync/1 says holds for sync/2 except where this page says otherwise: its encoding,
 identifiers, version vectors, index sequences, signed envelopes, certificates and revocations,
 the exchange and the updating of offers. Keys and sealing are in
-[encryption-v1.md](encryption-v1.md); chunks and list blobs travel over `tidefell/blobs/2`
+[encryption-v1.md](encryption-v1.md); chunks and list blobs travel over `shoal/blobs/2`
 ([blobs-v2.md](blobs-v2.md)).
 
 ## Transport
@@ -130,7 +130,7 @@ they decrypt from it, so that they serve exactly the signed bytes.
 Members resolve conflicts as sync/1 does, with one change to rule 4: of two versions that tie on
 rules 1 to 3, the greater encoding of the decrypted `EntryVersion` wins, as in sync/1, and if
 those are equal, the greater conflict copy ID: the first 16 bytes of
-BLAKE3(`"tidefell conflict copy\n"` || the signed `SealedVersion` body), compared as bytes, which
+BLAKE3(`"shoal conflict copy\n"` || the signed `SealedVersion` body), compared as bytes, which
 differs between any two sealed versions (ADR 0029 names a kept conflict copy by it). A version a
 member cannot open yet takes no part in choosing the winner; once it is granted the key, it
 resolves the entry again. A storage peer does not resolve conflicts. It keeps every version no

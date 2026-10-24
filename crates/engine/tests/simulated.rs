@@ -6,13 +6,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, FolderStatus, PeerAddr, RelayConfig, ReplicaMode,
     Retention, SyncOptions,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::Network;
-use tidefell_proto::{DeviceId, FolderId, UserId};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::Network;
+use shoal_proto::{DeviceId, FolderId, UserId};
 
 const FOLDER: FolderId = FolderId([42; 32]);
 
@@ -234,8 +234,8 @@ async fn engines_reconnect_after_a_partition_heals() {
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread")]
 async fn content_a_read_missed_is_offered_again_after_a_scan() {
+    use shoal_engine::Direction;
     use std::os::unix::fs::PermissionsExt;
-    use tidefell_engine::Direction;
     let dir = tempfile::tempdir().unwrap();
     let network = Network::new();
     let user = UserKey::from_seed([1; 32]);
@@ -559,7 +559,7 @@ async fn a_time_of_loss_withdraws_what_came_after_it() {
     assert!(
         matches!(
             engine_a.revoke_device(&user, phone.key.id(), None),
-            Err(tidefell_engine::Error::AlreadyRevoked)
+            Err(shoal_engine::Error::AlreadyRevoked)
         ),
         "once"
     );

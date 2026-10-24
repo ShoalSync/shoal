@@ -4,8 +4,8 @@
 use std::fs;
 use std::time::Duration;
 
-use tidefell_meta::Retention;
-use tidefell_proto::{DeviceId, FolderId};
+use shoal_meta::Retention;
+use shoal_proto::{DeviceId, FolderId};
 
 use crate::config::{FolderConfig, ReplicaMode};
 use crate::state::FolderState;
@@ -13,7 +13,7 @@ use crate::state::FolderState;
 /// Opens a folder whose state directory holds `meta` and `state` as its files, and throws the
 /// result away. Errors are fine; a panic is a finding.
 pub fn open_folder(meta: &[u8], state: &[u8]) {
-    let data = std::env::temp_dir().join(format!("tidefell-fuzz-{}", std::process::id()));
+    let data = std::env::temp_dir().join(format!("shoal-fuzz-{}", std::process::id()));
     let folder = FolderId([7; 32]);
     let dir = data.join("folders").join(folder.to_string());
     let _ = fs::remove_dir_all(&data);

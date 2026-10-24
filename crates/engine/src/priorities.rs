@@ -1,7 +1,7 @@
 //! Members' priorities for what storage peers keep of an encrypted folder (ADR 0023's amendment
 //! of 2026-10-22; `specs/storage-v1.md`).
 //!
-//! The rules are in `.tidefellpriorities` at the folder's root, a file synced as any other, so
+//! The rules are in `.shoalpriorities` at the folder's root, a file synced as any other, so
 //! every member device has the same. A member device that holds the key works out each current
 //! entry's priority from them, and gives the folder's storage peers the lot whenever it differs
 //! from what it last gave them. One without the file on disk, as a partial replica may be, fetches
@@ -12,21 +12,21 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use tidefell_proto::storage::{Hint, DEFAULT_PRIORITY, MAX_HINTS};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, FolderId};
+use shoal_proto::storage::{Hint, DEFAULT_PRIORITY, MAX_HINTS};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, DeviceId, FolderId};
 use tracing::{debug, info, warn};
 
 use crate::engine::Inner;
 use crate::{materialize, Result};
 
 /// The file at a folder's root that ranks its files for storage peers.
-pub(crate) const PRIORITIES_FILE: &str = ".tidefellpriorities";
+pub(crate) const PRIORITIES_FILE: &str = ".shoalpriorities";
 
 /// A folder's rules: each a priority and the pattern it gives it to, the last match winning.
 pub(crate) struct Rules(Vec<(u8, String, Gitignore)>);
 
-/// Checks that `pattern` can be a rule's: one line, a valid pattern as in `.tidefellignore`.
+/// Checks that `pattern` can be a rule's: one line, a valid pattern as in `.shoalignore`.
 pub(crate) fn check_rule(pattern: &str) -> std::result::Result<(), String> {
     let pattern = pattern.trim();
     if pattern.is_empty() || pattern.starts_with('#') || pattern.contains(['\n', '\r']) {
@@ -72,7 +72,7 @@ pub(crate) fn set_rule(text: &str, pattern: &str, priority: Option<u8>) -> Strin
 /// fetched by version, so each is fetched once.
 pub(crate) async fn text(
     inner: &Arc<Inner>,
-    node: &Arc<tidefell_net::Node>,
+    node: &Arc<shoal_net::Node>,
     folder: FolderId,
     cache: Option<&mut HashMap<FolderId, (ContentHash, String)>>,
 ) -> Result<Option<String>> {
@@ -190,7 +190,7 @@ pub(crate) struct Given {
 
 /// Gives the storage peers of each encrypted folder this device is a member of the priorities
 /// of its current files, if they differ from what it last gave them.
-pub(crate) async fn give(inner: &Arc<Inner>, node: &Arc<tidefell_net::Node>, given: &mut Given) {
+pub(crate) async fn give(inner: &Arc<Inner>, node: &Arc<shoal_net::Node>, given: &mut Given) {
     for handle in inner.handles() {
         let folder = {
             let state = handle.lock();
@@ -251,7 +251,7 @@ pub(crate) async fn give(inner: &Arc<Inner>, node: &Arc<tidefell_net::Node>, giv
             if node.encrypted_peer(&peer).is_none() {
                 continue;
             }
-            let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
+            let Ok(endpoint) = shoal_net::EndpointId::from_bytes(peer.as_bytes()) else {
                 continue;
             };
             let issued_ms = inner.now_ms();
@@ -269,7 +269,7 @@ pub(crate) async fn give(inner: &Arc<Inner>, node: &Arc<tidefell_net::Node>, giv
                     info!(%folder, peer = %peer, files = hints.len(), "gave a storage peer the folder's priorities");
                     given.given.insert((folder, peer), Some(digest));
                 }
-                Err(tidefell_net::Error::Rejected(e)) => {
+                Err(shoal_net::Error::Rejected(e)) => {
                     debug!(%folder, peer = %peer, error = %e, "a storage peer refused the priorities");
                     given.given.insert((folder, peer), Some(digest));
                 }
@@ -286,7 +286,7 @@ pub(crate) async fn give(inner: &Arc<Inner>, node: &Arc<tidefell_net::Node>, giv
 }
 
 /// Whether `error` says the peer does not speak storage/1: it refused the protocol.
-fn unspoken(error: &tidefell_net::Error) -> bool {
+fn unspoken(error: &shoal_net::Error) -> bool {
     let error = error.to_string().to_lowercase();
     ["alpn", "application protocol", "unknown protocol"]
         .iter()

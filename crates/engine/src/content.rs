@@ -11,9 +11,9 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use tidefell_chunker::hash_chunk;
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkHash, ContentHash, DeviceId, EntryId, Manifest};
+use shoal_chunker::hash_chunk;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ChunkHash, ContentHash, DeviceId, EntryId, Manifest};
 use tracing::{debug, info};
 
 use crate::config::{Direction, ReplicaMode};
@@ -445,7 +445,7 @@ pub(crate) fn compact(inner: &Inner) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::ChunkRef;
+    use shoal_proto::ChunkRef;
 
     use super::*;
 

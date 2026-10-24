@@ -55,17 +55,17 @@ def unpad(padded: bytes, block: int) -> bytes:
 class FolderKey:
     def __init__(self, key: bytes):
         self.key = key
-        self.id = derive_key("tidefell 2026-10-18 folder key id", key)[:16]
-        self.chunk_id_key = derive_key("tidefell 2026-10-18 chunk id", key)
-        self.chunk_key = derive_key("tidefell 2026-10-18 chunk key", key)
-        self.chunk_nonce_key = derive_key("tidefell 2026-10-18 chunk nonce", key)
-        self.metadata_key = derive_key("tidefell 2026-10-18 metadata key", key)
+        self.id = derive_key("shoal 2026-10-24 folder key id", key)[:16]
+        self.chunk_id_key = derive_key("shoal 2026-10-24 chunk id", key)
+        self.chunk_key = derive_key("shoal 2026-10-24 chunk key", key)
+        self.chunk_nonce_key = derive_key("shoal 2026-10-24 chunk nonce", key)
+        self.metadata_key = derive_key("shoal 2026-10-24 metadata key", key)
 
     def seal_chunk(self, plaintext: bytes):
         assert 0 < len(plaintext) <= 1 << 20
         chunk_id = keyed_hash(self.chunk_id_key, plaintext)
         nonce = keyed_hash(self.chunk_nonce_key, chunk_id)[:24]
-        aad = b"tidefell/chunk/1" + FOLDER + self.id + chunk_id
+        aad = b"shoal/chunk/1" + FOLDER + self.id + chunk_id
         padded = pad(plaintext, 4096)
         sealed = xseal(self.chunk_key, nonce, aad, padded)
         # Opened again as a reader would, from the chunk ID alone.
@@ -73,7 +73,7 @@ class FolderKey:
         return chunk_id, nonce, padded, sealed
 
     def seal_payload(self, payload: bytes, author: bytes, nonce: bytes) -> bytes:
-        aad = b"tidefell/version/1" + FOLDER + ENTRY + author + self.id
+        aad = b"shoal/version/1" + FOLDER + ENTRY + author + self.id
         sealed = nonce + xseal(self.metadata_key, nonce, aad, pad(payload, 64))
         assert unpad(xopen(self.metadata_key, sealed[:24], aad, sealed[24:]), 64) == payload
         return sealed
@@ -108,7 +108,7 @@ def main():
     recipient_sk, recipient_pk = hpke.derive_key_pair(RECIPIENT_IKM)
     generation = 1
     info = (
-        b"tidefell/key-grant/1"
+        b"shoal/key-grant/1"
         + FOLDER
         + generation.to_bytes(8, "big")
         + key.id
@@ -133,10 +133,10 @@ def main():
     # Inputs a reader must refuse, each made like a valid one with one thing wrong.
     plaintext = chunks[0]
     first_id, first_nonce = ids[0], keyed_hash(key.chunk_nonce_key, ids[0])[:24]
-    chunk_aad = b"tidefell/chunk/1" + FOLDER + key.id + first_id
+    chunk_aad = b"shoal/chunk/1" + FOLDER + key.id + first_id
     unterminated = plaintext + b"\x00" * (-len(plaintext) % 4096)
     other = chunks[1][:-1] + b"\xff"
-    payload_aad = b"tidefell/version/1" + FOLDER + ENTRY + AUTHOR.public + key.id
+    payload_aad = b"shoal/version/1" + FOLDER + ENTRY + AUTHOR.public + key.id
     wrong_key = b"\xee" * 32
     _, wrong_grant = hpke.seal(recipient_pk, info, b"", wrong_key, EPHEMERAL_IKM)
     refused = [

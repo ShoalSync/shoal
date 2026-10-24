@@ -1,11 +1,11 @@
 # When something goes wrong
 
-Everything Tidefell records about problems stays on the device. Nothing is sent anywhere unless
+Everything Shoal records about problems stays on the device. Nothing is sent anywhere unless
 you attach it to a report yourself.
 
 ## Status and problems
 
-`tidefell status` shows, besides this device:
+`shoal status` shows, besides this device:
 
 - each device this one syncs with: connected directly or through a relay, the round-trip time
   and since when, or when it was last seen and why the last connection failed;
@@ -16,8 +16,8 @@ you attach it to a report yourself.
 A file that cannot be read, fetched, written or deleted is a problem until it succeeds:
 
 ```sh
-tidefell problems              # every folder
-tidefell problems <folder id>  # one folder
+shoal problems              # every folder
+shoal problems <folder id>  # one folder
 ```
 
 Each lists the path, what failed (permission denied, disk full, content unavailable, name not
@@ -25,11 +25,11 @@ allowed on this system, changed while writing), the error, since when and how ma
 Problems that clear by themselves (a disk full, content no connected device has, a file that was
 changing) are tried again on every pass. Those that do not (permission denied, a read-only drive,
 a name the drive refuses, an I/O error the drive reports) are tried again only when the file changes, a scan looks at it again, or
-you ask: `tidefell problems <folder id> --retry`.
+you ask: `shoal problems <folder id> --retry`.
 One file that fails does not hold up the others. A file in a directory that cannot be read is
 not taken for deleted.
 
-When a drive gets close to full, Tidefell keeps some of it free (`min_free_space` in the
+When a drive gets close to full, Shoal keeps some of it free (`min_free_space` in the
 [configuration](configuration.md); 2% of the drive, up to 1 GiB, by default). Files that would
 cross that wait, each listed as a disk-full problem, and the folder's status says which drive is
 low and how much its recycle bin and earlier versions hold there. Emptying the recycle bin is the
@@ -40,19 +40,19 @@ catches up.
 ## What changed, and who changed it
 
 ```sh
-tidefell activity <folder id>             # the last 50 changes
-tidefell activity <folder id> --limit 500
+shoal activity <folder id>             # the last 50 changes
+shoal activity <folder id> --limit 500
 ```
 
 lists what this device applied to the folder, newest first: files added, changed, deleted,
 renamed, restored or in conflict, when, and which device made each change, or "this device".
-Each device keeps its own log for 30 days or 10,000 changes; it is not synced. `tidefell
+Each device keeps its own log for 30 days or 10,000 changes; it is not synced. `shoal
 files` and the web also say which device made each file's current version.
 
 ## Checking a device
 
 ```sh
-tidefell doctor
+shoal doctor
 ```
 
 checks, and says what to do about anything that is not right:
@@ -70,7 +70,7 @@ Administrators find the same under **Check** on the web peer's status page.
 
 ## Metrics
 
-`tidefelld` can serve metrics for Prometheus. Turn them on in its configuration:
+`shoald` can serve metrics for Prometheus. Turn them on in its configuration:
 
 ```toml
 [metrics]
@@ -88,8 +88,8 @@ follow. ADR 0030 lists every name.
 ## Reporting a problem
 
 ```sh
-tidefell diagnostics                  # writes tidefell-diagnostics-<time>.zip and lists it
-tidefell diagnostics --include-paths  # keeps real file and folder names
+shoal diagnostics                  # writes shoal-diagnostics-<time>.zip and lists it
+shoal diagnostics --include-paths  # keeps real file and folder names
 ```
 
 The file holds this device's version and platform, its configuration, status and problems,
@@ -101,43 +101,43 @@ Administrators can look at and download the same from the web peer's status page
 
 ## Logs
 
-`tidefelld` writes its log to standard error and, as JSON lines, to `<data_dir>/logs/`. The
+`shoald` writes its log to standard error and, as JSON lines, to `<data_dir>/logs/`. The
 file is rotated at 5 MiB, and five files are kept. Under systemd the journal keeps the logs
-instead (`journalctl -u tidefelld`), unless `log.file = true` in the
+instead (`journalctl -u shoald`), unless `log.file = true` in the
 [configuration](configuration.md).
 
 ```sh
-tidefell logs                    # the level, and where the log file is
-tidefell logs --problems         # the latest warnings and errors, oldest first
-tidefell log-level debug         # more detail until the daemon restarts
-tidefell log-level info,tidefell_net=debug
+shoal logs                    # the level, and where the log file is
+shoal logs --problems         # the latest warnings and errors, oldest first
+shoal log-level debug         # more detail until the daemon restarts
+shoal log-level info,shoal_net=debug
 ```
 
-The daemon keeps its last 500 warnings and errors in memory, so `tidefell logs --problems` works
+The daemon keeps its last 500 warnings and errors in memory, so `shoal logs --problems` works
 even when the log file is off.
 
 On Android the app writes the same log to its own storage, and to logcat under the tag
-`tidefell`.
+`shoal`.
 
 ## Crashes
 
-If Tidefell hits an internal error, it writes a crash file to `<data_dir>/crashes/` and stops,
+If Shoal hits an internal error, it writes a crash file to `<data_dir>/crashes/` and stops,
 rather than carrying on in a state it cannot trust. A crash file holds:
 
 - the version and platform;
 - the error and where it happened;
 - a backtrace.
 
-It holds no file contents and no keys. Under systemd, `tidefelld` is restarted automatically and
+It holds no file contents and no keys. Under systemd, `shoald` is restarted automatically and
 picks up from its saved state.
 
-The next `tidefell status` says that Tidefell stopped unexpectedly and names the crash file:
+The next `shoal status` says that Shoal stopped unexpectedly and names the crash file:
 
 ```sh
-tidefell crashes                 # every crash recorded, newest last
-tidefell crashes --report        # write the newest one up as an issue to file
-tidefell crashes --report <id>   # or another one, by its ID from `tidefell crashes --json`
-tidefell crashes --dismiss       # stop reporting them in status
+shoal crashes                 # every crash recorded, newest last
+shoal crashes --report        # write the newest one up as an issue to file
+shoal crashes --report <id>   # or another one, by its ID from `shoal crashes --json`
+shoal crashes --dismiss       # stop reporting them in status
 ```
 
 The ten most recent crash files are kept. On Android, the app tells you syncing stopped and offers
@@ -145,16 +145,16 @@ to restart it.
 
 ### Reporting a crash
 
-`tidefell crashes --report` prints an issue for the project's tracker: a title, and a body with
+`shoal crashes --report` prints an issue for the project's tracker: a title, and a body with
 the crash file in it, with your home directory replaced by `~`. Nothing is sent. Read it, then
 file it yourself, and attach a diagnostics bundle if you can (see above). With `report_url` set
-in `tidefelld`'s configuration to the tracker's issues page, it also prints a link that opens a
+in `shoald`'s configuration to the tracker's issues page, it also prints a link that opens a
 new issue already filled in; a long report is cut to fit the link, so paste the rest from the
 printed body. Without it, copy the title and body into a new issue. Administrators find the same
 under **Report this crash** on the web peer's status page.
 
 ```toml
-report_url = "https://github.com/Tidefell/tidefell/issues"
+report_url = "https://github.com/ShoalSync/shoal/issues"
 ```
 
 `report_url` goes at the top of the file, before any `[section]`. It works with trackers that

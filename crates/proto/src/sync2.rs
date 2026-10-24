@@ -1,5 +1,5 @@
-//! Messages of the `tidefell/sync/2` protocol, for encrypted folders. See `specs/sync-v2.md`;
-//! the sealing itself is in `tidefell-crypto` (`specs/encryption-v1.md`).
+//! Messages of the `shoal/sync/2` protocol, for encrypted folders. See `specs/sync-v2.md`;
+//! the sealing itself is in `shoal-crypto` (`specs/encryption-v1.md`).
 //!
 //! Variant order is part of the wire format, as in [`crate::sync`].
 
@@ -286,7 +286,7 @@ pub enum ErrorCode {
     UnknownDevice,
 }
 
-/// A message on a `tidefell/sync/2` stream.
+/// A message on a `shoal/sync/2` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncMessage {
     /// As sync/1's, with every field present.

@@ -1,6 +1,6 @@
 # Mounting a folder (Linux)
 
-On Linux, `tidefelld` can show a folder at a mount point with FUSE. With a partial replica,
+On Linux, `shoald` can show a folder at a mount point with FUSE. With a partial replica,
 this gives a directory that lists every file but stores only the ones opened recently. The
 design is recorded in [ADR 0017](../adr/0017-fuse-mounts.md).
 
@@ -8,7 +8,7 @@ design is recorded in [ADR 0017](../adr/0017-fuse-mounts.md).
 
 - The `fuse3` package, which provides `fusermount3`, and `/dev/fuse`. In a container, FUSE must
   be enabled for it; on Proxmox, set `features: fuse=1`.
-- `tidefelld` running as the user who will use the files, for example as a systemd user
+- `shoald` running as the user who will use the files, for example as a systemd user
   service (below). The mount is private to that user.
 
 ## Setting it up
@@ -19,7 +19,7 @@ becomes backing storage: leave it alone and use the mount point instead.
 ```toml
 [[folders]]
 id = "…"
-path = "/home/me/.local/share/tidefell/photos"
+path = "/home/me/.local/share/shoal/photos"
 mode = "partial"
 budget_bytes = 10000000000
 mount = "/home/me/Photos"
@@ -52,12 +52,12 @@ past its budget.
 ## Running as a systemd user service
 
 ```ini
-# ~/.config/systemd/user/tidefelld.service
+# ~/.config/systemd/user/shoald.service
 [Unit]
-Description=Tidefell daemon
+Description=Shoal daemon
 
 [Service]
-ExecStart=/usr/local/bin/tidefelld run --config %h/.config/tidefell/tidefelld.toml
+ExecStart=/usr/local/bin/shoald run --config %h/.config/shoal/shoald.toml
 Restart=on-failure
 
 [Install]
@@ -65,7 +65,7 @@ WantedBy=default.target
 ```
 
 ```sh
-systemctl --user enable --now tidefelld
+systemctl --user enable --now shoald
 ```
 
 The [NixOS module](../nixos.md) runs a sandboxed system service for servers and does not

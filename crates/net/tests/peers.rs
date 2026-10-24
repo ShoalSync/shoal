@@ -5,14 +5,14 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_identity::{DeviceKey, FolderMembers, UserKey};
-use tidefell_meta::{Folder, Retention};
-use tidefell_net::{
+use shoal_identity::{DeviceKey, FolderMembers, UserKey};
+use shoal_meta::{Folder, Retention};
+use shoal_net::{
     Backend, ChunkResult, IndexPage, Limits, Node, NodeConfig, RelayConfig, MIN_BYTES_PER_SEC,
 };
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{
     ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed,
 };
 use tokio::sync::watch;
@@ -171,7 +171,7 @@ impl Backend for TestBackend {
             up_to,
             versions: versions
                 .into_iter()
-                .filter_map(|s| s.signed.and_then(tidefell_meta::Wire::plain).cloned())
+                .filter_map(|s| s.signed.and_then(shoal_meta::Wire::plain).cloned())
                 .collect(),
         })
     }
@@ -209,7 +209,7 @@ impl Backend for TestBackend {
             let mut folder = self.folder.lock().unwrap();
             for v in versions {
                 if let Ok(applied) = folder.apply_remote(v, 0) {
-                    changed |= applied != tidefell_meta::Applied::Stale;
+                    changed |= applied != shoal_meta::Applied::Stale;
                 }
             }
         }
@@ -346,7 +346,7 @@ async fn manifests_chunks_and_availability() {
 
     // With a sync session open, the peer can be dialed by ID alone (no address lookup).
     // This is the first blobs/1 connection, so nothing is cached.
-    let by_id = tidefell_net::EndpointId::from_bytes(node_a.id().as_bytes()).unwrap();
+    let by_id = shoal_net::EndpointId::from_bytes(node_a.id().as_bytes()).unwrap();
     let results = node_b.fetch_chunks(by_id, FOLDER, &[wanted]).await.unwrap();
     assert!(matches!(results[0], ChunkResult::Found(..)));
 
@@ -423,7 +423,7 @@ async fn certificates_of_unknown_authors_are_fetched() {
     // A device nobody knows gets an error, not a certificate.
     let unknown = peer.request_certificate(FOLDER, DeviceId([0x55; 32])).await;
     assert!(
-        matches!(unknown, Err(tidefell_net::Error::Rejected(ref code)) if code == "UnknownDevice"),
+        matches!(unknown, Err(shoal_net::Error::Rejected(ref code)) if code == "UnknownDevice"),
         "{unknown:?}"
     );
 
@@ -532,7 +532,7 @@ fn new_device_config(seed: u8) -> NodeConfig {
     }
 }
 
-async fn next_event(server: &mut tidefell_net::PairingServer) -> tidefell_net::PairingEvent {
+async fn next_event(server: &mut shoal_net::PairingServer) -> shoal_net::PairingEvent {
     tokio::time::timeout(Duration::from_secs(10), server.next_event())
         .await
         .expect("pairing event")
@@ -541,8 +541,8 @@ async fn next_event(server: &mut tidefell_net::PairingServer) -> tidefell_net::P
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pairing_issues_a_certificate_once() {
-    use tidefell_net::{PairingEvent, PairingServer};
-    use tidefell_proto::pair::FolderOffer;
+    use shoal_net::{PairingEvent, PairingServer};
+    use shoal_proto::pair::FolderOffer;
 
     let alice = UserKey::from_seed([1; 32]);
     let laptop = TestBackend::new(10, &alice, &[&alice]);
@@ -686,7 +686,7 @@ async fn a_peer_that_never_answers_cannot_hold_a_connect() {
     use iroh::endpoint::presets;
     let silent = iroh::Endpoint::builder(presets::N0)
         .secret_key(iroh::SecretKey::from_bytes(&[104; 32]))
-        .alpns(vec![tidefell_proto::ALPN_SYNC_V1.to_vec()])
+        .alpns(vec![shoal_proto::ALPN_SYNC_V1.to_vec()])
         .relay_mode(iroh::RelayMode::Disabled)
         .clear_address_lookup()
         .bind_addr(SocketAddr::from(([127, 0, 0, 1], 0)))
