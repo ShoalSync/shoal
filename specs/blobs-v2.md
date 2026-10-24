@@ -1,6 +1,6 @@
 # Blob transfer protocol, version 2: encrypted folders
 
-ALPN: `tidefell/blobs/2`
+ALPN: `shoal/blobs/2`
 
 Status: draft. Messages are to be implemented in `crates/proto`; golden encodings are in
 [`vectors/blobs-v2.json`](vectors/blobs-v2.json), made by

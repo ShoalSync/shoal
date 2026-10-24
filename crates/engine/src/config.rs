@@ -4,9 +4,9 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tidefell_meta::Retention;
-use tidefell_net::{Limits, RelayConfig, RelayUrl};
-use tidefell_proto::{DeviceId, FolderId, UserId};
+use shoal_meta::Retention;
+use shoal_net::{Limits, RelayConfig, RelayUrl};
+use shoal_proto::{DeviceId, FolderId, UserId};
 
 /// How much of a folder a replica keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub struct FolderConfig {
 pub struct Encryption {
     /// The storage peers this device syncs the folder with: devices that hold it without
     /// reading it, whose users are not members.
-    pub storage_peers: Vec<tidefell_proto::DeviceId>,
+    pub storage_peers: Vec<shoal_proto::DeviceId>,
     /// Set on a storage peer: this device stores the folder for its members without reading
     /// it, and `path` is where it keeps what it stores, not a directory of files (ADR 0023).
     pub stored: Option<Stored>,

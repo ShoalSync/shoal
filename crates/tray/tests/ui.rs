@@ -4,19 +4,19 @@
 
 use std::time::{Duration, Instant};
 
-use tidefell_tray::supervisor::{Command, Paths};
+use shoal_tray::supervisor::{Command, Paths};
 
 #[test]
 fn the_tray_shows_and_quits() {
     let dir = tempfile::tempdir().unwrap();
     // Not set up: nothing to start.
     let paths = Paths {
-        daemon: dir.path().join("tidefelld.exe"),
+        daemon: dir.path().join("shoald.exe"),
         data_dir: dir.path().join("data"),
-        config: dir.path().join("tidefelld.toml"),
+        config: dir.path().join("shoald.toml"),
     };
     let began = Instant::now();
-    tidefell_tray::ui::run_with(paths, |commands| {
+    shoal_tray::ui::run_with(paths, |commands| {
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_secs(2));
             commands.blocking_send(Command::Quit).unwrap();

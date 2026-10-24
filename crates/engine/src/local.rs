@@ -9,7 +9,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use hashbrown::HashTable;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, VersionVector};
+use shoal_proto::{ContentHash, DeviceId, EntryId, VersionVector};
 
 use crate::state::LocalFile;
 use crate::tracked::encode;

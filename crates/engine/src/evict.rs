@@ -3,8 +3,8 @@
 use std::fs;
 use std::sync::Arc;
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::FolderId;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::FolderId;
 use tracing::{debug, info};
 
 use crate::config::ReplicaMode;
@@ -18,7 +18,7 @@ use crate::Result;
 struct Candidate {
     path: String,
     size: u64,
-    content: tidefell_proto::ContentHash,
+    content: shoal_proto::ContentHash,
     /// True if this device made the current version, so another copy must be confirmed first.
     authored_here: bool,
 }
@@ -27,7 +27,7 @@ struct Candidate {
 fn has_confirmed_copy(
     inner: &Inner,
     handle: &FolderHandle,
-    content: &tidefell_proto::ContentHash,
+    content: &shoal_proto::ContentHash,
 ) -> bool {
     let state = handle.lock();
     let vouching = inner.vouching.lock().unwrap();

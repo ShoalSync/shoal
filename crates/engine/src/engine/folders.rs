@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, FolderId, UserId};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, DeviceId, FolderId, UserId};
 use tracing::info;
 
 use super::recycle::recycle_summary;
@@ -147,7 +147,7 @@ impl Engine {
                             state
                                 .items
                                 .values()
-                                .filter(|i| matches!(i, tidefell_proto::sync2::Item::Version(_)))
+                                .filter(|i| matches!(i, shoal_proto::sync2::Item::Version(_)))
                                 .count()
                         },
                         stored: e
@@ -630,7 +630,7 @@ fn low_space(inner: &crate::engine::Inner, state: &crate::state::FolderState) ->
         Some(short) => (short, "the folder's drive"),
         None => (
             inner.floors.low(&inner.data_dir)?,
-            "the drive holding Tidefell's data",
+            "the drive holding Shoal's data",
         ),
     };
     let kept = recycle_summary(state).bytes;

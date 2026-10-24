@@ -12,8 +12,8 @@ use std::hash::BuildHasher;
 
 use hashbrown::HashTable;
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::EntryId;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::EntryId;
 
 /// How a device's filesystem tells names apart (ADR 0033).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -337,10 +337,10 @@ fn conflict_name(path: &str, entry: EntryId, hex_digits: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::{ContentHash, DeviceId, FolderId, VersionVector};
+    use shoal_proto::{ContentHash, DeviceId, FolderId, VersionVector};
 
     use super::*;
-    use tidefell_proto::sync::EntryVersion;
+    use shoal_proto::sync::EntryVersion;
 
     fn version(entry: u8, path: &str, kind: EntryKind) -> EntryVersion {
         EntryVersion {
@@ -620,8 +620,8 @@ mod tests {
         use std::borrow::Cow;
         use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-        use tidefell_proto::sync::EntryKind;
-        use tidefell_proto::EntryId;
+        use shoal_proto::sync::EntryKind;
+        use shoal_proto::EntryId;
 
         use super::super::{conflict_name, Folding};
 

@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use tidefell_proto::{ChunkHash, ContentHash, Manifest};
+use shoal_proto::{ChunkHash, ContentHash, Manifest};
 use tracing::warn;
 
 use crate::db::{chunk_rows, Reader};
@@ -231,7 +231,7 @@ impl Manifests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidefell_proto::ChunkRef;
+    use shoal_proto::ChunkRef;
 
     fn manifest(content: u8, chunks: &[u8]) -> Manifest {
         Manifest {

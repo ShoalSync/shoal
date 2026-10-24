@@ -1,4 +1,4 @@
-//! Messages of the `tidefell/sync/1` protocol. See `specs/sync-v1.md`.
+//! Messages of the `shoal/sync/1` protocol. See `specs/sync-v1.md`.
 //!
 //! Variant order in [`SyncMessage`] and [`EntryKind`] is part of the wire format: postcard
 //! encodes the variant index. Append new variants only in a new protocol version.
@@ -138,7 +138,7 @@ pub fn is_valid_path(path: &str) -> bool {
 
 /// The per-folder directory each replica keeps for its own use; no entry may live under it
 /// (ADR 0024).
-pub const RESERVED_DIR: &str = ".tidefell";
+pub const RESERVED_DIR: &str = ".shoal";
 
 impl Signed<EntryVersion> {
     /// Verifies the signature and checks that the signer is the version's author.
@@ -166,7 +166,7 @@ pub enum ErrorCode {
     UnknownDevice,
 }
 
-/// A message on a `tidefell/sync/1` stream.
+/// A message on a `shoal/sync/1` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SyncMessage {
     /// First message from each side: who the device belongs to, and the folders it offers to
@@ -255,8 +255,8 @@ mod tests {
             "a/b.txt",
             "dir/.hidden",
             "a..b",
-            "dir/.tidefell",
-            ".tidefellx",
+            "dir/.shoal",
+            ".shoalx",
             // "é" as one code point, NFC.
             "r\u{e9}sum\u{e9}.txt",
         ] {
@@ -272,8 +272,8 @@ mod tests {
             "..",
             "a\\b",
             "a\0b",
-            ".tidefell",
-            ".tidefell/tmp/x",
+            ".shoal",
+            ".shoal/tmp/x",
             // "é" as "e" and a combining accent, NFD.
             "re\u{301}sume\u{301}.txt",
         ] {

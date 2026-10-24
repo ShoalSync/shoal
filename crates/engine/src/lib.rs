@@ -1,4 +1,4 @@
-//! Tidefell `engine` crate: replica policies; wires chunker, store, meta, identity, net and
+//! Shoal `engine` crate: replica policies; wires chunker, store, meta, identity, net and
 //! fetch into the daemon core.
 //!
 //! An [`Engine`] syncs a set of folders with peers. For each folder it
@@ -22,8 +22,8 @@
 //! <data>/blocks/                 block store shared by all folders
 //! <data>/folders/<id>/meta       folder metadata snapshot (`meta` format)
 //! <data>/folders/<id>/state      engine state: manifests, local files, peer progress, copies
-//! <folder root>/.tidefell/folder the folder's marker; without it the folder is unavailable
-//! <folder root>/.tidefell/tmp/   in-progress downloads, renamed into place when complete
+//! <folder root>/.shoal/folder the folder's marker; without it the folder is unavailable
+//! <folder root>/.shoal/tmp/   in-progress downloads, renamed into place when complete
 //! ```
 //!
 //! Folders and peers can also be added at runtime; they are remembered in `<data>/runtime`.
@@ -152,13 +152,13 @@ pub use config::{
 };
 pub use engine::{zip_bundle, BundleEntry, BundleOptions, Engine, FolderStatus, Resolution};
 pub use probe::{Filesystem, NameLength};
-pub use tidefell_identity::{DeviceKey, UserKey};
-pub use tidefell_meta::{ChangeKind, Retention};
-pub use tidefell_net::{
+pub use shoal_identity::{DeviceKey, UserKey};
+pub use shoal_meta::{ChangeKind, Retention};
+pub use shoal_net::{
     Limits, PathKind, RelayConfig, RelayToken, RelayUrl, Transfer, MIN_BYTES_PER_SEC,
 };
-pub use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-pub use tidefell_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
+pub use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+pub use shoal_proto::{DeviceId, EntryId, FolderId, Signed, UserId};
 pub use views::{
     ActivityEntry, Check, CheckLevel, CopyInfo, EncryptionInfo, Event, FileInfo, FolderInfo,
     FolderPeer, FolderState, LossPreview, Operation, PathProblem, PeerInfo, PeerState, Priorities,
@@ -179,13 +179,13 @@ pub enum Error {
     },
     /// The block store failed.
     #[error(transparent)]
-    Store(#[from] tidefell_store::Error),
+    Store(#[from] shoal_store::Error),
     /// Folder metadata failed to load, save or apply.
     #[error(transparent)]
-    Meta(#[from] tidefell_meta::Error),
+    Meta(#[from] shoal_meta::Error),
     /// The network layer failed.
     #[error(transparent)]
-    Net(#[from] tidefell_net::Error),
+    Net(#[from] shoal_net::Error),
     /// Engine state on disk is unreadable.
     #[error("corrupt engine state in {0}")]
     CorruptState(std::path::PathBuf),
@@ -203,16 +203,16 @@ pub enum Error {
     },
     /// A folder named in a request is not configured.
     #[error("unknown folder {0}")]
-    UnknownFolder(tidefell_proto::FolderId),
+    UnknownFolder(shoal_proto::FolderId),
     /// A folder with this ID already exists.
     #[error("folder {0} already exists")]
-    FolderExists(tidefell_proto::FolderId),
+    FolderExists(shoal_proto::FolderId),
     /// The folder comes from the configuration file and cannot be changed at runtime.
     #[error("folder {0} is managed by the configuration file")]
-    Configured(tidefell_proto::FolderId),
+    Configured(shoal_proto::FolderId),
     /// The entry is not in the folder's recycle bin.
     #[error("entry {0} is not in the recycle bin")]
-    NotRecycled(tidefell_proto::EntryId),
+    NotRecycled(shoal_proto::EntryId),
     /// No live file has this path.
     #[error("no such file: {0}")]
     NoSuchFile(String),
@@ -233,14 +233,14 @@ pub enum Error {
     Crashed(String),
     /// Syncing is paused for the folder or the whole device (ADR 0029).
     #[error("syncing of folder {0} is paused")]
-    Paused(tidefell_proto::FolderId),
+    Paused(shoal_proto::FolderId),
     /// A file's content could not be fetched from connected peers.
     #[error("{0} is not available: no connected peer has its content")]
     Unavailable(String),
     /// The folder's root or its marker is missing, as when its drive is not mounted, so
     /// nothing is scanned, written or deleted there (ADR 0037).
     #[error("folder {0} is unavailable: {1}")]
-    FolderUnavailable(tidefell_proto::FolderId, String),
+    FolderUnavailable(shoal_proto::FolderId, String),
     /// A request was invalid.
     #[error("{0}")]
     Invalid(String),
@@ -257,7 +257,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// absolute path, entry and content, it returns whether it freed it. One that is not freed is
 /// removed, as in any folder.
 pub type Freer = std::sync::Arc<
-    dyn Fn(&std::path::Path, EntryId, tidefell_proto::ContentHash) -> std::io::Result<bool>
+    dyn Fn(&std::path::Path, EntryId, shoal_proto::ContentHash) -> std::io::Result<bool>
         + Send
         + Sync,
 >;

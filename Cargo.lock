@@ -3767,6 +3767,318 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "shoal-api"
+version = "0.23.1"
+dependencies = [
+ "axum",
+ "getrandom 0.4.3",
+ "shoal-engine",
+ "shoal-identity",
+ "shoal-proto",
+ "shoal-sdk",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "utoipa",
+]
+
+[[package]]
+name = "shoal-chunker"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "fastcdc",
+ "proptest",
+ "shoal-proto",
+]
+
+[[package]]
+name = "shoal-cli"
+version = "0.23.1"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "shoal-api",
+ "shoal-engine",
+ "shoal-identity",
+ "shoal-sdk",
+ "tempfile",
+ "tokio",
+ "zip",
+]
+
+[[package]]
+name = "shoal-crypto"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "hkdf",
+ "postcard",
+ "serde_json",
+ "sha2",
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "shoal-daemon"
+version = "0.23.1"
+dependencies = [
+ "clap",
+ "getrandom 0.4.3",
+ "schemars",
+ "serde",
+ "serde_json",
+ "shoal-api",
+ "shoal-engine",
+ "shoal-fs-cfapi",
+ "shoal-fs-fuse",
+ "shoal-identity",
+ "shoal-proto",
+ "shoal-sdk",
+ "shoal-web",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "shoal-engine"
+version = "0.23.1"
+dependencies = [
+ "aho-corasick",
+ "blake3",
+ "ed25519-dalek",
+ "fs4",
+ "getrandom 0.4.3",
+ "hashbrown",
+ "ignore",
+ "mimalloc",
+ "notify",
+ "paranoid-android",
+ "postcard",
+ "redb",
+ "regex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "shoal-chunker",
+ "shoal-crypto",
+ "shoal-fetch",
+ "shoal-identity",
+ "shoal-meta",
+ "shoal-net",
+ "shoal-proto",
+ "shoal-store",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "winapi-util",
+ "zip",
+]
+
+[[package]]
+name = "shoal-fetch"
+version = "0.23.1"
+dependencies = [
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "shoal-ffi"
+version = "0.23.1"
+dependencies = [
+ "serde_json",
+ "shoal-engine",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "uniffi",
+]
+
+[[package]]
+name = "shoal-fs-cfapi"
+version = "0.23.1"
+dependencies = [
+ "cloud-filter",
+ "nt-time",
+ "shoal-engine",
+ "shoal-identity",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "winapi-util",
+]
+
+[[package]]
+name = "shoal-fs-fuse"
+version = "0.23.1"
+dependencies = [
+ "fuser",
+ "libc",
+ "shoal-engine",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "shoal-identity"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "postcard",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shoal-meta"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "hashbrown",
+ "postcard",
+ "proptest",
+ "serde",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shoal-net"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "ipnet",
+ "iroh",
+ "iroh-mdns-address-lookup",
+ "iroh-metrics",
+ "netwatch",
+ "postcard",
+ "serde",
+ "shoal-identity",
+ "shoal-meta",
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "shoal-proto"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "postcard",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "shoal-sdk"
+version = "0.23.1"
+dependencies = [
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "utoipa",
+]
+
+[[package]]
+name = "shoal-sim"
+version = "0.23.1"
+dependencies = [
+ "blake3",
+ "rustix",
+ "serde",
+ "serde_json",
+ "shoal-engine",
+ "shoal-identity",
+ "shoal-net",
+ "shoal-proto",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "shoal-store"
+version = "0.23.1"
+dependencies = [
+ "shoal-chunker",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shoal-tray"
+version = "0.23.1"
+dependencies = [
+ "native-windows-gui",
+ "serde_json",
+ "shoal-engine",
+ "shoal-sdk",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "shoal-web"
+version = "0.23.1"
+dependencies = [
+ "argon2",
+ "askama",
+ "axum",
+ "blake3",
+ "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "serde",
+ "serde_json",
+ "shoal-engine",
+ "shoal-identity",
+ "shoal-proto",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4088,318 +4400,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "tidefell-api"
-version = "0.23.1"
-dependencies = [
- "axum",
- "getrandom 0.4.3",
- "tempfile",
- "tidefell-engine",
- "tidefell-identity",
- "tidefell-proto",
- "tidefell-sdk",
- "tokio",
- "tokio-stream",
- "tracing",
- "utoipa",
-]
-
-[[package]]
-name = "tidefell-chunker"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "fastcdc",
- "proptest",
- "tidefell-proto",
-]
-
-[[package]]
-name = "tidefell-cli"
-version = "0.23.1"
-dependencies = [
- "clap",
- "serde",
- "serde_json",
- "tempfile",
- "tidefell-api",
- "tidefell-engine",
- "tidefell-identity",
- "tidefell-sdk",
- "tokio",
- "zip",
-]
-
-[[package]]
-name = "tidefell-crypto"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "getrandom 0.4.3",
- "hkdf",
- "postcard",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
- "tidefell-proto",
- "x25519-dalek",
-]
-
-[[package]]
-name = "tidefell-daemon"
-version = "0.23.1"
-dependencies = [
- "clap",
- "getrandom 0.4.3",
- "schemars",
- "serde",
- "serde_json",
- "tempfile",
- "tidefell-api",
- "tidefell-engine",
- "tidefell-fs-cfapi",
- "tidefell-fs-fuse",
- "tidefell-identity",
- "tidefell-proto",
- "tidefell-sdk",
- "tidefell-web",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "tidefell-engine"
-version = "0.23.1"
-dependencies = [
- "aho-corasick",
- "blake3",
- "ed25519-dalek",
- "fs4",
- "getrandom 0.4.3",
- "hashbrown",
- "ignore",
- "mimalloc",
- "notify",
- "paranoid-android",
- "postcard",
- "redb",
- "regex",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-chunker",
- "tidefell-crypto",
- "tidefell-fetch",
- "tidefell-identity",
- "tidefell-meta",
- "tidefell-net",
- "tidefell-proto",
- "tidefell-store",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "winapi-util",
- "zip",
-]
-
-[[package]]
-name = "tidefell-fetch"
-version = "0.23.1"
-dependencies = [
- "thiserror 2.0.21",
- "tidefell-proto",
- "tokio",
-]
-
-[[package]]
-name = "tidefell-ffi"
-version = "0.23.1"
-dependencies = [
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-engine",
- "tokio",
- "tracing",
- "uniffi",
-]
-
-[[package]]
-name = "tidefell-fs-cfapi"
-version = "0.23.1"
-dependencies = [
- "cloud-filter",
- "nt-time",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-engine",
- "tidefell-identity",
- "tidefell-proto",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "winapi-util",
-]
-
-[[package]]
-name = "tidefell-fs-fuse"
-version = "0.23.1"
-dependencies = [
- "fuser",
- "libc",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-engine",
- "tidefell-proto",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tidefell-identity"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "getrandom 0.4.3",
- "postcard",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-proto",
-]
-
-[[package]]
-name = "tidefell-meta"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "hashbrown",
- "postcard",
- "proptest",
- "serde",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-proto",
-]
-
-[[package]]
-name = "tidefell-net"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ipnet",
- "iroh",
- "iroh-mdns-address-lookup",
- "iroh-metrics",
- "netwatch",
- "postcard",
- "serde",
- "thiserror 2.0.21",
- "tidefell-identity",
- "tidefell-meta",
- "tidefell-proto",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "tidefell-proto"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "postcard",
- "proptest",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "unicode-normalization",
-]
-
-[[package]]
-name = "tidefell-sdk"
-version = "0.23.1"
-dependencies = [
- "http-body-util",
- "hyper",
- "hyper-util",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tokio",
- "utoipa",
-]
-
-[[package]]
-name = "tidefell-sim"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "rustix",
- "serde",
- "serde_json",
- "tempfile",
- "tidefell-engine",
- "tidefell-identity",
- "tidefell-net",
- "tidefell-proto",
- "tokio",
-]
-
-[[package]]
-name = "tidefell-store"
-version = "0.23.1"
-dependencies = [
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-chunker",
- "tidefell-proto",
-]
-
-[[package]]
-name = "tidefell-tray"
-version = "0.23.1"
-dependencies = [
- "native-windows-gui",
- "serde_json",
- "tempfile",
- "tidefell-engine",
- "tidefell-sdk",
- "tokio",
-]
-
-[[package]]
-name = "tidefell-web"
-version = "0.23.1"
-dependencies = [
- "argon2",
- "askama",
- "axum",
- "blake3",
- "getrandom 0.4.3",
- "http-body-util",
- "hyper",
- "hyper-util",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "tidefell-engine",
- "tidefell-identity",
- "tidefell-proto",
- "tokio",
- "tokio-util",
- "tracing",
- "unicode-normalization",
 ]
 
 [[package]]

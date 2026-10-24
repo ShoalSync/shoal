@@ -9,7 +9,7 @@
   <button type="submit">{% if paused %}Resume syncing{% else %}Pause all syncing on this server{% endif %}</button>
 </form>
 {% endif %}
-{% if crashed %}<p class="notice">Tidefell stopped unexpectedly on this server. <a href="/status">See the status page</a>.</p>{% endif %}
+{% if crashed %}<p class="notice">Shoal stopped unexpectedly on this server. <a href="/status">See the status page</a>.</p>{% endif %}
 {% if share_links %}<p><a href="/shares">Your share links</a></p>{% endif %}
 {% if folders.is_empty() %}
 <p class="muted">No folders on this server are shared with your user.</p>

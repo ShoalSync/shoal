@@ -1,17 +1,15 @@
 [package]
-name = "tidefell-sdk"
+name = "shoal-sdk"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license = "MIT OR Apache-2.0"
-description = "Tidefell: public Rust client API for third parties"
+license.workspace = true
+description = "Shoal: public Rust client API for third parties"
 publish = false
 
 [lints]
 workspace = true
 
-# Dependency boundary: this crate is permissively licensed (MIT OR Apache-2.0)
-# and must never depend on an AGPL-licensed crate.
 [dependencies]
 http-body-util.workspace = true
 hyper.workspace = true

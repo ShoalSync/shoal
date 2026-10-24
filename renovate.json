@@ -51,7 +51,7 @@
     {
       "description": "The monorepo release that infra runs, and the relay built to match it, are bumped deliberately with each release (as is the app's, which Renovate does not see).",
       "matchManagers": ["nix"],
-      "matchDepNames": ["tidefell", "iroh"],
+      "matchDepNames": ["shoal", "iroh"],
       "enabled": false
     }
   ]

@@ -1,7 +1,7 @@
-//! Tidefell `meta` crate: file tree, versions, vector clocks, tombstones, recycle bin.
+//! Shoal `meta` crate: file tree, versions, vector clocks, tombstones, recycle bin.
 //!
 //! A [`Folder`] is one replica's metadata for one shared folder: the current version of every
-//! entry, unresolved conflict copies, the local index sequence used by `tidefell/sync/1`, and
+//! entry, unresolved conflict copies, the local index sequence used by `shoal/sync/1`, and
 //! the recycle bin. Conflict resolution follows `specs/sync-v1.md` so every replica converges
 //! on the same state regardless of the order versions arrive in.
 
@@ -29,7 +29,7 @@ pub use wire::{Seal, Wire};
 pub enum Error {
     /// A remote version failed verification.
     #[error(transparent)]
-    Proto(#[from] tidefell_proto::Error),
+    Proto(#[from] shoal_proto::Error),
     /// A version belongs to a different folder.
     #[error("version belongs to another folder")]
     WrongFolder,
@@ -44,7 +44,7 @@ pub enum Error {
     #[error("version counter ceiling reached")]
     CounterCeiling,
     /// A local change would leave more holes in its vector than a version may have
-    /// ([`tidefell_proto::MAX_HOLES`]): the entry has too many conflicts from this device that
+    /// ([`shoal_proto::MAX_HOLES`]): the entry has too many conflicts from this device that
     /// are not resolved.
     #[error("too many unresolved conflicts; resolve some first")]
     TooManyConflicts,

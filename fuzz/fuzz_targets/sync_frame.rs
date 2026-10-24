@@ -3,8 +3,8 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use tidefell_proto::frame;
-use tidefell_proto::sync::SyncMessage;
+use shoal_proto::frame;
+use shoal_proto::sync::SyncMessage;
 
 fuzz_target!(|data: &[u8]| {
     let _ = frame::decode::<SyncMessage>(data);

@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-fetch"
+name = "shoal-fetch"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: multi-peer scheduler, rarest-first, retry"
+description = "Shoal: multi-peer scheduler, rarest-first, retry"
 publish = false
 
 [lints]
@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 thiserror.workspace = true
-tidefell-proto.workspace = true
+shoal-proto.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]

@@ -8,9 +8,9 @@ use iroh::endpoint::presets;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, RelayMap, RelayMode, RelayUrl, SecretKey};
 use iroh_mdns_address_lookup::MdnsAddressLookup;
-use tidefell_proto::blobs2::BlobId;
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::{
+use shoal_proto::blobs2::BlobId;
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::{
     ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed, ALPN_BLOBS_V1, ALPN_BLOBS_V2,
     ALPN_SYNC_V1, ALPN_SYNC_V2,
 };
@@ -28,8 +28,8 @@ use crate::sync2::{V2Side, V2};
 use crate::transport::Conn;
 use crate::{Error, Result};
 
-/// The mDNS service Tidefell devices announce, apart from other iroh applications.
-const MDNS_SERVICE: &str = "tidefell";
+/// The mDNS service Shoal devices announce, apart from other iroh applications.
+const MDNS_SERVICE: &str = "shoal";
 
 /// Which relay servers to use when direct connections fail.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +130,7 @@ pub struct NetworkReport {
     pub captive_portal: Option<bool>,
 }
 
-/// This node's relays and network, for `tidefell doctor` (ADR 0030).
+/// This node's relays and network, for `shoal doctor` (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connectivity {
     /// The relays in use; empty if relays are turned off.
@@ -426,7 +426,7 @@ impl Protocols {
             alpns.extend([
                 ALPN_SYNC_V2.to_vec(),
                 ALPN_BLOBS_V2.to_vec(),
-                tidefell_proto::ALPN_STORAGE_V1.to_vec(),
+                shoal_proto::ALPN_STORAGE_V1.to_vec(),
             ]);
         }
         alpns
@@ -495,7 +495,7 @@ enum Transport {
     },
 }
 
-/// A running Tidefell peer endpoint.
+/// A running Shoal peer endpoint.
 pub struct Node {
     transport: Transport,
     backend: Arc<dyn Backend>,
@@ -544,7 +544,7 @@ impl Node {
                 .accept(ALPN_BLOBS_V2, blobs.clone());
         }
         if let Some(storage) = &protocols.storage {
-            router = router.accept(tidefell_proto::ALPN_STORAGE_V1, storage.clone());
+            router = router.accept(shoal_proto::ALPN_STORAGE_V1, storage.clone());
         }
         let router = router.spawn();
         Ok(Self {
@@ -592,7 +592,7 @@ impl Node {
                         let blobs = blobs.clone();
                         tokio::spawn(async move { blobs.serve(conn).await });
                     }
-                    (tidefell_proto::ALPN_STORAGE_V1, Some(_)) => {
+                    (shoal_proto::ALPN_STORAGE_V1, Some(_)) => {
                         if let Some(storage) = protocols.storage.clone() {
                             tokio::spawn(async move { storage.serve(conn).await });
                         }
@@ -891,10 +891,10 @@ impl Node {
         peer: impl Into<EndpointAddr>,
         folder: FolderId,
         issued_ms: i64,
-        hints: Vec<tidefell_proto::storage::Hint>,
+        hints: Vec<shoal_proto::storage::Hint>,
     ) -> Result<()> {
         let conn = self
-            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .blob_conn_for(peer.into(), shoal_proto::ALPN_STORAGE_V1)
             .await?;
         crate::storage::send_priorities(&conn, self.backend.certificate(), folder, issued_ms, hints)
             .await
@@ -908,7 +908,7 @@ impl Node {
         folder: FolderId,
     ) -> Result<(u64, u64, u64)> {
         let conn = self
-            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .blob_conn_for(peer.into(), shoal_proto::ALPN_STORAGE_V1)
             .await?;
         crate::storage::usage(&conn, self.backend.certificate(), folder).await
     }
@@ -922,7 +922,7 @@ impl Node {
         below: u8,
     ) -> Result<(u64, u64)> {
         let conn = self
-            .blob_conn_for(peer.into(), tidefell_proto::ALPN_STORAGE_V1)
+            .blob_conn_for(peer.into(), shoal_proto::ALPN_STORAGE_V1)
             .await?;
         crate::storage::drop_below(&conn, self.backend.certificate(), folder, below).await
     }
@@ -989,7 +989,7 @@ impl Node {
     /// decline the session.
     pub async fn pair(
         &self,
-        code: &tidefell_proto::pair::PairingCode,
+        code: &shoal_proto::pair::PairingCode,
     ) -> Result<crate::pair::ApproverSession> {
         match &self.transport {
             Transport::Iroh { endpoint, .. } => {

@@ -40,10 +40,10 @@ jobs:
       - name: Test
         # The FUSE mount tests must run, not skip: the runners give jobs /dev/fuse and mount().
         env:
-          TIDEFELL_REQUIRE_FUSE: "1"
+          SHOAL_REQUIRE_FUSE: "1"
         run: |
           "$HOST/tests/kernel"
-          TIDEFELLD="$HOST/bin/tidefelld" "$HOST/tests/mount"
+          SHOALD="$HOST/bin/shoald" "$HOST/tests/mount"
 
   # Several engines on a simulated network, through steps 200 seeds choose (ADR 0036). The
   # Nix workflow runs a few; this runs the pull request's share, and the nightly Simulation
@@ -62,12 +62,12 @@ jobs:
         run: echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)" >> "$GITHUB_ENV"
       - name: 200 seeds
         env:
-          TIDEFELL_SIM_SEEDS: "200"
-          TIDEFELL_SIM_JOBS: "6"
+          SHOAL_SIM_SEEDS: "200"
+          SHOAL_SIM_JOBS: "6"
         run: |
-          export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
-          export TIDEFELL_SIM_REGRESSIONS="$PWD/crates/sim/tests/regressions"
-          mkdir -p "$TIDEFELL_SIM_DIR"
+          export SHOAL_SIM_DIR="$RUNNER_TEMP/simulation"
+          export SHOAL_SIM_REGRESSIONS="$PWD/crates/sim/tests/regressions"
+          mkdir -p "$SHOAL_SIM_DIR"
           "$HOST/tests/seeds" --nocapture
 
   # Dependency and public API checks. Kept in one job, under its original name, because one
@@ -101,10 +101,10 @@ jobs:
         # release are reported in the job summary and do not fail the job.
         run: |
           baseline=$(git describe --tags --abbrev=0 --match 'v*')
-          version=$(cargo pkgid --package tidefell-sdk | sed 's/.*[#@]//')
+          version=$(cargo pkgid --package shoal-sdk | sed 's/.*[#@]//')
           status=0
           cargo semver-checks --color never --baseline-rev "$baseline" \
-            --package tidefell-proto --package tidefell-sdk > semver.txt 2>&1 || status=$?
+            --package shoal-proto --package shoal-sdk > semver.txt 2>&1 || status=$?
           cat semver.txt
           {
             echo "### Public API of proto and sdk since $baseline"
@@ -140,7 +140,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
       - name: Run the JVM tests against the host build
         working-directory: bindings/android
-        run: ./gradlew --no-daemon :jvm-test:test "-Ptidefell.host=$HOST"
+        run: ./gradlew --no-daemon :jvm-test:test "-Pshoal.host=$HOST"
 
   aar:
     name: Android library (AAR)
@@ -150,14 +150,14 @@ jobs:
         with:
           persist-credentials: false
       # Built by Nix, or fetched from the binary cache when this source was built before:
-      # tidefell-ffi for each ABI, the bindings generated from the host build (`ci-host`), and the
+      # shoal-ffi for each ABI, the bindings generated from the host build (`ci-host`), and the
       # NDK they were built with, for the loadable check.
       - name: Libraries and bindings
         run: |
           {
-            # One ABI at a time: three optimised builds of tidefell-ffi at once outgrow a job's
+            # One ABI at a time: three optimised builds of shoal-ffi at once outgrow a job's
             # memory when they are not in the cache yet.
-            echo "JNI_LIBS=$(nix build --max-jobs 1 --no-link --print-out-paths --print-build-logs .#tidefell-ffi-android)"
+            echo "JNI_LIBS=$(nix build --max-jobs 1 --no-link --print-out-paths --print-build-logs .#shoal-ffi-android)"
             echo "HOST=$(nix build --no-link --print-out-paths --print-build-logs .#ci-host)"
             ndk=$(nix build --no-link --print-out-paths --print-build-logs .#android-ndk)
             echo "ANDROID_NDK_HOME=$(echo "$ndk"/libexec/android-sdk/ndk/*)"
@@ -179,7 +179,7 @@ jobs:
           sdkmanager "platforms;android-36"
       - name: Build
         working-directory: bindings/android
-        run: ./gradlew --no-daemon :ffi:assembleRelease "-Ptidefell.jniLibs=$JNI_LIBS" "-Ptidefell.host=$HOST"
+        run: ./gradlew --no-daemon :ffi:assembleRelease "-Pshoal.jniLibs=$JNI_LIBS" "-Pshoal.host=$HOST"
       - name: Loadable by Android
         run: bindings/android/check-loadable.sh bindings/android/ffi/build/outputs/aar/ffi-release.aar
 
@@ -207,20 +207,20 @@ jobs:
         timeout-minutes: 20
         run: >
           powershell -NoProfile -ExecutionPolicy Bypass
-          -File packaging/windows/test-install.ps1 installer/tidefell-test.msi
+          -File packaging/windows/test-install.ps1 installer/shoal-test.msi
       - name: Clippy and tests
         shell: bash
         run: |
           # Kept between runs, outside the checkout, where Defender does not scan; the runner is
           # not ephemeral.
-          export CARGO_TARGET_DIR=C:/ci/target/tidefell
+          export CARGO_TARGET_DIR=C:/ci/target/shoal
           mkdir -p "$CARGO_TARGET_DIR" || unset CARGO_TARGET_DIR
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-          cargo test --locked -p tidefell-fs-cfapi --test primitives -- --ignored --nocapture --test-threads=1
+          cargo test --locked -p shoal-fs-cfapi --test primitives -- --ignored --nocapture --test-threads=1
           # The tray's Storage window, drawn in the runner's desktop session: its picture is in
           # the log, as base64 PNG on `SHOT storage` lines.
-          cargo build --locked -p tidefell-daemon
-          TIDEFELL_SCREENSHOT=1 cargo test --locked -p tidefell-tray --test storage -- --nocapture
+          cargo build --locked -p shoal-daemon
+          SHOAL_SCREENSHOT=1 cargo test --locked -p shoal-tray --test storage -- --nocapture
           cargo test --locked --workspace --no-fail-fast
       - name: Clear the sync roots this run left
         if: always()
@@ -237,15 +237,15 @@ jobs:
         with:
           persist-credentials: false
       - name: Build
-        run: cp "$(nix build --no-link --print-out-paths --print-build-logs .#windows-installer-test)/tidefell-test.msi" .
+        run: cp "$(nix build --no-link --print-out-paths --print-build-logs .#windows-installer-test)/shoal-test.msi" .
       - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
         with:
           retention-days: 1
           name: windows-installer
-          path: tidefell-test.msi
+          path: shoal-test.msi
 
   # The workflows themselves (ADR 0031): actionlint, and zizmor, whose findings of medium
-  # severity or higher fail, so actions stay pinned by commit.
+  # severity or higher fail, so actions stay pinned by commit; and the old name's check.
   workflows:
     name: Workflows
     runs-on: ephemeral
@@ -271,3 +271,6 @@ jobs:
           "$RUNNER_TEMP/actionlint" -config-file .forgejo/actionlint.yaml .forgejo/workflows/*.yml
       - name: zizmor
         run: zizmor --offline --min-severity medium .forgejo/workflows/*.yml
+      # The old name stays out of the tree (ADR 0043).
+      - name: The old name stays out
+        run: scripts/check-old-name.sh

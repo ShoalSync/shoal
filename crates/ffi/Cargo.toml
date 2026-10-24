@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-ffi"
+name = "shoal-ffi"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: uniffi bindings → Kotlin (Android), later Swift"
+description = "Shoal: uniffi bindings → Kotlin (Android), later Swift"
 publish = false
 
 [lints]
@@ -13,11 +13,11 @@ workspace = true
 [lib]
 crate-type = ["cdylib", "lib"]
 
-# Dependency boundary: may depend only on `tidefell-sdk` and `tidefell-engine`.
+# Dependency boundary: may depend only on `shoal-sdk` and `shoal-engine`.
 [dependencies]
 serde_json.workspace = true
 thiserror.workspace = true
-tidefell-engine = { workspace = true, features = ["dynamic-library"] }
+shoal-engine = { workspace = true, features = ["dynamic-library"] }
 tokio.workspace = true
 tracing.workspace = true
 uniffi = { workspace = true, features = ["tokio"] }

@@ -4,11 +4,11 @@ use std::fs;
 use std::path::Path;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
-use tidefell_proto::sync::is_valid_path;
+use shoal_proto::sync::is_valid_path;
 use tracing::warn;
 
 /// The file at a folder's root that lists this device's patterns. It is never synced.
-pub(crate) const IGNORE_FILE: &str = ".tidefellignore";
+pub(crate) const IGNORE_FILE: &str = ".shoalignore";
 
 /// Operating-system and temporary files, matched before the folder's own patterns so `!` can
 /// include one of them again.
@@ -140,9 +140,9 @@ mod tests {
 
     #[test]
     fn the_ignore_file_is_never_synced() {
-        let (_dir, i) = ignores("!.tidefellignore\n", None);
+        let (_dir, i) = ignores("!.shoalignore\n", None);
         assert!(i.is_ignored(IGNORE_FILE, false));
-        assert!(!i.is_ignored("sub/.tidefellignore", false));
+        assert!(!i.is_ignored("sub/.shoalignore", false));
     }
 
     #[test]

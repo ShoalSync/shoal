@@ -1,4 +1,4 @@
-//! Sync sessions, for both `tidefell/sync/1` and `tidefell/sync/2`, which differ only in their
+//! Sync sessions, for both `shoal/sync/1` and `shoal/sync/2`, which differ only in their
 //! messages and in what an index holds (a [`Protocol`]). See `specs/sync-v1.md` and
 //! `specs/sync-v2.md`.
 //!
@@ -11,8 +11,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use serde::Serialize;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::{DeviceId, FolderId, Signed};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::{DeviceId, FolderId, Signed};
 use tokio::sync::{mpsc, watch};
 use tracing::{debug, warn};
 
@@ -73,7 +73,7 @@ pub(crate) enum Event<P: Protocol> {
 
 /// What a sync protocol version is made of: its messages and the items of its index.
 pub(crate) trait Protocol: Sized + Send + Sync + 'static {
-    type Message: Serialize + tidefell_proto::frame::Message + Send + Sync + 'static;
+    type Message: Serialize + shoal_proto::frame::Message + Send + Sync + 'static;
     type Item: Serialize + Clone + Send + Sync + 'static;
 
     fn hello(
@@ -993,7 +993,7 @@ async fn certificate_exchange<P: Protocol>(
 mod tests {
     use super::*;
     use crate::sync::V1;
-    use tidefell_proto::sync::{ErrorCode, SyncMessage};
+    use shoal_proto::sync::{ErrorCode, SyncMessage};
 
     #[test]
     fn coalescing_pushes_keeps_other_work_in_order() {

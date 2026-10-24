@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-meta"
+name = "shoal-meta"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: file tree, versions, vector clocks, tombstones, recycle bin"
+description = "Shoal: file tree, versions, vector clocks, tombstones, recycle bin"
 publish = false
 
 [lints]
@@ -17,7 +17,7 @@ hashbrown.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tidefell-proto.workspace = true
+shoal-proto.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

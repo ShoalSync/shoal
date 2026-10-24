@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}{{ title }} · Tidefell{% endblock %}
+{% block title %}{{ title }} · Shoal{% endblock %}
 {% block content %}
 <h1>{{ title }}</h1>
-<p class="muted">Shared with you through Tidefell.{% if let Some(expires) = expires %} This link expires {{ expires }}.{% endif %}</p>
+<p class="muted">Shared with you through Shoal.{% if let Some(expires) = expires %} This link expires {{ expires }}.{% endif %}</p>
 {% if exhausted %}
 <p class="notice">This link has reached its download limit.</p>
 {% else if files.is_empty() %}

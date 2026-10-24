@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-net"
+name = "shoal-net"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: iroh endpoint, relay config, address lookup, sync/1 protocol"
+description = "Shoal: iroh endpoint, relay config, address lookup, sync/1 protocol"
 publish = false
 
 [lints]
@@ -24,11 +24,11 @@ netwatch.workspace = true
 postcard.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tidefell-identity.workspace = true
-tidefell-proto.workspace = true
+shoal-identity.workspace = true
+shoal-proto.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
-tidefell-meta.workspace = true
+shoal-meta.workspace = true

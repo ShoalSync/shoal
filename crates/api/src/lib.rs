@@ -1,8 +1,8 @@
-//! Tidefell `api` crate: REST surface for CLI, web and apps.
+//! Shoal `api` crate: REST surface for CLI, web and apps.
 //!
-//! Serves the `/v1` REST API (ADR 0009) over an [`Engine`]. Bodies are the `tidefell-sdk`
+//! Serves the `/v1` REST API (ADR 0009) over an [`Engine`]. Bodies are the `shoal-sdk`
 //! types; the OpenAPI document is generated from them and served at `/v1/openapi.json`.
-//! `tidefelld` serves this router on its control endpoint: a Unix socket (ADR 0010), or on
+//! `shoald` serves this router on its control endpoint: a Unix socket (ADR 0010), or on
 //! Windows a named pipe (ADR 0042).
 
 mod convert;
@@ -16,8 +16,8 @@ use axum::extract::FromRef;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
-use tidefell_engine::Engine;
-use tidefell_identity::UserKey;
+use shoal_engine::Engine;
+use shoal_identity::UserKey;
 use utoipa::OpenApi;
 
 pub use handlers::ApiDoc;
@@ -218,7 +218,7 @@ pub async fn serve_unix_with(
 }
 
 /// Serves the API on this machine's control endpoint `endpoint`, as
-/// `tidefell_sdk::Client::socket_path` names it: a Unix socket, or on Windows a named pipe.
+/// `shoal_sdk::Client::socket_path` names it: a Unix socket, or on Windows a named pipe.
 /// Runs until the listener fails.
 pub async fn serve_local(engine: Arc<Engine>, endpoint: &Path) -> std::io::Result<()> {
     serve_local_with(engine, endpoint, Options::default()).await

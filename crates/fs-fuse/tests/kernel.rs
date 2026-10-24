@@ -1,6 +1,6 @@
 //! A real FUSE mount over a folder kept in a directory: ordinary file operations through the
 //! kernel. Needs `/dev/fuse` (and `fusermount3` unless run as root); without them the test
-//! is skipped, unless `TIDEFELL_REQUIRE_FUSE` is set, as in CI.
+//! is skipped, unless `SHOAL_REQUIRE_FUSE` is set, as in CI.
 #![cfg(target_os = "linux")]
 
 use std::collections::BTreeMap;
@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use tidefell_fs_fuse::{mount, Backend, BackendError, FileEntry};
+use shoal_fs_fuse::{mount, Backend, BackendError, FileEntry};
 
 struct DirBackend {
     dir: PathBuf,
@@ -77,8 +77,8 @@ fn fuse_available() -> bool {
                 .arg("--version")
                 .output()
                 .is_ok());
-    if !usable && std::env::var_os("TIDEFELL_REQUIRE_FUSE").is_some() {
-        panic!("TIDEFELL_REQUIRE_FUSE is set but FUSE is not usable here");
+    if !usable && std::env::var_os("SHOAL_REQUIRE_FUSE").is_some() {
+        panic!("SHOAL_REQUIRE_FUSE is set but FUSE is not usable here");
     }
     usable
 }

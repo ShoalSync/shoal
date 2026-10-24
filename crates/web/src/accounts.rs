@@ -1,7 +1,7 @@
-//! Web accounts: local logins mapped to Tidefell users (ADR 0011).
+//! Web accounts: local logins mapped to Shoal users (ADR 0011).
 //!
 //! Stored as JSON in `<data_dir>/web/accounts.json` so administrators can audit them. The file
-//! is re-read on every login, so accounts added or removed with `tidefelld web account ...`
+//! is re-read on every login, so accounts added or removed with `shoald web account ...`
 //! apply without a restart.
 
 use std::fs;
@@ -12,7 +12,7 @@ use argon2::password_hash::phc::PasswordHash;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 use serde::{Deserialize, Serialize};
-use tidefell_proto::UserId;
+use shoal_proto::UserId;
 
 /// Account errors.
 #[derive(Debug, thiserror::Error)]
@@ -40,7 +40,7 @@ pub struct Account {
     pub username: String,
     /// Argon2id PHC string.
     pub password_hash: String,
-    /// The Tidefell user this account acts for (hex).
+    /// The Shoal user this account acts for (hex).
     pub user: String,
     /// Administrators can manage accounts in the web UI.
     pub admin: bool,

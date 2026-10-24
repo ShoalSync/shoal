@@ -1,7 +1,7 @@
 //! Async frame I/O: varint length prefix followed by a postcard body.
 
 use serde::Serialize;
-use tidefell_proto::frame::{self, Message, MAX_FRAME_LEN};
+use shoal_proto::frame::{self, Message, MAX_FRAME_LEN};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{Error, Result};

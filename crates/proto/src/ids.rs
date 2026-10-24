@@ -132,7 +132,7 @@ id!(
     ListId, 32
 );
 id!(
-    /// What `tidefell/blobs/2` transfers: a sealed chunk's chunk ID or a list blob's list ID.
+    /// What `shoal/blobs/2` transfers: a sealed chunk's chunk ID or a list blob's list ID.
     /// Which it is, the requester knows.
     BlobId, 32
 );

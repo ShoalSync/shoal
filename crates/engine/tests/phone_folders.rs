@@ -6,12 +6,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Direction, Engine, EngineConfig, Error, FolderConfig, LocalDeletes, RelayConfig, ReplicaMode,
     Retention, SyncOptions,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([25; 32]);
 
@@ -88,7 +88,7 @@ impl Device {
 
     fn set_aside_files(&self) -> usize {
         // Not counting the sidecar each has (ADR 0034).
-        fs::read_dir(self.root.join(".tidefell").join("recycle"))
+        fs::read_dir(self.root.join(".shoal").join("recycle"))
             .map(|d| {
                 d.flatten()
                     .filter(|e| !e.file_name().to_string_lossy().ends_with(".json"))
@@ -365,7 +365,7 @@ async fn removed_files_wait_in_the_recycle_bin() {
         .unwrap();
     assert!(phone.read("DCIM/a.jpg").is_none());
     assert_eq!(phone.set_aside_files(), 1);
-    assert!(phone.root.join(".tidefell/.nomedia").exists());
+    assert!(phone.root.join(".shoal/.nomedia").exists());
     let bin = engine_phone.recycle_bin(FOLDER).unwrap();
     assert_eq!(bin.len(), 1);
     assert!(bin[0].here_only);

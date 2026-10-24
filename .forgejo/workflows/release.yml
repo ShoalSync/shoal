@@ -75,7 +75,7 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
       - id: version
         run: |
-          version=$(cargo pkgid --package tidefell-cli | sed 's/.*[#@]//')
+          version=$(cargo pkgid --package shoal-cli | sed 's/.*[#@]//')
           if [ "v$version" != "$TAG" ]; then
             echo "::error::tag $TAG does not match workspace version $version"
             exit 1
@@ -113,20 +113,20 @@ jobs:
       - name: Build
         run: >
           cargo build --release --locked --target ${{ matrix.target }}
-          --package tidefell-daemon --package tidefell-cli
+          --package shoal-daemon --package shoal-cli
       - name: Package
         shell: bash
         run: |
-          name="tidefell-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          name="shoal-${{ needs.version.outputs.version }}-${{ matrix.target }}"
           mkdir "$name"
-          cp target/${{ matrix.target }}/release/{tidefell,tidefelld} README.md LICENSE "$name/"
+          cp target/${{ matrix.target }}/release/{shoal,shoald} README.md LICENSE-MIT LICENSE-APACHE "$name/"
           tar -czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
         with:
           retention-days: 1
           name: binaries-${{ matrix.target }}
-          path: tidefell-*.tar.gz*
+          path: shoal-*.tar.gz*
 
   # Windows' programs, built for want of a Windows release runner on the CI runner (ADR 0042's
   # amendment), in a target directory of their own, never the one pull requests' runs keep. They
@@ -150,10 +150,10 @@ jobs:
           export CARGO_TARGET_DIR="$RUNNER_TEMP/release-target"
           rm -rf "$CARGO_TARGET_DIR"
           cargo build --release --locked --target x86_64-pc-windows-msvc \
-            --package tidefell-daemon --package tidefell-cli --package tidefell-tray
+            --package shoal-daemon --package shoal-cli --package shoal-tray
           mkdir windows-bin
-          cp "$CARGO_TARGET_DIR"/x86_64-pc-windows-msvc/release/{tidefell,tidefelld,tidefell-tray}.exe \
-            README.md LICENSE windows-bin/
+          cp "$CARGO_TARGET_DIR"/x86_64-pc-windows-msvc/release/{shoal,shoald,shoal-tray}.exe \
+            README.md LICENSE-MIT LICENSE-APACHE windows-bin/
       - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
         with:
           retention-days: 1
@@ -176,13 +176,13 @@ jobs:
       - name: Package
         run: |
           version="${{ needs.version.outputs.version }}"
-          name="tidefell-$version-x86_64-pc-windows-msvc"
+          name="shoal-$version-x86_64-pc-windows-msvc"
           mkdir out
           cp -r windows-bin "$name"
           python3 -m zipfile -c "out/$name.zip" "$name"
           msitools="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#msitools)"
           PATH="$msitools/bin:$PATH" packaging/windows/msi.sh "$PWD/windows-bin" "$version" \
-            "out/tidefell-$version-x86_64.msi"
+            "out/shoal-$version-x86_64.msi"
           cd out
           for asset in *; do sha256sum "$asset" > "$asset.sha256"; done
       - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
@@ -205,23 +205,23 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
       - name: Package
         run: |
-          name="tidefell-specs-${{ needs.version.outputs.version }}"
+          name="shoal-specs-${{ needs.version.outputs.version }}"
           tar -czf "$name.tar.gz" specs
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-          schema="tidefelld-config-${{ needs.version.outputs.version }}.schema.json"
-          cargo run --locked --quiet --package tidefell-daemon -- config schema > "$schema"
+          schema="shoald-config-${{ needs.version.outputs.version }}.schema.json"
+          cargo run --locked --quiet --package shoal-daemon -- config schema > "$schema"
           sha256sum "$schema" > "$schema.sha256"
-          api="tidefell-api-${{ needs.version.outputs.version }}.openapi.json"
-          cargo run --locked --quiet --package tidefell-daemon -- api schema > "$api"
+          api="shoal-api-${{ needs.version.outputs.version }}.openapi.json"
+          cargo run --locked --quiet --package shoal-daemon -- api schema > "$api"
           sha256sum "$api" > "$api.sha256"
       - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
         with:
           retention-days: 1
           name: specs
           path: |
-            tidefell-specs-*.tar.gz*
-            tidefelld-config-*.schema.json*
-            tidefell-api-*.openapi.json*
+            shoal-specs-*.tar.gz*
+            shoald-config-*.schema.json*
+            shoal-api-*.openapi.json*
 
   publish:
     name: Publish the release

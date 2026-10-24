@@ -1,15 +1,15 @@
 //! Checks the crate against `specs/vectors/encryption-v1.json`, which a second implementation,
 //! written in Python from the spec, makes (`specs/vectors/gen`). The signed encryption key and
-//! grant are checked with the sync/2 messages, in `tidefell-proto`.
+//! grant are checked with the sync/2 messages, in `shoal-proto`.
 
 use std::path::PathBuf;
 
 use serde_json::Value;
-use tidefell_crypto::{
+use shoal_crypto::{
     list_blob, open_grant, read_list_blob, seal_grant_with, EncryptionSecret, Error, FolderKey,
     GrantFor,
 };
-use tidefell_proto::{ChunkId, DeviceId, EntryId, FolderId, KeyId, ListId};
+use shoal_proto::{ChunkId, DeviceId, EntryId, FolderId, KeyId, ListId};
 
 fn vectors() -> Value {
     let path =

@@ -1,12 +1,12 @@
-# NixOS module for tidefelld. Exposed as `nixosModules.tidefelld` by the flake.
+# NixOS module for shoald. Exposed as `nixosModules.shoald` by the flake.
 #
-# The configuration is written from `services.tidefelld.settings` and validated at build time
-# with `tidefelld config check`, so a bad configuration fails `nixos-rebuild`, not the service.
+# The configuration is written from `services.shoald.settings` and validated at build time
+# with `shoald config check`, so a bad configuration fails `nixos-rebuild`, not the service.
 #
 # Identity: on first start the service creates a device key and logs the device ID
-# (`journalctl -u tidefelld`). Certify that ID with `tidefelld certify` where the user key
+# (`journalctl -u shoald`). Certify that ID with `shoald certify` where the user key
 # lives, then either set `certificateFile` or run, once,
-#   sudo -u tidefell tidefelld init --data-dir <dataDir> --name <name> --certificate <file>
+#   sudo -u shoal shoald init --data-dir <dataDir> --name <name> --certificate <file>
 { defaultPackage }:
 {
   config,
@@ -15,33 +15,33 @@
   ...
 }:
 let
-  cfg = config.services.tidefelld;
+  cfg = config.services.shoald;
   settingsFormat = pkgs.formats.toml { };
   configFile =
-    pkgs.runCommand "tidefelld.toml"
+    pkgs.runCommand "shoald.toml"
       {
         nativeBuildInputs = [ cfg.package ];
       }
       ''
-        cp ${settingsFormat.generate "tidefelld.toml" cfg.settings} $out
-        tidefelld config check $out
+        cp ${settingsFormat.generate "shoald.toml" cfg.settings} $out
+        shoald config check $out
       '';
   folderPaths = map (f: toString f.path) (cfg.settings.folders or [ ]);
 in
 {
-  options.services.tidefelld = {
-    enable = lib.mkEnableOption "the Tidefell peer daemon";
+  options.services.shoald = {
+    enable = lib.mkEnableOption "the Shoal peer daemon";
 
     package = lib.mkOption {
       type = lib.types.package;
       default = defaultPackage pkgs;
-      defaultText = lib.literalExpression "tidefell.packages.\${system}.tidefell";
-      description = "Package providing `tidefelld`.";
+      defaultText = lib.literalExpression "shoal.packages.\${system}.shoal";
+      description = "Package providing `shoald`.";
     };
 
     dataDir = lib.mkOption {
       type = lib.types.path;
-      default = "/var/lib/tidefell";
+      default = "/var/lib/shoal";
       description = "State directory: device key, certificate, block store and metadata.";
     };
 
@@ -56,7 +56,7 @@ in
       type = lib.types.nullOr lib.types.path;
       default = null;
       description = ''
-        Device certificate issued by `tidefelld certify` for this device's ID. Imported before
+        Device certificate issued by `shoald certify` for this device's ID. Imported before
         every start. Leave unset to manage the certificate by hand.
       '';
     };
@@ -83,7 +83,7 @@ in
       inherit (settingsFormat) type;
       default = { };
       description = ''
-        Contents of the tidefelld configuration file. Run `tidefelld config schema` for the
+        Contents of the shoald configuration file. Run `shoald config schema` for the
         JSON Schema of the version you deploy.
       '';
       example = lib.literalExpression ''
@@ -91,7 +91,7 @@ in
           network.bind = "0.0.0.0:7777";
           folders = [{
             id = "<64 hex digits>";
-            path = "/srv/tidefell/photos";
+            path = "/srv/shoal/photos";
             members = [ "<user id>" ];
             retention_days = 30;
           }];
@@ -101,17 +101,17 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    services.tidefelld.settings.data_dir = lib.mkDefault (toString cfg.dataDir);
-    services.tidefelld.settings.network.relay.token_file = lib.mkIf (
+    services.shoald.settings.data_dir = lib.mkDefault (toString cfg.dataDir);
+    services.shoald.settings.network.relay.token_file = lib.mkIf (
       cfg.relayTokenFile != null
-    ) "/run/credentials/tidefelld.service/relay-token";
+    ) "/run/credentials/shoald.service/relay-token";
 
-    users.users.tidefell = {
+    users.users.shoal = {
       isSystemUser = true;
-      group = "tidefell";
+      group = "shoal";
       home = cfg.dataDir;
     };
-    users.groups.tidefell = { };
+    users.groups.shoal = { };
 
     environment.systemPackages = [ cfg.package ];
 
@@ -122,25 +122,25 @@ in
       in
       lib.optional (cfg.openFirewall && port != null && port != 0) port;
 
-    systemd.tmpfiles.rules = [ "d ${toString cfg.dataDir} 0700 tidefell tidefell -" ];
+    systemd.tmpfiles.rules = [ "d ${toString cfg.dataDir} 0700 shoal shoal -" ];
 
-    systemd.services.tidefelld = {
-      description = "Tidefell peer daemon";
+    systemd.services.shoald = {
+      description = "Shoal peer daemon";
       wantedBy = [ "multi-user.target" ];
       wants = [ "network-online.target" ];
       after = [ "network-online.target" ];
       restartTriggers = [ configFile ];
       serviceConfig = {
         ExecStartPre = [
-          "${cfg.package}/bin/tidefelld id --data-dir ${toString cfg.dataDir}"
+          "${cfg.package}/bin/shoald id --data-dir ${toString cfg.dataDir}"
         ]
         ++ lib.optional (cfg.certificateFile != null) (
-          "${cfg.package}/bin/tidefelld init --data-dir ${toString cfg.dataDir}"
+          "${cfg.package}/bin/shoald init --data-dir ${toString cfg.dataDir}"
           + " --name ${lib.escapeShellArg cfg.deviceName} --certificate ${toString cfg.certificateFile}"
         );
-        ExecStart = "${cfg.package}/bin/tidefelld run --config ${configFile}";
-        User = "tidefell";
-        Group = "tidefell";
+        ExecStart = "${cfg.package}/bin/shoald run --config ${configFile}";
+        User = "shoal";
+        Group = "shoal";
         Restart = "on-failure";
         RestartSec = 5;
         LoadCredential = lib.optional (

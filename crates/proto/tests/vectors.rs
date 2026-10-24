@@ -1,6 +1,6 @@
 //! Golden encodings in `specs/vectors/`. Any change to these bytes is a wire-format change.
 //!
-//! Regenerate after an intentional change with `TIDEFELL_BLESS=1 cargo test -p tidefell-proto`,
+//! Regenerate after an intentional change with `SHOAL_BLESS=1 cargo test -p shoal-proto`,
 //! and bump the ALPN version if the change is breaking.
 
 use std::fmt::Write as _;
@@ -8,14 +8,12 @@ use std::path::PathBuf;
 
 use ed25519_dalek::SigningKey;
 use serde_json::{json, Value};
-use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage};
-use tidefell_proto::frame::Message;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::pair::{
-    FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode,
-};
-use tidefell_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
-use tidefell_proto::{
+use shoal_proto::blobs::{BlobsErrorCode, BlobsMessage};
+use shoal_proto::frame::Message;
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::pair::{FolderOffer, OfferedEncryption, PairErrorCode, PairMessage, PairingCode};
+use shoal_proto::sync::{EntryKind, EntryVersion, ErrorCode, SyncMessage};
+use shoal_proto::{
     frame, ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, Signed, UserId,
 };
 
@@ -303,7 +301,7 @@ fn pair_v2_vectors() -> Vec<(&'static str, Vec<u8>)> {
             "complete",
             PairMessage::Complete {
                 certificate: certificate(),
-                relay: Some("https://relay.tidefell.org./".into()),
+                relay: Some("https://relay.shoal.org./".into()),
                 addrs: vec!["192.168.1.20:7777".parse().unwrap()],
                 folders: vec![
                     FolderOffer {
@@ -368,13 +366,13 @@ fn check_vectors(file: &str, alpn: &str, vectors: Vec<(&'static str, Vec<u8>)>) 
         "vectors": actual,
     });
 
-    if std::env::var_os("TIDEFELL_BLESS").is_some() {
+    if std::env::var_os("SHOAL_BLESS").is_some() {
         let text = serde_json::to_string_pretty(&actual).unwrap() + "\n";
         std::fs::write(&path, text).unwrap();
         return;
     }
     let expected: Value = serde_json::from_str(
-        &std::fs::read_to_string(&path).expect("missing vectors; run with TIDEFELL_BLESS=1"),
+        &std::fs::read_to_string(&path).expect("missing vectors; run with SHOAL_BLESS=1"),
     )
     .unwrap();
     assert_eq!(
@@ -385,17 +383,17 @@ fn check_vectors(file: &str, alpn: &str, vectors: Vec<(&'static str, Vec<u8>)>) 
 
 #[test]
 fn sync_v1_golden_vectors() {
-    check_vectors("sync-v1.json", "tidefell/sync/1", sync_v1_vectors());
+    check_vectors("sync-v1.json", "shoal/sync/1", sync_v1_vectors());
 }
 
 #[test]
 fn blobs_v1_golden_vectors() {
-    check_vectors("blobs-v1.json", "tidefell/blobs/1", blobs_v1_vectors());
+    check_vectors("blobs-v1.json", "shoal/blobs/1", blobs_v1_vectors());
 }
 
 #[test]
 fn pair_v2_golden_vectors() {
-    check_vectors("pair-v2.json", "tidefell/pair/2", pair_v2_vectors());
+    check_vectors("pair-v2.json", "shoal/pair/2", pair_v2_vectors());
 }
 
 #[test]
@@ -405,7 +403,7 @@ fn certificate_must_be_signed_by_its_user() {
     assert!(forged.verify().is_ok());
     assert!(matches!(
         forged.verify_certificate(),
-        Err(tidefell_proto::Error::SignerMismatch)
+        Err(shoal_proto::Error::SignerMismatch)
     ));
 }
 
@@ -434,7 +432,7 @@ fn entry_versions_have_one_encoding() {
     ] {
         let signature = ed25519_dalek::Signer::sign(
             &device_key(),
-            &tidefell_proto::signed::signing_bytes("sync/1/entry-version", &body),
+            &shoal_proto::signed::signing_bytes("sync/1/entry-version", &body),
         );
         // Signed is the signer, the body with its length, then the signature.
         let encoded = [
@@ -447,7 +445,7 @@ fn entry_versions_have_one_encoding() {
         // The signature is good; the encoding is not.
         assert!(matches!(
             resigned.verify_authored(),
-            Err(tidefell_proto::Error::Decode(_))
+            Err(shoal_proto::Error::Decode(_))
         ));
     }
 }
@@ -459,16 +457,16 @@ fn entry_version_signed_by_another_device_is_rejected() {
     assert!(signed.verify().is_ok());
     assert!(matches!(
         signed.verify_authored(),
-        Err(tidefell_proto::Error::SignerMismatch)
+        Err(shoal_proto::Error::SignerMismatch)
     ));
 }
 
 #[test]
 fn alpn_constants_match_specs() {
     for (alpn, file) in [
-        (tidefell_proto::ALPN_SYNC_V1, "sync-v1.md"),
-        (tidefell_proto::ALPN_BLOBS_V1, "blobs-v1.md"),
-        (tidefell_proto::ALPN_PAIR_V2, "pair-v2.md"),
+        (shoal_proto::ALPN_SYNC_V1, "sync-v1.md"),
+        (shoal_proto::ALPN_BLOBS_V1, "blobs-v1.md"),
+        (shoal_proto::ALPN_PAIR_V2, "pair-v2.md"),
     ] {
         let spec = std::fs::read_to_string(specs_dir().join(file)).unwrap();
         let alpn = std::str::from_utf8(alpn).unwrap();
@@ -490,7 +488,7 @@ fn hello_from_before_revocations_decodes_and_is_read_by_0_19() {
          ee79a9ef495c4ff150fb7000122222222222222222222222222222222222222222222222222222222222222\
          220180c8d3cbae66",
     );
-    let (decoded, _) = tidefell_proto::frame::decode::<SyncMessage>(&frame).unwrap();
+    let (decoded, _) = shoal_proto::frame::decode::<SyncMessage>(&frame).unwrap();
     let SyncMessage::Hello {
         clock_ms,
         revocations,

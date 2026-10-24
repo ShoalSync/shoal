@@ -9,9 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_engine::{Engine, Event, ReplicaMode};
-use tidefell_fs_cfapi::{EngineFolder, SyncRoot};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, Event, ReplicaMode};
+use shoal_fs_cfapi::{EngineFolder, SyncRoot};
+use shoal_proto::FolderId;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::{broadcast, oneshot};
 use tokio::task::JoinHandle;
@@ -163,13 +163,13 @@ impl Roots {
             let backend =
                 EngineFolder::new(engine.clone(), folder, tokio::runtime::Handle::current());
             let result = tokio::task::spawn_blocking(move || {
-                if let Some(problem) = tidefell_fs_cfapi::unusable(&path, folder) {
+                if let Some(problem) = shoal_fs_cfapi::unusable(&path, folder) {
                     return Err(problem);
                 }
                 let name = path
                     .file_name()
                     .map_or_else(|| folder.to_string(), |n| n.to_string_lossy().into_owned());
-                tidefell_fs_cfapi::connect(backend, &path, folder, &name)
+                shoal_fs_cfapi::connect(backend, &path, folder, &name)
                     .map_err(|e| format!("Windows refused it: {e}"))
             })
             .await
@@ -179,7 +179,7 @@ impl Roots {
                     tracing::info!(folder = %folder, root = %root.root().display(), "sync root connected");
                     self.refused.remove(&folder);
                     // Eviction dehydrates, leaving the file online-only where it is.
-                    engine.set_freer(folder, Some(Arc::new(tidefell_fs_cfapi::free)));
+                    engine.set_freer(folder, Some(Arc::new(shoal_fs_cfapi::free)));
                     self.connected.insert(folder, root);
                 }
                 Err(reason) => {

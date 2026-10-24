@@ -1,6 +1,6 @@
 # Pairing protocol, version 2
 
-ALPN: `tidefell/pair/2`
+ALPN: `shoal/pair/2`
 
 Status: draft. Messages are implemented in `crates/proto` (`pair` module) and the key
 derivations in `crates/identity` (`pairing` module); golden encodings are in
@@ -8,7 +8,7 @@ derivations in `crates/identity` (`pairing` module); golden encodings are in
 
 Version 2 replaces version 1, before 1.0 and so without keeping it (ADR 0026): a folder offer
 says whether the folder is encrypted and who its storage peers are (ADR 0023), so the new
-device joins it as such. The derivation context `"tidefell pair/1 secret"` is unchanged: it is
+device joins it as such. The derivation context `"shoal pair/1 secret"` is unchanged: it is
 a label, not the protocol's version.
 
 ## Purpose
@@ -40,7 +40,7 @@ connections with an invalid proof, and stops serving the code after too many of 
 With `A` the approver's device ID and `N` the new device's (32 bytes each):
 
 ```text
-key          = BLAKE3-derive-key("tidefell pair/1 secret", secret)
+key          = BLAKE3-derive-key("shoal pair/1 secret", secret)
 proof        = BLAKE3-keyed(key, "proof"   || A || N)
 confirmation = LE-u32(BLAKE3-keyed(key, "confirm" || A || N)[0..4]) mod 1 000 000
 ```
@@ -49,10 +49,10 @@ The confirmation code is shown as six decimal digits, zero-padded.
 
 ## Transport and encoding
 
-The approver dials `device` with ALPN `tidefell/pair/2` and opens one bidirectional stream.
+The approver dials `device` with ALPN `shoal/pair/2` and opens one bidirectional stream.
 iroh's TLS authenticates the new device's key, so the approver knows it reached the device in the
 code; the proof shows the new device that the approver saw the code. Framing is the same as
-`tidefell/sync/1`: varint length prefix, postcard body.
+`shoal/sync/1`: varint length prefix, postcard body.
 
 ## Messages
 

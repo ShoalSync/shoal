@@ -1,6 +1,6 @@
 # Blob transfer protocol, version 1
 
-ALPN: `tidefell/blobs/1`
+ALPN: `shoal/blobs/1`
 
 Status: draft. Messages are implemented in `crates/proto` (`blobs` module); golden encodings
 are in [`vectors/blobs-v1.json`](vectors/blobs-v1.json). See ADR 0008 for why this is not
@@ -13,8 +13,8 @@ holds so they can fetch from several peers at once (rarest first).
 
 ## Transport and encoding
 
-A QUIC connection negotiated with ALPN `tidefell/blobs/1` over iroh. Framing and encoding are
-the same as `tidefell/sync/1`: varint length prefix, postcard body, 16 MiB maximum frame.
+A QUIC connection negotiated with ALPN `shoal/blobs/1` over iroh. Framing and encoding are
+the same as `shoal/sync/1`: varint length prefix, postcard body, 16 MiB maximum frame.
 
 The requester opens a bidirectional stream per request and sends `Hello` followed by one
 request. The responder answers and finishes the stream. A requester may use many streams on one

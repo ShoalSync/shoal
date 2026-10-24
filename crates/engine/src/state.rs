@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use tidefell_identity::FolderMembers;
-use tidefell_meta::{Folder, Recycled};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::version::LegacyVersionVector;
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
+use shoal_identity::FolderMembers;
+use shoal_meta::{Folder, Recycled};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::version::LegacyVersionVector;
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector};
 
 use crate::committer::Committer;
 use crate::config::FolderConfig;
@@ -30,7 +30,7 @@ pub(crate) fn db_path(metadata_dir: &Path, id: FolderId) -> PathBuf {
 /// How a device tells a folder's names apart (ADR 0033): in NFC, and without regard to case
 /// on a drive that ignores it.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct NameFolding(pub(crate) tidefell_meta::Folding);
+pub(crate) struct NameFolding(pub(crate) shoal_meta::Folding);
 
 impl NameFolding {
     /// `name` as this device compares names.
@@ -48,23 +48,23 @@ pub(crate) fn recorded(name: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-const STATE_HEADER: &[u8] = b"tidefell-engine-folder 9\n";
+const STATE_HEADER: &[u8] = b"shoal-engine-folder 9\n";
 /// Format 7, before pins (ADR 0029).
 /// Format 8, whose version vectors had no holes.
-const STATE_HEADER_V8: &[u8] = b"tidefell-engine-folder 8\n";
-const STATE_HEADER_V7: &[u8] = b"tidefell-engine-folder 7\n";
+const STATE_HEADER_V8: &[u8] = b"shoal-engine-folder 8\n";
+const STATE_HEADER_V7: &[u8] = b"shoal-engine-folder 7\n";
 /// Format 6, before version history (ADR 0029).
-const STATE_HEADER_V6: &[u8] = b"tidefell-engine-folder 6\n";
+const STATE_HEADER_V6: &[u8] = b"shoal-engine-folder 6\n";
 /// Before deleted files were kept on disk instead of in the block store (ADR 0027).
-const STATE_HEADER_V5: &[u8] = b"tidefell-engine-folder 5\n";
+const STATE_HEADER_V5: &[u8] = b"shoal-engine-folder 5\n";
 /// Before files could be dropped from this device only or set aside (ADR 0025).
-const STATE_HEADER_V4: &[u8] = b"tidefell-engine-folder 4\n";
+const STATE_HEADER_V4: &[u8] = b"shoal-engine-folder 4\n";
 /// Before files on disk recorded the version vector of their content (ADR 0024).
-const STATE_HEADER_V3: &[u8] = b"tidefell-engine-folder 3\n";
+const STATE_HEADER_V3: &[u8] = b"shoal-engine-folder 3\n";
 /// Version 2 had no confirmed copies.
-const STATE_HEADER_V2: &[u8] = b"tidefell-engine-folder 2\n";
+const STATE_HEADER_V2: &[u8] = b"shoal-engine-folder 2\n";
 /// Version 1 had no last-use times either.
-const STATE_HEADER_V1: &[u8] = b"tidefell-engine-folder 1\n";
+const STATE_HEADER_V1: &[u8] = b"shoal-engine-folder 1\n";
 
 /// What this replica last saw or wrote at a path on disk.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,8 +469,8 @@ pub(crate) type StoredListed = (
     u64,
     usize,
     u64,
-    Vec<(tidefell_proto::ChunkId, u8)>,
-    Vec<(tidefell_proto::ChunkId, u8)>,
+    Vec<(shoal_proto::ChunkId, u8)>,
+    Vec<(shoal_proto::ChunkId, u8)>,
 );
 
 pub(crate) struct FolderState {
@@ -517,7 +517,7 @@ pub(crate) struct FolderState {
     /// row later otherwise (ADR 0040).
     pub(crate) replaced: Tracked<String, (DeviceId, Option<i64>, u64)>,
     /// An encrypted folder's keys this device holds, by key ID: generation and key (ADR 0023).
-    pub(crate) keys: Tracked<tidefell_proto::KeyId, (u64, [u8; 32])>,
+    pub(crate) keys: Tracked<shoal_proto::KeyId, (u64, [u8; 32])>,
     /// An encrypted folder's index items besides the versions in `meta`, by sequence:
     /// encryption keys, grants, and sealed versions this device cannot open yet.
     /// On a storage peer, the sealed versions among `items` that another kept version
@@ -528,13 +528,13 @@ pub(crate) struct FolderState {
     /// vectors: built from `items` when first needed, not stored.
     /// An encrypted folder's list blobs, by list ID: those its own versions list, and those
     /// fetched to open or store others' (ADR 0023).
-    pub(crate) list_blobs: Tracked<tidefell_proto::ListId, Vec<u8>>,
+    pub(crate) list_blobs: Tracked<shoal_proto::ListId, Vec<u8>>,
     /// Bumped whenever `items` changes, so what is worked out from them can be kept until then.
     pub(crate) items_revision: u64,
     /// The keys a member device holds a grant of, other than this one, at an items revision
     /// and a vouching generation: whether a storage peer's copy counts (ADR 0023).
     pub(crate) granted_keys:
-        std::cell::RefCell<Option<(u64, u64, std::collections::BTreeSet<tidefell_proto::KeyId>)>>,
+        std::cell::RefCell<Option<(u64, u64, std::collections::BTreeSet<shoal_proto::KeyId>)>>,
     /// On a storage peer, the chunk IDs its kept versions list, all and the current versions'
     /// only, at an items revision and a count of list blobs: worked out again only after a change.
     pub(crate) stored_listed: std::cell::RefCell<Option<StoredListed>>,
@@ -548,27 +548,24 @@ pub(crate) struct FolderState {
     /// first needed.
     pub(crate) chunk_index: Option<
         std::collections::HashMap<
-            (tidefell_proto::ChunkHash, tidefell_proto::KeyId),
-            tidefell_proto::ChunkId,
+            (shoal_proto::ChunkHash, shoal_proto::KeyId),
+            shoal_proto::ChunkId,
         >,
     >,
     /// On a storage peer, the folder's sealed chunks (ADR 0023).
     pub(crate) sealed_store: Option<crate::stored::SealedStore>,
     pub(crate) stored_heads: Option<
-        std::collections::HashMap<
-            tidefell_proto::EntryId,
-            Vec<(u64, tidefell_proto::VersionVector)>,
-        >,
+        std::collections::HashMap<shoal_proto::EntryId, Vec<(u64, shoal_proto::VersionVector)>>,
     >,
-    pub(crate) items: Tracked<u64, tidefell_proto::sync2::Item>,
+    pub(crate) items: Tracked<u64, shoal_proto::sync2::Item>,
     /// Which chunk each of an encrypted folder's chunk IDs is, and under which key.
     pub(crate) chunk_ids:
-        Tracked<tidefell_proto::ChunkId, (tidefell_proto::ChunkHash, tidefell_proto::KeyId)>,
+        Tracked<shoal_proto::ChunkId, (shoal_proto::ChunkHash, shoal_proto::KeyId)>,
     /// An encrypted folder's contents as its versions name them, by content and the key their
     /// chunks are sealed with (one content can be sealed under several): each chunk's ID and
     /// length, from which the manifest is made once fetched.
     pub(crate) sealed_chunks:
-        Tracked<(ContentHash, tidefell_proto::KeyId), Vec<(tidefell_proto::ChunkId, u32)>>,
+        Tracked<(ContentHash, shoal_proto::KeyId), Vec<(shoal_proto::ChunkId, u32)>>,
     /// Paths this device keeps on disk as a partial replica (ADR 0029): files, or directories
     /// and everything below them. Kept in the runtime settings, not the folder's database, so a
     /// rebuild keeps them (ADR 0034); a folder's metadata holds them only from before that.
@@ -1067,8 +1064,8 @@ impl FolderState {
     /// How this device tells the folder's names apart (ADR 0033).
     pub(crate) fn folding(&self) -> NameFolding {
         NameFolding(match self.filesystem.case_insensitive {
-            true => tidefell_meta::Folding::Case,
-            false => tidefell_meta::Folding::None,
+            true => shoal_meta::Folding::Case,
+            false => shoal_meta::Folding::None,
         })
     }
 
@@ -1350,10 +1347,10 @@ impl FolderState {
             );
         }
         assert_eq!(loaded.header, self.meta.header(), "the header differs");
-        let saved: Vec<(u64, tidefell_proto::EntryId)> = loaded
+        let saved: Vec<(u64, shoal_proto::EntryId)> = loaded
             .versions
             .iter()
-            .map(|(s, v, _)| (*s, tidefell_meta::copy_id(v)))
+            .map(|(s, v, _)| (*s, shoal_meta::copy_id(v)))
             .collect();
         assert_eq!(
             saved,
@@ -1373,7 +1370,7 @@ impl FolderState {
     }
 
     /// Replaces the member list.
-    pub(crate) fn set_members(&mut self, members: Vec<tidefell_proto::UserId>) {
+    pub(crate) fn set_members(&mut self, members: Vec<shoal_proto::UserId>) {
         self.members = FolderMembers::new(self.config.id, members.iter().copied());
         self.config.members = members;
         // Whose grants count changed with the members.
@@ -1414,7 +1411,7 @@ impl FolderState {
     }
 
     /// Changes the recycle-bin retention. Expired items are purged at the next purge.
-    pub(crate) fn set_retention(&mut self, retention: tidefell_meta::Retention) {
+    pub(crate) fn set_retention(&mut self, retention: shoal_meta::Retention) {
         self.meta.set_retention(retention);
         self.config.retention = retention;
         self.touch();
@@ -1422,7 +1419,7 @@ impl FolderState {
 
     /// Purges expired recycle-bin items and forgets manifests nothing references. Returns
     /// chunks no longer referenced by this folder.
-    pub(crate) fn purge(&mut self, now_ms: i64) -> (Vec<Recycled>, Vec<tidefell_proto::ChunkHash>) {
+    pub(crate) fn purge(&mut self, now_ms: i64) -> (Vec<Recycled>, Vec<shoal_proto::ChunkHash>) {
         let purged = self.meta.purge_expired(now_ms);
         crate::history::purge(self, now_ms);
         (purged, self.release_unreferenced())
@@ -1433,8 +1430,8 @@ impl FolderState {
     /// folder.
     pub(crate) fn discard(
         &mut self,
-        entry: Option<&tidefell_proto::EntryId>,
-    ) -> (Vec<Recycled>, Vec<tidefell_proto::ChunkHash>) {
+        entry: Option<&shoal_proto::EntryId>,
+    ) -> (Vec<Recycled>, Vec<shoal_proto::ChunkHash>) {
         let discarded = match entry {
             Some(entry) => self.meta.discard(entry).into_iter().collect(),
             None => self.meta.discard_all(),
@@ -1443,7 +1440,7 @@ impl FolderState {
     }
 
     /// Forgets manifests nothing references and returns their chunks.
-    fn release_unreferenced(&mut self) -> Vec<tidefell_proto::ChunkHash> {
+    fn release_unreferenced(&mut self) -> Vec<shoal_proto::ChunkHash> {
         let referenced = self.referenced_contents();
         let unused: Vec<ContentHash> = self
             .manifests
@@ -1483,11 +1480,11 @@ mod tests {
 
     /// ADR 0034's exit criterion: at 100,000 entries, a batch of 512 versions from a peer
     /// writes under 1 MB and holds the folder lock for under 50 ms. Slow, so only when asked:
-    /// `cargo test --release -p tidefell-engine --lib -- --ignored a_batch_at_100000_entries`.
+    /// `cargo test --release -p shoal-engine --lib -- --ignored a_batch_at_100000_entries`.
     #[test]
     #[ignore = "a measurement; run it in release with --ignored"]
     fn a_batch_at_100000_entries() {
-        use tidefell_identity::DeviceKey;
+        use shoal_identity::DeviceKey;
         const ENTRIES: usize = 100_000;
         const BATCH: usize = 512;
         const ROUNDS: usize = 20;
@@ -1551,19 +1548,19 @@ mod tests {
                     let current = state.meta.current(&entry(n)).unwrap().to_version();
                     let mut vector = state.meta.current_vector(&entry(n));
                     vector.increment(other.id());
-                    let changed = tidefell_proto::sync::EntryVersion {
+                    let changed = shoal_proto::sync::EntryVersion {
                         kind: file(n, round),
                         author: other.id(),
                         version: vector,
                         ..current
                     };
-                    tidefell_proto::Signed::sign(&changed, other.signing_key())
+                    shoal_proto::Signed::sign(&changed, other.signing_key())
                 })
                 .collect();
             // Checked before the lock, as the engine does.
             let verified: Vec<_> = versions
                 .into_iter()
-                .map(|v| tidefell_meta::verify_remote(FolderId([3; 32]), v).unwrap())
+                .map(|v| shoal_meta::verify_remote(FolderId([3; 32]), v).unwrap())
                 .collect();
             let before = written();
             // What the engine does while it holds the folder's lock.
@@ -1587,8 +1584,8 @@ mod tests {
         assert!(per_batch < 1_000_000, "{per_batch}");
     }
 
-    use tidefell_meta::Retention;
-    use tidefell_proto::{FolderId, UserId};
+    use shoal_meta::Retention;
+    use shoal_proto::{FolderId, UserId};
 
     use super::*;
     use crate::config::ReplicaMode;
@@ -1610,7 +1607,7 @@ mod tests {
             confirm_deletes: Default::default(),
             encryption: None,
         };
-        let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
+        let mine = shoal_identity::DeviceKey::from_seed([5; 32]);
         let mut state =
             FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, mine.id()).unwrap();
         let entry = EntryId([1; 16]);
@@ -1661,12 +1658,12 @@ mod tests {
             confirm_deletes: Default::default(),
             encryption: None,
         };
-        let mine = tidefell_identity::DeviceKey::from_seed([5; 32]);
-        let other = tidefell_identity::DeviceKey::from_seed([6; 32]);
+        let mine = shoal_identity::DeviceKey::from_seed([5; 32]);
+        let other = shoal_identity::DeviceKey::from_seed([6; 32]);
         let mut state =
             FolderState::open(tmp.path(), &tmp.path().join("metadata"), config, mine.id()).unwrap();
-        let file = |n: u8| tidefell_proto::sync::EntryKind::File {
-            content: tidefell_proto::ContentHash([n; 32]),
+        let file = |n: u8| shoal_proto::sync::EntryKind::File {
+            content: shoal_proto::ContentHash([n; 32]),
             size: 1,
             executable: false,
         };
@@ -1675,7 +1672,7 @@ mod tests {
             .meta
             .local_change(
                 mine.signing_key(),
-                tidefell_proto::EntryId([1; 16]),
+                shoal_proto::EntryId([1; 16]),
                 "mine",
                 file(1),
                 10,
@@ -1684,19 +1681,19 @@ mod tests {
         // Made elsewhere: received at 2000, by this device's clock.
         let theirs = |n: u8| {
             let mut folder =
-                tidefell_meta::Folder::new(FolderId([3; 32]), other.id(), 1, Retention::Days(30));
+                shoal_meta::Folder::new(FolderId([3; 32]), other.id(), 1, Retention::Days(30));
             folder
                 .local_change(
                     other.signing_key(),
-                    tidefell_proto::EntryId([n; 16]),
+                    shoal_proto::EntryId([n; 16]),
                     &format!("theirs{n}"),
                     file(n),
                     5,
                 )
                 .unwrap()
         };
-        let verify = |v: tidefell_meta::Wire| {
-            tidefell_meta::verify_remote(FolderId([3; 32]), v.plain().unwrap().clone()).unwrap()
+        let verify = |v: shoal_meta::Wire| {
+            shoal_meta::verify_remote(FolderId([3; 32]), v.plain().unwrap().clone()).unwrap()
         };
         state.meta.apply_verified(verify(theirs(2)), 2000).unwrap();
         // Received again while rebuilding: not when it first came, so no time.
@@ -1961,7 +1958,7 @@ mod tests {
 
     #[test]
     fn upgrading_catches_up_bases_left_behind() {
-        use tidefell_identity::DeviceKey;
+        use shoal_identity::DeviceKey;
 
         let tmp = tempfile::tempdir().unwrap();
         let config = FolderConfig {

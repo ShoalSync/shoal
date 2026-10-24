@@ -1,12 +1,12 @@
-//! `tidefell/storage/1`: members' priorities for what a storage peer keeps of an encrypted
+//! `shoal/storage/1`: members' priorities for what a storage peer keeps of an encrypted
 //! folder. See `specs/storage-v1.md`.
 
 use std::sync::Arc;
 
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::storage::{Hint, StorageErrorCode, StorageMessage, MAX_HINTS};
-use tidefell_proto::{FolderId, Signed};
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::storage::{Hint, StorageErrorCode, StorageMessage, MAX_HINTS};
+use shoal_proto::{FolderId, Signed};
 
 use crate::backend::EncryptedBackend;
 use crate::session::verify_peer;

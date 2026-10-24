@@ -1,4 +1,4 @@
-//! The `tidefell/pair/2` protocol and pairing codes. See `specs/pair-v2.md` and ADR 0015.
+//! The `shoal/pair/2` protocol and pairing codes. See `specs/pair-v2.md` and ADR 0015.
 //!
 //! Variant order is part of the wire format. Append new variants only in a new protocol version.
 
@@ -89,7 +89,7 @@ pub struct OfferedEncryption {
     pub storage_peers: Vec<DeviceId>,
 }
 
-/// A message on a `tidefell/pair/2` stream.
+/// A message on a `shoal/pair/2` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PairMessage {
     /// Approver → new device, first: proof that the approver has seen the code.
@@ -176,7 +176,7 @@ mod tests {
         PairingCode {
             device: DeviceId([0xab; 32]),
             secret: [0x5a; 16],
-            relay: Some("https://relay.tidefell.org./".into()),
+            relay: Some("https://relay.shoal.org./".into()),
             addrs: vec![
                 "192.168.1.20:7777".parse().unwrap(),
                 "[::1]:7778".parse().unwrap(),

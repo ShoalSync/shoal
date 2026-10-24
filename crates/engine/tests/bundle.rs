@@ -8,13 +8,13 @@ use std::net::SocketAddr;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
-use tidefell_engine::diagnostics::write_crash;
-use tidefell_engine::{
+use shoal_engine::diagnostics::write_crash;
+use shoal_engine::{
     zip_bundle, BundleOptions, Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode,
     Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([44; 32]);
 
@@ -89,18 +89,18 @@ async fn bundles_hold_no_names_ids_or_addresses() {
     fs::create_dir_all(data.join("logs")).unwrap();
     let lines = [
         format!(
-            r#"{{"timestamp":"2026-09-28T02:23:10.123Z","level":"WARN","fields":{{"message":"update failed","folder":"{folder}","path":"CanaryDir/CanarySecret.txt","error":"i/o error on {root_text}/CanaryDir/CanarySecret.txt: permission denied"}},"target":"tidefell_engine::materialize"}}"#
+            r#"{{"timestamp":"2026-09-28T02:23:10.123Z","level":"WARN","fields":{{"message":"update failed","folder":"{folder}","path":"CanaryDir/CanarySecret.txt","error":"i/o error on {root_text}/CanaryDir/CanarySecret.txt: permission denied"}},"target":"shoal_engine::materialize"}}"#
         ),
         format!(
-            r#"{{"timestamp":"2026-09-28T02:23:11Z","level":"DEBUG","fields":{{"message":"dial failed","peer":"{device}","error":"failed to connect to 127.0.0.1:4433 as {user_id}"}},"target":"tidefell_engine::engine"}}"#
+            r#"{{"timestamp":"2026-09-28T02:23:11Z","level":"DEBUG","fields":{{"message":"dial failed","peer":"{device}","error":"failed to connect to 127.0.0.1:4433 as {user_id}"}},"target":"shoal_engine::engine"}}"#
         ),
         "a line that is not JSON, about CanaryDir/CanarySecret.txt".to_owned(),
         // A name the engine never recorded, with spaces, in an error.
         format!(
-            r#"{{"timestamp":"2026-09-28T02:23:12Z","level":"WARN","fields":{{"message":"cannot open file","error":"{root_text}/Canary Taxes 2025/Canary Settlement.pdf: permission denied"}},"target":"tidefell_engine::scan"}}"#
+            r#"{{"timestamp":"2026-09-28T02:23:12Z","level":"WARN","fields":{{"message":"cannot open file","error":"{root_text}/Canary Taxes 2025/Canary Settlement.pdf: permission denied"}},"target":"shoal_engine::scan"}}"#
         ),
     ];
-    fs::write(data.join("logs/tidefell.log"), lines.join("\n")).unwrap();
+    fs::write(data.join("logs/shoal.log"), lines.join("\n")).unwrap();
     write_crash(
         &data.join("crashes"),
         "engine",
@@ -128,7 +128,7 @@ async fn bundles_hold_no_names_ids_or_addresses() {
         "problems.json",
         "recent-problems.json",
         "doctor.json",
-        "logs/tidefell.log",
+        "logs/shoal.log",
     ] {
         assert!(
             names.contains(&expected),
@@ -168,7 +168,7 @@ async fn bundles_hold_no_names_ids_or_addresses() {
     assert!(status.contains(&format!("{}…", &folder[..8])), "{status}");
     let log = &unzipped
         .iter()
-        .find(|(n, _)| n == "logs/tidefell.log")
+        .find(|(n, _)| n == "logs/shoal.log")
         .unwrap()
         .1;
     assert!(

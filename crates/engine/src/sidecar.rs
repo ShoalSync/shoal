@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use tidefell_meta::Recycled;
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, EntryId};
+use shoal_meta::Recycled;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, EntryId};
 use tracing::debug;
 
 use crate::history::Previous;

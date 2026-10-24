@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fuser::{Errno, FileAttr, FileType, INodeNo};
-use tidefell_proto::sync::is_valid_path;
+use shoal_proto::sync::is_valid_path;
 use tracing::warn;
 
 use crate::backend::{Backend, BackendError, FileEntry};

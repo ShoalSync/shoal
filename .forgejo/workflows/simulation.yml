@@ -24,18 +24,18 @@ jobs:
         with:
           toolchain: stable
       - name: Build
-        run: cargo test --locked --release --package tidefell-sim --test seeds --no-run
+        run: cargo test --locked --release --package shoal-sim --test seeds --no-run
       - name: Run
         env:
-          TIDEFELL_SIM_SEEDS: "10000"
-          TIDEFELL_SIM_JOBS: "8"
+          SHOAL_SIM_SEEDS: "10000"
+          SHOAL_SIM_JOBS: "8"
         run: |
-          export TIDEFELL_SIM_DIR="$RUNNER_TEMP/simulation"
-          mkdir -p "$TIDEFELL_SIM_DIR"
+          export SHOAL_SIM_DIR="$RUNNER_TEMP/simulation"
+          mkdir -p "$SHOAL_SIM_DIR"
           # Days since the epoch pick the range, so each night tries seeds not tried before;
           # dividing first is the point.
           # shellcheck disable=SC2017
-          export TIDEFELL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 ))
-          echo "seeds $TIDEFELL_SIM_FIRST to $((TIDEFELL_SIM_FIRST + TIDEFELL_SIM_SEEDS - 1))" \
+          export SHOAL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 ))
+          echo "seeds $SHOAL_SIM_FIRST to $((SHOAL_SIM_FIRST + SHOAL_SIM_SEEDS - 1))" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-          cargo test --locked --release --package tidefell-sim --test seeds seeds_pass -- --nocapture
+          cargo test --locked --release --package shoal-sim --test seeds seeds_pass -- --nocapture

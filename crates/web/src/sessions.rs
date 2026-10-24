@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tidefell_proto::UserId;
+use shoal_proto::UserId;
 
 /// How long a session lasts.
 pub(crate) const SESSION_TTL: Duration = Duration::from_secs(12 * 60 * 60);

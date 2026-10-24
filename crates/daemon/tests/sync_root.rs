@@ -1,4 +1,4 @@
-//! A partial replica's folder is a Windows sync root while `tidefelld` runs (ADR 0042): its
+//! A partial replica's folder is a Windows sync root while `shoald` runs (ADR 0042): its
 //! files not on this device are placeholders that fill when read, changes made there sync, and
 //! the roots are disconnected when the daemon stops and connected again when it starts. A
 //! partial folder added at runtime becomes a sync root too, and stops being one when removed.
@@ -11,21 +11,21 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use tidefell_sdk::types::{Mode, NewFolder};
-use tidefell_sdk::Client;
+use shoal_sdk::types::{Mode, NewFolder};
+use shoal_sdk::Client;
 
 /// Set on a placeholder whose data is not on disk.
 const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
 
 fn bin() -> String {
-    std::env::var("TIDEFELLD").unwrap_or_else(|_| env!("CARGO_BIN_EXE_tidefelld").to_owned())
+    std::env::var("SHOALD").unwrap_or_else(|_| env!("CARGO_BIN_EXE_shoald").to_owned())
 }
 
-fn tidefelld(args: &[&str]) -> String {
+fn shoald(args: &[&str]) -> String {
     let out = Command::new(bin()).args(args).output().unwrap();
     assert!(
         out.status.success(),
-        "tidefelld {args:?} failed: {}",
+        "shoald {args:?} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).unwrap()
@@ -61,12 +61,12 @@ impl Daemon {
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
             if let Some(status) = self.child.try_wait().unwrap() {
-                assert!(status.success(), "tidefelld exited with {status}");
+                assert!(status.success(), "shoald exited with {status}");
                 return;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        panic!("tidefelld did not stop");
+        panic!("shoald did not stop");
     }
 }
 
@@ -123,9 +123,9 @@ scan_interval_secs = 1
             peer_port = peer.port,
             folder = self.folder.display(),
         );
-        let path = self.dir.join("tidefelld.toml");
+        let path = self.dir.join("shoald.toml");
         fs::write(&path, config).unwrap();
-        tidefelld(&["config", "check", path.to_str().unwrap()]);
+        shoald(&["config", "check", path.to_str().unwrap()]);
         let log = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -133,7 +133,7 @@ scan_interval_secs = 1
             .unwrap();
         let child = Command::new(bin())
             .args(["run", "--config", path.to_str().unwrap()])
-            .env("RUST_LOG", "info,tidefell_fs_cfapi=debug")
+            .env("RUST_LOG", "info,shoal_fs_cfapi=debug")
             .stdout(Stdio::null())
             .stderr(log)
             .spawn()
@@ -146,7 +146,7 @@ scan_interval_secs = 1
 }
 
 fn init(dir: PathBuf, folder: PathBuf, name: &str, user_key: &Path) -> Node {
-    let out = tidefelld(&[
+    let out = shoald(&[
         "init",
         "--data-dir",
         dir.join("data").to_str().unwrap(),
@@ -191,7 +191,7 @@ fn a_partial_folder_is_a_sync_root_while_the_daemon_runs() {
     // Outside the profile's hidden AppData, where Explorer would not show a sync root.
     let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
     let roots = tempfile::Builder::new()
-        .prefix("Tidefell daemon ")
+        .prefix("Shoal daemon ")
         .tempdir_in(profile)
         .unwrap();
     let user_key = tmp.path().join("user.key");
@@ -203,15 +203,15 @@ fn a_partial_folder_is_a_sync_root_while_the_daemon_runs() {
     );
     let laptop = init(
         tmp.path().join("laptop"),
-        roots.path().join("Tidefell"),
+        roots.path().join("Shoal"),
         "laptop",
         &user_key,
     );
     let user = field(
-        &tidefelld(&["id", "--data-dir", nas.data().to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", nas.data().to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
     fs::create_dir_all(nas.folder.join("docs")).unwrap();
     fs::write(nas.folder.join("beach.jpg"), b"sand and sea").unwrap();
     fs::write(nas.folder.join("docs/notes.txt"), b"first draft").unwrap();

@@ -5,7 +5,7 @@ use std::io::Write;
 use std::path::Path;
 
 use serde_json::{json, Value};
-use tidefell_net::PathKind;
+use shoal_net::PathKind;
 
 use super::Engine;
 use crate::diagnostics;
@@ -131,7 +131,7 @@ impl Engine {
             });
         };
 
-        let log_file = data_dir.join("logs").join("tidefell.log");
+        let log_file = data_dir.join("logs").join("shoal.log");
         add_json(
             "summary.json",
             json!({
@@ -262,7 +262,7 @@ impl Engine {
             .collect();
         add_json("doctor.json", Value::Array(checks));
 
-        for name in ["tidefell.log", "tidefell.1.log"] {
+        for name in ["shoal.log", "shoal.1.log"] {
             if let Some(log) = tail(&data_dir.join("logs").join(name), LOG_BYTES) {
                 entries.push(BundleEntry {
                     name: format!("logs/{name}"),

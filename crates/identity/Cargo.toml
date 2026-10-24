@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-identity"
+name = "shoal-identity"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: users, devices, folder membership, signing, key formats"
+description = "Shoal: users, devices, folder membership, signing, key formats"
 publish = false
 
 [lints]
@@ -16,7 +16,7 @@ ed25519-dalek.workspace = true
 getrandom.workspace = true
 postcard.workspace = true
 thiserror.workspace = true
-tidefell-proto.workspace = true
+shoal-proto.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

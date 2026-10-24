@@ -1,4 +1,4 @@
-"""An encoder for Tidefell's wire format written from the specs, independent of `crates/proto`,
+"""An encoder for Shoal's wire format written from the specs, independent of `crates/proto`,
 so the golden vectors it makes check the Rust code rather than confirm it.
 
 postcard 1.x: unsigned integers are LEB128 varints, signed ones zig-zag first; strings and
@@ -9,7 +9,7 @@ varint variant index then the fields; `Option` is one byte, 0 or 1, then the val
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
-SIG_DOMAIN = b"tidefell/sig/1\x00"
+SIG_DOMAIN = b"shoal/sig/1\x00"
 
 
 def varint(n: int) -> bytes:

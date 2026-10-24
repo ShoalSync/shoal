@@ -4,19 +4,19 @@
 use std::path::Path;
 use std::sync::RwLock;
 
-use tidefell_engine::device;
-use tidefell_engine::DeviceKey;
+use shoal_engine::device;
+use shoal_engine::DeviceKey;
 
-use crate::{Result, TidefellError};
+use crate::{Result, ShoalError};
 
 /// Keeps the device key's 32-byte seed for the library. The app implements it.
 #[uniffi::export(callback_interface)]
 pub trait KeyVault: Send + Sync {
     /// The seed stored earlier, or none if nothing is stored. Fails, rather than returning none,
     /// if a seed is stored but cannot be read: a new key would make this a different device.
-    fn load(&self) -> std::result::Result<Option<Vec<u8>>, TidefellError>;
+    fn load(&self) -> std::result::Result<Option<Vec<u8>>, ShoalError>;
     /// Stores `seed`, replacing nothing: it is called only when nothing is stored.
-    fn store(&self, seed: Vec<u8>) -> std::result::Result<(), TidefellError>;
+    fn store(&self, seed: Vec<u8>) -> std::result::Result<(), ShoalError>;
 }
 
 static VAULT: RwLock<Option<Box<dyn KeyVault>>> = RwLock::new(None);
@@ -87,8 +87,8 @@ fn remove_key_file(file: &Path) -> Result<()> {
     std::fs::remove_file(file).map_err(io)
 }
 
-fn failed(detail: impl Into<String>) -> TidefellError {
-    TidefellError::Failed {
+fn failed(detail: impl Into<String>) -> ShoalError {
+    ShoalError::Failed {
         detail: detail.into(),
     }
 }
@@ -103,10 +103,10 @@ mod tests {
     struct Memory(Mutex<Option<Vec<u8>>>);
 
     impl KeyVault for Memory {
-        fn load(&self) -> std::result::Result<Option<Vec<u8>>, TidefellError> {
+        fn load(&self) -> std::result::Result<Option<Vec<u8>>, ShoalError> {
             Ok(self.0.lock().unwrap().clone())
         }
-        fn store(&self, seed: Vec<u8>) -> std::result::Result<(), TidefellError> {
+        fn store(&self, seed: Vec<u8>) -> std::result::Result<(), ShoalError> {
             *self.0.lock().unwrap() = Some(seed);
             Ok(())
         }
@@ -115,10 +115,10 @@ mod tests {
     struct Broken;
 
     impl KeyVault for Broken {
-        fn load(&self) -> std::result::Result<Option<Vec<u8>>, TidefellError> {
+        fn load(&self) -> std::result::Result<Option<Vec<u8>>, ShoalError> {
             Err(failed("the keystore is locked"))
         }
-        fn store(&self, _: Vec<u8>) -> std::result::Result<(), TidefellError> {
+        fn store(&self, _: Vec<u8>) -> std::result::Result<(), ShoalError> {
             Err(failed("the keystore is locked"))
         }
     }

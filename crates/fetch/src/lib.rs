@@ -1,4 +1,4 @@
-//! Tidefell `fetch` crate: multi-peer scheduler, rarest-first, retry.
+//! Shoal `fetch` crate: multi-peer scheduler, rarest-first, retry.
 //!
 //! [`Scheduler`] decides which chunks of a manifest to request from which peers. It is pure
 //! (no I/O, time passed in), so its policy is tested directly. [`fetch`] drives it against any

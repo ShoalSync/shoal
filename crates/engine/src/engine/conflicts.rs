@@ -2,9 +2,9 @@
 
 use std::path::PathBuf;
 
-use tidefell_meta::StoredVersion;
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::{DeviceId, EntryId, FolderId, VersionVector};
+use shoal_meta::StoredVersion;
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::{DeviceId, EntryId, FolderId, VersionVector};
 
 use super::Engine;
 use crate::state::FolderState;
@@ -84,7 +84,7 @@ pub(crate) fn copy_path(
             // A device's name may be in any Unicode form; paths are in NFC (ADR 0033).
             crate::state::recorded(&name).into_owned()
         })
-        .find(|c| tidefell_proto::sync::is_valid_path(c) && !taken(c))
+        .find(|c| shoal_proto::sync::is_valid_path(c) && !taken(c))
 }
 
 impl Engine {

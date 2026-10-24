@@ -1,4 +1,4 @@
-//! The Phase 2 exit criterion: two `tidefelld` processes sync a folder end to end.
+//! The Phase 2 exit criterion: two `shoald` processes sync a folder end to end.
 
 use std::cell::Cell;
 use std::fs;
@@ -7,13 +7,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const BIN: &str = env!("CARGO_BIN_EXE_tidefelld");
+const BIN: &str = env!("CARGO_BIN_EXE_shoald");
 
-fn tidefelld(args: &[&str]) -> String {
+fn shoald(args: &[&str]) -> String {
     let out = Command::new(BIN).args(args).output().unwrap();
     assert!(
         out.status.success(),
-        "tidefelld {args:?} failed: {}",
+        "shoald {args:?} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).unwrap()
@@ -125,9 +125,9 @@ listen = "127.0.0.1:{metrics_port}"
             metrics_port = self.metrics_port.get(),
             folder = self.folder().display(),
         );
-        let path = self.dir.join("tidefelld.toml");
+        let path = self.dir.join("shoald.toml");
         fs::write(&path, config).unwrap();
-        tidefelld(&["config", "check", path.to_str().unwrap()]);
+        shoald(&["config", "check", path.to_str().unwrap()]);
         // Appended to, so a restarted daemon's log follows the earlier one's.
         let log_path = self.dir.join("daemon.log");
         let log = fs::OpenOptions::new()
@@ -179,7 +179,7 @@ listen = "127.0.0.1:{metrics_port}"
 
 fn init(root: &Path, name: &str, user_key: &Path) -> Node {
     let dir = root.join(name);
-    let out = tidefelld(&[
+    let out = shoald(&[
         "init",
         "--data-dir",
         dir.join("data").to_str().unwrap(),
@@ -199,7 +199,7 @@ fn init(root: &Path, name: &str, user_key: &Path) -> Node {
 
 /// A node's control endpoint: its socket, or on Windows its named pipe.
 fn control(node: &Node) -> std::path::PathBuf {
-    tidefell_sdk::Client::socket_path(&node.dir.join("data"))
+    shoal_sdk::Client::socket_path(&node.dir.join("data"))
 }
 
 fn wait_for(what: &str, nodes: &[&Node], mut check: impl FnMut() -> bool) {
@@ -241,10 +241,10 @@ fn two_daemons_sync_a_folder() {
     let a = init(root.path(), "a", &user_key);
     let b = init(root.path(), "b", &user_key);
     let user = field(
-        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
 
     fs::create_dir_all(a.folder()).unwrap();
     fs::write(a.folder().join("hello.txt"), b"hello from a").unwrap();
@@ -256,9 +256,9 @@ fn two_daemons_sync_a_folder() {
         fs::read(b.folder().join("hello.txt")).ok().as_deref() == Some(b"hello from a".as_slice())
     });
     // Each daemon keeps JSON lines in its data directory (ADR 0030).
-    let log = fs::read_to_string(a.dir.join("data/logs/tidefell.log")).unwrap();
+    let log = fs::read_to_string(a.dir.join("data/logs/shoal.log")).unwrap();
     assert!(
-        log.lines().any(|l| l.contains("\"tidefelld running\"")),
+        log.lines().any(|l| l.contains("\"shoald running\"")),
         "{log}"
     );
 
@@ -274,7 +274,7 @@ fn two_daemons_sync_a_folder() {
     assert!(page.ends_with("# EOF\n"), "{page}");
     let received = page
         .lines()
-        .find_map(|l| l.strip_prefix(r#"tidefell_content_received_bytes_total{network="local"} "#))
+        .find_map(|l| l.strip_prefix(r#"shoal_content_received_bytes_total{network="local"} "#))
         .unwrap();
     assert!(received.parse::<u64>().unwrap() >= 12, "{page}");
 
@@ -296,7 +296,7 @@ fn two_daemons_sync_a_folder() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let client = tidefell_sdk::Client::local(control(&b));
+        let client = shoal_sdk::Client::local(control(&b));
         let status = client.status().await.unwrap();
         assert_eq!(status.device, b.device);
         assert_eq!(status.user, user);
@@ -355,7 +355,7 @@ fn two_daemons_sync_a_folder() {
     assert!(signed_in.starts_with("HTTP/1.1 303"), "{signed_in}");
     assert!(signed_in
         .to_lowercase()
-        .contains("set-cookie: tidefell_session="));
+        .contains("set-cookie: shoal_session="));
 }
 
 /// Sends one raw HTTP/1.1 request and returns the whole response.
@@ -377,7 +377,7 @@ fn a_new_daemon_pairs_then_syncs() {
     let root = tempfile::tempdir().unwrap();
     // `init` writes the user key into the approver's data directory, so it can approve.
     let a_dir = root.path().join("a");
-    let out = tidefelld(&[
+    let out = shoald(&[
         "init",
         "--data-dir",
         a_dir.join("data").to_str().unwrap(),
@@ -392,10 +392,10 @@ fn a_new_daemon_pairs_then_syncs() {
         device: field(&out, "device"),
     };
     let user = field(
-        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
     fs::create_dir_all(a.folder()).unwrap();
     fs::write(a.folder().join("beach.jpg"), b"sand and sea").unwrap();
     let config = format!(
@@ -419,14 +419,14 @@ scan_interval_secs = 1
         port = a.port.get(),
         folder = a.folder().display(),
     );
-    fs::write(a.dir.join("tidefelld.toml"), config).unwrap();
+    fs::write(a.dir.join("shoald.toml"), config).unwrap();
     let log = fs::File::create(a.dir.join("daemon.log")).unwrap();
     let _da = Daemon(
         Command::new(BIN)
             .args([
                 "run",
                 "--config",
-                a.dir.join("tidefelld.toml").to_str().unwrap(),
+                a.dir.join("shoald.toml").to_str().unwrap(),
             ])
             .stdout(Stdio::null())
             .stderr(log)
@@ -461,7 +461,7 @@ scan_interval_secs = 1
         .enable_all()
         .build()
         .unwrap();
-    let client = tidefell_sdk::Client::local(control(&a));
+    let client = shoal_sdk::Client::local(control(&a));
     wait_for("the approver's control endpoint", &[&a], || {
         runtime.block_on(client.status()).is_ok()
     });
@@ -503,21 +503,21 @@ bind = "127.0.0.1:{port}"
         data = b.dir.join("data").display(),
         port = b.port.get(),
     );
-    fs::write(b.dir.join("tidefelld.toml"), config).unwrap();
+    fs::write(b.dir.join("shoald.toml"), config).unwrap();
     let log = fs::File::create(b.dir.join("daemon.log")).unwrap();
     let _db = Daemon(
         Command::new(BIN)
             .args([
                 "run",
                 "--config",
-                b.dir.join("tidefelld.toml").to_str().unwrap(),
+                b.dir.join("shoald.toml").to_str().unwrap(),
             ])
             .stdout(Stdio::null())
             .stderr(log)
             .spawn()
             .unwrap(),
     );
-    let phone = tidefell_sdk::Client::local(control(&b));
+    let phone = shoal_sdk::Client::local(control(&b));
     wait_for("the new device's control endpoint", &[&a, &b], || {
         runtime.block_on(phone.status()).is_ok()
     });
@@ -525,12 +525,12 @@ bind = "127.0.0.1:{port}"
         let known = phone.known_peers().await.unwrap();
         assert_eq!(known[0].device, a.device);
         phone
-            .add_folder(&tidefell_sdk::types::NewFolder {
+            .add_folder(&shoal_sdk::types::NewFolder {
                 id: Some(folder_id.clone()),
                 path: b.folder().display().to_string(),
                 members: Vec::new(),
                 retention_days: 30,
-                mode: Some(tidefell_sdk::types::Mode::Partial),
+                mode: Some(shoal_sdk::types::Mode::Partial),
                 budget_bytes: Some(1_000_000),
                 scan_interval_secs: Some(1),
                 sync: Default::default(),
@@ -561,7 +561,7 @@ fn files_under(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.file_name().is_some_and(|n| n == ".tidefell") {
+            if path.file_name().is_some_and(|n| n == ".shoal") {
                 continue;
             }
             if path.is_dir() {
@@ -582,7 +582,7 @@ fn files_under(dir: &Path) -> std::collections::BTreeMap<String, Vec<u8>> {
     found
 }
 
-/// ADR 0034's exit criterion: killing tidefelld during a first sync loses nothing when it
+/// ADR 0034's exit criterion: killing shoald during a first sync loses nothing when it
 /// restarts.
 #[test]
 fn killed_during_a_first_sync_loses_nothing() {
@@ -592,10 +592,10 @@ fn killed_during_a_first_sync_loses_nothing() {
     let a = init(root.path(), "a", &user_key);
     let b = init(root.path(), "b", &user_key);
     let user = field(
-        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
     let mut expected = std::collections::BTreeMap::new();
     for n in 0..FILES {
         let rel = format!("d{}/file-{n:04}.txt", n % 20);
@@ -636,10 +636,10 @@ fn a_damaged_database_is_rebuilt_even_when_killed_meanwhile() {
     let a = init(root.path(), "a", &user_key);
     let b = init(root.path(), "b", &user_key);
     let user = field(
-        &tidefelld(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
+        &shoald(&["id", "--data-dir", a.dir.join("data").to_str().unwrap()]),
         "user",
     );
-    let folder_id = tidefelld(&["new-folder-id"]).trim().to_string();
+    let folder_id = shoald(&["new-folder-id"]).trim().to_string();
     let mut expected = std::collections::BTreeMap::new();
     for n in 0..FILES {
         let rel = format!("d{}/file-{n:04}.txt", n % 20);

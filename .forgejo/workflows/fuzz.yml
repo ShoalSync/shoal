@@ -37,7 +37,7 @@ jobs:
         # The corpus each run grows is kept on the runner slot, beside its CARGO_HOME, which a
         # container runner keeps between jobs; the seeds in fuzz/corpus are read only.
         run: |
-          corpus="${CARGO_HOME:-$HOME/.cargo}/tidefell-fuzz/corpus"
+          corpus="${CARGO_HOME:-$HOME/.cargo}/shoal-fuzz/corpus"
           failed=0
           for target in $(cargo fuzz list); do
             mkdir -p "$corpus/$target"

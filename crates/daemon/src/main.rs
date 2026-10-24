@@ -1,7 +1,7 @@
-//! `tidefelld`: the headless Tidefell peer for Linux servers and NAS devices.
+//! `shoald`: the headless Shoal peer for Linux servers and NAS devices.
 
 #[global_allocator]
-static ALLOCATOR: tidefell_engine::Allocator = tidefell_engine::Allocator;
+static ALLOCATOR: shoal_engine::Allocator = shoal_engine::Allocator;
 
 mod config;
 #[cfg(target_os = "linux")]
@@ -14,12 +14,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use tidefell_engine::{diagnostics, Engine};
-use tidefell_identity::{load_certificate, save_certificate, DeviceKey, UserKey};
-use tidefell_proto::{DeviceId, FolderId};
+use shoal_engine::{diagnostics, Engine};
+use shoal_identity::{load_certificate, save_certificate, DeviceKey, UserKey};
+use shoal_proto::{DeviceId, FolderId};
 
 #[derive(Parser)]
-#[command(name = "tidefelld", version, about = "Tidefell peer daemon")]
+#[command(name = "shoald", version, about = "Shoal peer daemon")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -39,12 +39,12 @@ enum Command {
         /// `<data_dir>/user.key`. Back this file up: it proves which devices are yours.
         #[arg(long, conflicts_with = "certificate")]
         user_key: Option<PathBuf>,
-        /// Use a certificate issued elsewhere with `tidefelld certify` instead.
+        /// Use a certificate issued elsewhere with `shoald certify` instead.
         #[arg(long)]
         certificate: Option<PathBuf>,
     },
     /// Set up this device by pairing with a device that holds your user key (instead of
-    /// `init`): prints a pairing code to approve there with `tidefell pair <code>`, then waits.
+    /// `init`): prints a pairing code to approve there with `shoal pair <code>`, then waits.
     Pair {
         /// State directory (the `data_dir` of the configuration).
         #[arg(long)]
@@ -64,7 +64,7 @@ enum Command {
         /// The user key file.
         #[arg(long)]
         user_key: PathBuf,
-        /// The other device's ID, as printed by `tidefelld id`.
+        /// The other device's ID, as printed by `shoald id`.
         #[arg(long)]
         device: String,
         /// Human-readable device name.
@@ -122,7 +122,7 @@ enum AccountCommand {
         /// Login name.
         #[arg(long)]
         username: String,
-        /// The Tidefell user the account acts for. Defaults to this device's user.
+        /// The Shoal user the account acts for. Defaults to this device's user.
         #[arg(long)]
         user: Option<String>,
         /// Allow managing accounts in the web UI.
@@ -164,11 +164,11 @@ enum ConfigCommand {
 }
 
 fn device_key_path(data_dir: &Path) -> PathBuf {
-    tidefell_engine::device::device_key_path(data_dir)
+    shoal_engine::device::device_key_path(data_dir)
 }
 
 fn certificate_path(data_dir: &Path) -> PathBuf {
-    tidefell_engine::device::certificate_path(data_dir)
+    shoal_engine::device::certificate_path(data_dir)
 }
 
 fn now_ms() -> i64 {
@@ -184,7 +184,7 @@ fn init(
     user_key: Option<PathBuf>,
     certificate: Option<PathBuf>,
 ) -> Result<(), String> {
-    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
+    shoal_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let device =
         DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     let cert = match certificate {
@@ -216,19 +216,19 @@ fn load_identity(
 ) -> Result<
     (
         DeviceKey,
-        tidefell_proto::Signed<tidefell_proto::identity::DeviceCertificate>,
+        shoal_proto::Signed<shoal_proto::identity::DeviceCertificate>,
     ),
     String,
 > {
     let key = DeviceKey::load(&device_key_path(data_dir)).map_err(|e| {
         format!(
-            "no device key in {} ({e}); run `tidefelld init`",
+            "no device key in {} ({e}); run `shoald init`",
             data_dir.display()
         )
     })?;
     let cert = load_certificate(&certificate_path(data_dir)).map_err(|e| {
         format!(
-            "no certificate in {} ({e}); run `tidefelld init`",
+            "no certificate in {} ({e}); run `shoald init`",
             data_dir.display()
         )
     })?;
@@ -240,7 +240,7 @@ fn load_identity(
 }
 
 fn print_id(data_dir: &Path) -> Result<(), String> {
-    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
+    shoal_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     println!("device: {}", key.id());
     match load_identity(data_dir) {
@@ -249,7 +249,7 @@ fn print_id(data_dir: &Path) -> Result<(), String> {
             println!("user:   {}", body.user);
             println!("name:   {}", body.name);
         }
-        Err(_) => println!("not certified yet: see `tidefelld init`"),
+        Err(_) => println!("not certified yet: see `shoald init`"),
     }
     Ok(())
 }
@@ -260,7 +260,7 @@ async fn pair(
     no_relay: bool,
     bind: Option<std::net::SocketAddr>,
 ) -> Result<(), String> {
-    use tidefell_engine::pairing::{self, PairingEvent};
+    use shoal_engine::pairing::{self, PairingEvent};
 
     if certificate_path(data_dir).exists() {
         return Err(format!(
@@ -268,19 +268,19 @@ async fn pair(
             data_dir.display()
         ));
     }
-    tidefell_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
+    shoal_engine::create_data_dir(data_dir).map_err(|e| e.to_string())?;
     let key = DeviceKey::load_or_generate(&device_key_path(data_dir)).map_err(|e| e.to_string())?;
     let relay = if no_relay {
-        tidefell_engine::RelayConfig::Disabled
+        shoal_engine::RelayConfig::Disabled
     } else {
-        tidefell_engine::RelayConfig::Default
+        shoal_engine::RelayConfig::Default
     };
     let mut server = pairing::start_pairing(&key, relay, !no_relay, !no_relay, bind, name)
         .await
         .map_err(|e| e.to_string())?;
     println!("device: {}", key.id());
     println!("code: {}", server.code().to_text());
-    eprintln!("On a device with your user key, run: tidefell pair <code>");
+    eprintln!("On a device with your user key, run: shoal pair <code>");
     let deadline = tokio::time::Instant::now() + pairing::CODE_TTL;
     loop {
         let event = tokio::time::timeout_at(deadline, server.next_event())
@@ -316,7 +316,7 @@ async fn pair(
                 }
                 eprintln!(
                     "Paired. Start the daemon, then join folders with \
-                     `tidefell folder join <folder id> <path>`."
+                     `shoal folder join <folder id> <path>`."
                 );
                 return Ok(());
             }
@@ -357,7 +357,7 @@ fn web_account(command: AccountCommand) -> Result<(), String> {
                 .read_line(&mut password)
                 .map_err(|e| e.to_string())?;
             let password = password.trim_end_matches(['\r', '\n']);
-            tidefell_web::AccountStore::new(&data_dir)
+            shoal_web::AccountStore::new(&data_dir)
                 .upsert(&username, password, user, admin)
                 .map_err(|e| e.to_string())?;
             eprintln!();
@@ -365,7 +365,7 @@ fn web_account(command: AccountCommand) -> Result<(), String> {
             Ok(())
         }
         AccountCommand::Remove { data_dir, username } => {
-            if tidefell_web::AccountStore::new(&data_dir)
+            if shoal_web::AccountStore::new(&data_dir)
                 .remove(&username)
                 .map_err(|e| e.to_string())?
             {
@@ -376,7 +376,7 @@ fn web_account(command: AccountCommand) -> Result<(), String> {
             }
         }
         AccountCommand::List { data_dir } => {
-            for account in tidefell_web::AccountStore::new(&data_dir)
+            for account in shoal_web::AccountStore::new(&data_dir)
                 .list()
                 .map_err(|e| e.to_string())?
             {
@@ -441,7 +441,7 @@ async fn shutdown_signal() {
 async fn run(path: &Path) -> Result<(), String> {
     let config = read_config(path)?;
     let mut engine_config = config.to_engine()?;
-    if let tidefell_engine::RelayConfig::Custom { token, .. } = &mut engine_config.relay {
+    if let shoal_engine::RelayConfig::Custom { token, .. } = &mut engine_config.relay {
         *token = config.relay_token()?;
     }
     let (key, cert) = load_identity(&config.data_dir)?;
@@ -450,7 +450,7 @@ async fn run(path: &Path) -> Result<(), String> {
             .await
             .map_err(|e| e.to_string())?,
     );
-    tracing::info!(device = %engine.id(), "tidefelld running");
+    tracing::info!(device = %engine.id(), "shoald running");
     // For diagnostics bundles, which redact it (ADR 0030).
     if let Ok(value) = serde_json::to_value(&config) {
         engine.set_diagnostics_config(value);
@@ -463,9 +463,9 @@ async fn run(path: &Path) -> Result<(), String> {
     #[cfg(windows)]
     let sync_roots = sync_roots::SyncRoots::start(&engine);
 
-    let socket = tidefell_sdk::Client::socket_path(&config.data_dir);
+    let socket = shoal_sdk::Client::socket_path(&config.data_dir);
     // A user key next to the device key lets this daemon approve pairings (ADR 0015).
-    let user_key_path = tidefell_engine::device::user_key_path(&config.data_dir);
+    let user_key_path = shoal_engine::device::user_key_path(&config.data_dir);
     let user_key = if user_key_path.exists() {
         let key = UserKey::load(&user_key_path)
             .map_err(|e| format!("{}: {e}", user_key_path.display()))?;
@@ -478,18 +478,18 @@ async fn run(path: &Path) -> Result<(), String> {
     let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
     let api = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        let options = tidefell_api::Options {
+        let options = shoal_api::Options {
             user_key: user_key.clone(),
             shutdown: Some(shutdown.clone()),
         };
-        async move { tidefell_api::serve_local_with(engine, &socket, options).await }
+        async move { shoal_api::serve_local_with(engine, &socket, options).await }
     });
     let web = match &config.web {
         Some(web) => {
             let listener = tokio::net::TcpListener::bind(web.bind)
                 .await
                 .map_err(|e| format!("web peer cannot bind {}: {e}", web.bind))?;
-            let settings = tidefell_web::WebConfig {
+            let settings = shoal_web::WebConfig {
                 secure_cookies: web.secure_cookies,
                 share_links: web.share_links,
                 max_upload_bytes: (web.max_upload_bytes > 0).then_some(web.max_upload_bytes),
@@ -498,7 +498,7 @@ async fn run(path: &Path) -> Result<(), String> {
             // Its administrators can revoke devices if this daemon holds the user key.
             let user_key = user_key.clone();
             tokio::spawn(async move {
-                tidefell_web::serve_with_user_key(listener, engine, &data_dir, settings, user_key)
+                shoal_web::serve_with_user_key(listener, engine, &data_dir, settings, user_key)
                     .await
             })
         }
@@ -510,7 +510,7 @@ async fn run(path: &Path) -> Result<(), String> {
                 .await
                 .map_err(|e| format!("metrics cannot bind {}: {e}", metrics.listen))?;
             let engine = engine.clone();
-            tokio::spawn(async move { tidefell_api::serve_metrics(listener, engine).await })
+            tokio::spawn(async move { shoal_api::serve_metrics(listener, engine).await })
         }
         None => tokio::spawn(std::future::pending()),
     };
@@ -567,7 +567,7 @@ async fn run(path: &Path) -> Result<(), String> {
 }
 
 fn main() -> ExitCode {
-    tidefell_engine::with_allocator_settings();
+    shoal_engine::with_allocator_settings();
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Init {
@@ -603,7 +603,7 @@ fn main() -> ExitCode {
             WebCommand::Account(command) => web_account(command),
         },
         Command::Api { command } => match command {
-            ApiCommand::Schema => tidefell_api::openapi()
+            ApiCommand::Schema => shoal_api::openapi()
                 .to_pretty_json()
                 .map(|json| println!("{json}"))
                 .map_err(|e| e.to_string()),
@@ -628,7 +628,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("tidefelld: {e}");
+            eprintln!("shoald: {e}");
             ExitCode::FAILURE
         }
     }

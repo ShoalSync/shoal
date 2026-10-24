@@ -3,10 +3,10 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use tidefell_meta::Current;
-use tidefell_net::{EndpointId, Node};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ContentHash, DeviceId, FolderId, Manifest};
+use shoal_meta::Current;
+use shoal_net::{EndpointId, Node};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ContentHash, DeviceId, FolderId, Manifest};
 use tracing::{debug, info};
 
 use crate::engine::{FolderHandle, Inner};
@@ -66,8 +66,8 @@ fn storage_copy_counts(
     }
     let granted = granted_keys(state, vouching);
     let (low, high) = (
-        (*content, tidefell_proto::KeyId([0; 16])),
-        (*content, tidefell_proto::KeyId([0xff; 16])),
+        (*content, shoal_proto::KeyId([0; 16])),
+        (*content, shoal_proto::KeyId([0xff; 16])),
     );
     state
         .sealed_chunks
@@ -78,8 +78,8 @@ fn storage_copy_counts(
 /// The keys that a member device other than this one, vouched for now, holds a grant of. Worked
 /// out once per change to the items or to vouching, not once per file: the grants were verified
 /// when they were kept, so they are only decoded here.
-fn granted_keys(state: &FolderState, vouching: &Vouching) -> BTreeSet<tidefell_proto::KeyId> {
-    use tidefell_proto::SignedKind as _;
+fn granted_keys(state: &FolderState, vouching: &Vouching) -> BTreeSet<shoal_proto::KeyId> {
+    use shoal_proto::SignedKind as _;
     let at = (state.items_revision, vouching.generation());
     if let Some((revision, generation, keys)) = state.granted_keys.borrow().as_ref() {
         if (*revision, *generation) == at {
@@ -87,12 +87,12 @@ fn granted_keys(state: &FolderState, vouching: &Vouching) -> BTreeSet<tidefell_p
         }
     }
     let me = state.meta.device();
-    let keys: BTreeSet<tidefell_proto::KeyId> = state
+    let keys: BTreeSet<shoal_proto::KeyId> = state
         .items
         .values()
         .filter_map(|item| match item {
-            tidefell_proto::sync2::Item::Grant(signed) => {
-                tidefell_proto::sync2::KeyGrant::decode(&signed.body).ok()
+            shoal_proto::sync2::Item::Grant(signed) => {
+                shoal_proto::sync2::KeyGrant::decode(&signed.body).ok()
             }
             _ => None,
         })
@@ -200,7 +200,7 @@ pub(crate) async fn confirm(
     let encrypted = {
         let state = handle.lock();
         state.config.encryption.as_ref().map(|e| {
-            let chunks: Vec<(ContentHash, Vec<tidefell_proto::ChunkId>)> = pending
+            let chunks: Vec<(ContentHash, Vec<shoal_proto::ChunkId>)> = pending
                 .iter()
                 .filter_map(|m| {
                     state
@@ -238,8 +238,8 @@ pub(crate) async fn confirm(
                     continue;
                 }
                 let mut all = true;
-                for batch in ids.chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_AVAILABILITY) {
-                    let blobs: Vec<tidefell_proto::blobs2::BlobId> =
+                for batch in ids.chunks(shoal_proto::blobs2::MAX_BLOBS_PER_AVAILABILITY) {
+                    let blobs: Vec<shoal_proto::blobs2::BlobId> =
                         batch.iter().map(|c| (*c).into()).collect();
                     match node.blob_availability(endpoint, id, &blobs).await {
                         Ok(held) if held.len() == blobs.len() && held.iter().all(|h| *h) => {}
@@ -312,7 +312,7 @@ pub(crate) async fn confirm(
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::{ChunkHash, ChunkRef};
+    use shoal_proto::{ChunkHash, ChunkRef};
 
     use super::*;
 

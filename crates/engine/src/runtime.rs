@@ -7,7 +7,7 @@
 //! included: they are this device's choices, kept apart from folder metadata so a rebuilt
 //! folder keeps them.
 //!
-//! Format (version 8): the bytes `tidefell-engine-runtime 8\n` followed by the postcard
+//! Format (version 8): the bytes `shoal-engine-runtime 8\n` followed by the postcard
 //! encoding of [`Runtime`]. Version 7 had no encrypted folders, 6 no revocations, 5 no
 //! certificates, 4 no pins, version 3 no pause, version 2 no folder sync options, and version 1
 //! no peer relays either; all are still read.
@@ -19,24 +19,24 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tidefell_meta::Retention;
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::Signed;
-use tidefell_proto::{DeviceId, FolderId, UserId};
+use shoal_meta::Retention;
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::Signed;
+use shoal_proto::{DeviceId, FolderId, UserId};
 
 use crate::config::{
     ConfirmDeletes, Direction, FolderConfig, LocalDeletes, PeerAddr, ReplicaMode, SyncOptions,
 };
 use crate::{io_err, Error, Result};
 
-const HEADER: &[u8] = b"tidefell-engine-runtime 8\n";
-const HEADER_V7: &[u8] = b"tidefell-engine-runtime 7\n";
-const HEADER_V6: &[u8] = b"tidefell-engine-runtime 6\n";
-const HEADER_V5: &[u8] = b"tidefell-engine-runtime 5\n";
-const HEADER_V4: &[u8] = b"tidefell-engine-runtime 4\n";
-const HEADER_V3: &[u8] = b"tidefell-engine-runtime 3\n";
-const HEADER_V2: &[u8] = b"tidefell-engine-runtime 2\n";
-const HEADER_V1: &[u8] = b"tidefell-engine-runtime 1\n";
+const HEADER: &[u8] = b"shoal-engine-runtime 8\n";
+const HEADER_V7: &[u8] = b"shoal-engine-runtime 7\n";
+const HEADER_V6: &[u8] = b"shoal-engine-runtime 6\n";
+const HEADER_V5: &[u8] = b"shoal-engine-runtime 5\n";
+const HEADER_V4: &[u8] = b"shoal-engine-runtime 4\n";
+const HEADER_V3: &[u8] = b"shoal-engine-runtime 3\n";
+const HEADER_V2: &[u8] = b"shoal-engine-runtime 2\n";
+const HEADER_V1: &[u8] = b"shoal-engine-runtime 1\n";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct Runtime {
@@ -491,16 +491,13 @@ mod tests {
         runtime.add_peer(PeerAddr {
             device: DeviceId([5; 32]),
             addrs: Vec::new(),
-            relay: Some("https://relay.tidefell.org./".parse().unwrap()),
+            relay: Some("https://relay.shoal.org./".parse().unwrap()),
         });
         runtime.save(tmp.path()).unwrap();
         assert!(fs::read(path(tmp.path())).unwrap().starts_with(HEADER));
         let reloaded = Runtime::load(tmp.path()).unwrap();
         let peer: PeerAddr = reloaded.peers[1].clone().into();
-        assert_eq!(
-            peer.relay.unwrap().to_string(),
-            "https://relay.tidefell.org./"
-        );
+        assert_eq!(peer.relay.unwrap().to_string(), "https://relay.shoal.org./");
     }
 
     #[test]

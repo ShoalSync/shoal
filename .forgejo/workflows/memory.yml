@@ -30,7 +30,7 @@ jobs:
         with:
           toolchain: stable
       - name: Build
-        run: cargo build --release -p tidefell-engine --example memory
+        run: cargo build --release -p shoal-engine --example memory
       - name: Measure
         env:
           FULL: ${{ inputs.full }}

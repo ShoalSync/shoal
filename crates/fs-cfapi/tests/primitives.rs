@@ -2,7 +2,7 @@
 //! engine's seam would rely on. Each test prints what it found (`primitive:` lines in the log)
 //! and asserts only that the operation ran, so one run answers every question. Ignored by
 //! default, as findings rather than checks: run them with
-//! `cargo test -p tidefell-fs-cfapi --test primitives -- --ignored --nocapture`.
+//! `cargo test -p shoal-fs-cfapi --test primitives -- --ignored --nocapture`.
 #![cfg(windows)]
 
 use std::collections::HashMap;
@@ -236,12 +236,12 @@ impl Root {
     fn new(name: &str, hydration: HydrationType) -> Self {
         let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
         let dir = tempfile::Builder::new()
-            .prefix("Tidefell primitives ")
+            .prefix("Shoal primitives ")
             .tempdir_in(profile)
             .unwrap();
         let path = dir.path().join(name);
         std::fs::create_dir(&path).unwrap();
-        let id = SyncRootIdBuilder::new(format!("TidefellPrimitive{name}"))
+        let id = SyncRootIdBuilder::new(format!("ShoalPrimitive{name}"))
             .user_security_id(SecurityId::current_user().unwrap())
             .account_name("primitives")
             .build();
@@ -250,7 +250,7 @@ impl Root {
         }
         id.register(
             SyncRootInfo::default()
-                .with_display_name(format!("Tidefell primitives {name}"))
+                .with_display_name(format!("Shoal primitives {name}"))
                 .with_hydration_type(hydration)
                 .with_population_type(PopulationType::AlwaysFull)
                 .with_allow_pinning(true)
@@ -679,11 +679,11 @@ fn fetches_answered_from_other_threads() {
 #[ignore = "a spike: prints findings"]
 fn moving_a_placeholder_aside() {
     let root = Root::new("Aside", HydrationType::Full);
-    let reserved = root.path.join(".tidefell");
+    let reserved = root.path.join(".shoal");
     std::fs::create_dir(&reserved).unwrap();
     let outside = tempfile::tempdir().unwrap(); // under %LOCALAPPDATA%
     for (case, dest) in [
-        ("into .tidefell", reserved.join("kept.txt")),
+        ("into .shoal", reserved.join("kept.txt")),
         ("out of the root", outside.path().join("kept.txt")),
     ] {
         let name = format!("{}.txt", case.replace(' ', "-"));
@@ -985,12 +985,12 @@ fn writes_while_another_root_reconnects() {
     }
     let profile = std::env::var_os("USERPROFILE").unwrap();
     let dir = tempfile::Builder::new()
-        .prefix("Tidefell primitives ")
+        .prefix("Shoal primitives ")
         .tempdir_in(profile)
         .unwrap();
     let a_path = dir.path().join("SlowA");
     std::fs::create_dir(&a_path).unwrap();
-    let a_id = SyncRootIdBuilder::new("TidefellPrimitiveSlowA")
+    let a_id = SyncRootIdBuilder::new("ShoalPrimitiveSlowA")
         .user_security_id(SecurityId::current_user().unwrap())
         .account_name("primitives")
         .build();
@@ -999,7 +999,7 @@ fn writes_while_another_root_reconnects() {
     }
     a_id.register(
         SyncRootInfo::default()
-            .with_display_name("Tidefell primitives SlowA")
+            .with_display_name("Shoal primitives SlowA")
             .with_hydration_type(HydrationType::Full)
             .with_population_type(PopulationType::AlwaysFull)
             .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
@@ -1168,7 +1168,7 @@ fn fills_that_read_a_fresh_file() {
     let profile = std::env::var_os("USERPROFILE").unwrap();
     let store = tempfile::tempdir().unwrap(); // %TEMP%, as a test's data directory is
     let dir = tempfile::Builder::new()
-        .prefix("Tidefell primitives ")
+        .prefix("Shoal primitives ")
         .tempdir_in(profile)
         .unwrap();
     let mut roots = Vec::new();
@@ -1176,7 +1176,7 @@ fn fills_that_read_a_fresh_file() {
     for r in 0..3 {
         let path = dir.path().join(format!("Fresh{r}"));
         std::fs::create_dir(&path).unwrap();
-        let id = SyncRootIdBuilder::new(format!("TidefellPrimitiveFresh{r}"))
+        let id = SyncRootIdBuilder::new(format!("ShoalPrimitiveFresh{r}"))
             .user_security_id(SecurityId::current_user().unwrap())
             .account_name("primitives")
             .build();
@@ -1185,7 +1185,7 @@ fn fills_that_read_a_fresh_file() {
         }
         id.register(
             SyncRootInfo::default()
-                .with_display_name(format!("Tidefell primitives Fresh{r}"))
+                .with_display_name(format!("Shoal primitives Fresh{r}"))
                 .with_hydration_type(HydrationType::Full)
                 .with_population_type(PopulationType::AlwaysFull)
                 .with_icon("%SystemRoot%\\system32\\imageres.dll,0")

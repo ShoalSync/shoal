@@ -558,7 +558,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidefell-identity"
+name = "shoal-identity"
 version = "0.15.0"
 dependencies = [
  "blake3",
@@ -566,11 +566,11 @@ dependencies = [
  "getrandom",
  "postcard",
  "thiserror",
- "tidefell-proto",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-meta"
+name = "shoal-meta"
 version = "0.15.0"
 dependencies = [
  "blake3",
@@ -578,24 +578,24 @@ dependencies = [
  "postcard",
  "serde",
  "thiserror",
- "tidefell-proto",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-metadata-bench"
+name = "shoal-metadata-bench"
 version = "0.0.0"
 dependencies = [
  "postcard",
  "redb",
  "rusqlite",
  "tempfile",
- "tidefell-identity",
- "tidefell-meta",
- "tidefell-proto",
+ "shoal-identity",
+ "shoal-meta",
+ "shoal-proto",
 ]
 
 [[package]]
-name = "tidefell-proto"
+name = "shoal-proto"
 version = "0.15.0"
 dependencies = [
  "ed25519-dalek",

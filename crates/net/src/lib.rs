@@ -1,7 +1,7 @@
-//! Tidefell `net` crate: iroh endpoint, relay config, address lookup, sync/1 protocol.
+//! Shoal `net` crate: iroh endpoint, relay config, address lookup, sync/1 protocol.
 //!
-//! A [`Node`] owns the device's iroh endpoint and serves `tidefell/sync/1` and
-//! `tidefell/blobs/1`, and can approve a pairing (`tidefell/pair/2`); a new device uses a
+//! A [`Node`] owns the device's iroh endpoint and serves `shoal/sync/1` and
+//! `shoal/blobs/1`, and can approve a pairing (`shoal/pair/2`); a new device uses a
 //! [`PairingServer`] instead until it has a certificate. It reaches folder metadata and chunks only through the [`Backend`] trait,
 //! which `engine` implements, so this crate does not depend on `meta` or `store`.
 // Peers' data is handled here: an unchecked index, overflow or unwrap must be a reviewed
@@ -70,7 +70,7 @@ pub enum Error {
     Rejected(String),
     /// The peer sent data that does not match its hash.
     #[error("peer sent corrupt data for chunk {0}")]
-    Corrupt(tidefell_proto::ChunkHash),
+    Corrupt(shoal_proto::ChunkHash),
     /// The peer session has ended.
     #[error("peer session closed")]
     Closed,

@@ -5,9 +5,9 @@ use std::fs;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use tidefell_chunker::{chunk_reader, Params};
-use tidefell_proto::sync::{is_valid_path, EntryKind};
-use tidefell_proto::{EntryId, Manifest, VersionVector};
+use shoal_chunker::{chunk_reader, Params};
+use shoal_proto::sync::{is_valid_path, EntryKind};
+use shoal_proto::{EntryId, Manifest, VersionVector};
 use tracing::{debug, warn};
 
 use crate::activity::Failure;
@@ -19,7 +19,7 @@ use crate::views::{Operation, ProblemKind};
 use crate::{random_bytes, Result};
 
 /// Directory at a folder's root reserved for the engine's own files.
-pub(crate) const RESERVED_DIR: &str = ".tidefell";
+pub(crate) const RESERVED_DIR: &str = ".shoal";
 
 /// What a file on disk looks like, cheaply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -293,7 +293,7 @@ fn walk(root: &Path, dir: &Path, ignores: &Ignores, recursive: bool, found: &mut
     }
 }
 
-fn file_content(kind: &EntryKind) -> Option<tidefell_proto::ContentHash> {
+fn file_content(kind: &EntryKind) -> Option<shoal_proto::ContentHash> {
     match kind {
         EntryKind::File { content, .. } => Some(*content),
         _ => None,
@@ -328,7 +328,7 @@ fn one_per_path(
     // Found sorted and without repeats: on a drive that tells every name apart, names in NFC
     // cannot collide, so there is nothing to group (ADR 0035: no copy of every path).
     let normalized = |rel: &str| matches!(recorded(rel), std::borrow::Cow::Borrowed(_));
-    if folding.0 == tidefell_meta::Folding::None && found.iter().all(|(rel, _)| normalized(rel)) {
+    if folding.0 == shoal_meta::Folding::None && found.iter().all(|(rel, _)| normalized(rel)) {
         return found;
     }
     found.sort_by_cached_key(|(rel, _)| folding.fold(rel));
@@ -378,7 +378,7 @@ struct Changed {
     stat: DiskStat,
     /// In an encrypted folder, each chunk's ID under the key it will be sealed with, worked out
     /// as the file is read rather than by reading it again under the folder lock (ADR 0023).
-    chunk_ids: Vec<(tidefell_proto::ChunkHash, tidefell_proto::ChunkId)>,
+    chunk_ids: Vec<(shoal_proto::ChunkHash, shoal_proto::ChunkId)>,
 }
 
 /// What a scan found.

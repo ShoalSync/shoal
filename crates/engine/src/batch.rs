@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_net::{ChunkResult, EndpointId, Node};
-use tidefell_proto::blobs::MAX_CHUNKS_PER_REQUEST;
-use tidefell_proto::{ChunkHash, DeviceId, FolderId};
+use shoal_net::{ChunkResult, EndpointId, Node};
+use shoal_proto::blobs::MAX_CHUNKS_PER_REQUEST;
+use shoal_proto::{ChunkHash, DeviceId, FolderId};
 use tokio::sync::oneshot;
 
 /// How long the first request for a peer waits for others to join it.

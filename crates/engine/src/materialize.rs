@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use tidefell_fetch::{fetch, ChunkSource, Config};
-use tidefell_net::{ChunkResult, EndpointId, Node};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{
+use shoal_fetch::{fetch, ChunkSource, Config};
+use shoal_net::{ChunkResult, EndpointId, Node};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{
     ChunkHash, ChunkRef, ContentHash, DeviceId, EntryId, FolderId, Manifest, VersionVector,
 };
 use tracing::{debug, info, warn};
@@ -90,7 +90,7 @@ impl ChunkSource for PeerSource {
         &self,
         peer: &DeviceId,
         chunks: &[ChunkHash],
-    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
+    ) -> std::result::Result<shoal_fetch::Fetched, String> {
         self.check_paused()?;
         // Sent with other downloads' requests to the same peer (ADR 0032).
         let results = self
@@ -105,7 +105,7 @@ impl ChunkSource for PeerSource {
             )
             .await
             .map_err(|e| self.failed(FetchFailure::Request, e))?;
-        let mut fetched = tidefell_fetch::Fetched::default();
+        let mut fetched = shoal_fetch::Fetched::default();
         for result in results {
             match result {
                 ChunkResult::Found(hash, data) => fetched.chunks.push((hash, data)),
@@ -678,7 +678,7 @@ async fn fill_from_peers(
         download: crate::batch::download_id(),
     });
     let check: crate::fill::Check = Arc::new(|hash, data| {
-        if tidefell_chunker::hash_chunk(data) == *hash {
+        if shoal_chunker::hash_chunk(data) == *hash {
             Ok(())
         } else {
             Err("a chunk did not match its hash".to_owned())
@@ -855,7 +855,7 @@ fn cached_manifest(handle: &FolderHandle, content: ContentHash, size: u64) -> Op
 fn single_chunk(content: ContentHash, size: u64) -> Option<Manifest> {
     let len = u32::try_from(size)
         .ok()
-        .filter(|len| *len < tidefell_chunker::Params::DEFAULT.min)?;
+        .filter(|len| *len < shoal_chunker::Params::DEFAULT.min)?;
     let chunks = match len {
         0 => Vec::new(),
         len => vec![ChunkRef {
@@ -1116,7 +1116,7 @@ pub(crate) async fn write_copy(
     node: &Arc<Node>,
     handle: &FolderHandle,
     id: FolderId,
-    version: &tidefell_proto::sync::EntryVersion,
+    version: &shoal_proto::sync::EntryVersion,
     dest: &Path,
 ) -> Result<bool> {
     let EntryKind::File {
@@ -1327,8 +1327,8 @@ async fn download(
     let fetched = tokio::select! {
         fetched = download => fetched.map(|_| ()).map_err(|e| {
             inner.counters.fetch_failed(match e {
-                tidefell_fetch::FetchError::Unobtainable(_) => FetchFailure::Unavailable,
-                tidefell_fetch::FetchError::Sink(_) => FetchFailure::Storage,
+                shoal_fetch::FetchError::Unobtainable(_) => FetchFailure::Unavailable,
+                shoal_fetch::FetchError::Sink(_) => FetchFailure::Storage,
             });
             e.to_string()
         }),
@@ -1469,11 +1469,11 @@ mod tests {
             pending("docs", None),
         ];
         assert_eq!(
-            blockers(&writes, NameFolding(tidefell_meta::Folding::Case)),
+            blockers(&writes, NameFolding(shoal_meta::Folding::Case)),
             [vec![], vec![0], vec![], vec![2]]
         );
         assert_eq!(
-            blockers(&writes, NameFolding(tidefell_meta::Folding::None)),
+            blockers(&writes, NameFolding(shoal_meta::Folding::None)),
             vec![Vec::<usize>::new(); 4]
         );
     }
@@ -1501,7 +1501,7 @@ mod tests {
             pending("a/y/z.txt", None),
         ];
         assert_eq!(
-            blockers(&writes, NameFolding(tidefell_meta::Folding::None)),
+            blockers(&writes, NameFolding(shoal_meta::Folding::None)),
             [
                 vec![],
                 vec![],
@@ -1522,10 +1522,8 @@ mod tests {
         let size = data.len() as u64;
         // What the chunker makes of the file.
         let chunked =
-            tidefell_chunker::chunk_reader(&data[..], tidefell_chunker::Params::DEFAULT, |_, _| {
-                Ok(())
-            })
-            .unwrap();
+            shoal_chunker::chunk_reader(&data[..], shoal_chunker::Params::DEFAULT, |_, _| Ok(()))
+                .unwrap();
         assert_eq!(single_chunk(content, size), Some(chunked));
         assert_eq!(single_chunk(content, 0).unwrap().chunks, []);
         assert!(single_chunk(content, 64 * 1024 - 1).is_some());

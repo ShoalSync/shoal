@@ -4,12 +4,12 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tidefell_tray::supervisor::Paths;
+use shoal_tray::supervisor::Paths;
 
-/// The `tidefelld` the tests run: `TIDEFELLD`, else the one built beside them, as
+/// The `shoald` the tests run: `SHOALD`, else the one built beside them, as
 /// `cargo test --workspace` builds it. None if neither: the test is skipped.
-pub fn tidefelld() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("TIDEFELLD") {
+pub fn shoald() -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("SHOALD") {
         return Some(path.into());
     }
     // Beside this test's directory, `target/<profile>/deps`.
@@ -17,7 +17,7 @@ pub fn tidefelld() -> Option<PathBuf> {
     let path = exe
         .parent()?
         .parent()?
-        .join(format!("tidefelld{}", std::env::consts::EXE_SUFFIX));
+        .join(format!("shoald{}", std::env::consts::EXE_SUFFIX));
     path.exists().then_some(path)
 }
 
@@ -45,7 +45,7 @@ pub fn set_up(daemon: &Path, dir: &Path) -> Paths {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let config = dir.join("tidefelld.toml");
+    let config = dir.join("shoald.toml");
     std::fs::write(&config, local_config(&data_dir)).unwrap();
     Paths {
         daemon: daemon.to_owned(),

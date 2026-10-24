@@ -152,7 +152,7 @@ struct JoinDialog {
     confirm: nwg::Label,
     _cancel: nwg::Button,
     handler: nwg::EventHandler,
-    /// `tidefelld pair`, stopped when the dialog goes.
+    /// `shoald pair`, stopped when the dialog goes.
     _join: setup::Join,
 }
 
@@ -202,7 +202,7 @@ pub fn run_opening(
     nwg::TrayNotification::builder()
         .parent(&window)
         .icon(Some(&icon))
-        .tip(Some("Tidefell is starting"))
+        .tip(Some("Shoal is starting"))
         .build(&mut tray)
         .map_err(|e| e.to_string())?;
     let mut notice = nwg::Notice::default();
@@ -326,7 +326,7 @@ impl Tray {
         if let Some(error) = snapshot.error {
             self.tray.show(
                 &error,
-                Some("Tidefell"),
+                Some("Shoal"),
                 Some(nwg::TrayNotificationFlags::ERROR_ICON),
                 None,
             );
@@ -407,9 +407,9 @@ impl Tray {
                 add("Pause syncing", Some(Action::Pause));
             }
         } else if shown.failed {
-            add("Start Tidefell again", Some(Action::Restart));
+            add("Start Shoal again", Some(Action::Restart));
         }
-        add("Quit Tidefell", Some(Action::Quit));
+        add("Quit Shoal", Some(Action::Quit));
         let (x, y) = nwg::GlobalCursor::position();
         menu.popup(x, y);
         *self.menu.borrow_mut() = Some((menu, submenus, items));
@@ -454,7 +454,7 @@ impl Tray {
             Action::Restart => Command::Restart,
             Action::Quit => {
                 *self.quitting.borrow_mut() = true;
-                self.tray.set_tip("Tidefell is stopping");
+                self.tray.set_tip("Shoal is stopping");
                 Command::Quit
             }
         };
@@ -467,7 +467,7 @@ impl Tray {
     fn first_device(&self) {
         let key = self.paths.data_dir.join("user.key");
         let agreed = nwg::message(&nwg::MessageParams {
-            title: "Set up Tidefell",
+            title: "Set up Shoal",
             content: &format!(
                 "This makes your user key, {}, which proves which devices are yours. Back it \
                  up somewhere safe: without it, no new device can join yours.\n\nSet up this \
@@ -483,13 +483,13 @@ impl Tray {
         match setup::first_device(&self.paths, &setup::device_name()) {
             // The supervisor starts the daemon once it sees the configuration.
             Ok(()) => self.tray.show(
-                "This device is set up. Make a folder with `tidefell folder create <path> --partial <bytes>`.",
-                Some("Tidefell"),
+                "This device is set up. Make a folder with `shoal folder create <path> --partial <bytes>`.",
+                Some("Shoal"),
                 Some(nwg::TrayNotificationFlags::INFO_ICON),
                 None,
             ),
             Err(e) => {
-                nwg::error_message("Tidefell", &format!("Cannot set up this device: {e}"));
+                nwg::error_message("Shoal", &format!("Cannot set up this device: {e}"));
             }
         }
     }
@@ -502,7 +502,7 @@ impl Tray {
         match JoinDialog::open(app) {
             Ok(dialog) => *app.join.borrow_mut() = Some(dialog),
             Err(e) => {
-                nwg::error_message("Tidefell", &format!("Cannot start pairing: {e}"));
+                nwg::error_message("Shoal", &format!("Cannot start pairing: {e}"));
             }
         }
     }
@@ -519,7 +519,7 @@ impl Tray {
                 return;
             };
             match event {
-                Joining::Code(code) => dialog.code.set_text(&format!("tidefell pair {code}")),
+                Joining::Code(code) => dialog.code.set_text(&format!("shoal pair {code}")),
                 Joining::Confirm(code) => dialog.confirm.set_text(&format!(
                     "A device is approving this one. Check it shows confirmation code {} {}.",
                     &code[..code.len().min(3)],
@@ -529,16 +529,16 @@ impl Tray {
                     drop(open);
                     *self.join.borrow_mut() = None;
                     nwg::simple_message(
-                        "Tidefell",
-                        "This device has joined your devices, and Tidefell starts now. Join \
-                         a folder with `tidefell folder join <id> <path> --partial <bytes>`.",
+                        "Shoal",
+                        "This device has joined your devices, and Shoal starts now. Join \
+                         a folder with `shoal folder join <id> <path> --partial <bytes>`.",
                     );
                     return;
                 }
                 Joining::Failed(reason) => {
                     drop(open);
                     *self.join.borrow_mut() = None;
-                    nwg::error_message("Tidefell", &format!("Pairing stopped: {reason}"));
+                    nwg::error_message("Shoal", &format!("Pairing stopped: {reason}"));
                     return;
                 }
             }
@@ -639,7 +639,7 @@ impl Tray {
         match ApproveDialog::open(app) {
             Ok(dialog) => *app.approve.borrow_mut() = Some(dialog),
             Err(e) => {
-                nwg::error_message("Tidefell", &format!("Cannot add a device: {e}"));
+                nwg::error_message("Shoal", &format!("Cannot add a device: {e}"));
             }
         }
     }
@@ -707,7 +707,7 @@ impl Tray {
                     *open = None;
                     // Released first: a message box runs events of its own.
                     drop(open);
-                    nwg::simple_message("Tidefell", "The device is one of yours now.");
+                    nwg::simple_message("Shoal", "The device is one of yours now.");
                     return;
                 }
                 Approving::Declined => {
@@ -717,7 +717,7 @@ impl Tray {
                 Approving::Failed(reason) => {
                     *open = None;
                     drop(open);
-                    nwg::error_message("Tidefell", &format!("Cannot add the device: {reason}"));
+                    nwg::error_message("Shoal", &format!("Cannot add the device: {reason}"));
                     return;
                 }
             }
@@ -740,7 +740,7 @@ impl ApproveDialog {
         nwg::Label::builder()
             .text(
                 "On the new device, choose \"Join my other devices\" in its tray, or run \
-                 `tidefelld pair`, and enter the pairing code it shows:",
+                 `shoald pair`, and enter the pairing code it shows:",
             )
             .position((16, 12))
             .size((488, 54))
@@ -811,7 +811,7 @@ impl Tray {
         match StorageWindow::open(app, id, name) {
             Ok(window) => *app.storage.borrow_mut() = Some(window),
             Err(e) => {
-                nwg::error_message("Tidefell", &format!("Cannot open the Storage window: {e}"));
+                nwg::error_message("Shoal", &format!("Cannot open the Storage window: {e}"));
             }
         }
     }
@@ -909,7 +909,7 @@ impl Tray {
                     result,
                 } => {
                     let force = if result.done {
-                        nwg::simple_message("Tidefell", &storage::dropped(&result));
+                        nwg::simple_message("Shoal", &storage::dropped(&result));
                         false
                     } else {
                         ask(&storage::at_risk_question(&result))
@@ -939,7 +939,7 @@ impl Tray {
 /// Asks `question`, Yes or No.
 fn ask(question: &str) -> bool {
     nwg::message(&nwg::MessageParams {
-        title: "Tidefell",
+        title: "Shoal",
         content: question,
         buttons: nwg::MessageButtons::YesNo,
         icons: nwg::MessageIcons::Question,
@@ -1132,8 +1132,8 @@ impl StorageWindow {
     /// Shows the folder's tree and what its storage peers keep, keeping the item chosen.
     fn show(
         &mut self,
-        priorities: &tidefell_sdk::types::Priorities,
-        reports: &[tidefell_sdk::types::StoragePeerReport],
+        priorities: &shoal_sdk::types::Priorities,
+        reports: &[shoal_sdk::types::StoragePeerReport],
     ) {
         let chosen = self.selected_row().map(|r| r.path.clone());
         self.tree.clear();

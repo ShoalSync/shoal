@@ -1,4 +1,4 @@
-//! The `tidefell` binary against two in-process engines serving their control sockets: the
+//! The `shoal` binary against two in-process engines serving their control sockets: the
 //! Phase 3 flow of creating a folder, joining it from another device, and restoring a
 //! deleted file.
 
@@ -8,10 +8,10 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, RelayConfig};
-use tidefell_identity::{DeviceKey, UserKey};
+use shoal_engine::{Engine, EngineConfig, RelayConfig};
+use shoal_identity::{DeviceKey, UserKey};
 
-const BIN: &str = env!("CARGO_BIN_EXE_tidefell");
+const BIN: &str = env!("CARGO_BIN_EXE_shoal");
 
 struct Device {
     data: PathBuf,
@@ -53,16 +53,16 @@ impl Device {
             .await
             .unwrap(),
         );
-        let socket = tidefell_sdk::Client::socket_path(&data);
+        let socket = shoal_sdk::Client::socket_path(&data);
         tokio::spawn({
             let (engine, socket) = (engine.clone(), socket.clone());
-            let options = tidefell_api::Options {
+            let options = shoal_api::Options {
                 user_key,
                 ..Default::default()
             };
-            async move { tidefell_api::serve_local_with(engine, &socket, options).await }
+            async move { shoal_api::serve_local_with(engine, &socket, options).await }
         });
-        let client = tidefell_sdk::Client::local(&socket);
+        let client = shoal_sdk::Client::local(&socket);
         for _ in 0..200 {
             if client.status().await.is_ok() {
                 break;
@@ -72,12 +72,12 @@ impl Device {
         Self { data, engine }
     }
 
-    /// Runs `tidefell` against this device and returns stdout, failing on a non-zero exit.
+    /// Runs `shoal` against this device and returns stdout, failing on a non-zero exit.
     fn run(&self, args: &[&str]) -> String {
         let out = self.try_run(args);
         assert!(
             out.status.success(),
-            "tidefell {args:?} failed: {}",
+            "shoal {args:?} failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8(out.stdout).unwrap()
@@ -123,7 +123,7 @@ async fn create_join_delete_restore() {
     // Create on the laptop; the output tells the user how to join elsewhere.
     let laptop_root = tmp.path().join("laptop").join("photos");
     let created = laptop.run(&["folder", "create", laptop_root.to_str().unwrap()]);
-    assert!(created.contains("tidefell folder join"));
+    assert!(created.contains("shoal folder join"));
     let folders = laptop.json(&["folder", "list"]);
     let id = folders[0]["id"].as_str().unwrap().to_string();
     std::fs::write(laptop_root.join("beach.jpg"), b"sand and sea").unwrap();
@@ -245,7 +245,7 @@ async fn create_join_delete_restore() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn pair_approves_a_new_device() {
-    use tidefell_engine::pairing::{self, PairingEvent};
+    use shoal_engine::pairing::{self, PairingEvent};
 
     let tmp = tempfile::tempdir().unwrap();
     let alice = UserKey::from_seed([1; 32]);

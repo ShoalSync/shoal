@@ -9,10 +9,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_fs_cfapi::{connect, EngineFolder, SyncRoot};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_fs_cfapi::{connect, EngineFolder, SyncRoot};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 pub const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
 
@@ -85,9 +85,7 @@ pub struct Pair {
 /// The engines' and the provider's logs, shown with a test's output when it fails.
 pub fn logs() {
     let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            "provider=info,tidefell_engine=debug,tidefell_net=debug,tidefell_fs_cfapi=debug",
-        )
+        .with_env_filter("provider=info,shoal_engine=debug,shoal_net=debug,shoal_fs_cfapi=debug")
         .with_test_writer()
         .try_init();
 }
@@ -97,7 +95,7 @@ pub fn pair(seed: u8) -> Pair {
     let data = tempfile::tempdir().unwrap();
     let profile = std::env::var_os("USERPROFILE").expect("USERPROFILE");
     let roots = tempfile::Builder::new()
-        .prefix("Tidefell provider ")
+        .prefix("Shoal provider ")
         .tempdir_in(profile)
         .unwrap();
     let user = UserKey::from_seed([seed; 32]);
@@ -112,7 +110,7 @@ pub fn pair(seed: u8) -> Pair {
     };
     let laptop = Device {
         data: data.path().join("laptop"),
-        root: roots.path().join("Tidefell"),
+        root: roots.path().join("Shoal"),
         key: DeviceKey::from_seed([seed + 2; 32]),
         user,
         mode: ReplicaMode::Partial {
@@ -150,7 +148,7 @@ pub async fn connect_root(engine: &Arc<Engine>, device: &Device) -> SyncRoot {
             EngineFolder::new(engine, folder, runtime),
             &root,
             folder,
-            "Tidefell test",
+            "Shoal test",
         )
         .unwrap()
     })
@@ -174,7 +172,7 @@ pub fn on_disk(engine: &Engine, folder: FolderId, path: &str) -> bool {
         .any(|f| f.path == path && f.on_disk)
 }
 
-pub fn entry_at(engine: &Engine, folder: FolderId, path: &str) -> Option<tidefell_proto::EntryId> {
+pub fn entry_at(engine: &Engine, folder: FolderId, path: &str) -> Option<shoal_proto::EntryId> {
     engine
         .files(folder)
         .unwrap()

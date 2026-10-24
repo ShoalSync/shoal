@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cloud_filter::placeholder::{Placeholder, UpdateOptions};
-use tidefell_engine::Engine;
+use shoal_engine::Engine;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn placeholders_fill_on_reading_and_other_programs_changes_sync() {
@@ -224,7 +224,7 @@ async fn eviction_dehydrates_in_place() {
     })
     .await;
     let root = Arc::new(connect_root(&laptop, &p.laptop).await);
-    laptop.set_freer(folder, Some(Arc::new(tidefell_fs_cfapi::free)));
+    laptop.set_freer(folder, Some(Arc::new(shoal_fs_cfapi::free)));
     for (name, data) in [("a.bin", &a), ("b.bin", &b)] {
         let path = p.laptop.abs(name);
         assert_eq!(&blocking(move || fs::read(path).unwrap()).await, data);

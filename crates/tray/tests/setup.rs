@@ -1,4 +1,4 @@
-//! Setting a device up from the tray, against a real `tidefelld`: one as the first of your
+//! Setting a device up from the tray, against a real `shoald`: one as the first of your
 //! devices, and another joining it by pairing, approved through the first one's API.
 
 use std::path::Path;
@@ -7,11 +7,11 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 mod common;
-use common::{local_config, tidefelld};
-use tidefell_sdk::Client;
-use tidefell_tray::approve::{Approval, Approving};
-use tidefell_tray::setup::{first_device, Join, Joining};
-use tidefell_tray::supervisor::Paths;
+use common::{local_config, shoald};
+use shoal_sdk::Client;
+use shoal_tray::approve::{Approval, Approving};
+use shoal_tray::setup::{first_device, Join, Joining};
+use shoal_tray::supervisor::Paths;
 
 struct Daemon(Child);
 
@@ -26,7 +26,7 @@ fn paths(daemon: &Path, dir: &Path) -> Paths {
     let data_dir = dir.join("data");
     Paths {
         daemon: daemon.to_owned(),
-        config: data_dir.join("tidefelld.toml"),
+        config: data_dir.join("shoald.toml"),
         data_dir,
     }
 }
@@ -39,8 +39,8 @@ fn next(events: &mpsc::Receiver<Joining>) -> Joining {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_first_device_then_another_joining_it() {
-    let Some(daemon) = tidefelld() else {
-        eprintln!("skipping: tidefelld is not built");
+    let Some(daemon) = shoald() else {
+        eprintln!("skipping: shoald is not built");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -158,8 +158,8 @@ fn approving_needs_a_running_daemon() {
 
 #[test]
 fn a_join_that_fails_says_why() {
-    let Some(daemon) = tidefelld() else {
-        eprintln!("skipping: tidefelld is not built");
+    let Some(daemon) = shoald() else {
+        eprintln!("skipping: shoald is not built");
         return;
     };
     let dir = tempfile::tempdir().unwrap();

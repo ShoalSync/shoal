@@ -1,13 +1,13 @@
-# Example tidefelld configuration. Validate with `tidefelld config check <file>`;
-# the JSON Schema is printed by `tidefelld config schema`.
+# Example shoald configuration. Validate with `shoald config check <file>`;
+# the JSON Schema is printed by `shoald config schema`.
 
-data_dir = "/var/lib/tidefell"
+data_dir = "/var/lib/shoal"
 # Watch folders for changes, with a full scan hourly. Folders that cannot be watched are scanned
 # every `scan_interval_secs`.
 watch = true
 # Where crash reports are filed: an issue tracker's issues page. Reports link to a new issue there,
 # pre-filled; without it they are shown to copy.
-# report_url = "https://github.com/Tidefell/tidefell/issues"
+# report_url = "https://github.com/ShoalSync/shoal/issues"
 
 # [limits]
 # upload_kib_per_sec = 2048      # unlimited if unset; at least 64
@@ -20,7 +20,7 @@ watch = true
 # listen = "127.0.0.1:9477"
 
 [log]
-# "info", "debug", or per module such as "info,tidefell_net=debug". RUST_LOG overrides it.
+# "info", "debug", or per module such as "info,shoal_net=debug". RUST_LOG overrides it.
 level = "info"
 # JSON lines in <data_dir>/logs/. By default written unless the system journal keeps the logs.
 # file = true
@@ -38,7 +38,7 @@ addrs = ["192.168.1.20:7777"]
 
 [[folders]]
 id = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-path = "/srv/tidefell/photos"
+path = "/srv/shoal/photos"
 mode = "full"
 members = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
 retention_days = 30
@@ -47,7 +47,7 @@ scan_interval_secs = 10
 # at a mount point with FUSE (Linux only):
 # mode = "partial"
 # budget_bytes = 10000000000
-# mount = "/home/me/Tidefell/Photos"
+# mount = "/home/me/Shoal/Photos"
 # To only send this device's files and never write other devices' changes here, and to keep
 # files deleted here on every other device:
 # direction = "send-only"
@@ -58,7 +58,7 @@ scan_interval_secs = 10
 # storage_peers = ["dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"]
 
 # Optional web peer: sign in from a browser. Create accounts with
-# `tidefelld web account add --data-dir <data_dir> --username <name>`.
+# `shoald web account add --data-dir <data_dir> --username <name>`.
 [web]
 bind = "127.0.0.1:8080"
 secure_cookies = true

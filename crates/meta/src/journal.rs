@@ -8,8 +8,8 @@
 
 use std::collections::BTreeSet;
 
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::{DeviceId, EntryId, FolderId, SignedKind};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::{DeviceId, EntryId, FolderId, SignedKind};
 
 use crate::compact::Slim;
 use crate::folder::{Conflicts, Entry, StoredVersion};

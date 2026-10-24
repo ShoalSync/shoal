@@ -1,5 +1,5 @@
-// The tidefell-ffi AAR (ADR 0014): libtidefell_ffi.so for each ABI plus the uniffi-generated
-// Kotlin API in org.tidefell.ffi. Released as tidefell-ffi-X.Y.Z.aar.
+// The shoal-ffi AAR (ADR 0014): libshoal_ffi.so for each ABI plus the uniffi-generated
+// Kotlin API in org.shoalsync.ffi. Released as shoal-ffi-X.Y.Z.aar.
 
 plugins {
     alias(libs.plugins.android.library)
@@ -9,24 +9,24 @@ val repo: File = rootDir.resolve("../..").canonicalFile
 val workspaceVersion: String = Regex("""(?m)^version = "([^"]+)"""")
     .find(repo.resolve("Cargo.toml").readText())!!.groupValues[1]
 
-group = "org.tidefell"
+group = "org.shoalsync"
 version = workspaceVersion
 
-// Build fewer ABIs while developing, e.g. -Ptidefell.abis=x86_64.
-val abis: List<String> = (findProperty("tidefell.abis") as String?)
+// Build fewer ABIs while developing, e.g. -Pshoal.abis=x86_64.
+val abis: List<String> = (findProperty("shoal.abis") as String?)
     ?.split(",")?.map { it.trim() }
     ?: listOf("arm64-v8a", "armeabi-v7a", "x86_64")
 val minSdkVersion = 29
 val jniLibs = layout.buildDirectory.dir("rust/jniLibs")
 val generated = layout.buildDirectory.dir("generated/uniffi")
 // Libraries and bindings built elsewhere, as by CI's Nix packages, instead of here:
-// -Ptidefell.jniLibs=<tidefell-ffi-android> and -Ptidefell.host=<ci-host>, whose kotlin/ holds
+// -Pshoal.jniLibs=<shoal-ffi-android> and -Pshoal.host=<ci-host>, whose kotlin/ holds
 // the bindings.
-val prebuiltJniLibs: File? = (findProperty("tidefell.jniLibs") as String?)?.let(::File)
-val prebuiltHost: File? = (findProperty("tidefell.host") as String?)?.let(::File)
+val prebuiltJniLibs: File? = (findProperty("shoal.jniLibs") as String?)?.let(::File)
+val prebuiltHost: File? = (findProperty("shoal.host") as String?)?.let(::File)
 
 val cargoNdk by tasks.registering(Exec::class) {
-    description = "Cross-compiles tidefell-ffi for the Android ABIs with cargo-ndk."
+    description = "Cross-compiles shoal-ffi for the Android ABIs with cargo-ndk."
     onlyIf { prebuiltJniLibs == null }
     workingDir = repo
     outputs.dir(jniLibs)
@@ -34,21 +34,21 @@ val cargoNdk by tasks.registering(Exec::class) {
     commandLine(
         listOf("cargo", "ndk") + abis.flatMap { listOf("-t", it) } + listOf(
             "-P", minSdkVersion.toString(), "-o", jniLibs.get().asFile.path,
-            "build", "-p", "tidefell-ffi", "--profile", "mobile", "--locked",
+            "build", "-p", "shoal-ffi", "--profile", "mobile", "--locked",
         ),
     )
     // cargo-ndk also copies dependencies' cdylibs (iroh builds some); ship only ours.
     doLast {
-        fileTree(jniLibs) { exclude("**/libtidefell_ffi.so") }.forEach { it.delete() }
+        fileTree(jniLibs) { exclude("**/libshoal_ffi.so") }.forEach { it.delete() }
     }
 }
 
 val hostBuild by tasks.registering(Exec::class) {
-    description = "Builds tidefell-ffi for the host; the bindings are generated from its symbols."
+    description = "Builds shoal-ffi for the host; the bindings are generated from its symbols."
     onlyIf { prebuiltHost == null }
     workingDir = repo
     outputs.upToDateWhen { false }
-    commandLine("cargo", "build", "-p", "tidefell-ffi", "--locked")
+    commandLine("cargo", "build", "-p", "shoal-ffi", "--locked")
 }
 
 val generateBindings by tasks.registering(Exec::class) {
@@ -60,7 +60,7 @@ val generateBindings by tasks.registering(Exec::class) {
     outputs.upToDateWhen { false }
     doFirst { delete(generated) }
     // The Android libraries are stripped, so read the uniffi metadata from the host build.
-    val library = repo.resolve("target/debug/" + System.mapLibraryName("tidefell_ffi"))
+    val library = repo.resolve("target/debug/" + System.mapLibraryName("shoal_ffi"))
     commandLine(
         "cargo", "run", "--locked", "-q", "-p", "xtask", "--bin", "uniffi-bindgen", "--",
         "generate", "--library", library.path,
@@ -69,7 +69,7 @@ val generateBindings by tasks.registering(Exec::class) {
 }
 
 android {
-    namespace = "org.tidefell.ffi"
+    namespace = "org.shoalsync.ffi"
     compileSdk = 36
 
     defaultConfig {

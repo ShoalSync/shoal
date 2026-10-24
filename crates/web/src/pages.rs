@@ -198,7 +198,7 @@ pub(crate) struct Status {
     pub(crate) received: String,
     pub(crate) send_rate: String,
     pub(crate) receive_rate: String,
-    /// The checks of `tidefell doctor`, when asked for.
+    /// The checks of `shoal doctor`, when asked for.
     pub(crate) checks: Option<Vec<CheckRow>>,
     pub(crate) crash: Option<CrashNotice>,
     pub(crate) revoked: Vec<RevokedRow>,

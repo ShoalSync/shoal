@@ -7,8 +7,8 @@ use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tidefell_meta::{Change, ChangeKind};
-use tidefell_proto::DeviceId;
+use shoal_meta::{Change, ChangeKind};
+use shoal_proto::DeviceId;
 
 /// Entries kept.
 const ENTRIES: usize = 10_000;
@@ -142,7 +142,7 @@ pub(crate) fn compact(dir: &Path, now_ms: i64) -> std::io::Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::EntryId;
+    use shoal_proto::EntryId;
 
     use super::*;
 

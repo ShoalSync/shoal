@@ -9,8 +9,8 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
 use serde::Deserialize;
-use tidefell_engine::{FileInfo, FolderInfo};
-use tidefell_proto::FolderId;
+use shoal_engine::{FileInfo, FolderInfo};
+use shoal_proto::FolderId;
 use tokio::io::AsyncWriteExt;
 
 use crate::format::{query_value, size, time};
@@ -21,12 +21,12 @@ use crate::handlers::{
 use crate::pages;
 use crate::shares::{NewShare, Share, UNLOCK_TTL};
 use crate::AppState;
-use tidefell_engine::Engine;
+use shoal_engine::Engine;
 
 type AppStateRef = State<Arc<AppState>>;
 
 /// Cookie remembering that this browser entered a link's password. Scoped to the link's path.
-const LINK_COOKIE: &str = "tidefell_link";
+const LINK_COOKIE: &str = "shoal_link";
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -52,14 +52,14 @@ fn upload_path(dir: &str, file_name: &str) -> Option<String> {
         parts.push(part);
     }
     // The engine's own directory at the folder root.
-    if parts.first().copied().unwrap_or(name) == ".tidefell" {
+    if parts.first().copied().unwrap_or(name) == ".shoal" {
         return None;
     }
     parts.push(name);
     // Browsers may send a name in any Unicode form; paths are in NFC (ADR 0033).
     let path: String =
         unicode_normalization::UnicodeNormalization::nfc(parts.join("/").as_str()).collect();
-    tidefell_proto::sync::is_valid_path(&path).then_some(path)
+    shoal_proto::sync::is_valid_path(&path).then_some(path)
 }
 
 /// `path`, or if that is taken, the first free `name (n).ext` beside it, so an upload through a
@@ -87,7 +87,7 @@ fn free_path(files: &[String], root: &std::path::Path, path: &str) -> Option<Str
     };
     (1..1000)
         .map(|n| format!("{dir}{stem} ({n}){ext}"))
-        .find(|candidate| tidefell_proto::sync::is_valid_path(candidate) && !taken(candidate))
+        .find(|candidate| shoal_proto::sync::is_valid_path(candidate) && !taken(candidate))
 }
 
 fn random_suffix() -> String {
@@ -123,7 +123,7 @@ async fn stage_upload(
             .map_err(StageError::NoSpace)
     };
     room(ROOM_EVERY)?;
-    let staging_dir = folder.path.join(".tidefell").join("tmp");
+    let staging_dir = folder.path.join(".shoal").join("tmp");
     tokio::fs::create_dir_all(&staging_dir)
         .await
         .map_err(|e| failed(&e))?;
@@ -975,11 +975,11 @@ mod tests {
         assert_eq!(upload_path("../etc", "passwd"), None);
         assert_eq!(upload_path("", ".."), None);
         assert_eq!(upload_path("", ""), None);
-        assert_eq!(upload_path(".tidefell/tmp", "x"), None);
-        assert_eq!(upload_path("", ".tidefell"), None);
+        assert_eq!(upload_path(".shoal/tmp", "x"), None);
+        assert_eq!(upload_path("", ".shoal"), None);
         assert_eq!(
-            upload_path("docs/.tidefell", "x").as_deref(),
-            Some("docs/.tidefell/x")
+            upload_path("docs/.shoal", "x").as_deref(),
+            Some("docs/.shoal/x")
         );
     }
 

@@ -10,12 +10,12 @@ use axum::http::StatusCode;
 use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use tidefell_engine::diagnostics;
-use tidefell_engine::{
+use shoal_engine::diagnostics;
+use shoal_engine::{
     self as engine, Engine, Error as EngineError, PeerAddr, ReplicaMode, Retention,
 };
-use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
-use tidefell_sdk::types::{
+use shoal_proto::{DeviceId, EntryId, FolderId, UserId};
+use shoal_sdk::types::{
     Activity, ActivityQuery, ApiError, ApprovePairing, ChangeKind, Check, CheckLevel,
     CopiesRequest, Copy, Crash, CrashReport, CrashReportQuery, DiagnosticsRequest, ErrorKind,
     Event, FetchRequest, Fetched, File, Folder, FolderEncryption, FolderPeer, FolderState,
@@ -40,9 +40,9 @@ type AppState = State<Arc<Engine>>;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Tidefell API",
-        description = "Control a Tidefell peer: folders, files, the recycle bin and peers.",
-        license(name = "MIT OR Apache-2.0 (types and client); AGPL-3.0-only (server)")
+        title = "Shoal API",
+        description = "Control a Shoal peer: folders, files, the recycle bin and peers.",
+        license(name = "MIT OR Apache-2.0")
     ),
     paths(
         status,
@@ -633,7 +633,7 @@ fn priorities_info(p: engine::Priorities) -> Priorities {
     }
 }
 
-/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.shoalpriorities`,
 /// and what they give each current file and directory.
 #[utoipa::path(get, path = "/v1/folders/{id}/priorities", tag = "folders",
     params(("id" = String, Path, description = "Folder ID")),
@@ -646,7 +646,7 @@ pub(crate) async fn priorities(
     Ok(Json(priorities_info(p)))
 }
 
-/// Sets or removes the rule for one pattern in an encrypted folder's `.tidefellpriorities`,
+/// Sets or removes the rule for one pattern in an encrypted folder's `.shoalpriorities`,
 /// keeping its other lines; the file syncs to the members' other devices.
 #[utoipa::path(put, path = "/v1/folders/{id}/priorities", tag = "folders",
     params(("id" = String, Path, description = "Folder ID")),
@@ -1228,7 +1228,7 @@ pub(crate) async fn diagnostics(
             (axum::http::header::CONTENT_TYPE, "application/zip"),
             (
                 axum::http::header::CONTENT_DISPOSITION,
-                "attachment; filename=\"tidefell-diagnostics.zip\"",
+                "attachment; filename=\"shoal-diagnostics.zip\"",
             ),
         ],
         zip,
@@ -1321,7 +1321,7 @@ pub(crate) async fn dismiss_crashes(State(engine): AppState) -> ApiResult<Status
     Ok(StatusCode::NO_CONTENT)
 }
 
-fn limits_view(l: tidefell_engine::Limits) -> Limits {
+fn limits_view(l: shoal_engine::Limits) -> Limits {
     Limits {
         upload_kib_per_sec: l.upload.map(|b| b / 1024),
         download_kib_per_sec: l.download.map(|b| b / 1024),
@@ -1344,7 +1344,7 @@ pub(crate) async fn set_limits(
     State(engine): AppState,
     Json(limits): Json<Limits>,
 ) -> Json<Limits> {
-    engine.set_limits(tidefell_engine::Limits {
+    engine.set_limits(shoal_engine::Limits {
         upload: limits.upload_kib_per_sec.map(|k| k * 1024),
         download: limits.download_kib_per_sec.map(|k| k * 1024),
         limit_local: limits.limit_local,

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# The Linux half of Phase 8's exit criterion (ADR 0042): a real tidefelld, on a Linux runner,
+# The Linux half of Phase 8's exit criterion (ADR 0042): a real shoald, on a Linux runner,
 # pairs as a new device with the Windows runner's, which holds the user key, joins the partial
 # folder it offers as a full replica, and fills it with the files the Windows half checks. The
 # two halves find each other through iroh's relays and then talk directly over the LAN; each
 # pairing code goes to the Windows half as a commit status on this run's commit.
 #
 # Needs TOKEN (this run's token, which may write statuses), GITHUB_SERVER_URL,
-# GITHUB_REPOSITORY, GITHUB_SHA and GITHUB_RUN_ID, as a workflow run has, and tidefelld on PATH.
+# GITHUB_REPOSITORY, GITHUB_SHA and GITHUB_RUN_ID, as a workflow run has, and shoald on PATH.
 set -euo pipefail
 run=$GITHUB_RUN_ID
 work=${RUNNER_TEMP:-$(mktemp -d)}/exit-criterion
@@ -28,7 +28,7 @@ deadline=$((SECONDS + 75 * 60))
 paired=
 while [ -z "$paired" ] && [ "$SECONDS" -lt "$deadline" ]; do
   rm -f "$work/pair.out"
-  tidefelld pair --data-dir "$data" --name "Linux runner" > "$work/pair.out" 2> "$work/pair.err" &
+  shoald pair --data-dir "$data" --name "Linux runner" > "$work/pair.out" 2> "$work/pair.err" &
   pid=$!
   until grep -q '^code: ' "$work/pair.out" 2>/dev/null || ! kill -0 "$pid" 2>/dev/null; do sleep 1; done
   if code=$(sed -n 's/^code: //p' "$work/pair.out") && [ -n "$code" ]; then
@@ -52,7 +52,7 @@ mkdir -p "$folder/docs"
 printf 'hello from Linux, run %s\n' "$run" > "$folder/hello.txt"
 python3 -c 'import sys; sys.stdout.buffer.write(bytes((i * 7) % 251 for i in range(3 << 20)))' \
   > "$folder/docs/big.bin"
-cat > "$work/tidefelld.toml" <<TOML
+cat > "$work/shoald.toml" <<TOML
 data_dir = '$data'
 
 [[folders]]
@@ -62,8 +62,8 @@ members = ["$user"]
 retention_days = 30
 scan_interval_secs = 5
 TOML
-tidefelld config check "$work/tidefelld.toml"
-tidefelld run --config "$work/tidefelld.toml" 2> "$work/daemon.log" &
+shoald config check "$work/shoald.toml"
+shoald run --config "$work/shoald.toml" 2> "$work/daemon.log" &
 daemon=$!
 trap 'kill -INT "$daemon" 2>/dev/null; wait "$daemon" 2>/dev/null || true' EXIT
 

@@ -1,6 +1,6 @@
 //! On-disk snapshots of a [`Folder`].
 //!
-//! Format 2: the bytes `tidefell-meta 2\n` followed by the postcard encoding of [`Snapshot`].
+//! Format 2: the bytes `shoal-meta 2\n` followed by the postcard encoding of [`Snapshot`].
 //! Versions are stored in signed form and re-verified on load. Format 1 differs only in how
 //! recycle-bin items encode their version vectors, from before vectors had holes.
 
@@ -10,8 +10,8 @@ use std::io::Write;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tidefell_proto::sync::{EntryVersion, LegacyEntryVersion};
-use tidefell_proto::{DeviceId, EntryId, FolderId, Signed};
+use shoal_proto::sync::{EntryVersion, LegacyEntryVersion};
+use shoal_proto::{DeviceId, EntryId, FolderId, Signed};
 
 use crate::folder::{Entry, StoredVersion};
 use crate::recycle::{RecycleBin, Recycled, Retention};
@@ -19,10 +19,10 @@ use crate::Wire;
 use crate::{Error, Folder, Result};
 
 /// Header identifying the snapshot format.
-pub const SNAPSHOT_HEADER: &[u8] = b"tidefell-meta 2\n";
+pub const SNAPSHOT_HEADER: &[u8] = b"shoal-meta 2\n";
 
 /// Header of format 1.
-const SNAPSHOT_HEADER_V1: &[u8] = b"tidefell-meta 1\n";
+const SNAPSHOT_HEADER_V1: &[u8] = b"shoal-meta 1\n";
 
 #[derive(Serialize, Deserialize)]
 struct Snapshot {
@@ -192,8 +192,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use ed25519_dalek::SigningKey;
-    use tidefell_proto::sync::EntryKind;
-    use tidefell_proto::{ContentHash, EntryId};
+    use shoal_proto::sync::EntryKind;
+    use shoal_proto::{ContentHash, EntryId};
 
     use super::*;
 

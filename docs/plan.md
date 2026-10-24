@@ -1,11 +1,11 @@
 # Implementation plan
 
-This document describes how the Tidefell repositories fit together, how they stay
+This document describes how the Shoal repositories fit together, how they stay
 maintainable, and the phased delivery plan. It is the canonical reference for cross-repo work.
 
 ## Core rule
 
-**The monorepo (`tidefell/tidefell`) is the only producer of shared definitions. The other
+**The monorepo (`shoal/shoal`) is the only producer of shared definitions. The other
 repositories are consumers that pin a single released version and never hand-copy anything.**
 
 Sharing happens through released artifacts with generated bindings, not through shared source,
@@ -16,30 +16,30 @@ contributors remembering it.
 
 | Repository | Owns | Consumes |
 | --- | --- | --- |
-| `tidefell/tidefell` | All Rust code, wire specs, test vectors, glossary, ADRs, user and admin docs | Nothing from the other repos |
-| `tidefell/android` | Kotlin + Compose app, foreground service, `DocumentsProvider` | `org.tidefell:tidefell-ffi` AAR |
-| `tidefell/infra` | Nix deployment of relay, DNS, hosted web peer, full-replica storage | Release binaries, config JSON Schema |
-| `tidefell/site` | Website, blog, docs hosting | Built mdBook and specs from a release |
+| `shoal/shoal` | All Rust code, wire specs, test vectors, glossary, ADRs, user and admin docs | Nothing from the other repos |
+| `shoal/android` | Kotlin + Compose app, foreground service, `DocumentsProvider` | `org.shoalsync:shoal-ffi` AAR |
+| `shoal/infra` | Nix deployment of relay, DNS, hosted web peer, full-replica storage | Release binaries, config JSON Schema |
+| `shoal/site` | Website, blog, docs hosting | Built mdBook and specs from a release |
 
 ## How the repositories reference each other
 
 ```
-tidefell/tidefell (source of truth)
+shoal/shoal (source of truth)
 ├─ crates/*   code
 ├─ specs/     wire protocol per ALPN + test vectors
 ├─ docs/      mdBook, ADRs, glossary, repo map
 └─ release vX.Y.Z
-   ├─ tidefell-ffi AAR asset (generated Kotlin)   → android
-   ├─ tidefelld / web binaries (Nix flake outputs) → infra
-   ├─ tidefelld config JSON Schema                 → infra (validated in CI)
+   ├─ shoal-ffi AAR asset (generated Kotlin)   → android
+   ├─ shoald / web binaries (Nix flake outputs) → infra
+   ├─ shoald config JSON Schema                 → infra (validated in CI)
    ├─ OpenAPI document for `api`                   → external clients
    └─ built mdBook + specs                         → site
 ```
 
 | Edge | Artifact | How the consumer pins it |
 | --- | --- | --- |
-| monorepo → android | `tidefell-ffi-X.Y.Z.aar` with uniffi-generated Kotlin, attached to the release (ADR 0014) | `gradle/libs.versions.toml`: `tidefell = "X.Y.Z"`; the build downloads and checks the AAR. A `tidefellFfiLocalPath` Gradle property switches to a composite build against a local monorepo checkout for FFI development. |
-| monorepo → infra | Monorepo `flake.nix` exposes `packages.tidefelld`, `packages.tidefell-web`, and a NixOS module | Infra `flake.nix` input pinned to the release tag; `flake.lock` records the exact revision. Infra CI validates all configs against the schema from the pinned version. Relay and DNS use upstream iroh packages, pinned the same way. |
+| monorepo → android | `shoal-ffi-X.Y.Z.aar` with uniffi-generated Kotlin, attached to the release (ADR 0014) | `gradle/libs.versions.toml`: `shoal = "X.Y.Z"`; the build downloads and checks the AAR. A `shoalFfiLocalPath` Gradle property switches to a composite build against a local monorepo checkout for FFI development. |
+| monorepo → infra | Monorepo `flake.nix` exposes `packages.shoald`, `packages.shoal-web`, and a NixOS module | Infra `flake.nix` input pinned to the release tag; `flake.lock` records the exact revision. Infra CI validates all configs against the schema from the pinned version. Relay and DNS use upstream iroh packages, pinned the same way. |
 | monorepo → site | Built mdBook tarball + `specs/*.md` attached to the release | Site pins the tag; site CI fetches and embeds. Docs live next to code so they change in the same pull request. |
 | downstream → monorepo | Nothing | A downstream need becomes a monorepo issue first, then a release, then a pin bump. |
 
@@ -50,7 +50,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 
 1. **Machine-enforced crate boundaries.** `cargo xtask check-deps` reads `cargo metadata` and
    fails CI when:
-   - `proto` or `sdk` depends (transitively) on an AGPL crate;
+   - a workspace crate is not MIT OR Apache-2.0 (ADR 0044);
    - `engine` depends on `fs-fuse` or `web`;
    - `ffi` depends on any workspace crate other than `sdk` and `engine`.
 
@@ -92,7 +92,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Decision | Choice | Record |
 | --- | --- | --- |
 | Per-repo conventions file | `CONVENTIONS.md` | ADR 0001 |
-| JVM/Android namespace and Maven group | `org.tidefell` | ADR 0002 |
+| JVM/Android namespace and Maven group | `org.shoalsync` | ADR 0002 |
 | Infrastructure tooling | Nix (flakes, NixOS modules) | ADR 0003 |
 | Android integration | Full peer via FFI, no separate daemon | ADR 0004 |
 | Versioning | Single workspace version, one pin per consumer | ADR 0005 |
@@ -100,20 +100,20 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | Minimum supported Rust version | 1.91 | ADR 0007 |
 | Chunk transfer | Own `blobs/1` protocol on the `store` crate, no iroh-blobs | ADR 0008 |
 | API | REST/JSON with generated OpenAPI; gRPC deferred | ADR 0009 |
-| Local control and web peer placement | Unix socket; web peer inside `tidefelld` | ADR 0010 |
-| Web accounts | Local logins mapped to Tidefell users; no user keys on servers | ADR 0011 |
+| Local control and web peer placement | Unix socket; web peer inside `shoald` | ADR 0010 |
+| Web accounts | Local logins mapped to Shoal users; no user keys on servers | ADR 0011 |
 | Web UI | Server-rendered with htmx | ADR 0012 |
 | Website and docs | Zola site, mdBook docs per release | ADR 0013 |
 | Delivering the ffi AAR | Release asset fetched with the org GitHub App token; Maven later | ADR 0014 |
 | Adding devices | Pairing over the network (`pair/1`); user keys never leave their machine | ADR 0015 |
 | Partial replicas | Placeholders, fetch on open, LRU eviction to a budget; Android `DocumentsProvider` | ADR 0016 |
-| Linux placeholders | `tidefelld` mounts folders read-write with FUSE (`fuser`) | ADR 0017 |
+| Linux placeholders | `shoald` mounts folders read-write with FUSE (`fuser`) | ADR 0017 |
 | Always-on peers | Self-run full replica now; encrypted storage peer in a later phase | ADR 0018 |
 | Web uploads and share links | Uploads and read-only share links in the web peer, off by default | ADR 0019 |
 | Camera-roll backup | Android, opt-in, upload only, originals kept by default | ADR 0020 |
 | Retention settings | Editable at runtime, recycle-bin size shown | ADR 0021 |
 | Confirmed copies | Full replicas confirm holding a file; eviction and removing originals wait for one | ADR 0022 |
-| Encrypted storage peers | Encrypted folders (sync/2, blobs/2), HPKE key grants, storage mode in `tidefelld` | ADR 0023 |
+| Encrypted storage peers | Encrypted folders (sync/2, blobs/2), HPKE key grants, storage mode in `shoald` | ADR 0023 |
 | Sync consistency and trust | Changes build on what is on disk; same-path and equal-vector rules; bounded exchange with deadlines; authors vouched for by member certificates | ADR 0024 |
 | Phone folders | Any folder on the phone, per-folder sync options, removal through the recycle bin | ADR 0025 |
 | Compatibility | None before 1.0; from 1.0 a deprecation period, then removal | ADR 0026 |
@@ -137,7 +137,7 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | --- | --- | --- |
 | **0** Scaffold | Four repositories, licenses, CI | Done |
 | **1** Foundations | `proto` message types and vectors, `chunker`, `store`, `meta` with unit tests; `xtask check-deps`, `cargo-deny`, `cargo-semver-checks`; glossary, ADRs, repo map; `CONVENTIONS.md` everywhere; monorepo `flake.nix`; release workflow | `v0.1.0` tag produces versioned artifacts; boundary violations fail CI |
-| **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on the block store, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `tidefelld config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
+| **2** Sync | `identity`, `net` (iroh endpoint, sync/1), blobs/1 on the block store, `fetch`, `engine`, `daemon`; two-peer tests in `tests/`; `shoald config schema`; infra relay and DNS as NixOS modules | Two daemons sync a folder end to end; infra CI validates config |
 | **3** Surfaces | `api` (REST with generated OpenAPI; ADR 0009), `cli`, `web` peer with accounts; `sdk` stabilised; mdBook built in release; site pulls docs by tag | Set up, share a folder and restore from the recycle bin via CLI and web |
 | **4** Clients | On-demand partial replicas; `pair/1`; `ffi` and the AAR release asset; Android Gradle project, foreground service, `DocumentsProvider` | Android app syncs against a full replica using the published AAR |
 | **4b** Desktop placeholders | `fs-fuse` on the same on-demand engine support | A Linux partial replica mounts a folder and opens placeholders on demand |
@@ -153,9 +153,9 @@ Android talking gRPC to a separate daemon (it runs the full peer via FFI; one pa
 | **5j** Metadata storage | Per-folder databases, `metadata_dir`, integrity checks, per-folder rebuild with sidecars for kept files (ADR 0034) | See the Phase 5j breakdown |
 | **5k** Robustness | Memory budgets, simulation testing, folder markers, free-space floors and error handling (ADR 0035, ADR 0036, ADR 0037) | See the Phase 5k breakdown |
 | **5l** Security and battery | Threat model, Android Keystore, device revocation ADR, battery benchmark and counters (ADR 0038, ADR 0039) | See the Phase 5l breakdown |
-| **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `tidefelld`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
+| **6** Encrypted storage peers | `crypto` crate, sync/2 and blobs/2 specs first, encrypted folders on member devices, storage mode in `shoald`, `role-storage-peer` in infra | A phone-like and a laptop-like member, never online together, sync an encrypted folder through a storage peer whose disk holds no plaintext paths or content |
 | **7** iOS client (set aside) | Swift app over the `ffi` crate's uniffi Swift bindings, shipped as an XCFramework release asset; File Provider extension for placeholders; pairing; camera-roll backup | An iPhone app, built against the published XCFramework, pairs with a full replica, shows a folder in the Files app and opens a placeholder on demand |
-| **8** Windows client | `tidefelld` per user; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; installer (ADR 0042) | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
+| **8** Windows client | `shoald` per user; placeholders through the Cloud Files API (a new `fs-cfapi` crate); tray app for pairing and status; installer (ADR 0042) | A Windows partial replica shows a folder in Explorer with placeholders that open on demand |
 
 ### Client phases (outline)
 
@@ -163,7 +163,7 @@ Phases 7 and 8 get their own decisions and breakdown when they start. Phase 7 is
 (2026-10-19): it needs a Mac, which the project does not have. Phase 8 started then, with a
 Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 
-- **iOS.** A new `tidefell/ios` repository consumes a `TidefellFFI.xcframework` release asset,
+- **iOS.** A new `shoal/ios` repository consumes a `ShoalFFI.xcframework` release asset,
   as Android consumes the AAR (ADR 0014). The File Provider extension runs under tight memory
   and background-time limits, so the engine either runs inside the extension or in the app
   with the extension talking to it through an app group; this is the phase's first decision.
@@ -190,14 +190,14 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 ### Status
 
 - Phase 1 is complete and released as `v0.1.0`.
-- Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `tidefelld`, with
+- Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `shoald`, with
   an end-to-end test of two daemon processes syncing a folder.
-- Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `tidefell/infra`
+- Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `shoal/infra`
   pins it with relay, DNS and full-replica roles.
-- Phase 3 steps 1–6 are implemented: the `tidefell` CLI, the web peer, and the book built by
+- Phase 3 steps 1–6 are implemented: the `shoal` CLI, the web peer, and the book built by
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
-- Phase 3 is complete: released as `v0.3.0`, and `tidefell/site` serves its docs.
-- Phase 4 is complete: released as `v0.4.0`. `tidefell/android` pins it and runs the exit
+- Phase 3 is complete: released as `v0.3.0`, and `shoal/site` serves its docs.
+- Phase 4 is complete: released as `v0.4.0`. `shoal/android` pins it and runs the exit
   criterion on an emulator in CI.
 - Phase 4b is complete: released as `v0.5.0`. A Linux partial replica mounts a folder with
   FUSE, and the exit criterion runs in CI against a real mount.
@@ -206,30 +206,30 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   emptying the recycle bin, in the engine, API, sdk and CLI.
 - Phase 5 step 3 is implemented: web uploads and share links (expiry, password, download
   limit, revocation), off unless `[web] share_links = true`.
-- Phase 5 step 4 is implemented: `tidefell/infra` has `role-always-on` and a three-VM test of
+- Phase 5 step 4 is implemented: `shoal/infra` has `role-always-on` and a three-VM test of
   the exit criterion, and the guide explains running an always-on peer.
 - Phase 5 step 5 is implemented: the Android bindings expose retention, the recycle-bin
   summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
 - Phase 5 step 6 is implemented: the README and the book describe self-run always-on peers,
   uploads, share links and per-device retention; no page suggests a project-run service.
-- Phase 5 is complete: released as `v0.6.0`; `tidefell/infra` and `tidefell/site` pin it.
-  `tidefell/android` builds against it with camera-roll backup and retention and recycle-bin
+- Phase 5 is complete: released as `v0.6.0`; `shoal/infra` and `shoal/site` pin it.
+  `shoal/android` builds against it with camera-roll backup and retention and recycle-bin
   settings, and its emulator exit criterion backs up a photo to a daemon. The setting to remove
   originals after backup is deferred until the engine can report which peers hold a file.
 - Phases 5b and 6 are decided: ADRs 0022 and 0023 are accepted. Phases 7 and 8 wait for CI
   runners.
 - Phase 5b is complete: released as `v0.7.0`. Full replicas report their kind, the engine
   records confirmed copies, and a partial replica evicts a file it made only once one exists.
-  `tidefell/android` pins it and offers to remove backed-up photos from the phone, off by
+  `shoal/android` pins it and offers to remove backed-up photos from the phone, off by
   default; its emulator exit criterion checks that a backed-up photo becomes eligible only after
-  the daemon, a full replica, confirms it. `tidefell/infra` and `tidefell/site` still pin
+  the daemon, a full replica, confirms it. `shoal/infra` and `shoal/site` still pin
   `v0.6.0`.
 - Phase 5c is decided: ADR 0024 is accepted. Steps 2 and 3 are implemented: local changes build
   on what is on disk, equal vectors are concurrent, entries at the same path are written by the
-  ADR 0024 rule, counters have a ceiling, `.tidefell` is reserved, manifests are checked against
+  ADR 0024 rule, counters have a ceiling, `.shoal` is reserved, manifests are checked against
   sizes, index batches are paged and not echoed, and handshakes and requests have deadlines. A
-  test syncs 100,000 entries per replica. Step 4 is implemented in `tidefell/android`
-  (tidefell/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
+  test syncs 100,000 entries per replica. Step 4 is implemented in `shoal/android`
+  (shoal/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
   removal and is backed up again, backup runs one at a time, the sync service stops at the
   Android 15 time limit, and app data is excluded from backups and device transfer.
 - `v0.8.0` releases Phase 5c steps 2 and 3. `tidefell/infra`, `tidefell/site` and
@@ -237,7 +237,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - Phase 5c step 7 is implemented in this repository: `engine.rs` is split by concern
   (folders, files, the recycle bin and peers), folder defaults and the retention and mode
   conversions live once in the engine and are shared by the API, the bindings and the daemon
-  configuration, and every crate forbids unsafe code. The Android part is tidefell/android#11 (merged):
+  configuration, and every crate forbids unsafe code. The Android part is shoal/android#11 (merged):
   view models hold each screen's state, and node and `MediaStore` work runs on
   `Dispatchers.IO`. Steps 5 and 6 are not started.
 - Phase 5d is decided: ADR 0025 (phone folders on Android) and ADR 0026 (compatibility from
@@ -281,8 +281,8 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   is implemented; the app's screens follow with the next Android pin. Step 4 (the doctor
   and the diagnostics bundle) is implemented; the app's screens follow with the next Android
   pin. Step 5 (activity history) is implemented; the app's screen follows with the next
-  Android pin. Step 6 (metrics) is implemented in `tidefelld`; the scrape option in
-  `tidefell/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
+  Android pin. Step 6 (metrics) is implemented in `shoald`; the scrape option in
+  `shoal/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
   implemented; the app's screen follows with the next Android pin.
 - Phase 5f is complete: `v0.13.0` released steps 3 to 7, and the Android screens, the infra
   metrics scrape and the site came with its pins.
@@ -305,10 +305,10 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - `v0.14.0` releases Phase 5h: several files written at once, small files fetched without
   their manifest, and chunk requests batched across files with no availability query to full
   replicas or a lone peer. It also carries Phase 5g's checks. The protocol is unchanged.
-- Phase 5i: step 2 (reproduction) is in `tidefell/android` (ADR 0033 records what 0.14.0
+- Phase 5i: step 2 (reproduction) is in `shoal/android` (ADR 0033 records what 0.14.0
   does). Step 3 (NFC) is implemented: paths are NFC on the wire, and names keep their spelling
-  on disk. Step 4 (probing) is implemented, with a `filesystem` check in `tidefell doctor`.
-  Step 5 (collisions and refused names) is implemented, with `tidefell rename`, the API's
+  on disk. Step 4 (probing) is implemented, with a `filesystem` check in `shoal doctor`.
+  Step 5 (collisions and refused names) is implemented, with `shoal rename`, the API's
   rename and the web peer's offer to rename; the app's offer comes with the next Android pin.
 - `v0.15.0` releases Phase 5i: NFC paths on the wire, each folder's drive probed, names that fold
   together kept apart on a drive that cannot tell them apart, refused names listed as problems,
@@ -321,7 +321,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   renames) is implemented. Step 4 (per-folder databases) is implemented: at 100,000 entries a
   512-version batch holds the folder lock for 3.4 ms and writes 0.55 MB. Step 5
   (`metadata_dir`) is implemented. Step 6: sidecars, integrity checks and per-folder rebuilds are
-  in place (`tidefell folder rebuild`, the `rebuilding` state); a daemon with one damaged
+  in place (`shoal folder rebuild`, the `rebuilding` state); a daemon with one damaged
   folder database starts, rebuilds that folder with its recycle bin and history, and keeps
   syncing the others, also when killed during the rebuild. Pins are in the runtime settings, so
   a rebuild keeps them. Phase 5j is complete.
@@ -333,7 +333,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   runtime settings move to format 5 the same way. The protocol is unchanged. The FFI gains
   `FolderState.REBUILDING`, `Folder.rebuild` and `Node.rebuildFolder`, which the Android pin
   takes up.
-- Phase 5k: step 2 (folder roots) is done: each folder's root has a `.tidefell/folder` marker,
+- Phase 5k: step 2 (folder roots) is done: each folder's root has a `.shoal/folder` marker,
   a folder whose root is missing or unmarked is unavailable and nothing is scanned, written or
   deleted there, roots are created only when a folder is created or joined, and a scan that
   would delete most of a folder holds its deletes for confirmation. Step 3 (disk space and
@@ -363,7 +363,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   hold them, or withdrawn where received after a time of loss the user gives, with author
   vouching. Step 4 (Android keys) is done in this repository: the FFI keeps
   the device key in a vault the app provides (`set_key_vault`), moving a key file left from
-  before into it. Step 5 (battery) is done: the benchmark in `tidefell/android`, the app's usage
+  before into it. Step 5 (battery) is done: the benchmark in `shoal/android`, the app's usage
   counters in the diagnostics bundle, and budgets from the first, emulator, figures (ADR 0039).
   Phase 5l is complete; ADR 0040's revocation is built with author vouching (Phase 5c step 6).
 - `v0.18.0` releases Phase 5l: the threat model, ADR 0040, and the FFI's key vault
@@ -392,7 +392,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   it is revoked at once rather than at its next connection.
 - The FFI takes a relay token (`Relay.Custom.token`) and reports a revoked device
   (`DeviceStatus.revoked`), for the Android app's relay setting and its "pair again" notice.
-- ADR 0040's first part, revoking a device's connections, is implemented: `tidefell device
+- ADR 0040's first part, revoking a device's connections, is implemented: `shoal device
   revoke` (and `POST /v1/devices/{device}/revoke`) on the device holding the user key signs a
   revocation; `sync/1`'s `Hello` carries every revocation the sender knows (appended after
   `clock_ms`, which 0.19 reads past), so they are exchanged before anything else; a revoked peer
@@ -472,11 +472,11 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   is deleted only after an exchange since the revocation, by when a peer holding it has taken it
   over; removed members and missing certificates never lead to a delete. The simulation revokes
   a device (`Revoke`) and checks the others still agree.
-- ADR 0040's time of loss (for 0.21): `tidefell device revoke --lost-at` previews and revokes;
+- ADR 0040's time of loss (for 0.21): `shoal device revoke --lost-at` previews and revokes;
   each replica withdraws the revoked device's changes it received after the time, by its own
   clock, putting back what each change replaced (history now records which version replaced
   each kept one) or deleting, after an exchange; changes it cannot place are left to the others.
-  The time is clamped to a folder's retention, many withdrawals are held for the user (`tidefell
+  The time is clamped to a folder's retention, many withdrawals are held for the user (`shoal
   folder withdrawals`), a device is revoked once, and concurrent revocations keep the earliest
   loss. The simulation's `Revoke` sometimes gives a time.
 - A direct path counts as local when its address is on a network this device's interfaces are
@@ -508,11 +508,11 @@ Delivered as a sequence of pull requests; each merges before the next is pushed.
    tested with simulated peers.
 4. **`engine` and `daemon`.** Replica policies (full; partial with a byte budget), folder
    scanning (polling first, notification later), materialising files atomically from chunks,
-   deletes into the recycle bin with chunks pinned until purge. `tidefelld` with TOML config,
-   `tidefelld config schema` (JSON Schema via `schemars`), `init`, `id` and `run`. End-to-end
+   deletes into the recycle bin with chunks pinned until purge. `shoald` with TOML config,
+   `shoald config schema` (JSON Schema via `schemars`), `init`, `id` and `run`. End-to-end
    test: two daemons sync a folder, including edits, deletes and a conflict.
-5. **Nix and infra.** NixOS module for `tidefelld` in the monorepo flake; relay and DNS server
-   NixOS configurations in `tidefell/infra`, pinned to the monorepo release.
+5. **Nix and infra.** NixOS module for `shoald` in the monorepo flake; relay and DNS server
+   NixOS configurations in `shoal/infra`, pinned to the monorepo release.
 
 ### Phase 3 work breakdown
 
@@ -527,47 +527,47 @@ from the recycle bin, both through the CLI and through the web peer.
    and their OpenAPI schemas, and provides a typed client over a Unix socket or HTTP. `api`
    serves them with axum on the control socket, including server-sent events and
    `/v1/openapi.json`. The OpenAPI document is published with each release.
-4. **`tidefell` CLI.** `status`, `folder create|join|list|remove|share|unshare|scan`, `files`,
+4. **`shoal` CLI.** `status`, `folder create|join|list|remove|share|unshare|scan`, `files`,
    `peer list|add|remove`, `recycle list|restore`, `events`. Talks to the daemon only through
-   `sdk`. Web accounts are managed on the web peer's host with `tidefelld web account`, since
+   `sdk`. Web accounts are managed on the web peer's host with `shoald web account`, since
    they live in its data directory.
 5. **`web`.** Accounts (argon2id) linked to user IDs, sessions with CSRF protection, and a
    server-rendered htmx UI: sign in, folders, file listing and download, recycle bin with
-   restore, and account management for admins. Enabled by `[web]` in `tidefelld`.
-6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `tidefell/site`
+   restore, and account management for admins. Enabled by `[web]` in `shoald`.
+6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `shoal/site`
    becomes a Zola site that serves the pinned release's docs.
 
 ### Phase 4 work breakdown
 
 Exit criterion: the Android app, built against the AAR attached to a monorepo release, pairs
-with a `tidefelld` full replica, joins a folder, lists it, opens a file on demand, and syncs a
-file it saves back to the daemon. Android CI runs this against the release's `tidefelld` on an
+with a `shoald` full replica, joins a folder, lists it, opens a file on demand, and syncs a
+file it saves back to the daemon. Android CI runs this against the release's `shoald` on an
 emulator.
 
 1. **Decisions.** ADRs 0014–0016 and this breakdown.
 2. **Partial replicas on demand (ADR 0016).** Placeholders in the engine's local state; `open`
    and `write`; pinning while open; LRU eviction to the budget that turns materialised files
-   back into placeholders. Exposed through `sdk`/`api` (`tidefell open`), and the web peer can
+   back into placeholders. Exposed through `sdk`/`api` (`shoal open`), and the web peer can
    download placeholders. Tests with a full and a partial replica in process.
 3. **Pairing (ADR 0015).** `specs/pair-v1.md` and vectors; `proto` messages; pairing code and
    confirmation code in `identity`; the `pair/1` handler in `net`; an uncertified,
-   pairing-only engine mode; the approver side in the engine, `api` and `tidefell pair <code>`.
+   pairing-only engine mode; the approver side in the engine, `api` and `shoal pair <code>`.
    Test: a new device pairs with a daemon and then syncs a folder.
 4. **`ffi`.** uniffi (proc-macro) surface over `engine`: lifecycle, pairing, folders, files,
    `open`/`write`, recycle bin, peers, and events through a callback interface. Kotlin JVM
    tests in monorepo CI load the host library and sync with an in-process peer.
 5. **AAR.** `bindings/android/`, a Gradle Android library built with `cargo-ndk` for
    `arm64-v8a`, `armeabi-v7a` and `x86_64`; CI builds it and the release workflow attaches
-   `tidefell-ffi-X.Y.Z.aar`. Released as `v0.4.0-rc.1` for the Android work to pin.
+   `shoal-ffi-X.Y.Z.aar`. Released as `v0.4.0-rc.1` for the Android work to pin.
 6. **Android app.** Gradle project (Kotlin, Jetpack Compose, Material 3; minimum SDK 29):
    foreground service hosting the engine, pairing screen with a QR code, folder list and join,
    `DocumentsProvider`, storage budget setting. CI builds and unit-tests it, then runs the exit
-   criterion on an emulator against the pinned release's `tidefelld`.
+   criterion on an emulator against the pinned release's `shoald`.
 7. **Release.** `v0.4.0` and the Android pin bump.
 
 ### Phase 4b work breakdown
 
-Exit criterion: a `tidefelld` partial replica on Linux mounts a folder. Listing it shows every
+Exit criterion: a `shoald` partial replica on Linux mounts a folder. Listing it shows every
 file, reading a placeholder fetches it from a full replica, and a file saved through the mount
 reaches the full replica. CI runs this with a real FUSE mount on the self-hosted runner.
 
@@ -581,7 +581,7 @@ reaches the full replica. CI runs this with a real FUSE mount on the self-hosted
    engine's `open` and `close`; staged writes recorded with `write`; `create`, `unlink`,
    `rename`, in-memory `mkdir` and `rmdir`, truncation and times; kernel cache invalidation on
    engine events. Unit tests drive the handlers against a fake backend without the kernel.
-4. **Daemon mounts.** `mount = "/path"` on a folder in `tidefelld`'s config and schema;
+4. **Daemon mounts.** `mount = "/path"` on a folder in `shoald`'s config and schema;
    mounting at start, unmounting on shutdown (including SIGTERM), and clearing a stale mount
    left by a crash. A guide page on mounting. The end-to-end exit-criterion test
    runs in CI against a real FUSE mount.
@@ -598,7 +598,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
 3. **Web uploads and share links (ADR 0019).** Uploads and new folders through the web peer;
    share links with expiry, password, download limit and revocation; link pages; tests that
    drive the web peer over HTTP.
-4. **Always-on peer (ADR 0018, option B).** `tidefell/infra`: a NixOS role for a self-run full
+4. **Always-on peer (ADR 0018, option B).** `shoal/infra`: a NixOS role for a self-run full
    replica with the web peer, relay and TLS, pinned to a release; a guide page on running one
    on a small VPS. The exit criterion runs in infra CI: a phone-like partial replica and a
    laptop-like one, never online together, sync through the always-on peer.
@@ -608,7 +608,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
 6. **Site and docs.** Remove any suggestion of a project-run service; document the always-on
    peer, sharing and backup.
 7. **Release.** `v0.6.0`, and the infra and site pin bumps.
-8. **Camera-roll backup (ADR 0020).** `tidefell/android`, against the `v0.6.0` AAR: backup
+8. **Camera-roll backup (ADR 0020).** `shoal/android`, against the `v0.6.0` AAR: backup
    settings, `MediaStore` tracking, `WorkManager` scheduling, and retention and recycle-bin
    settings. Tested on the emulator with seeded media. The Android pin moves to `v0.6.0` here.
    The off-by-default setting to remove originals after backup is deferred: it needs the engine
@@ -624,7 +624,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    and a partial peer.
 4. **Surfaces.** API, sdk, CLI (`ls`, `status`), web peer and `ffi` report files without a
    confirmed copy. Release `v0.7.0`.
-5. **Removing originals (ADR 0020, 0022).** `tidefell/android` against `v0.7.0`: the
+5. **Removing originals (ADR 0020, 0022).** `shoal/android` against `v0.7.0`: the
    off-by-default setting on Android 11 and later, the eligibility notification and the system
    delete request. The emulator exit criterion checks that a backed-up photo becomes eligible
    only after the daemon, a full replica, confirms it.
@@ -636,7 +636,7 @@ Each fix starts with a test that reproduces the finding and fails, then makes it
 1. **Decisions.** ADR 0024 and the sync/1 spec changes.
 2. **Sync correctness.** Local changes build on the vector of what is on disk; equal vectors
    are concurrent; entries at the same path are written by the ADR 0024 rule; counters have a
-   ceiling and checked increments; `.tidefell` is reserved in path validation; manifests are
+   ceiling and checked increments; `.shoal` is reserved in path validation; manifests are
    checked against the version's size and dropped when assembly fails.
 3. **Flow control and deadlines.** Paged index batches written from their own task, no echo,
    deadlines on handshakes and requests, a 64 KiB limit before authentication, and no network
@@ -665,7 +665,7 @@ Phone folders (ADR 0025). Nothing has been released publicly, so nothing migrate
    CLI and `ffi`. Files dropped on this device are listed as on other devices and are not
    fetched again, even for new versions, unless opened. Moving a file to the local recycle bin
    without recording a delete. Release `v0.9.0`, and the infra, site and Android pins.
-3. **Android folders.** `tidefell/android`: All files access, the folder picker with the camera
+3. **Android folders.** `shoal/android`: All files access, the folder picker with the camera
    folder first, the three sync options in order (backup only, two-way sync, remove after
    backup), "Delete from all devices", clean up, and `MediaStore` announcements for files
    written into shared storage. The camera backup and its removal notification are removed.
@@ -682,10 +682,10 @@ Features from other sync tools (ADR 0029). It can run alongside Phase 5c steps 5
 2. **Local network discovery.** mDNS address lookup in the engine, `local_discovery` in the
    configuration, API and bindings, and the multicast lock on Android. A test syncs two
    daemons with the relay disabled and no address lookup.
-3. **Ignore patterns.** `.tidefellignore` with `#include` and the built-in defaults, applied
+3. **Ignore patterns.** `.shoalignore` with `#include` and the built-in defaults, applied
    to scans, sending and writing. Ignored paths are listed as on other devices.
-4. **Watching.** `notify` watches in `tidefelld`, scans of the touched directories, the
-   one-hour safety scan, and the polling fallback shown in `tidefell status`. Release
+4. **Watching.** `notify` watches in `shoald`, scans of the touched directories, the
+   one-hour safety scan, and the polling fallback shown in `shoal status`. Release
    `v0.11.0`, and the infra, site and Android pins.
 5. **Version history.** Replaced content kept as previous versions, retention and thinning,
    restore as a new version, engine state format 7, and history in the API, CLI, web and
@@ -698,8 +698,8 @@ Features from other sync tools (ADR 0029). It can run alongside Phase 5c steps 5
    limits.
 9. **Conflict resolution.** The sync/1 change that keeps conflict copies until they are
    resolved, same-content versions merged without a conflict, the `ConflictDetected` event,
-   `open_version`, and `resolve` with keep a version and keep both. `tidefell conflicts` and
-   `tidefell resolve`, the conflict screen and folder banner in the web, and the notification and
+   `open_version`, and `resolve` with keep a version and keep both. `shoal conflicts` and
+   `shoal resolve`, the conflict screen and folder banner in the web, and the notification and
    conflict screen in the Android app. Release `v0.12.0`, and the infra, site and Android pins.
 
 Exit criterion: with the relay disabled, two daemons on one network sync directly; an ignored
@@ -718,21 +718,21 @@ after Phase 5e step 4 (`v0.11.0`), since Android reports have no engine logs tod
 2. **Logs and crashes.** The rotating JSON log file, logcat on Android, the runtime log level,
    the recent-problems buffer, the panic hook and crash files, fatal engine-task panics, and the
    crash notice on the next start. The Android side (the app's log calls, the uncaught-exception
-   handler, restart after a crash) is in `tidefell/android`.
+   handler, restart after a crash) is in `shoal/android`.
 3. **Status and problems.** Peer connections, folder states, per-path problems and transfer
    rates in the engine, API, sdk, bindings, CLI, web and Android app.
-4. **Diagnostics bundle and doctor.** The redacted bundle and its preview, `tidefell doctor`
+4. **Diagnostics bundle and doctor.** The redacted bundle and its preview, `shoal doctor`
    and the app and web checks, and the clock in sync/1's `Hello`.
 5. **Activity history.** Who made each file's current version, and the per-folder activity
    log, in the API, CLI, web and Android app.
-6. **Metrics.** The opt-in Prometheus endpoint and the scrape option in `tidefell/infra`.
+6. **Metrics.** The opt-in Prometheus endpoint and the scrape option in `shoal/infra`.
 7. **Reporting a crash.** The pre-filled issue from the CLI, web and app, and `report_url`.
    Release, with the infra, site and Android pins.
 
-Exit criterion: a forced panic on `tidefelld` and on Android leaves a crash file and a notice
+Exit criterion: a forced panic on `shoald` and on Android leaves a crash file and a notice
 on the next start; a diagnostics bundle from each holds logs, status, problems and the crash,
 with no plain path or full ID unless paths were included; a folder on a read-only disk lists the
-problem in the CLI and the app; `tidefell doctor` warns about a peer whose clock is five minutes
+problem in the CLI and the app; `shoal doctor` warns about a peer whose clock is five minutes
 off; and `/metrics` counts bytes during a sync.
 
 ### Phase 5g work breakdown
@@ -749,7 +749,7 @@ Static analysis and fuzzing (ADR 0031). It can run alongside Phases 5e and 5f.
    become regression tests.
 6. **Workflow checks.** `actionlint` and `zizmor` in all four repositories, with or after the
    action pinning of Phase 5c step 5.
-7. **Android.** Android Lint and `detekt` in `tidefell/android` CI, with baselines.
+7. **Android.** Android Lint and `detekt` in `shoal/android` CI, with baselines.
 8. **Smaller checks.** `shellcheck`, `statix` and `deadnix` as flake checks, and `typos`, in every
    repository that has files for them.
 
@@ -782,13 +782,13 @@ File names across filesystems (ADR 0033). It comes before the macOS, iOS and Win
 (Phases 7 and 8), and first because phone folders already use case-insensitive storage.
 
 1. **Decisions.** ADR 0033 and this breakdown.
-2. **Reproduce.** An emulator test in `tidefell/android`: a daemon shares `Photo.jpg` and
+2. **Reproduce.** An emulator test in `shoal/android`: a daemon shares `Photo.jpg` and
    `photo.jpg` with different content into a phone folder in shared storage, and a name with `:`
    into one on a FAT image. Record what happens today.
 3. **NFC.** The scanner normalises names and remembers the on-disk spelling; sync/1 rejects
    paths that are not NFC.
 4. **Probing.** Case and normalisation sensitivity, refused characters and names, and name length
-   per folder, in `tidefell doctor` and the API.
+   per folder, in `shoal doctor` and the API.
 5. **Collisions and refused names.** The same-path rule applied after each device's folding,
    case-only directories merged, refused names listed as problems with a rename offered, and
    case-only renames recorded. An engine test runs with a simulated case-insensitive, FAT-like
@@ -814,14 +814,14 @@ holds, so it comes before larger folders are promised.
    `meta` and `state` files.
 5. **`metadata_dir`.** The setting in the configuration, CLI and API, the refusal to start when
    the databases were left behind, and the guide.
-6. **Detection and rebuild.** Integrity checks on open, daily and in `tidefell doctor`; sidecars
+6. **Detection and rebuild.** Integrity checks on open, daily and in `shoal doctor`; sidecars
    for kept files; the `rebuilding` state; per-folder rebuild without stopping other folders;
-   `tidefell folder rebuild`.
+   `shoal folder rebuild`.
 
 Exit criterion: at 100,000 entries, applying a batch of 512 versions writes less than 1 MB and
-holds the folder lock for under 50 ms; with one folder's database corrupted, `tidefelld` starts,
+holds the folder lock for under 50 ms; with one folder's database corrupted, `shoald` starts,
 rebuilds that folder with its recycle bin and history intact, and serves the others throughout;
-and killing `tidefelld` during a first sync loses nothing when it restarts.
+and killing `shoald` during a first sync loses nothing when it restarts.
 
 ### Phase 5k work breakdown
 
@@ -829,7 +829,7 @@ Robustness (ADR 0035, ADR 0036, ADR 0037). Step 2 is urgent; the rest follow Pha
 databases they build on.
 
 1. **Decisions.** ADRs 0035, 0036 and 0037 and this breakdown.
-2. **Folder roots.** The `.tidefell/folder` marker, the `unavailable` state, no root created
+2. **Folder roots.** The `.shoal/folder` marker, the `unavailable` state, no root created
    outside create and join, and the paused mass delete. A test unmounts a folder's directory and
    checks that no delete leaves the device.
 3. **Disk space and errors.** Free-space floors per volume, writes that wait above the floor,
@@ -840,7 +840,7 @@ databases they build on.
 5. **Simulation.** The transport seam, the in-memory transport, the harness with its operations
    and invariants, seed shrinking, 200 seeds per pull request and 10,000 nightly.
 
-Exit criterion: removing a folder's drive while `tidefelld` runs, and starting it before the
+Exit criterion: removing a folder's drive while `shoald` runs, and starting it before the
 drive mounts, deletes nothing anywhere; a full disk pauses downloads and resumes them when space
 returns; a synthetic full replica of 1,000,000 files and 10 TiB stays under 500 MB of resident
 memory (raised from 300 MB, ADR 0035); and 10,000 simulation seeds pass.
@@ -854,7 +854,7 @@ Security and battery (ADR 0038, ADR 0039).
    whether a change affects it.
 3. **Device revocation.** Its ADR, before Phase 6.
 4. **Android keys.** The device key wrapped with an Android Keystore key, with existing keys
-   converted on upgrade, in `tidefell/android`.
+   converted on upgrade, in `shoal/android`.
 5. **Battery.** The scripted benchmark on the emulator and a device, the app's counters in the
    diagnostics bundle, budgets from the first results, then the changes the benchmark supports.
 
@@ -872,7 +872,7 @@ storage does not contain a usable device key; and a release's notes include its 
 4. **Protocol.** v2 messages in `proto` and sync/2 and blobs/2 in `net`, alongside v1.
 5. **Encrypted folders on members.** Creating and joining, grants for new devices, rotation
    when a member is removed, and decryption into the folder directory. CLI and API support.
-6. **Storage mode.** `[storage]` in `tidefelld`: stored folders with members and quotas,
+6. **Storage mode.** `[storage]` in `shoald`: stored folders with members and quotas,
    version retention and chunk collection, operator commands.
 7. **Infra.** `role-storage-peer`, and a VM test of the exit criterion that also checks the
    storage peer's disk for plaintext.
@@ -916,7 +916,7 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    by target; Unix-only test code gated; a Windows type-check in CI.
 2. **Local control and privacy.** The control API and SDK over a named pipe; the data
    directory under `%LOCALAPPDATA%`, private by the profile's access control (ADR 0042's
-   amendment), and `tidefell doctor` warning of one outside it.
+   amendment), and `shoal doctor` warning of one outside it.
 3. **File semantics.** Done (2026-10-20): the executable bit kept from the current version;
    NTFS file IDs; free space and volume serial numbers; network drives; renames that replace
    open files, files held without sharing tried again, and non-replacing renames; the hidden
@@ -939,7 +939,7 @@ Decided in ADR 0042. Each step lands with tests that run on the Windows runner (
    in place; an encrypted folder's fill opens no file, as an unencrypted one's; making a file
    in sync checks its file ID too; and a watch's overflow is a rescan, with `notify` 8 patched
    as notify 9 does it (ADR 0042's amendments).
-7. **Tray app.** Done (2026-10-21; ADR 0042's amendment): `tidefell-tray` starts and supervises
+7. **Tray app.** Done (2026-10-21; ADR 0042's amendment): `shoal-tray` starts and supervises
    the daemon, with the allocator settings in its environment, and shows its status and
    folders, opens them, pauses and resumes, and quits; it sets up a device as the first one or
    by pairing as a new one, and approves another device.
@@ -961,10 +961,10 @@ their quota in that order, and nothing held is dropped unless a user asks.
 
 1. **Operator's side.** A total quota across stored folders and a priority for each, filling in
    priority order, and fetching through the scheduler with a source that keeps chunks sealed.
-2. **Rules and hints.** `.tidefellpriorities`, `tidefell folder priority`, and member devices
-   sending hints over `tidefell/storage/1` (spec, vectors).
-3. **Usage.** What a storage peer holds and lacks by priority, in `tidefell folder storage`.
-4. **Dropping.** `tidefell folder storage-drop`, refusing files with no other copy unless told.
+2. **Rules and hints.** `.shoalpriorities`, `shoal folder priority`, and member devices
+   sending hints over `shoal/storage/1` (spec, vectors).
+3. **Usage.** What a storage peer holds and lacks by priority, in `shoal folder storage`.
+4. **Dropping.** `shoal folder storage-drop`, refusing files with no other copy unless told.
 5. **Ranking from the apps** (the amendment's section of 2026-10-23). The daemon's priorities
    endpoints, members without the rules on disk giving the ranking (#54); the tray's Storage
    window on Windows; the Explorer status icons; the Android Storage screen.

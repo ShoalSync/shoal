@@ -10,14 +10,12 @@
 use std::collections::BTreeMap;
 
 use ed25519_dalek::SigningKey;
-use tidefell_crypto::{open_grant, seal_grant, EncryptionSecret, FolderKey, GrantFor};
-use tidefell_meta::{Seal, Verified, Wire};
-use tidefell_net::ItemPage;
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::sync2::{
-    ChunkList, EncryptionKey, Item, KeyGrant, SealedPayload, SealedVersion,
-};
-use tidefell_proto::{Causality, ChunkHash, ChunkId, DeviceId, KeyId, Signed};
+use shoal_crypto::{open_grant, seal_grant, EncryptionSecret, FolderKey, GrantFor};
+use shoal_meta::{Seal, Verified, Wire};
+use shoal_net::ItemPage;
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::sync2::{ChunkList, EncryptionKey, Item, KeyGrant, SealedPayload, SealedVersion};
+use shoal_proto::{Causality, ChunkHash, ChunkId, DeviceId, KeyId, Signed};
 use tracing::{debug, info, warn};
 
 use crate::engine::{FolderHandle, Inner};
@@ -63,7 +61,7 @@ impl Seal for Signer {
         }
     }
 
-    fn seal(&self, version: &EntryVersion) -> tidefell_meta::Result<Wire> {
+    fn seal(&self, version: &EntryVersion) -> shoal_meta::Result<Wire> {
         match self {
             Signer::Plain(key) => key.seal(version),
             Signer::Sealed(sealer) => sealer.seal(version),
@@ -83,7 +81,7 @@ pub(crate) struct Sealer {
 }
 
 impl Sealer {
-    fn seal(&self, version: &EntryVersion) -> tidefell_meta::Result<Wire> {
+    fn seal(&self, version: &EntryVersion) -> shoal_meta::Result<Wire> {
         let file = matches!(version.kind, EntryKind::File { .. });
         let (chunks, lens) = if file {
             (self.chunks.clone(), self.lens.clone())
@@ -104,7 +102,7 @@ impl Sealer {
                 &version.author,
                 &payload.encode(),
             )
-            .map_err(|e| tidefell_meta::Error::Sealing(e.to_string()))?;
+            .map_err(|e| shoal_meta::Error::Sealing(e.to_string()))?;
         let sealed = SealedVersion {
             folder: version.folder,
             entry: version.entry,
@@ -156,7 +154,7 @@ pub(crate) fn signer(
                 ids.iter().copied().zip(lens.iter().copied()).collect(),
             );
             // A file of more than 4096 chunks lists them in list blobs (encryption-v1.md).
-            let (list, blobs) = tidefell_proto::sync2::chunk_list(&ids).ok_or_else(|| {
+            let (list, blobs) = shoal_proto::sync2::chunk_list(&ids).ok_or_else(|| {
                 Error::Invalid(format!("content {content} has too many chunks to list"))
             })?;
             for (id, bytes) in blobs {
@@ -180,7 +178,7 @@ fn chunk_id(
     state: &mut FolderState,
     key: &FolderKey,
     hash: &ChunkHash,
-    also: Option<(&str, &tidefell_proto::ContentHash)>,
+    also: Option<(&str, &shoal_proto::ContentHash)>,
 ) -> Result<ChunkId> {
     if let Some(id) = find_chunk_id(state, hash, key.id()) {
         return Ok(id);
@@ -295,8 +293,8 @@ fn keep_stored(
 /// were verified when kept.
 fn stored_heads(
     state: &FolderState,
-) -> std::collections::HashMap<tidefell_proto::EntryId, Vec<(u64, tidefell_proto::VersionVector)>> {
-    use tidefell_proto::SignedKind as _;
+) -> std::collections::HashMap<shoal_proto::EntryId, Vec<(u64, shoal_proto::VersionVector)>> {
+    use shoal_proto::SignedKind as _;
     let mut heads: std::collections::HashMap<_, Vec<_>> = std::collections::HashMap::new();
     for (sequence, item) in state.items.iter() {
         let Item::Version(signed) = item else {
@@ -780,7 +778,7 @@ fn apply_version(
     state: &mut FolderState,
     signed: Signed<SealedVersion>,
     now: i64,
-    touched: &mut Vec<tidefell_proto::EntryId>,
+    touched: &mut Vec<shoal_proto::EntryId>,
 ) -> bool {
     let Ok(sealed) = signed.verify_authored() else {
         return false;
@@ -848,7 +846,7 @@ pub(crate) fn chunk_ids_of(state: &FolderState, sealed: &SealedVersion) -> Optio
             let mut ids = Vec::new();
             for list in lists {
                 let bytes = state.list_blobs.get(list)?;
-                ids.extend(tidefell_proto::sync2::read_list_blob(list, bytes)?);
+                ids.extend(shoal_proto::sync2::read_list_blob(list, bytes)?);
             }
             Some(ids)
         }
@@ -860,12 +858,12 @@ pub(crate) fn chunk_ids_of(state: &FolderState, sealed: &SealedVersion) -> Optio
 /// any.
 pub(crate) async fn fetch_lists(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
 ) -> bool {
-    use tidefell_net::{BlobKind, BlobResult};
-    use tidefell_proto::blobs2::BlobId;
-    use tidefell_proto::SignedKind as _;
+    use shoal_net::{BlobKind, BlobResult};
+    use shoal_proto::blobs2::BlobId;
+    use shoal_proto::SignedKind as _;
 
     let (folder, mut wanted) = {
         let state = handle.lock();
@@ -873,7 +871,7 @@ pub(crate) async fn fetch_lists(
         if state.lists_complete.get() == Some(at) {
             return false;
         }
-        let mut wanted: Vec<tidefell_proto::ListId> = Vec::new();
+        let mut wanted: Vec<shoal_proto::ListId> = Vec::new();
         for item in state.items.values() {
             let Item::Version(signed) = item else {
                 continue;
@@ -908,12 +906,12 @@ pub(crate) async fn fetch_lists(
         if wanted.is_empty() {
             break;
         }
-        let Ok(endpoint) = tidefell_net::EndpointId::from_bytes(peer.as_bytes()) else {
+        let Ok(endpoint) = shoal_net::EndpointId::from_bytes(peer.as_bytes()) else {
             continue;
         };
         for batch in wanted
             .clone()
-            .chunks(tidefell_proto::blobs2::MAX_BLOBS_PER_REQUEST)
+            .chunks(shoal_proto::blobs2::MAX_BLOBS_PER_REQUEST)
         {
             let request: Vec<(BlobId, BlobKind)> = batch
                 .iter()
@@ -928,7 +926,7 @@ pub(crate) async fn fetch_lists(
                 let BlobResult::Found(id, bytes) = result else {
                     continue;
                 };
-                let list = tidefell_proto::ListId(id.0);
+                let list = shoal_proto::ListId(id.0);
                 if batch.contains(&list) {
                     state.list_blobs.insert(list, bytes);
                     wanted.retain(|w| *w != list);
@@ -958,7 +956,7 @@ pub(crate) async fn fetch_lists(
 
 /// A file's content as a sealed version names it: its hash, and its chunks' key, IDs and
 /// lengths.
-type SealedContent = (tidefell_proto::ContentHash, (KeyId, Vec<(ChunkId, u32)>));
+type SealedContent = (shoal_proto::ContentHash, (KeyId, Vec<(ChunkId, u32)>));
 
 /// Applies an opened version and records how its content is sealed. Returns true if it changed
 /// anything.
@@ -976,7 +974,7 @@ fn apply_opened(
     state
         .meta
         .apply_verified(verified, now)
-        .is_ok_and(|a| a != tidefell_meta::Applied::Stale)
+        .is_ok_and(|a| a != shoal_meta::Applied::Stale)
 }
 
 /// Keeps a sealed version this device cannot open yet, unless a version it holds supersedes it
@@ -1033,7 +1031,7 @@ fn open_own_grant(inner: &Inner, state: &mut FolderState, grant: &KeyGrant) -> b
 fn open_waiting(
     state: &mut FolderState,
     now: i64,
-    touched: &mut Vec<tidefell_proto::EntryId>,
+    touched: &mut Vec<shoal_proto::EntryId>,
 ) -> bool {
     let waiting: Vec<(u64, Signed<SealedVersion>)> = state
         .items
@@ -1079,7 +1077,7 @@ pub(crate) fn unknown_authors(inner: &Inner, items: &[Item]) -> Vec<DeviceId> {
 }
 
 /// The device's secret for opening grants, derived from its identity key.
-pub(crate) fn secret(key: &tidefell_identity::DeviceKey) -> EncryptionSecret {
+pub(crate) fn secret(key: &shoal_identity::DeviceKey) -> EncryptionSecret {
     EncryptionSecret::for_device(&key.seed())
 }
 
@@ -1137,11 +1135,11 @@ fn locate(inner: &Inner, state: &mut FolderState, id: &ChunkId) -> Option<(Chunk
 /// content's manifest once every chunk is here, which is then written like any other.
 pub(crate) async fn fetch_content(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
-    folder: tidefell_proto::FolderId,
-    content: tidefell_proto::ContentHash,
-) -> std::result::Result<tidefell_proto::Manifest, String> {
+    folder: shoal_proto::FolderId,
+    content: shoal_proto::ContentHash,
+) -> std::result::Result<shoal_proto::Manifest, String> {
     // The content as each key held seals it: tried in turn, as peers hold the chunks of the
     // versions they have.
     let candidates: Vec<(FolderKey, Vec<(ChunkId, u32)>)> = {
@@ -1173,10 +1171,10 @@ pub(crate) async fn fetch_content(
 /// there: during a fill, opening a file can wait on that fill.
 pub(crate) async fn fill_content(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
-    folder: tidefell_proto::FolderId,
-    content: tidefell_proto::ContentHash,
+    folder: shoal_proto::FolderId,
+    content: shoal_proto::ContentHash,
     size: u64,
     sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
 ) -> std::result::Result<(), String> {
@@ -1222,10 +1220,10 @@ pub(crate) async fn fill_content(
 #[allow(clippy::too_many_arguments)]
 async fn fill_sealed(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
-    folder: tidefell_proto::FolderId,
-    (content, size): (tidefell_proto::ContentHash, u64),
+    folder: shoal_proto::FolderId,
+    (content, size): (shoal_proto::ContentHash, u64),
     key: &FolderKey,
     list: &[(ChunkId, u32)],
     sink: &mut (dyn FnMut(u64, &[u8]) -> std::io::Result<()> + Send),
@@ -1271,7 +1269,7 @@ async fn fill_sealed(
     };
     match filled {
         Ok(()) => {}
-        Err(crate::fill::FillError::Fetch(tidefell_fetch::FetchError::Unobtainable(_))) => {
+        Err(crate::fill::FillError::Fetch(shoal_fetch::FetchError::Unobtainable(_))) => {
             if source.answered() {
                 inner.unobtainable.lock().unwrap().insert((folder, content));
             }
@@ -1297,8 +1295,8 @@ async fn fill_sealed(
 /// ADR 0023). The scheduler names chunks by hash; here each chunk's ID stands in for it, as
 /// `ChunkHash(id.0)`, since only its ID is known until it is opened.
 struct SealedSource {
-    node: std::sync::Arc<tidefell_net::Node>,
-    folder: tidefell_proto::FolderId,
+    node: std::sync::Arc<shoal_net::Node>,
+    folder: shoal_proto::FolderId,
     inner: std::sync::Arc<Inner>,
     key: FolderKey,
     /// Whether any peer answered, so content none of them sent is unobtainable, rather than out
@@ -1307,8 +1305,8 @@ struct SealedSource {
 }
 
 impl SealedSource {
-    fn endpoint(peer: &DeviceId) -> std::result::Result<tidefell_net::EndpointId, String> {
-        tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())
+    fn endpoint(peer: &DeviceId) -> std::result::Result<shoal_net::EndpointId, String> {
+        shoal_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())
     }
 
     fn check_paused(&self) -> std::result::Result<(), String> {
@@ -1323,15 +1321,15 @@ impl SealedSource {
     }
 }
 
-impl tidefell_fetch::ChunkSource for SealedSource {
+impl shoal_fetch::ChunkSource for SealedSource {
     type Peer = DeviceId;
 
     async fn availability(
         &self,
         peer: &DeviceId,
-        manifest: &tidefell_proto::Manifest,
+        manifest: &shoal_proto::Manifest,
     ) -> std::result::Result<Vec<ChunkHash>, String> {
-        use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
+        use shoal_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
         self.check_paused()?;
         let endpoint = Self::endpoint(peer)?;
         let mut held = Vec::new();
@@ -1361,9 +1359,9 @@ impl tidefell_fetch::ChunkSource for SealedSource {
         &self,
         peer: &DeviceId,
         chunks: &[ChunkHash],
-    ) -> std::result::Result<tidefell_fetch::Fetched, String> {
-        use tidefell_net::{BlobKind, BlobResult};
-        use tidefell_proto::blobs2::BlobId;
+    ) -> std::result::Result<shoal_fetch::Fetched, String> {
+        use shoal_net::{BlobKind, BlobResult};
+        use shoal_proto::blobs2::BlobId;
         self.check_paused()?;
         let wanted: Vec<(BlobId, BlobKind)> = chunks
             .iter()
@@ -1376,7 +1374,7 @@ impl tidefell_fetch::ChunkSource for SealedSource {
             .map_err(|e| e.to_string())?;
         self.answered
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        let mut fetched = tidefell_fetch::Fetched::default();
+        let mut fetched = shoal_fetch::Fetched::default();
         for result in results {
             match result {
                 BlobResult::Found(id, sealed) => {
@@ -1396,7 +1394,7 @@ impl tidefell_fetch::ChunkSource for SealedSource {
 }
 
 /// The peers an encrypted `folder`'s content can come from: those it has a sync/2 session with.
-fn sealed_peers(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> Vec<DeviceId> {
+fn sealed_peers(node: &shoal_net::Node, folder: shoal_proto::FolderId) -> Vec<DeviceId> {
     node.encrypted_peers()
         .into_iter()
         .filter(|p| p.shared_folders().contains(&folder))
@@ -1405,15 +1403,12 @@ fn sealed_peers(node: &tidefell_net::Node, folder: tidefell_proto::FolderId) -> 
 }
 
 /// `list` as a manifest the scheduler takes, each chunk's ID in its hash's place.
-fn by_id(
-    content: tidefell_proto::ContentHash,
-    list: &[(ChunkId, u32)],
-) -> tidefell_proto::Manifest {
-    tidefell_proto::Manifest {
+fn by_id(content: shoal_proto::ContentHash, list: &[(ChunkId, u32)]) -> shoal_proto::Manifest {
+    shoal_proto::Manifest {
         content,
         chunks: list
             .iter()
-            .map(|(id, len)| tidefell_proto::ChunkRef {
+            .map(|(id, len)| shoal_proto::ChunkRef {
                 hash: ChunkHash(id.0),
                 len: *len,
             })
@@ -1425,13 +1420,13 @@ fn by_id(
 /// into the block store, each chunk's ID recorded before it is stored, so compaction keeps it.
 async fn fetch_sealed(
     inner: &std::sync::Arc<Inner>,
-    node: &std::sync::Arc<tidefell_net::Node>,
+    node: &std::sync::Arc<shoal_net::Node>,
     handle: &FolderHandle,
-    folder: tidefell_proto::FolderId,
-    content: tidefell_proto::ContentHash,
+    folder: shoal_proto::FolderId,
+    content: shoal_proto::ContentHash,
     key: &FolderKey,
     list: &[(ChunkId, u32)],
-) -> std::result::Result<tidefell_proto::Manifest, String> {
+) -> std::result::Result<shoal_proto::Manifest, String> {
     let source = std::sync::Arc::new(SealedSource {
         node: node.clone(),
         folder,
@@ -1447,12 +1442,12 @@ async fn fetch_sealed(
             .is_some_and(|(hash, _)| crate::content::has_chunk(inner, &state, hash))
     };
     let (manifest, peers) = (by_id(content, list), sealed_peers(node, folder));
-    let download = tidefell_fetch::fetch(
+    let download = shoal_fetch::fetch(
         source.clone(),
         &manifest,
         &peers,
         here,
-        tidefell_fetch::Config::default(),
+        shoal_fetch::Config::default(),
         |id, plaintext| {
             let hash = ChunkHash(*blake3::hash(&plaintext).as_bytes());
             // Recorded first, so compaction knows the chunk is this download's as soon as it
@@ -1474,7 +1469,7 @@ async fn fetch_sealed(
     };
     match fetched {
         Ok(_) => {}
-        Err(tidefell_fetch::FetchError::Unobtainable(_)) => {
+        Err(shoal_fetch::FetchError::Unobtainable(_)) => {
             if source.answered() {
                 inner.unobtainable.lock().unwrap().insert((folder, content));
             }
@@ -1484,16 +1479,16 @@ async fn fetch_sealed(
     }
     let manifest = {
         let state = handle.lock();
-        let chunks: Option<Vec<tidefell_proto::ChunkRef>> = list
+        let chunks: Option<Vec<shoal_proto::ChunkRef>> = list
             .iter()
             .map(|(id, len)| {
-                Some(tidefell_proto::ChunkRef {
+                Some(shoal_proto::ChunkRef {
                     hash: state.chunk_ids.get(id)?.0,
                     len: *len,
                 })
             })
             .collect();
-        tidefell_proto::Manifest {
+        shoal_proto::Manifest {
             content,
             chunks: chunks.ok_or("a chunk's ID was not recorded")?,
         }

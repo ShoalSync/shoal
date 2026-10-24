@@ -21,15 +21,15 @@ made it and every chunk is authenticated, and members check both. The
 
 ## Setting one up
 
-A storage peer is `tidefelld` with a `[storage]` section. It is its operator's device, certified
+A storage peer is `shoald` with a `[storage]` section. It is its operator's device, certified
 by the operator's own user, who is not a member of the folders it stores.
 
-1. On the server, install Tidefell and run `tidefelld init`. Note the **device ID** that
-   `tidefelld id` prints.
-2. Ask the folder's members for the folder ID and their **user IDs** (`tidefelld id` on any of
+1. On the server, install Shoal and run `shoald init`. Note the **device ID** that
+   `shoald id` prints.
+2. Ask the folder's members for the folder ID and their **user IDs** (`shoald id` on any of
    their devices).
 3. List the folder in the server's configuration, with its members and a quota, and restart
-   `tidefelld`:
+   `shoald`:
 
    ```toml
    [[storage.folders]]
@@ -43,8 +43,8 @@ by the operator's own user, who is not a member of the folders it stores.
    not found by address lookup:
 
    ```sh
-   tidefell folder store-with <folder id> <storage peer's device id>
-   tidefell peer add <storage peer's device id> --addr <host:7777>
+   shoal folder store-with <folder id> <storage peer's device id>
+   shoal peer add <storage peer's device id> --addr <host:7777>
    ```
 
    A folder made with `--storage-peer <device id>` has it from the start.
@@ -54,13 +54,13 @@ configuration. A device either syncs a folder or stores it, never both.
 
 ### On NixOS
 
-The infrastructure flake's `role-storage-peer` runs `tidefelld` as a storage peer and opens UDP
+The infrastructure flake's `role-storage-peer` runs `shoald` as a storage peer and opens UDP
 7777; stored folders are set per host:
 
 ```nix
 {
   imports = [ infra.nixosModules.role-storage-peer ];
-  services.tidefelld.settings.storage.folders = [
+  services.shoald.settings.storage.folders = [
     {
       id = "<folder id>";
       members = [ "<user id>" ];
@@ -72,9 +72,9 @@ The infrastructure flake's `role-storage-peer` runs `tidefelld` as a storage pee
 
 ## Day to day
 
-`tidefell storage` on the server lists the folders it stores: how many versions, how many
+`shoal storage` on the server lists the folders it stores: how many versions, how many
 replaced versions it keeps, its size against the quota, and how many chunks it is still fetching.
-`tidefell status` shows the same for each stored folder.
+`shoal status` shows the same for each stored folder.
 
 - It keeps the newest version of every file, and versions that later ones replaced, deletes
   included, for `retention_days`. After that it drops them, and the chunks only they used.
@@ -103,24 +103,24 @@ replaced versions it keeps, its size against the quota, and how many chunks it i
 
 When a storage peer runs short of room, the folder's members decide what it keeps first, by
 ranking files from 0 to 255 (128 unless a rule says): it fills its quota highest first, and never
-stores a file ranked 0. The rules are in the folder's `.tidefellpriorities`, which syncs to every
+stores a file ranked 0. The rules are in the folder's `.shoalpriorities`, which syncs to every
 member device like any file; a member device holding the folder's key gives the storage peer the
 priority of each file, by its ID only, never its name.
 
 ```sh
-tidefell folder priority <folder id> Photos/ 200      # keep photos first
-tidefell folder priority <folder id> '*.iso' 0        # never store disc images there
-tidefell folder priority <folder id> Photos/ --clear  # back to 128
-tidefell folder priorities <folder id>
+shoal folder priority <folder id> Photos/ 200      # keep photos first
+shoal folder priority <folder id> '*.iso' 0        # never store disc images there
+shoal folder priority <folder id> Photos/ --clear  # back to 128
+shoal folder priorities <folder id>
 ```
 
 On Windows the tray's **Storage…** window does the same, and shows what each storage peer keeps
-([Windows](windows.md#what-storage-peers-keep)). Patterns are as in `.tidefellignore`, and the
+([Windows](windows.md#what-storage-peers-keep)). Patterns are as in `.shoalignore`, and the
 last rule that matches a file wins. A device
 without the file on disk, as a partial replica may be, fetches it to read and edit it. The storage
 peer learns which files are ranked above others, though not which files they are.
 
-`tidefell folder storage <folder id>` shows, for each storage peer, what it holds and the room
+`shoal folder storage <folder id>` shows, for each storage peer, what it holds and the room
 it has left, and for each priority how much of its files it keeps:
 
 ```text
@@ -135,7 +135,7 @@ A storage peer never drops what it holds to make room: a file it already has sta
 rank falls, and one ranked higher waits. To make room, ask it to forget what is ranked low:
 
 ```sh
-tidefell folder storage-drop <folder id> <storage peer's device id> --below 100
+shoal folder storage-drop <folder id> <storage peer's device id> --below 100
 ```
 
 It asks first, and drops nothing if a file would go that has no copy known anywhere else, on

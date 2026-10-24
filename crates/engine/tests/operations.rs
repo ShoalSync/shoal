@@ -6,12 +6,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, Error, Event, FolderConfig, NewFolder, RelayConfig, ReplicaMode,
     Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::{FolderId, UserId};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::{FolderId, UserId};
 
 const FOLDER: FolderId = FolderId([7; 32]);
 

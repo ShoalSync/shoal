@@ -6,11 +6,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention, VersionKind,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([32; 32]);
 
@@ -115,7 +115,7 @@ async fn a_replaced_file_is_restored_from_its_history() {
         .unwrap();
     assert_eq!(fs::read(first).unwrap(), b"first draft");
     // History stays out of the phone gallery on Android.
-    assert!(b.root.join(".tidefell/.nomedia").exists());
+    assert!(b.root.join(".shoal/.nomedia").exists());
     // A's edit was made on disk, so a keeps nothing (ADR 0029).
     assert_eq!(engine_a.versions(FOLDER, "notes.txt").unwrap().len(), 1);
 

@@ -71,7 +71,7 @@ impl Provider {
 fn fill(
     backend: &dyn Backend,
     rel: &str,
-    content: tidefell_proto::ContentHash,
+    content: shoal_proto::ContentHash,
     total: u64,
     ticket: ticket::FetchData,
 ) {

@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{EntryId, FolderId};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{EntryId, FolderId};
 use tracing::{info, warn};
 
 use super::{Engine, FolderHandle, Inner};
@@ -153,9 +153,9 @@ pub(super) fn purge(inner: &Inner, now_ms: i64) {
 
 /// Removes chunks one folder no longer references from the block store, unless another
 /// folder still uses them.
-fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto::ChunkHash>) {
+fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = shoal_proto::ChunkHash>) {
     let handles: Vec<Arc<FolderHandle>> = inner.folders.read().unwrap().values().cloned().collect();
-    let still_used = |hash: &tidefell_proto::ChunkHash| {
+    let still_used = |hash: &shoal_proto::ChunkHash| {
         handles
             .iter()
             .any(|h| h.lock().manifests.is_referenced(hash))
@@ -174,14 +174,14 @@ fn remove_chunks(inner: &Inner, chunks: impl IntoIterator<Item = tidefell_proto:
     }
 }
 
-fn recycled_size(item: &tidefell_meta::Recycled) -> u64 {
+fn recycled_size(item: &shoal_meta::Recycled) -> u64 {
     match item.version.kind {
         EntryKind::File { size, .. } => size,
         _ => 0,
     }
 }
 
-fn recycled_info(item: &tidefell_meta::Recycled, expires_at_ms: Option<i64>) -> RecycledInfo {
+fn recycled_info(item: &shoal_meta::Recycled, expires_at_ms: Option<i64>) -> RecycledInfo {
     RecycledInfo {
         entry: item.version.entry,
         path: item.version.path.clone(),

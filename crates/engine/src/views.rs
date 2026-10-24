@@ -2,10 +2,10 @@
 
 use std::path::PathBuf;
 
-use tidefell_meta::Retention;
-use tidefell_proto::{DeviceId, EntryId, FolderId, UserId};
+use shoal_meta::Retention;
+use shoal_proto::{DeviceId, EntryId, FolderId, UserId};
 
-use tidefell_net::PathKind;
+use shoal_net::PathKind;
 
 use crate::config::{ReplicaMode, SyncOptions};
 
@@ -158,7 +158,7 @@ pub struct StorageDrop {
 }
 
 /// An encrypted folder's storage priorities (ADR 0023): the rules in its
-/// `.tidefellpriorities`, and what they give each current file and directory.
+/// `.shoalpriorities`, and what they give each current file and directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Priorities {
     /// Each rule's priority and pattern, in the file's order; the last that matches wins.
@@ -298,7 +298,7 @@ pub struct ActivityEntry {
     /// When this device applied it, in milliseconds since the Unix epoch.
     pub time_ms: i64,
     /// What happened.
-    pub kind: tidefell_meta::ChangeKind,
+    pub kind: shoal_meta::ChangeKind,
     /// The entry's path.
     pub path: String,
     /// Its path before, for a rename.
@@ -311,7 +311,7 @@ pub struct ActivityEntry {
     pub local: bool,
 }
 
-/// How a check of `tidefell doctor` came out.
+/// How a check of `shoal doctor` came out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CheckLevel {
     /// Fine.
@@ -322,7 +322,7 @@ pub enum CheckLevel {
     Failure,
 }
 
-/// One check of `tidefell doctor` (ADR 0030).
+/// One check of `shoal doctor` (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Check {
     /// What was checked: `state`, `clock`, `space`, `folder`, `filesystem`, `watch`, `relay`,
@@ -357,7 +357,7 @@ pub struct FileInfo {
     /// whose names fold together, not always the path recorded (ADR 0024, ADR 0033).
     pub path: String,
     /// The current version's content.
-    pub content: tidefell_proto::ContentHash,
+    pub content: shoal_proto::ContentHash,
     /// Size in bytes.
     pub size: u64,
     /// Modification time, milliseconds since the Unix epoch.

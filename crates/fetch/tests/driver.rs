@@ -3,8 +3,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tidefell_fetch::{fetch, ChunkSource, Config, FetchError, Fetched};
-use tidefell_proto::{ChunkHash, ChunkRef, ContentHash, Manifest};
+use shoal_fetch::{fetch, ChunkSource, Config, FetchError, Fetched};
+use shoal_proto::{ChunkHash, ChunkRef, ContentHash, Manifest};
 
 fn h(n: u8) -> ChunkHash {
     ChunkHash([n; 32])

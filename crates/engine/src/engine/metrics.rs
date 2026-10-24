@@ -1,15 +1,15 @@
-//! Prometheus metrics (ADR 0030): what `tidefelld` serves at `/metrics` when `[metrics]` is on,
+//! Prometheus metrics (ADR 0030): what `shoald` serves at `/metrics` when `[metrics]` is on,
 //! in the OpenMetrics text format. Counters are kept as things happen; everything else is read
 //! from the engine when the page is built.
 
 use std::fmt::{Display, Write as _};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tidefell_net::PathKind;
+use shoal_net::PathKind;
 
 use crate::Engine;
 
-/// Why fetching content failed, for `tidefell_fetch_failures_total`.
+/// Why fetching content failed, for `shoal_fetch_failures_total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FetchFailure {
     /// A request to a peer failed: the connection was lost, it timed out or it was refused.
@@ -105,12 +105,12 @@ impl Engine {
         let local: &[(&str, &str)] = &[("network", "local")];
         let remote: &[(&str, &str)] = &[("network", "remote")];
         page.counter(
-            "tidefell_content_sent_bytes",
+            "shoal_content_sent_bytes",
             "File content sent to peers, on the local network or not.",
             &[(local, traffic.sent_local), (remote, traffic.sent_remote)],
         );
         page.counter(
-            "tidefell_content_received_bytes",
+            "shoal_content_received_bytes",
             "File content received from peers, on the local network or not.",
             &[
                 (local, traffic.received_local),
@@ -118,12 +118,12 @@ impl Engine {
             ],
         );
         page.counter(
-            "tidefell_chunks_served",
+            "shoal_chunks_served",
             "Chunks of file content sent to peers.",
             &[(&[], traffic.chunks_served)],
         );
         page.counter(
-            "tidefell_requests",
+            "shoal_requests",
             "Requests sent to peers, by kind; each opens a stream.",
             &[
                 (&[("kind", "manifest")], traffic.manifest_requests),
@@ -134,7 +134,7 @@ impl Engine {
             ],
         );
         page.counter(
-            "tidefell_chunks_requested",
+            "shoal_chunks_requested",
             "Chunks of file content asked for in requests to peers.",
             &[(&[], traffic.chunks_requested)],
         );
@@ -148,7 +148,7 @@ impl Engine {
             .map(|(r, labels)| (&labels[..], self.inner.counters.fetch_failures(*r)))
             .collect();
         page.counter(
-            "tidefell_fetch_failures",
+            "shoal_fetch_failures",
             "Failures fetching file content, by reason.",
             &failures,
         );
@@ -160,7 +160,7 @@ impl Engine {
             .collect();
         let count = |kind| connected.iter().filter(|p| **p == Some(kind)).count();
         page.gauge(
-            "tidefell_connections",
+            "shoal_connections",
             "Peers connected now, directly or through a relay.",
             &[
                 (&[("path", "direct")], count(PathKind::Direct)),
@@ -182,17 +182,17 @@ impl Engine {
                 .collect::<Vec<_>>()
         };
         page.gauge(
-            "tidefell_folder_pending_files",
+            "shoal_folder_pending_files",
             "Files the folder is to write and does not have yet.",
             &per_folder(&|f| Some(f.pending_files.to_string())),
         );
         page.gauge(
-            "tidefell_folder_pending_bytes",
+            "shoal_folder_pending_bytes",
             "The size of the files the folder is to write and does not have yet.",
             &per_folder(&|f| Some(f.pending_bytes.to_string())),
         );
         page.gauge(
-            "tidefell_folder_scan_duration_seconds",
+            "shoal_folder_scan_duration_seconds",
             "How long the folder's last scan took.",
             &per_folder(&|f| {
                 f.last_scan_duration_ms
@@ -200,17 +200,17 @@ impl Engine {
             }),
         );
         page.gauge(
-            "tidefell_folder_recycle_bin_items",
+            "shoal_folder_recycle_bin_items",
             "Deleted files in the folder's recycle bin.",
             &per_folder(&|f| Some(f.recycle_bin.items.to_string())),
         );
         page.gauge(
-            "tidefell_folder_recycle_bin_bytes",
+            "shoal_folder_recycle_bin_bytes",
             "The size of the deleted files in the folder's recycle bin.",
             &per_folder(&|f| Some(f.recycle_bin.bytes.to_string())),
         );
         page.gauge(
-            "tidefell_folder_problems",
+            "shoal_folder_problems",
             "Paths in the folder that failed to scan, fetch, write or delete.",
             &per_folder(&|f| Some(f.problems.to_string())),
         );

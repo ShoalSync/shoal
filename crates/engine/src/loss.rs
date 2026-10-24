@@ -3,7 +3,7 @@
 //! clock (ADR 0040, "Times come from trusted clocks"), and the revoking machine previews the same
 //! judgement from its own record.
 
-use tidefell_meta::Retention;
+use shoal_meta::Retention;
 
 use crate::db::Rebuild;
 

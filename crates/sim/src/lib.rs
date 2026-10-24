@@ -120,7 +120,7 @@ pub async fn shorten(mut steps: Vec<Op>, base: &Path) -> Vec<Op> {
         while at < steps.len() {
             let end = (at + chunk).min(steps.len());
             let candidate: Vec<Op> = steps[..at].iter().chain(&steps[end..]).cloned().collect();
-            let copies = std::env::var("TIDEFELL_SIM_COPIES")
+            let copies = std::env::var("SHOAL_SIM_COPIES")
                 .ok()
                 .and_then(|c| c.parse().ok())
                 .unwrap_or(8);

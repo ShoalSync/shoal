@@ -1,7 +1,7 @@
-//! Tidefell `web` crate: web peer: accounts, sessions, embedded browser UI.
+//! Shoal `web` crate: web peer: accounts, sessions, embedded browser UI.
 //!
-//! The web peer runs inside `tidefelld` (ADR 0010). People sign in with a local account linked
-//! to a Tidefell user (ADR 0011) and see the folders that user is a member of: files, downloads
+//! The web peer runs inside `shoald` (ADR 0010). People sign in with a local account linked
+//! to a Shoal user (ADR 0011) and see the folders that user is a member of: files, downloads
 //! and the recycle bin with restore, and upload files. With [`WebConfig::share_links`] on, they
 //! can also share a file or directory through a link that needs no account (ADR 0019).
 //! Administrators also manage accounts. Pages are rendered on the server with askama; htmx is
@@ -29,7 +29,7 @@ use axum::http::{header, HeaderValue};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
-use tidefell_engine::Engine;
+use shoal_engine::Engine;
 
 pub use accounts::{Account, AccountError, AccountStore};
 
@@ -56,7 +56,7 @@ pub(crate) struct AppState {
     pub(crate) throttle: throttle::Throttle,
     /// The user key, if this server holds it: administrators can then revoke devices
     /// (ADR 0040).
-    pub(crate) user_key: Option<tidefell_engine::UserKey>,
+    pub(crate) user_key: Option<shoal_engine::UserKey>,
     pub(crate) config: WebConfig,
 }
 
@@ -92,7 +92,7 @@ pub fn router_with_user_key(
     engine: Arc<Engine>,
     data_dir: &Path,
     config: WebConfig,
-    user_key: Option<tidefell_engine::UserKey>,
+    user_key: Option<shoal_engine::UserKey>,
 ) -> Router {
     let state = Arc::new(AppState {
         engine,
@@ -192,7 +192,7 @@ pub async fn serve_with_user_key(
     engine: Arc<Engine>,
     data_dir: &Path,
     config: WebConfig,
-    user_key: Option<tidefell_engine::UserKey>,
+    user_key: Option<shoal_engine::UserKey>,
 ) -> std::io::Result<()> {
     if let Ok(addr) = listener.local_addr() {
         tracing::info!(%addr, "web peer listening");

@@ -1,4 +1,4 @@
-//! Tidefell `proto` crate: wire types, ALPN constants, signed message formats.
+//! Shoal `proto` crate: wire types, ALPN constants, signed message formats.
 //!
 //! Everything in this crate is part of the wire contract described in `specs/`. Changing the
 //! field order or types of any serialised struct or enum is a breaking change and requires a
@@ -37,22 +37,22 @@ pub use signed::{Signed, SignedKind};
 pub use version::{Causality, VersionVector, MAX_COUNTER, MAX_HOLES};
 
 /// ALPN for the version 1 sync protocol. See `specs/sync-v1.md`.
-pub const ALPN_SYNC_V1: &[u8] = b"tidefell/sync/1";
+pub const ALPN_SYNC_V1: &[u8] = b"shoal/sync/1";
 
 /// ALPN for the version 1 blob transfer protocol. See `specs/blobs-v1.md`.
-pub const ALPN_BLOBS_V1: &[u8] = b"tidefell/blobs/1";
+pub const ALPN_BLOBS_V1: &[u8] = b"shoal/blobs/1";
 
 /// ALPN for the version 2 pairing protocol. See `specs/pair-v2.md`.
-pub const ALPN_PAIR_V2: &[u8] = b"tidefell/pair/2";
+pub const ALPN_PAIR_V2: &[u8] = b"shoal/pair/2";
 
 /// ALPN for encrypted folders' metadata exchange (`specs/sync-v2.md`), alongside sync/1.
-pub const ALPN_SYNC_V2: &[u8] = b"tidefell/sync/2";
+pub const ALPN_SYNC_V2: &[u8] = b"shoal/sync/2";
 
 /// ALPN for encrypted folders' sealed chunks and list blobs (`specs/blobs-v2.md`), alongside
 /// blobs/1.
-pub const ALPN_BLOBS_V2: &[u8] = b"tidefell/blobs/2";
+pub const ALPN_BLOBS_V2: &[u8] = b"shoal/blobs/2";
 /// ALPN of the protocol members rank what a storage peer keeps with (`specs/storage-v1.md`).
-pub const ALPN_STORAGE_V1: &[u8] = b"tidefell/storage/1";
+pub const ALPN_STORAGE_V1: &[u8] = b"shoal/storage/1";
 
 /// Errors decoding or verifying wire data.
 #[derive(Debug, thiserror::Error)]

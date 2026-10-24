@@ -1,22 +1,22 @@
-//! The Storage window against a real `tidefelld` (ADR 0023's amendment, its section of
+//! The Storage window against a real `shoald` (ADR 0023's amendment, its section of
 //! 2026-10-23): it loads an encrypted folder's priorities and what its storage peers keep, and
 //! sets and removes rules through the daemon. On Windows the window itself opens, in the
-//! runner's desktop session, and with `TIDEFELL_SCREENSHOT` set the test prints a picture of it
-//! (`SHOT` lines, base64 PNG). Runs where `tidefelld` has been built; skipped otherwise.
+//! runner's desktop session, and with `SHOAL_SCREENSHOT` set the test prints a picture of it
+//! (`SHOT` lines, base64 PNG). Runs where `shoald` has been built; skipped otherwise.
 
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod common;
-use common::{set_up, tidefelld};
-use tidefell_sdk::types::{NewEncryption, NewFolder};
-use tidefell_sdk::Client;
-use tidefell_tray::storage::{pattern_for, rows, Answer, Request, Session};
-use tidefell_tray::supervisor::{supervise, Command as Ask};
+use common::{set_up, shoald};
+use shoal_sdk::types::{NewEncryption, NewFolder};
+use shoal_sdk::Client;
+use shoal_tray::storage::{pattern_for, rows, Answer, Request, Session};
+use shoal_tray::supervisor::{supervise, Command as Ask};
 use tokio::sync::mpsc as channel;
 
-fn loaded(answers: &mpsc::Receiver<Answer>) -> (Vec<tidefell_tray::storage::Row>, usize) {
+fn loaded(answers: &mpsc::Receiver<Answer>) -> (Vec<shoal_tray::storage::Row>, usize) {
     match answers.recv_timeout(Duration::from_secs(60)).unwrap() {
         Answer::Loaded(priorities, reports) => (rows(&priorities), reports.len()),
         other => panic!("not loaded: {other:?}"),
@@ -25,8 +25,8 @@ fn loaded(answers: &mpsc::Receiver<Answer>) -> (Vec<tidefell_tray::storage::Row>
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_storage_window_ranks_through_the_daemon() {
-    let Some(daemon) = tidefelld() else {
-        eprintln!("skipping: tidefelld is not built");
+    let Some(daemon) = shoald() else {
+        eprintln!("skipping: shoald is not built");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
@@ -103,7 +103,7 @@ async fn the_storage_window_ranks_through_the_daemon() {
         (200, "from the rule for /Photos/")
     );
     assert!(
-        std::fs::read_to_string(root.join(".tidefellpriorities"))
+        std::fs::read_to_string(root.join(".shoalpriorities"))
             .unwrap()
             .contains("200 /Photos/"),
         "the rule is in the folder's file"
@@ -135,9 +135,9 @@ async fn the_storage_window_ranks_through_the_daemon() {
         .unwrap();
 }
 
-/// Opens the folder's Storage window, and with `TIDEFELL_SCREENSHOT` set prints what it shows.
+/// Opens the folder's Storage window, and with `SHOAL_SCREENSHOT` set prints what it shows.
 #[cfg(windows)]
-fn show_the_window(paths: &tidefell_tray::supervisor::Paths, folder: &str) {
+fn show_the_window(paths: &shoal_tray::supervisor::Paths, folder: &str) {
     // Drawn by the window itself, so whatever covers it on the desktop is left out.
     const CAPTURE: &str = r#"
 Add-Type -AssemblyName System.Drawing
@@ -167,14 +167,14 @@ $text = [Convert]::ToBase64String($stream.ToArray())
 for ($i = 0; $i -lt $text.Length; $i += 4000) { Write-Output "SHOT storage $($text.Substring($i, [Math]::Min(4000, $text.Length - $i)))" }
 "#;
     let shown = Arc::new(Mutex::new(None));
-    tidefell_tray::ui::run_opening(paths.clone(), Some((folder, "vault")), |commands| {
+    shoal_tray::ui::run_opening(paths.clone(), Some((folder, "vault")), |commands| {
         let shown = shown.clone();
         std::thread::spawn(move || {
             let out = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", CAPTURE])
                 .output();
             *shown.lock().unwrap() = Some(out);
-            let _ = commands.blocking_send(tidefell_tray::supervisor::Command::Quit);
+            let _ = commands.blocking_send(shoal_tray::supervisor::Command::Quit);
         });
     })
     .unwrap();
@@ -185,7 +185,7 @@ for ($i = 0; $i -lt $text.Length; $i += 4000) { Write-Output "SHOT storage $($te
         "the window shows: {text}\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    if std::env::var_os("TIDEFELL_SCREENSHOT").is_some() {
+    if std::env::var_os("SHOAL_SCREENSHOT").is_some() {
         println!("{text}");
     }
 }

@@ -1,4 +1,4 @@
-//! Tidefell `identity` crate: users, devices, folder membership, signing, key formats.
+//! Shoal `identity` crate: users, devices, folder membership, signing, key formats.
 //!
 //! - A [`DeviceKey`] is generated on first run. Its public half is the device's `DeviceId`
 //!   and also its iroh endpoint ID, so the QUIC handshake authenticates the device.
@@ -9,7 +9,7 @@
 //! # Key file format (version 1)
 //!
 //! ```text
-//! tidefell-device-key 1      (or tidefell-user-key 1)
+//! shoal-device-key 1      (or shoal-user-key 1)
 //! <64 lowercase hex digits: the Ed25519 seed>
 //! ```
 //!
@@ -23,7 +23,7 @@ pub mod pairing;
 pub use certificate::{decode_certificate, encode_certificate, load_certificate, save_certificate};
 pub use keys::{DeviceKey, UserKey};
 pub use membership::{AuthError, FolderMembers};
-pub use tidefell_proto::identity::DeviceCertificate;
+pub use shoal_proto::identity::DeviceCertificate;
 
 /// Identity errors.
 #[derive(Debug, thiserror::Error)]

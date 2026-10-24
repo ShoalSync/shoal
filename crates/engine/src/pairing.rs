@@ -6,10 +6,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_net::{ApproverSession, EndpointAddr, Node, NodeConfig, RelayConfig};
-pub use tidefell_proto::pair::{FolderOffer, PairingCode};
-use tidefell_proto::DeviceId;
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_net::{ApproverSession, EndpointAddr, Node, NodeConfig, RelayConfig};
+pub use shoal_proto::pair::{FolderOffer, PairingCode};
+use shoal_proto::DeviceId;
 use tracing::info;
 
 use crate::config::PeerAddr;
@@ -17,7 +17,7 @@ use crate::engine::Inner;
 use crate::runtime::Runtime;
 use crate::{now_ms, Error, Result};
 
-pub use tidefell_net::{Paired, PairingEvent, PairingServer};
+pub use shoal_net::{Paired, PairingEvent, PairingServer};
 
 /// How long a pairing code stays valid.
 pub const CODE_TTL: Duration = Duration::from_secs(600);
@@ -92,11 +92,11 @@ impl PendingPairing {
                             .unwrap_or_else(|| state.config.id.to_string()),
                         members: state.config.members.clone(),
                         retention_days: match state.config.retention {
-                            tidefell_meta::Retention::Forever => 0,
-                            tidefell_meta::Retention::Days(d) => d,
+                            shoal_meta::Retention::Forever => 0,
+                            shoal_meta::Retention::Days(d) => d,
                         },
                         encryption: state.config.encryption.as_ref().map(|e| {
-                            tidefell_proto::pair::OfferedEncryption {
+                            shoal_proto::pair::OfferedEncryption {
                                 storage_peers: e.storage_peers.clone(),
                             }
                         }),

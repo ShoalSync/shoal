@@ -1,4 +1,4 @@
-//! Messages of the `tidefell/blobs/1` protocol. See `specs/blobs-v1.md`.
+//! Messages of the `shoal/blobs/1` protocol. See `specs/blobs-v1.md`.
 //!
 //! Variant order is part of the wire format and never changes. A new request may be appended
 //! when older peers failing to decode it is handled (ADR 0022); anything else needs a new
@@ -25,7 +25,7 @@ pub enum BlobsErrorCode {
     ProtocolViolation,
 }
 
-/// A message on a `tidefell/blobs/1` stream.
+/// A message on a `shoal/blobs/1` stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BlobsMessage {
     /// First message from the requester on each stream.

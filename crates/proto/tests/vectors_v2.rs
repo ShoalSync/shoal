@@ -8,13 +8,13 @@ use std::path::PathBuf;
 
 use ed25519_dalek::SigningKey;
 use serde_json::Value;
-use tidefell_proto::blobs2::{BlobId, BlobsErrorCode, BlobsMessage};
-use tidefell_proto::identity::{DeviceCertificate, DeviceRevocation};
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::sync2::{
+use shoal_proto::blobs2::{BlobId, BlobsErrorCode, BlobsMessage};
+use shoal_proto::identity::{DeviceCertificate, DeviceRevocation};
+use shoal_proto::sync::EntryKind;
+use shoal_proto::sync2::{
     ChunkList, EncryptionKey, ErrorCode, Item, KeyGrant, SealedPayload, SealedVersion, SyncMessage,
 };
-use tidefell_proto::{frame, ChunkId, DeviceId, EntryId, FolderId, KeyId, ListId, Signed, UserId};
+use shoal_proto::{frame, ChunkId, DeviceId, EntryId, FolderId, KeyId, ListId, Signed, UserId};
 
 fn load(file: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -84,10 +84,7 @@ fn revocation() -> Signed<DeviceRevocation> {
 }
 
 /// The sealed version the vectors carry, from encryption-v1.json's chunks and payload.
-fn sealed_version(
-    chunks: ChunkList,
-    version: tidefell_proto::VersionVector,
-) -> Signed<SealedVersion> {
+fn sealed_version(chunks: ChunkList, version: shoal_proto::VersionVector) -> Signed<SealedVersion> {
     let enc = load("encryption-v1.json");
     Signed::sign(
         &SealedVersion {
@@ -125,7 +122,7 @@ fn sync_v2_messages_encode_as_the_spec_says() {
     let grant: Signed<KeyGrant> =
         postcard::from_bytes(&bytes(&enc["grant"]["signed_key_grant"])).unwrap();
 
-    let mut with_holes: tidefell_proto::VersionVector = [(author, 1), (DeviceId([0x99; 32]), 2)]
+    let mut with_holes: shoal_proto::VersionVector = [(author, 1), (DeviceId([0x99; 32]), 2)]
         .into_iter()
         .collect();
     for n in 3..=5 {
@@ -366,7 +363,7 @@ fn v2_messages_refuse_bytes_left_over() {
 
 #[test]
 fn storage_v1_messages_encode_as_the_spec_says() {
-    use tidefell_proto::storage::{Hint, StorageErrorCode, StorageMessage};
+    use shoal_proto::storage::{Hint, StorageErrorCode, StorageMessage};
     let hint = |n: u8, priority| Hint {
         entry: EntryId([n; 16]),
         priority,

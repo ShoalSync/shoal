@@ -1,6 +1,6 @@
-//! The `tidefelld` configuration file (TOML) and its JSON Schema.
+//! The `shoald` configuration file (TOML) and its JSON Schema.
 //!
-//! The schema is published with each release (`tidefelld config schema`) so deployments can
+//! The schema is published with each release (`shoald config schema`) so deployments can
 //! validate their configuration against the exact daemon version they run.
 
 use std::net::SocketAddr;
@@ -9,13 +9,13 @@ use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use tidefell_engine::{
+use shoal_engine::{
     EngineConfig, FolderConfig, PeerAddr, RelayConfig, RelayToken, ReplicaMode, Retention,
     SyncOptions,
 };
-use tidefell_proto::{DeviceId, FolderId, UserId};
+use shoal_proto::{DeviceId, FolderId, UserId};
 
-/// Configuration for `tidefelld`.
+/// Configuration for `shoald`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -23,11 +23,11 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// Where each folder's metadata database is kept, and nothing else: `<data_dir>/metadata`
     /// by default. Point it at fast storage, such as an SSD, when `data_dir` and the folders
-    /// are on slow disks (ADR 0034). To change it on a device in use, stop `tidefelld`, move
-    /// the directory, and set this; `tidefelld` will not start without the databases.
+    /// are on slow disks (ADR 0034). To change it on a device in use, stop `shoald`, move
+    /// the directory, and set this; `shoald` will not start without the databases.
     #[serde(default)]
     pub metadata_dir: Option<PathBuf>,
-    /// Bytes to keep free on every drive Tidefell writes to: the folders', `data_dir`'s and
+    /// Bytes to keep free on every drive Shoal writes to: the folders', `data_dir`'s and
     /// `metadata_dir`'s. Below it, nothing more is downloaded there until space is back
     /// (ADR 0037). 2% of each drive, up to 1 GiB, if left out.
     #[serde(default)]
@@ -56,7 +56,7 @@ pub struct Config {
     #[serde(default)]
     pub metrics: Option<Metrics>,
     /// The issue tracker crash reports are written up for: its issues page, such as
-    /// "https://github.com/Tidefell/tidefell/issues" (ADR 0030). Reports link to
+    /// "https://github.com/ShoalSync/shoal/issues" (ADR 0030). Reports link to
     /// `<report_url>/new` pre-filled; without one they are shown to copy.
     #[serde(default)]
     pub report_url: Option<String>,
@@ -134,7 +134,7 @@ pub struct Limits {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Log {
-    /// Level filter, such as "info" or "info,tidefell_net=debug". `RUST_LOG` overrides it.
+    /// Level filter, such as "info" or "info,shoal_net=debug". `RUST_LOG` overrides it.
     #[serde(default = "default_log_level")]
     pub level: String,
     /// Write JSON lines to `<data_dir>/logs/`, rotated at 5 MiB with five files kept. By default
@@ -285,7 +285,7 @@ pub enum Direction {
     SendOnly,
 }
 
-/// What deleting a file in the folder on this device, outside Tidefell, does (ADR 0025).
+/// What deleting a file in the folder on this device, outside Shoal, does (ADR 0025).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum LocalDeletes {
@@ -301,7 +301,7 @@ pub enum LocalDeletes {
 #[serde(deny_unknown_fields)]
 pub struct Folder {
     /// Folder ID (64 hex digits), the same on every replica. Create one with
-    /// `tidefelld new-folder-id`.
+    /// `shoald new-folder-id`.
     pub id: String,
     /// Where the folder lives on this device.
     pub path: PathBuf,
@@ -322,11 +322,11 @@ pub struct Folder {
     /// `direction` and `local_deletes` counts as holding everything (ADR 0022).
     #[serde(default)]
     pub direction: Direction,
-    /// What deleting a file here, outside Tidefell, does.
+    /// What deleting a file here, outside Shoal, does.
     #[serde(default)]
     pub local_deletes: LocalDeletes,
     /// When one scan finds at least 100 files deleted, and more than this percentage of the
-    /// folder's files, the deletes wait for `tidefell folder deletes` to confirm them or bring
+    /// folder's files, the deletes wait for `shoal folder deletes` to confirm them or bring
     /// the files back (ADR 0037). 50 if left out; 0 records every delete as it is found.
     #[serde(default)]
     pub confirm_deletes_over: Option<u8>,
@@ -374,7 +374,7 @@ impl Config {
     /// Validates the configuration and converts it for the engine.
     pub fn to_engine(&self) -> Result<EngineConfig, String> {
         if let Some(url) = &self.report_url {
-            tidefell_engine::diagnostics::check_report_url(url)
+            shoal_engine::diagnostics::check_report_url(url)
                 .map_err(|e| format!("report_url: {e}"))?;
         }
         if self.network.relay.token_file.is_some() && self.network.relay.mode != RelayMode::Custom {
@@ -445,18 +445,18 @@ impl Config {
                 scan_interval: Duration::from_secs(f.scan_interval_secs.max(1)),
                 sync: SyncOptions {
                     direction: match f.direction {
-                        Direction::Both => tidefell_engine::Direction::Both,
-                        Direction::SendOnly => tidefell_engine::Direction::SendOnly,
+                        Direction::Both => shoal_engine::Direction::Both,
+                        Direction::SendOnly => shoal_engine::Direction::SendOnly,
                     },
                     local_deletes: match f.local_deletes {
-                        LocalDeletes::Everywhere => tidefell_engine::LocalDeletes::Everywhere,
-                        LocalDeletes::ThisDevice => tidefell_engine::LocalDeletes::ThisDevice,
+                        LocalDeletes::Everywhere => shoal_engine::LocalDeletes::Everywhere,
+                        LocalDeletes::ThisDevice => shoal_engine::LocalDeletes::ThisDevice,
                     },
                 },
                 confirm_deletes: match f.confirm_deletes_over {
-                    None => tidefell_engine::ConfirmDeletes::default(),
-                    Some(0) => tidefell_engine::ConfirmDeletes::Never,
-                    Some(percent @ 1..=100) => tidefell_engine::ConfirmDeletes::Over(percent),
+                    None => shoal_engine::ConfirmDeletes::default(),
+                    Some(0) => shoal_engine::ConfirmDeletes::Never,
+                    Some(percent @ 1..=100) => shoal_engine::ConfirmDeletes::Over(percent),
                     Some(_) => {
                         return Err(format!(
                             "folder {}: confirm_deletes_over is a percentage, 0 to 100",
@@ -468,7 +468,7 @@ impl Config {
                     .encryption
                     .as_ref()
                     .map(|e| {
-                        Ok::<_, String>(tidefell_engine::Encryption {
+                        Ok::<_, String>(shoal_engine::Encryption {
                             storage_peers: e
                                 .storage_peers
                                 .iter()
@@ -503,14 +503,12 @@ impl Config {
                 retention: Retention::from_days(f.retention_days),
                 scan_interval: Duration::from_secs(3600),
                 sync: SyncOptions::default(),
-                confirm_deletes: tidefell_engine::ConfirmDeletes::default(),
-                encryption: Some(tidefell_engine::Encryption {
+                confirm_deletes: shoal_engine::ConfirmDeletes::default(),
+                encryption: Some(shoal_engine::Encryption {
                     storage_peers: Vec::new(),
-                    stored: Some(tidefell_engine::Stored {
+                    stored: Some(shoal_engine::Stored {
                         quota_bytes: f.quota_bytes,
-                        priority: f
-                            .priority
-                            .unwrap_or(tidefell_engine::Stored::DEFAULT_PRIORITY),
+                        priority: f.priority.unwrap_or(shoal_engine::Stored::DEFAULT_PRIORITY),
                     }),
                 }),
             });
@@ -523,7 +521,7 @@ impl Config {
             address_lookup: self.network.address_lookup,
             local_discovery: self.network.local_discovery,
             watch: self.watch,
-            limits: tidefell_engine::Limits {
+            limits: shoal_engine::Limits {
                 upload: self.limits.upload_kib_per_sec.map(|k| k * 1024),
                 download: self.limits.download_kib_per_sec.map(|k| k * 1024),
                 limit_local: self.limits.limit_local,
@@ -582,7 +580,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    const EXAMPLE: &str = include_str!("../tidefelld.example.toml");
+    const EXAMPLE: &str = include_str!("../shoald.example.toml");
 
     #[test]
     fn example_is_valid() {
@@ -627,7 +625,7 @@ mod tests {
         let stored = engine.folders.iter().find(|f| f.is_stored()).unwrap();
         assert_eq!(
             stored.encryption.as_ref().and_then(|e| e.stored),
-            Some(tidefell_engine::Stored {
+            Some(shoal_engine::Stored {
                 quota_bytes: 1000,
                 priority: 200,
             })
@@ -651,9 +649,9 @@ mod tests {
         assert_eq!(stored.path, config.data_dir.join("stored").join(&id));
         assert_eq!(
             stored.encryption.as_ref().and_then(|e| e.stored),
-            Some(tidefell_engine::Stored {
+            Some(shoal_engine::Stored {
                 quota_bytes: 1000,
-                priority: tidefell_engine::Stored::DEFAULT_PRIORITY,
+                priority: shoal_engine::Stored::DEFAULT_PRIORITY,
             })
         );
         // A device syncs a folder or stores it, not both.
@@ -667,7 +665,7 @@ mod tests {
         let config = parse(EXAMPLE).unwrap();
         assert_eq!(
             config.to_engine().unwrap().limits,
-            tidefell_engine::Limits::default()
+            shoal_engine::Limits::default()
         );
         let text = EXAMPLE.replace(
             "[log]\n",
@@ -719,11 +717,11 @@ mod tests {
         let config = parse(&text).unwrap();
         assert_eq!(
             config.report_url.as_deref(),
-            Some("https://github.com/Tidefell/tidefell/issues")
+            Some("https://github.com/ShoalSync/shoal/issues")
         );
         assert!(config.to_engine().is_ok());
         let bad = EXAMPLE.replace(
-            "# report_url = \"https://github.com/Tidefell/tidefell/issues\"",
+            "# report_url = \"https://github.com/ShoalSync/shoal/issues\"",
             "report_url = \"github.com/issues?x=1\"",
         );
         assert!(parse(&bad).unwrap().to_engine().is_err());
@@ -739,8 +737,8 @@ mod tests {
         assert_eq!(
             engine.folders[0].sync,
             SyncOptions {
-                direction: tidefell_engine::Direction::SendOnly,
-                local_deletes: tidefell_engine::LocalDeletes::ThisDevice,
+                direction: shoal_engine::Direction::SendOnly,
+                local_deletes: shoal_engine::LocalDeletes::ThisDevice,
             }
         );
         let bad = EXAMPLE.replace(
@@ -811,8 +809,8 @@ mod tests {
         let mounts = with("/home/me/Photos").unwrap();
         assert_eq!(mounts[0].1, PathBuf::from("/home/me/Photos"));
         assert!(with("relative/dir").is_err());
-        assert!(with("/srv/tidefell/photos/inside").is_err());
-        assert!(with("/srv/tidefell").is_err());
+        assert!(with("/srv/shoal/photos/inside").is_err());
+        assert!(with("/srv/shoal").is_err());
         assert!(parse(EXAMPLE).unwrap().mounts().unwrap().is_empty());
     }
 

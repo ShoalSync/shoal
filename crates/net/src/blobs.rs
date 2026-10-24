@@ -1,13 +1,13 @@
-//! `tidefell/blobs/1`: chunk and availability requests. See `specs/blobs-v1.md`.
+//! `shoal/blobs/1`: chunk and availability requests. See `specs/blobs-v1.md`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::transport::{Conn, RecvHalf, SendHalf};
 use iroh::protocol::{AcceptError, ProtocolHandler};
-use tidefell_proto::blobs::{BlobsErrorCode, BlobsMessage, MAX_CHUNKS_PER_REQUEST};
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::{ChunkHash, ContentHash, FolderId, Signed};
+use shoal_proto::blobs::{BlobsErrorCode, BlobsMessage, MAX_CHUNKS_PER_REQUEST};
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::{ChunkHash, ContentHash, FolderId, Signed};
 
 use crate::backend::Backend;
 use crate::limits::RateLimiter;

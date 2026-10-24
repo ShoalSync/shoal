@@ -5,13 +5,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, RelayConfig};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_sdk::types::{
+use shoal_engine::{Engine, EngineConfig, RelayConfig};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_sdk::types::{
     Direction, ErrorKind, Event, Folder, FolderEncryption, KnownPeer, Limits, LocalDeletes,
     NewEncryption, NewFolder, PriorityRule, SyncOptions,
 };
-use tidefell_sdk::{Client, Error};
+use shoal_sdk::{Client, Error};
 
 async fn eventually(what: &str, mut check: impl AsyncFnMut() -> bool) {
     for _ in 0..500 {
@@ -60,7 +60,7 @@ async fn control_api_end_to_end() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_local(engine, &socket).await }
+        async move { shoal_api::serve_local(engine, &socket).await }
     });
     let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;
@@ -183,7 +183,7 @@ async fn control_api_end_to_end() {
     assert!(client.copies(&created.id, "missing.txt").await.is_err());
     // Deleted through the engine, which keeps the content for the recycle bin; a file deleted by
     // hand on the only device has no copy left to restore (ADR 0027).
-    let folder_id: tidefell_proto::FolderId = created.id.parse().unwrap();
+    let folder_id: shoal_proto::FolderId = created.id.parse().unwrap();
     engine.delete(folder_id, "a.txt").await.unwrap();
     assert!(client.files(&created.id).await.unwrap().is_empty());
     let bin = client.recycle_bin(&created.id).await.unwrap();
@@ -362,7 +362,7 @@ async fn control_api_end_to_end() {
     let checks = client.doctor().await.unwrap();
     assert!(checks
         .iter()
-        .any(|c| c.name == "folder" && c.level == tidefell_sdk::types::CheckLevel::Pass));
+        .any(|c| c.name == "folder" && c.level == shoal_sdk::types::CheckLevel::Pass));
     let folder = client
         .folders()
         .await
@@ -378,7 +378,7 @@ async fn control_api_end_to_end() {
         ErrorKind::NotFound
     );
     // A crash written up for the tracker (ADR 0030): shown to copy, or linked when configured.
-    tidefell_engine::diagnostics::write_crash(
+    shoal_engine::diagnostics::write_crash(
         &engine.data_dir().join("crashes"),
         "rust",
         "boom",
@@ -406,7 +406,7 @@ async fn control_api_end_to_end() {
     client.dismiss_crashes().await.unwrap();
 
     // The activity log (ADR 0030): everything above, newest first, all made here.
-    use tidefell_sdk::types::ChangeKind;
+    use shoal_sdk::types::ChangeKind;
     let activity = client.activity(&created.id, 100).await.unwrap();
     let oldest = activity.last().unwrap();
     assert_eq!(
@@ -501,14 +501,14 @@ async fn logging_through_the_api() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_local(engine, &socket).await }
+        async move { shoal_api::serve_local(engine, &socket).await }
     });
     let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;
 
     // Before the process starts logging there is nothing to show.
     assert_eq!(api_error(client.log_settings().await), ErrorKind::NotFound);
-    tidefell_engine::diagnostics::init_logging(&tidefell_engine::diagnostics::LogOptions {
+    shoal_engine::diagnostics::init_logging(&shoal_engine::diagnostics::LogOptions {
         data_dir: data_dir.clone(),
         level: "info".into(),
         file: Some(true),
@@ -520,15 +520,15 @@ async fn logging_through_the_api() {
     assert_eq!(settings.level, "info");
     assert_eq!(
         settings.file.as_deref(),
-        Some(data_dir.join("logs").join("tidefell.log").to_str().unwrap())
+        Some(data_dir.join("logs").join("shoal.log").to_str().unwrap())
     );
     assert_eq!(
         client
-            .set_log_level("debug,tidefell_net=trace")
+            .set_log_level("debug,shoal_net=trace")
             .await
             .unwrap()
             .level,
-        "debug,tidefell_net=trace"
+        "debug,shoal_net=trace"
     );
     assert_eq!(
         api_error(client.set_log_level("[nope").await),
@@ -536,7 +536,7 @@ async fn logging_through_the_api() {
     );
     assert_eq!(
         client.log_settings().await.unwrap().level,
-        "debug,tidefell_net=trace"
+        "debug,shoal_net=trace"
     );
 
     tracing::warn!(folder = "f1", "a warning for the problems list");
@@ -547,8 +547,7 @@ async fn logging_through_the_api() {
 
     // A crash from an earlier run is reported until it is dismissed.
     assert!(client.status().await.unwrap().crash.is_none());
-    tidefell_engine::diagnostics::write_crash(&data_dir.join("crashes"), "test", "boom", "")
-        .unwrap();
+    shoal_engine::diagnostics::write_crash(&data_dir.join("crashes"), "test", "boom", "").unwrap();
     let crash = client.status().await.unwrap().crash.unwrap();
     assert_eq!(crash.message, "boom");
     assert!(!crash.seen);
@@ -592,7 +591,7 @@ async fn encrypted_folders_through_the_api() {
     let socket = Client::socket_path(&data_dir);
     let server = tokio::spawn({
         let (engine, socket) = (engine.clone(), socket.clone());
-        async move { tidefell_api::serve_local(engine, &socket).await }
+        async move { shoal_api::serve_local(engine, &socket).await }
     });
     let client = Client::local(&socket);
     eventually("socket is up", async || client.status().await.is_ok()).await;

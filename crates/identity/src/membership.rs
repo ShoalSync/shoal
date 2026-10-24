@@ -2,8 +2,8 @@
 
 use std::collections::BTreeSet;
 
-use tidefell_proto::identity::DeviceCertificate;
-use tidefell_proto::{DeviceId, FolderId, Signed, UserId};
+use shoal_proto::identity::DeviceCertificate;
+use shoal_proto::{DeviceId, FolderId, Signed, UserId};
 
 /// Why a device was not admitted to a folder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

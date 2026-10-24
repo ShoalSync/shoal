@@ -6,9 +6,9 @@
 use std::fs;
 use std::path::Path;
 
-use tidefell_identity::DeviceKey;
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkHash, ChunkRef, ContentHash, EntryId, Manifest, VersionVector};
+use shoal_identity::DeviceKey;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ChunkHash, ChunkRef, ContentHash, EntryId, Manifest, VersionVector};
 
 use crate::config::FolderConfig;
 use crate::state::{FolderState, LocalFile};

@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::EntryId;
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::EntryId;
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 

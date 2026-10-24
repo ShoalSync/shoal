@@ -6,9 +6,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([35; 32]);
 
@@ -91,9 +91,9 @@ async fn eventually(what: &str, mut check: impl FnMut() -> bool) {
     panic!("timed out waiting for {what}");
 }
 
-/// The sidecars under `.tidefell/<dir>`, with what they say.
+/// The sidecars under `.shoal/<dir>`, with what they say.
 fn sidecars(replica: &Replica, dir: &str) -> Vec<serde_json::Value> {
-    let dir = replica.root.join(".tidefell").join(dir);
+    let dir = replica.root.join(".shoal").join(dir);
     let mut found: Vec<serde_json::Value> = fs::read_dir(&dir)
         .map(|entries| {
             entries
@@ -148,7 +148,7 @@ async fn kept_files_say_what_they_are_and_are_backfilled() {
     // Lost, as files kept by an earlier version never had them: written again on start.
     engine_b.shutdown().await;
     for sub in ["deleted", "history", "recycle"] {
-        for entry in fs::read_dir(b.root.join(".tidefell").join(sub))
+        for entry in fs::read_dir(b.root.join(".shoal").join(sub))
             .unwrap()
             .flatten()
         {

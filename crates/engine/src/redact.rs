@@ -256,7 +256,7 @@ impl Redactor {
     }
 }
 
-/// A place in Tidefell's or a library's source, as backtraces name them, or `i/o`.
+/// A place in Shoal's or a library's source, as backtraces name them, or `i/o`.
 fn is_source(token: &str) -> bool {
     let file = token.split(':').next().unwrap_or(token);
     token == "i/o"
@@ -407,11 +407,11 @@ mod tests {
     #[test]
     fn json_logs_hash_path_fields() {
         let r = redactor(&[]);
-        let line = r#"{"timestamp":"2026-09-28T02:23:10Z","level":"WARN","fields":{"message":"update failed","path":"My Taxes/2025 return.pdf","error":"denied"},"target":"tidefell_engine::materialize"}"#;
+        let line = r#"{"timestamp":"2026-09-28T02:23:10Z","level":"WARN","fields":{"message":"update failed","path":"My Taxes/2025 return.pdf","error":"denied"},"target":"shoal_engine::materialize"}"#;
         let out = r.log(line);
         assert!(!out.contains("Taxes") && !out.contains("return"), "{out}");
         assert!(
-            out.contains("tidefell_engine::materialize") && out.contains("update failed"),
+            out.contains("shoal_engine::materialize") && out.contains("update failed"),
             "{out}"
         );
     }

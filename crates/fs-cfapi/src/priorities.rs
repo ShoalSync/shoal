@@ -1,7 +1,7 @@
 //! An encrypted folder's storage priorities in Explorer (ADR 0023's section of 2026-10-23): a
 //! state of the provider's own on each file and directory not at the default, its icon in the
 //! Status column and its words in the icon's tooltip. Read only: they are set in the tray's
-//! Storage window, or in `.tidefellpriorities`.
+//! Storage window, or in `.shoalpriorities`.
 
 use std::collections::HashMap;
 use std::io;

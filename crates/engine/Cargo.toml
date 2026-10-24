@@ -1,20 +1,20 @@
 [package]
-name = "tidefell-engine"
+name = "shoal-engine"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: replica policies; wires chunker, store, meta, identity, net and fetch into the daemon core"
+description = "Shoal: replica policies; wires chunker, store, meta, identity, net and fetch into the daemon core"
 publish = false
 
 [lints]
 workspace = true
 
-# Dependency boundary: must not depend on `tidefell-fs-fuse` or `tidefell-web`.
+# Dependency boundary: must not depend on `shoal-fs-fuse` or `shoal-web`.
 # Platform front-ends depend on the engine, never the other way round.
 [features]
 # Engines on an in-memory network, for the simulation harness (ADR 0036).
-simulation = ["tidefell-net/simulation"]
+simulation = ["shoal-net/simulation"]
 # The allocator for a library loaded at run time, such as the Android app's: its thread-local
 # storage must not be the static kind, which Android refuses to load from such a library.
 dynamic-library = ["mimalloc/local_dynamic_tls"]
@@ -30,15 +30,15 @@ postcard.workspace = true
 redb.workspace = true
 serde.workspace = true
 thiserror.workspace = true
-tidefell-chunker.workspace = true
-tidefell-fetch.workspace = true
-tidefell-crypto.workspace = true
-tidefell-identity.workspace = true
-tidefell-meta.workspace = true
-tidefell-net.workspace = true
-tidefell-proto.workspace = true
+shoal-chunker.workspace = true
+shoal-fetch.workspace = true
+shoal-crypto.workspace = true
+shoal-identity.workspace = true
+shoal-meta.workspace = true
+shoal-net.workspace = true
+shoal-proto.workspace = true
 unicode-normalization.workspace = true
-tidefell-store.workspace = true
+shoal-store.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

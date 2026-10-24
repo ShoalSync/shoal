@@ -291,7 +291,7 @@ pub enum Direction {
     SendOnly,
 }
 
-/// What deleting a file on this device, outside Tidefell, does.
+/// What deleting a file on this device, outside Shoal, does.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum LocalDeletes {
@@ -573,7 +573,7 @@ pub struct StorageDropResult {
     pub at_risk: Vec<String>,
 }
 
-/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.tidefellpriorities`,
+/// An encrypted folder's storage priorities (ADR 0023): the rules in its `.shoalpriorities`,
 /// and what they give each current file and directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct Priorities {
@@ -588,7 +588,7 @@ pub struct Priorities {
 pub struct PriorityRule {
     /// 0 to 255, higher kept first; 0 never stored on a storage peer.
     pub priority: u8,
-    /// Paths it covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+    /// Paths it covers, as in `.shoalignore`, such as `Photos/` or `*.iso`.
     pub pattern: String,
 }
 
@@ -605,10 +605,10 @@ pub struct PriorityEntry {
     pub rule: Option<u32>,
 }
 
-/// Sets or removes the rule for one pattern in an encrypted folder's `.tidefellpriorities`.
+/// Sets or removes the rule for one pattern in an encrypted folder's `.shoalpriorities`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct PriorityUpdate {
-    /// Paths the rule covers, as in `.tidefellignore`, such as `Photos/` or `*.iso`.
+    /// Paths the rule covers, as in `.shoalignore`, such as `Photos/` or `*.iso`.
     pub pattern: String,
     /// 0 to 255, or none to remove the rule.
     pub priority: Option<u8>,
@@ -942,7 +942,7 @@ pub struct ApiError {
 /// How this device logs (ADR 0030).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LogSettings {
-    /// The level filter, such as `info` or `info,tidefell_net=debug`.
+    /// The level filter, such as `info` or `info,shoal_net=debug`.
     pub level: String,
     /// The file logs are written to; none when the system journal keeps them.
     #[serde(default)]
@@ -952,7 +952,7 @@ pub struct LogSettings {
 /// A new level filter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct LogLevel {
-    /// The level filter, such as `debug` or `info,tidefell_engine=debug`.
+    /// The level filter, such as `debug` or `info,shoal_engine=debug`.
     pub level: String,
 }
 

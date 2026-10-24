@@ -2,7 +2,7 @@
 //! interoperability (manifests list chunks explicitly) but would defeat deduplication against
 //! existing data, so a change here needs a deliberate decision.
 
-use tidefell_chunker::{manifest_of, Params};
+use shoal_chunker::{manifest_of, Params};
 
 /// Deterministic pseudo-random bytes (xorshift64).
 fn noise(len: usize) -> Vec<u8> {

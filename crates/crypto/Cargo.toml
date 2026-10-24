@@ -1,10 +1,10 @@
 [package]
-name = "tidefell-crypto"
+name = "shoal-crypto"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Tidefell: encrypted folders' keys, sealing and key grants (specs/encryption-v1.md)"
+description = "Shoal: encrypted folders' keys, sealing and key grants (specs/encryption-v1.md)"
 publish = false
 
 [lints]
@@ -18,7 +18,7 @@ hkdf.workspace = true
 postcard.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-tidefell-proto.workspace = true
+shoal-proto.workspace = true
 x25519-dalek.workspace = true
 
 [dev-dependencies]

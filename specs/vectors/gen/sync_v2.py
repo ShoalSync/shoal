@@ -94,7 +94,7 @@ def main():
         ("error-unknown-device", variant(5, variant(3))),
     ]
     out = {
-        "alpn": "tidefell/sync/2",
+        "alpn": "shoal/sync/2",
         "spec": "specs/sync-v2.md",
         "encoding": "varint length prefix + postcard",
         "device_key_seed": "11" * 32,

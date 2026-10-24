@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::Form;
-use tidefell_engine::{diagnostics, CheckLevel, PathKind};
+use shoal_engine::{diagnostics, CheckLevel, PathKind};
 
 use crate::format::{size, time};
 use crate::handlers::{admin_only, check_csrf, render, signed_in, CsrfForm};
@@ -25,7 +25,7 @@ pub(crate) fn unseen_crash(state: &AppState) -> Option<diagnostics::Crash> {
 
 #[derive(serde::Deserialize)]
 pub(crate) struct StatusQuery {
-    /// Run the checks of `tidefell doctor` (ADR 0030).
+    /// Run the checks of `shoal doctor` (ADR 0030).
     #[serde(default)]
     check: bool,
 }
@@ -194,9 +194,9 @@ pub(crate) struct DiagnosticsQuery {
 async fn bundle(
     state: &AppState,
     include_paths: bool,
-) -> std::io::Result<Vec<tidefell_engine::BundleEntry>> {
+) -> std::io::Result<Vec<shoal_engine::BundleEntry>> {
     let engine = state.engine.clone();
-    let options = tidefell_engine::BundleOptions {
+    let options = shoal_engine::BundleOptions {
         include_paths,
         app: None,
     };
@@ -260,14 +260,14 @@ pub(crate) async fn diagnostics_zip(
     }
     match bundle(&state, query.include_paths)
         .await
-        .and_then(|entries| tidefell_engine::zip_bundle(&entries))
+        .and_then(|entries| shoal_engine::zip_bundle(&entries))
     {
         Ok(zip) => (
             [
                 (axum::http::header::CONTENT_TYPE, "application/zip"),
                 (
                     axum::http::header::CONTENT_DISPOSITION,
-                    "attachment; filename=\"tidefell-diagnostics.zip\"",
+                    "attachment; filename=\"shoal-diagnostics.zip\"",
                 ),
             ],
             zip,
@@ -282,9 +282,9 @@ pub(crate) async fn diagnostics_zip(
 
 /// The user a device belongs to, by the certificate this server keeps for it.
 fn user_of(
-    certificates: &[tidefell_engine::Signed<tidefell_engine::DeviceCertificate>],
-    device: tidefell_engine::DeviceId,
-) -> Option<tidefell_engine::UserId> {
+    certificates: &[shoal_engine::Signed<shoal_engine::DeviceCertificate>],
+    device: shoal_engine::DeviceId,
+) -> Option<shoal_engine::UserId> {
     certificates
         .iter()
         .filter_map(|c| c.verify_certificate().ok())
@@ -306,7 +306,7 @@ pub(crate) struct RevokeQuery {
 /// What revoking `device` as lost at `lost_ms` would withdraw here, folder by folder.
 fn loss_preview(
     state: &AppState,
-    device: tidefell_engine::DeviceId,
+    device: shoal_engine::DeviceId,
     lost_ms: i64,
 ) -> pages::LossPreview {
     // A page lists this many files of a folder at most.
@@ -348,9 +348,9 @@ fn loss_preview(
 
 /// Which peer `device` names, if this server may revoke it: it holds the user key, and the
 /// device is the user's and not revoked yet.
-fn revocable(state: &AppState, device: &str) -> Option<(tidefell_engine::DeviceId, String)> {
+fn revocable(state: &AppState, device: &str) -> Option<(shoal_engine::DeviceId, String)> {
     state.user_key.as_ref()?;
-    let device: tidefell_engine::DeviceId = device.parse().ok()?;
+    let device: shoal_engine::DeviceId = device.parse().ok()?;
     if device == state.engine.id()
         || state
             .engine

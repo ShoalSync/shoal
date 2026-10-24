@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
-use tidefell_proto::storage::DEFAULT_PRIORITY;
-use tidefell_proto::sync::EntryKind;
-use tidefell_proto::{ChunkId, ContentHash, DeviceId, FolderId};
+use shoal_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
+use shoal_proto::storage::DEFAULT_PRIORITY;
+use shoal_proto::sync::EntryKind;
+use shoal_proto::{ChunkId, ContentHash, DeviceId, FolderId};
 
 use super::Engine;
 use crate::priorities::{self, Rules, PRIORITIES_FILE};
@@ -132,7 +132,7 @@ impl Engine {
         })
     }
 
-    /// Sets the rule for `pattern` in an encrypted folder's `.tidefellpriorities` to `priority`,
+    /// Sets the rule for `pattern` in an encrypted folder's `.shoalpriorities` to `priority`,
     /// or removes it for `None`, keeping the file's other lines. The file syncs as any other, so
     /// the members' other devices rank the same; where it is not on disk it is placed there
     /// first.
@@ -160,7 +160,7 @@ impl Engine {
             String::new()
         };
         let source = std::env::temp_dir().join(format!(
-            "tidefell-priorities-{:016x}",
+            "shoal-priorities-{:016x}",
             u64::from_le_bytes(crate::random_bytes()?)
         ));
         std::fs::write(&source, priorities::set_rule(&text, pattern, priority))
@@ -254,7 +254,7 @@ impl Engine {
         ids: &[ChunkId],
     ) -> std::result::Result<(StorageUsage, HashSet<ChunkId>), String> {
         let endpoint =
-            tidefell_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
+            shoal_net::EndpointId::from_bytes(peer.as_bytes()).map_err(|e| e.to_string())?;
         let (quota_bytes, held_bytes, room_bytes) = self
             .node
             .storage_usage(endpoint, folder)
@@ -327,7 +327,7 @@ impl Engine {
                 done: false,
             });
         }
-        let endpoint = tidefell_net::EndpointId::from_bytes(peer.as_bytes())
+        let endpoint = shoal_net::EndpointId::from_bytes(peer.as_bytes())
             .map_err(|e| Error::Invalid(e.to_string()))?;
         let (dropped_chunks, dropped_bytes) = self
             .node

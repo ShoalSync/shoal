@@ -3,10 +3,10 @@
 //! with what was decrypted from them.
 
 use ed25519_dalek::SigningKey;
-use tidefell_meta::{copy_id, Folder, Retention, Verified, Wire};
-use tidefell_proto::sync::{EntryKind, EntryVersion};
-use tidefell_proto::sync2::{ChunkList, SealedVersion};
-use tidefell_proto::{ContentHash, DeviceId, EntryId, FolderId, KeyId, Signed, VersionVector};
+use shoal_meta::{copy_id, Folder, Retention, Verified, Wire};
+use shoal_proto::sync::{EntryKind, EntryVersion};
+use shoal_proto::sync2::{ChunkList, SealedVersion};
+use shoal_proto::{ContentHash, DeviceId, EntryId, FolderId, KeyId, Signed, VersionVector};
 
 const FOLDER: FolderId = FolderId([1; 32]);
 const ENTRY: EntryId = EntryId([2; 16]);

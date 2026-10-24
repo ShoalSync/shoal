@@ -13,10 +13,10 @@ use std::sync::{Arc, RwLock};
 
 use redb::{Database, Durability, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
-use tidefell_meta::{Header, Journal, Recycled, Retention, Wire};
-use tidefell_proto::sync::EntryVersion;
-use tidefell_proto::sync2::SealedVersion;
-use tidefell_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
+use shoal_meta::{Header, Journal, Recycled, Retention, Wire};
+use shoal_proto::sync::EntryVersion;
+use shoal_proto::sync2::SealedVersion;
+use shoal_proto::{ChunkHash, ContentHash, DeviceId, FolderId, Manifest, Signed};
 
 use crate::tracked::Changed;
 use crate::{Error, Result};
@@ -112,7 +112,7 @@ pub(crate) struct Changes {
     /// The folder's last rebuild, if it had one.
     pub(crate) rebuild: Option<Rebuild>,
     /// What the changes did, for the activity log (ADR 0030), written once they are committed.
-    pub(crate) activity: Vec<tidefell_meta::Change>,
+    pub(crate) activity: Vec<shoal_meta::Change>,
     /// When they were applied.
     pub(crate) at_ms: i64,
     /// Rows of the chunk index to add (`true`) or remove: a chunk's hash, then a content's.
@@ -842,7 +842,7 @@ impl FolderDb {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidefell_proto::EntryId;
+    use shoal_proto::EntryId;
 
     fn header(sequence: u64) -> Header {
         Header {
@@ -967,16 +967,16 @@ mod tests {
     fn what_was_committed_is_read_back() {
         let dir = tempfile::tempdir().unwrap();
         let mut db = FolderDb::create(&dir.path().join("f.redb"), false).unwrap();
-        let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
+        let key = shoal_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let version = |n: u8| EntryVersion {
             folder: FolderId([1; 32]),
             entry: EntryId([n; 16]),
             path: format!("f{n}"),
-            kind: tidefell_proto::sync::EntryKind::Directory,
+            kind: shoal_proto::sync::EntryKind::Directory,
             modified_ms: 0,
             author: DeviceId(key.verifying_key().to_bytes()),
-            version: tidefell_proto::VersionVector::new(),
+            version: shoal_proto::VersionVector::new(),
         };
         let signed = |n: u8| Signed::sign(&version(n), key);
         db.commit(&Changes {
@@ -1026,7 +1026,7 @@ mod tests {
     fn dropped_versions_are_removed_in_one_pass() {
         let dir = tempfile::tempdir().unwrap();
         let mut db = FolderDb::create(&dir.path().join("f.redb"), false).unwrap();
-        let key = tidefell_identity::DeviceKey::from_seed([3; 32]);
+        let key = shoal_identity::DeviceKey::from_seed([3; 32]);
         let key = key.signing_key();
         let signed = |n: u64| {
             Signed::sign(
@@ -1034,10 +1034,10 @@ mod tests {
                     folder: FolderId([1; 32]),
                     entry: EntryId([0; 16]),
                     path: format!("f{n}"),
-                    kind: tidefell_proto::sync::EntryKind::Directory,
+                    kind: shoal_proto::sync::EntryKind::Directory,
                     modified_ms: 0,
                     author: DeviceId(key.verifying_key().to_bytes()),
-                    version: tidefell_proto::VersionVector::new(),
+                    version: shoal_proto::VersionVector::new(),
                 },
                 key,
             )

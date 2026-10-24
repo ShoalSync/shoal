@@ -1,6 +1,6 @@
 //! Folder roots and their marker (ADR 0037).
 //!
-//! A folder's root holds `.tidefell/folder`, naming the folder and the device that created it.
+//! A folder's root holds `.shoal/folder`, naming the folder and the device that created it.
 //! The root is created only when the folder is created or joined. Afterwards, a missing root
 //! or marker makes the folder unavailable: no scans, writes or deletes until it is back. An
 //! unmounted drive therefore looks like a folder that is away, not one whose files were all
@@ -9,14 +9,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use tidefell_proto::{DeviceId, FolderId};
+use shoal_proto::{DeviceId, FolderId};
 
 use crate::scan::RESERVED_DIR;
 use crate::state::FolderState;
 use crate::{io_err, Error, Result};
 
-const HEADER: &str =
-    "# Tidefell folder root. Removing this file stops Tidefell syncing this folder.";
+const HEADER: &str = "# Shoal folder root. Removing this file stops Shoal syncing this folder.";
 
 fn path(root: &Path) -> PathBuf {
     root.join(RESERVED_DIR).join("folder")
@@ -163,9 +162,7 @@ mod tests {
         let (folder, _) = ids();
         assert!(check(&root, folder).unwrap().contains("is missing"));
         fs::create_dir(&root).unwrap();
-        assert!(check(&root, folder)
-            .unwrap()
-            .contains("no .tidefell/folder"));
+        assert!(check(&root, folder).unwrap().contains("no .shoal/folder"));
     }
 
     #[test]

@@ -1,9 +1,9 @@
-//! Tidefell `store` crate: block store, availability bitmaps, eviction, on-disk layout.
+//! Shoal `store` crate: block store, availability bitmaps, eviction, on-disk layout.
 //!
 //! # On-disk layout (format 1)
 //!
 //! ```text
-//! <root>/FORMAT                  "tidefell-store 1\n"
+//! <root>/FORMAT                  "shoal-store 1\n"
 //! <root>/chunks/ab/cdef…         chunk bytes, named by lowercase hex BLAKE3 hash,
 //!                                split after the first two hex digits
 //! <root>/tmp/                    in-progress writes, renamed into place when complete
@@ -30,13 +30,13 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use tidefell_chunker::hash_chunk;
-use tidefell_proto::{ChunkHash, Manifest};
+use shoal_chunker::hash_chunk;
+use shoal_proto::{ChunkHash, Manifest};
 
 pub use availability::Availability;
 
 /// Contents of the `FORMAT` file for the layout this crate writes.
-pub const FORMAT: &str = "tidefell-store 1\n";
+pub const FORMAT: &str = "shoal-store 1\n";
 
 /// Block store errors.
 #[derive(Debug, thiserror::Error)]
@@ -323,7 +323,7 @@ impl BlockStore {
 
 #[cfg(test)]
 mod tests {
-    use tidefell_proto::{ChunkRef, ContentHash};
+    use shoal_proto::{ChunkRef, ContentHash};
 
     use super::*;
 
@@ -383,7 +383,7 @@ mod tests {
     #[test]
     fn refuses_unknown_format_and_foreign_directories() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join("FORMAT"), "tidefell-store 99\n").unwrap();
+        fs::write(dir.path().join("FORMAT"), "shoal-store 99\n").unwrap();
         assert!(matches!(
             BlockStore::open(dir.path()),
             Err(Error::UnsupportedFormat(_))

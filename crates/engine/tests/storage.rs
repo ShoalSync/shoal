@@ -6,9 +6,9 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::FolderId;
+use shoal_engine::{Engine, EngineConfig, FolderConfig, RelayConfig, ReplicaMode, Retention};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::FolderId;
 
 const FOLDER: FolderId = FolderId([27; 32]);
 
@@ -85,7 +85,7 @@ impl Replica {
 
     fn kept_files(&self) -> usize {
         // Not counting the sidecar each has (ADR 0034).
-        fs::read_dir(self.root.join(".tidefell").join("deleted"))
+        fs::read_dir(self.root.join(".shoal").join("deleted"))
             .map(|d| {
                 d.flatten()
                     .filter(|e| !e.file_name().to_string_lossy().ends_with(".json"))

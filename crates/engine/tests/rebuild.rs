@@ -7,11 +7,11 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use tidefell_engine::{
+use shoal_engine::{
     Engine, EngineConfig, FolderConfig, FolderState, PeerAddr, RelayConfig, ReplicaMode, Retention,
 };
-use tidefell_identity::{DeviceKey, UserKey};
-use tidefell_proto::{DeviceId, FolderId};
+use shoal_identity::{DeviceKey, UserKey};
+use shoal_proto::{DeviceId, FolderId};
 
 const DAMAGED: FolderId = FolderId([36; 32]);
 const OTHER: FolderId = FolderId([37; 32]);
@@ -128,7 +128,7 @@ fn paths(engine: &Engine, folder: FolderId) -> Vec<String> {
     paths
 }
 
-fn info(engine: &Engine, folder: FolderId) -> tidefell_engine::FolderInfo {
+fn info(engine: &Engine, folder: FolderId) -> shoal_engine::FolderInfo {
     engine
         .folders()
         .into_iter()
@@ -327,7 +327,7 @@ async fn a_rebuild_with_no_peer_ends_at_the_first_scan() {
         checks
             .iter()
             .filter(|c| c.name == "metadata")
-            .all(|c| c.level == tidefell_engine::CheckLevel::Pass),
+            .all(|c| c.level == shoal_engine::CheckLevel::Pass),
         "{checks:?}"
     );
     engine.delete(DAMAGED, "kept.txt").await.unwrap();

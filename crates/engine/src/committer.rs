@@ -92,7 +92,7 @@ impl Committer {
             fail: std::sync::atomic::AtomicBool::new(false),
         });
         let thread = std::thread::Builder::new()
-            .name("tidefell-commit".into())
+            .name("shoal-commit".into())
             .spawn({
                 let shared = shared.clone();
                 move || run(&shared)

@@ -1,11 +1,11 @@
 # Fuzz targets for what arrives from outside (ADR 0031). Built by `cargo fuzz` with the nightly
 # toolchain in `rust-toolchain.toml`; not part of the main workspace.
 [package]
-name = "tidefell-fuzz"
+name = "shoal-fuzz"
 version = "0.0.0"
 edition = "2021"
 publish = false
-license = "AGPL-3.0-only"
+license = "MIT OR Apache-2.0"
 
 [package.metadata]
 cargo-fuzz = true
@@ -13,9 +13,9 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 postcard = { version = "1", features = ["alloc"] }
-tidefell-engine = { path = "../crates/engine" }
-tidefell-meta = { path = "../crates/meta" }
-tidefell-proto = { path = "../crates/proto" }
+shoal-engine = { path = "../crates/engine" }
+shoal-meta = { path = "../crates/meta" }
+shoal-proto = { path = "../crates/proto" }
 
 [workspace]
 members = ["."]

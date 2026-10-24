@@ -2,7 +2,7 @@
 //!
 //! Error codes do not say why a name was refused: Android's shared storage reports a name FAT
 //! refuses as "permission denied". So each name is created in a directory of its own under
-//! `.tidefell/`, and counts as stored only if the directory then lists exactly that name.
+//! `.shoal/`, and counts as stored only if the directory then lists exactly that name.
 
 use std::fs;
 use std::path::Path;
@@ -100,7 +100,7 @@ impl Filesystem {
         too_long.then(|| format!("{name:?} is longer than this folder's drive allows"))
     }
 
-    /// What the probe found, in a sentence, for `tidefell doctor`.
+    /// What the probe found, in a sentence, for `shoal doctor`.
     pub fn describe(&self) -> String {
         let mut parts = vec![if self.case_insensitive {
             "names match without regard to case".to_owned()
@@ -139,7 +139,7 @@ impl Filesystem {
 }
 
 /// Probes the filesystem of the folder at `root`, in a directory of its own under
-/// `.tidefell/`. Fails if that directory cannot be made, as on a read-only drive.
+/// `.shoal/`. Fails if that directory cannot be made, as on a read-only drive.
 pub(crate) fn probe(root: &Path) -> std::io::Result<Filesystem> {
     let dir = root
         .join(RESERVED_DIR)

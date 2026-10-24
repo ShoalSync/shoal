@@ -1,5 +1,5 @@
 use proptest::prelude::*;
-use tidefell_chunker::{chunk_reader, hash_chunk, hash_content, Params};
+use shoal_chunker::{chunk_reader, hash_chunk, hash_content, Params};
 
 const SMALL: Params = Params {
     min: 64,
