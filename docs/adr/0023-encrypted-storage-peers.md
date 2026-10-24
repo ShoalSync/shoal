@@ -355,7 +355,9 @@ adding entries to Explorer's context menu.
   (`StorageProviderItemPropertyDefinition`), also when registered again in place over one
   without them, its placeholders staying as they were; `StorageProviderItemProperties.SetAsync`
   sets one on a placeholder; and Explorer shows it as an icon in the Status column, beside the
-  sync state, not as a column of its own. Not yet done.
+  sync state, not as a column of its own. Done on 2026-10-24: the state is "Storage priority";
+  0 shows a red cross, below 128 a downward triangle, above it a star, and 128, the default,
+  nothing; the tooltip says the number. A root registered before is registered again in place.
 - **Android:** a Storage screen for each encrypted folder, as the Windows window, and a priority
   picker when a file or directory is pressed and held.
 

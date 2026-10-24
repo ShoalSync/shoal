@@ -157,6 +157,10 @@ pub(crate) struct Inner {
     /// Encrypted folders' contents that a fetch found no peer has whole, though one answered:
     /// a revoked device's version of one may be withdrawn (ADR 0023).
     pub(crate) unobtainable: Mutex<HashSet<(FolderId, tidefell_proto::ContentHash)>>,
+    /// Each folder's storage priority rules last fetched here, by the version of
+    /// `.tidefellpriorities` they are, where it is not on disk: fetched once per version
+    /// (ADR 0023's amendment of 2026-10-22).
+    pub(crate) rules_fetched: Mutex<HashMap<FolderId, (tidefell_proto::ContentHash, String)>>,
     pub(crate) certificate: Signed<DeviceCertificate>,
     /// The user this device belongs to, from its certificate.
     pub(crate) user: UserId,
@@ -857,6 +861,7 @@ impl Engine {
         let inner = Arc::new(Inner {
             encryption: crate::encrypted::secret(&key),
             unobtainable: Mutex::default(),
+            rules_fetched: Mutex::default(),
             key: key.clone(),
             certificate,
             user,

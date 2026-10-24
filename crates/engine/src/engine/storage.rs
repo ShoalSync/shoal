@@ -1,7 +1,7 @@
 //! What a folder's storage peers keep, as members see it, and dropping from one when a user asks
 //! (ADR 0023's amendment of 2026-10-22).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use tidefell_proto::blobs2::{BlobId, MAX_BLOBS_PER_AVAILABILITY};
 use tidefell_proto::storage::DEFAULT_PRIORITY;
@@ -29,9 +29,25 @@ impl Engine {
     /// them on disk, as a partial replica may not; none if the folder has no such file.
     async fn rules(&self, folder: FolderId) -> Result<Option<Rules>> {
         let root = self.inner.folder(&folder)?.lock().config.path.clone();
-        Ok(priorities::text(&self.inner, &self.node, folder, None)
-            .await?
-            .map(|text| Rules::parse(&root, &text)))
+        // The cache is lent for the fetch, not held across it.
+        let mut cache: HashMap<FolderId, (ContentHash, String)> = self
+            .inner
+            .rules_fetched
+            .lock()
+            .unwrap()
+            .get(&folder)
+            .map(|cached| (folder, cached.clone()))
+            .into_iter()
+            .collect();
+        let text = priorities::text(&self.inner, &self.node, folder, Some(&mut cache)).await?;
+        if let Some(cached) = cache.remove(&folder) {
+            self.inner
+                .rules_fetched
+                .lock()
+                .unwrap()
+                .insert(folder, cached);
+        }
+        Ok(text.map(|text| Rules::parse(&root, &text)))
     }
 
     /// Fails unless this device is a member device of `folder`, an encrypted folder: the

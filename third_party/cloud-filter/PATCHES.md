@@ -207,6 +207,17 @@ get overlapped result: Some(WIN32_ERROR(5)), expected: WIN32_ERROR(996)
 Only that thread ends, not the process, but the panic is noise and the watch is gone. The fix
 ends the watch quietly in each case. Upstream: <https://github.com/ho-229/cloud-filter-rs/pull/14>.
 
+### 10. Custom item states (an addition, not a fix)
+
+A provider can define states of its own, which Explorer shows as icons in the Status column,
+with their values as tooltips: `StorageProviderItemPropertyDefinition` in the registration, and
+`StorageProviderItemProperties.SetAsync` on an item. The crate exposed neither. Added:
+`SyncRootInfo::add_item_property_definition` (and `with_`), `SyncRootInfo::
+item_property_definitions`, and `properties::set_item_properties`, with the `windows` crate's
+`implement` feature for the list it takes. Checked on Windows 11 25H2 by an unpackaged,
+unelevated process, also registering again in place over a root without the definition.
+Tidefell shows storage priorities with it (ADR 0023). Not sent upstream yet.
+
 ## Also observed, not patched
 
 These are useful context for upstream, but they are not bugs in the crate:

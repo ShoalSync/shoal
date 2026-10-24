@@ -72,6 +72,11 @@ peer never drops anything to make room; to make room for what is ranked higher, 
 priority, and **Drop…**: it asks first, and again, listing them, if a file would go that has no
 copy known anywhere else.
 
+Explorer shows the same in its **Status** column, beside each file's sync state: a star for a
+file kept first, a downward triangle for one kept after others, and a red cross for one never
+stored on storage peers; files at the default show nothing. Hover over the icon for its
+priority. Explorer only shows them; they are set in the Storage window.
+
 ## Good to know
 
 - **Windows Firewall** may ask whether to let `tidefelld` accept connections, the first time it

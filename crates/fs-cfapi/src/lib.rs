@@ -10,12 +10,14 @@
 mod backend;
 mod ops;
 mod place;
+mod priorities;
 mod provider;
 mod reconcile;
 
+use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cloud_filter::root::{
     Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
@@ -43,6 +45,8 @@ pub struct SyncRoot {
     id: SyncRootId,
     backend: Arc<dyn Backend>,
     connection: Option<Connection<provider::Provider>>,
+    /// The storage priorities Explorer shows, by path (see [`SyncRoot::show_priorities`]).
+    shown: Mutex<HashMap<String, u8>>,
 }
 
 fn sync_root_id(folder: FolderId) -> io::Result<SyncRootId> {
@@ -53,7 +57,9 @@ fn sync_root_id(folder: FolderId) -> io::Result<SyncRootId> {
 }
 
 /// Registers `root` as `folder`'s sync root, named `name` in Explorer, if it is not already,
-/// connects to it, and makes its placeholders match the folder.
+/// connects to it, and makes its placeholders match the folder. A root registered before it
+/// defined the storage priority state is registered again in place, which leaves its
+/// placeholders as they are.
 pub fn connect<B: Backend>(
     backend: B,
     root: &Path,
@@ -65,7 +71,13 @@ pub fn connect<B: Backend>(
     let alone = provider::TRANSFERS
         .write()
         .unwrap_or_else(|e| e.into_inner());
-    if !id.is_registered().map_err(io::Error::other)? {
+    let registered = id.is_registered().map_err(io::Error::other)?
+        && id.info().is_ok_and(|info| {
+            info.item_property_definitions()
+                .iter()
+                .any(|(property, _)| *property == priorities::PROPERTY)
+        });
+    if !registered {
         id.register(
             SyncRootInfo::default()
                 .with_display_name(name)
@@ -75,6 +87,8 @@ pub fn connect<B: Backend>(
                 .with_icon("%SystemRoot%\\system32\\imageres.dll,0")
                 .with_version(env!("CARGO_PKG_VERSION"))
                 .with_path(root)
+                .map_err(io::Error::other)?
+                .with_item_property_definition(priorities::PROPERTY, priorities::NAME)
                 .map_err(io::Error::other)?,
         )
         .map_err(io::Error::other)?;
@@ -92,6 +106,7 @@ pub fn connect<B: Backend>(
         id,
         backend,
         connection: Some(connection),
+        shown: Mutex::default(),
     };
     // Deletes made while disconnected are found by the engine's scan, before anything is made
     // again.
@@ -109,6 +124,15 @@ impl SyncRoot {
     /// Makes the placeholders match the folder again, as after any change to it.
     pub fn changed(&self) -> io::Result<Reconciled> {
         reconcile::reconcile(&self.root, &*self.backend)
+    }
+
+    /// Shows an encrypted folder's storage priorities, each folder-relative path's, in
+    /// Explorer's Status column: an icon for each file and directory not at the default, 128.
+    /// Only those changed since the last call are set again. Blocks, so call it off the
+    /// engine's runtime threads. Returns how many it set.
+    pub fn show_priorities(&self, priorities: &[(String, u8)]) -> io::Result<usize> {
+        let mut shown = self.shown.lock().unwrap_or_else(|e| e.into_inner());
+        priorities::show(&self.root, priorities, &mut shown)
     }
 
     /// Disconnects, keeping the registration, and returns once disconnected. Blocks, so call it

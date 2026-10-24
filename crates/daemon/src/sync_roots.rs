@@ -112,7 +112,7 @@ async fn run(
             roots.update(&engine).await;
         }
         for folder in batch.changed {
-            roots.changed(folder).await;
+            roots.changed(&engine, folder).await;
         }
     }
     for (folder, root) in roots.connected.drain() {
@@ -192,14 +192,45 @@ impl Roots {
         }
     }
 
-    /// Makes `folder`'s placeholders match it again, if it is connected.
-    async fn changed(&mut self, folder: FolderId) {
+    /// Makes `folder`'s placeholders match it again, if it is connected, and shows its storage
+    /// priorities in Explorer if it is an encrypted folder with storage peers (ADR 0023).
+    async fn changed(&mut self, engine: &Arc<Engine>, folder: FolderId) {
+        if !self.connected.contains_key(&folder) {
+            return;
+        }
+        let ranked = engine.folders().into_iter().any(|f| {
+            f.id == folder
+                && f.encryption
+                    .as_ref()
+                    .is_some_and(|e| e.stored.is_none() && !e.storage_peers.is_empty())
+        });
+        let priorities: Option<Vec<(String, u8)>> = if ranked {
+            match engine.priorities(folder).await {
+                Ok(p) => Some(
+                    p.entries
+                        .into_iter()
+                        .map(|e| (e.path, e.priority))
+                        .collect(),
+                ),
+                Err(e) => {
+                    tracing::debug!(folder = %folder, error = %e, "cannot rank the folder's files yet");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         let Some(root) = self.connected.remove(&folder) else {
             return;
         };
         // Moved to the blocking thread and back: the root is only ever this task's.
         match tokio::task::spawn_blocking(move || {
             let result = root.changed();
+            if let Some(priorities) = priorities {
+                if let Err(e) = root.show_priorities(&priorities) {
+                    tracing::debug!(error = %e, "cannot show the storage priorities");
+                }
+            }
             (root, result)
         })
         .await

@@ -428,3 +428,97 @@ async fn a_delete_while_away_and_a_version_changed_before_reading() {
     let root = Arc::try_unwrap(root).ok().unwrap();
     blocking(move || root.unregister().unwrap()).await;
 }
+
+/// What Explorer has as the custom states of `path`, as text: their values, read back through
+/// the shell as Explorer reads them. The property is a serialized blob in which a string may
+/// start at an odd offset, so it is decoded at both.
+fn custom_states(path: &Path) -> String {
+    let script = format!(
+        "$i = (New-Object -ComObject Shell.Application).Namespace('{}').ParseName('{}'); \
+         $v = $i.ExtendedProperty('System.StorageProviderCustomStates'); \
+         if ($v) {{ $b = [byte[]]$v; [Text.Encoding]::Unicode.GetString($b) + '|' + \
+         [Text.Encoding]::Unicode.GetString($b, 1, $b.Length - 1) }}",
+        path.parent().unwrap().display(),
+        path.file_name().unwrap().to_string_lossy()
+    );
+    let out = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).replace('\0', "")
+}
+
+/// An encrypted folder's storage priorities show in Explorer's Status column, as states of the
+/// provider's own on each file not at the default, and go when a file is back at it (ADR 0023's
+/// section of 2026-10-23).
+#[tokio::test(flavor = "multi_thread")]
+async fn storage_priorities_show_in_explorer() {
+    let p = pair(160);
+    p.nas.write("kept.txt", b"kept first");
+    p.nas.write("never.iso", b"never stored");
+    p.nas.write("plain.txt", b"at the default");
+    let (nas, laptop) = (p.nas.start().await, p.laptop.start().await);
+    nas.scan(p.nas.folder).await.unwrap();
+    laptop.connect(nas.addr()).await.unwrap();
+    let folder = p.laptop.folder;
+    eventually("the laptop lists the files", || {
+        laptop.files(folder).unwrap().len() == 3
+    })
+    .await;
+    let root = Arc::new(connect_root(&laptop, &p.laptop).await);
+
+    let show = |priorities: Vec<(&str, u8)>| {
+        let root = root.clone();
+        let priorities: Vec<(String, u8)> = priorities
+            .into_iter()
+            .map(|(p, n)| (p.to_owned(), n))
+            .collect();
+        blocking(move || root.show_priorities(&priorities).unwrap())
+    };
+    let set = show(vec![
+        ("kept.txt", 200),
+        ("never.iso", 0),
+        ("plain.txt", 128),
+    ])
+    .await;
+    assert_eq!(set, 2, "only those not at the default");
+    let (kept, never, plain) = (
+        p.laptop.abs("kept.txt"),
+        p.laptop.abs("never.iso"),
+        p.laptop.abs("plain.txt"),
+    );
+    let states = blocking({
+        let (kept, never, plain) = (kept.clone(), never.clone(), plain.clone());
+        move || {
+            (
+                custom_states(&kept),
+                custom_states(&never),
+                custom_states(&plain),
+            )
+        }
+    })
+    .await;
+    assert!(
+        states.0.contains("Storage priority 200: kept first"),
+        "{states:?}"
+    );
+    assert!(
+        states.1.contains("Storage priority 0: never stored"),
+        "{states:?}"
+    );
+    assert!(!states.2.contains("Storage priority"), "{states:?}");
+
+    // Unchanged: nothing set again. Back at the default: cleared.
+    let set = show(vec![
+        ("kept.txt", 128),
+        ("never.iso", 0),
+        ("plain.txt", 128),
+    ])
+    .await;
+    assert_eq!(set, 1);
+    let kept_now = blocking(move || custom_states(&kept)).await;
+    assert!(!kept_now.contains("Storage priority"), "{kept_now:?}");
+
+    let root = Arc::try_unwrap(root).ok().unwrap();
+    blocking(move || root.unregister().unwrap()).await;
+}
