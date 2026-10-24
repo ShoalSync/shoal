@@ -38,7 +38,6 @@
 - [Implementation plan](plan.md)
 - [Repository map](repos.md)
 - [Contributing](project/contributing.md)
-- [The release runner](project/release-runner.md)
 - [Architecture decisions](adr/README.md)
   - [0001: CONVENTIONS.md in every repository](adr/0001-conventions-file.md)
   - [0002: `org.tidefell` namespace](adr/0002-namespace.md)
@@ -84,3 +83,4 @@
   - [0042: The Windows client](adr/0042-windows-client.md)
   - [0043: Rename to Shoal](adr/0043-rename-to-shoal.md)
   - [0044: Licence: MIT OR Apache-2.0](adr/0044-licence-mit-or-apache.md)
+  - [0045: GitHub hosting and hosted CI](adr/0045-github-hosting.md)

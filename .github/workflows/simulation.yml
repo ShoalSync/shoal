@@ -1,8 +1,9 @@
 name: Simulation
 
 # 10,000 simulation seeds each night on main (ADR 0036), a new range each night, so the seeds
-# pull requests run are not the only ones tried. A failing seed is printed with the fewest steps
-# found that still fail, to keep in crates/sim/tests/regressions/.
+# pull requests run are not the only ones tried. Split over ten runners of 1,000 seeds each. A
+# failing seed is printed with the fewest steps found that still fail, to keep in
+# crates/sim/tests/regressions/.
 on:
   schedule:
     - cron: "37 1 * * *"
@@ -13,9 +14,13 @@ permissions:
 
 jobs:
   simulation:
-    name: 10,000 seeds
-    runs-on: ephemeral
-    timeout-minutes: 180
+    name: Seeds (shard ${{ matrix.shard }} of 10)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -27,15 +32,16 @@ jobs:
         run: cargo test --locked --release --package shoal-sim --test seeds --no-run
       - name: Run
         env:
-          SHOAL_SIM_SEEDS: "10000"
-          SHOAL_SIM_JOBS: "8"
+          SHARD: ${{ matrix.shard }}
+          SHOAL_SIM_SEEDS: "1000"
+          SHOAL_SIM_JOBS: "4"
         run: |
           export SHOAL_SIM_DIR="$RUNNER_TEMP/simulation"
           mkdir -p "$SHOAL_SIM_DIR"
-          # Days since the epoch pick the range, so each night tries seeds not tried before;
-          # dividing first is the point.
+          # Days since the epoch pick the night's 10,000 seeds, so each night tries seeds not
+          # tried before; dividing first is the point. The shard picks its 1,000 of them.
           # shellcheck disable=SC2017
-          export SHOAL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 ))
+          export SHOAL_SIM_FIRST=$(( $(date +%s) / 86400 * 10000 + SHARD * SHOAL_SIM_SEEDS ))
           echo "seeds $SHOAL_SIM_FIRST to $((SHOAL_SIM_FIRST + SHOAL_SIM_SEEDS - 1))" \
             | tee -a "$GITHUB_STEP_SUMMARY"
           cargo test --locked --release --package shoal-sim --test seeds seeds_pass -- --nocapture

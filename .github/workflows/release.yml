@@ -1,11 +1,11 @@
 name: Release
 
 # A release is a `vX.Y.Z` tag on main whose commit passed CI. Every artifact carries the
-# workspace version (ADR 0005). Every job runs on the release runner, which runs nothing else
-# (Phase 5c step 5; see docs/project/release-runner.md), with one pinned toolchain. Releases are
-# Forgejo releases (ADR 0041): binaries, specs and schemas, each with a SHA-256 file and a cosign
-# signature made with the project's release key (cosign.pub). A tag that already exists can be
-# released again from the current workflow with a manual run.
+# workspace version (ADR 0005). Every job runs on a fresh GitHub-hosted runner with one pinned
+# toolchain and no cache (ADR 0045). Releases are GitHub releases: binaries, the Windows
+# installer, specs and schemas, and the third-party licences, each with a SHA-256 file and a
+# cosign signature made without a key, through Sigstore, by this workflow's identity. A tag that
+# already exists can be released again from the current workflow with a manual run on main.
 on:
   push:
     tags: ["v*"]
@@ -28,9 +28,10 @@ env:
 jobs:
   version:
     name: Check the tag is on main, passed CI and matches the workspace version
-    runs-on: release
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -48,28 +49,23 @@ jobs:
             exit 1
           fi
       - name: Its commit passed CI
-        # Every CI and Nix job's commit status on the tag's commit succeeded.
+        # The latest run of each of the CI and Docs workflows for the push of the tag's commit
+        # to main succeeded.
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           sha=$(git rev-parse "$TAG^{commit}")
-          python3 - "$sha" <<'PY'
-          import json, os, sys, urllib.request
-          sha = sys.argv[1]
-          url = f"{os.environ['GITHUB_SERVER_URL']}/api/v1/repos/{os.environ['GITHUB_REPOSITORY']}/commits/{sha}/status"
-          request = urllib.request.Request(url, headers={"Authorization": f"token {os.environ['TOKEN']}"})
-          with urllib.request.urlopen(request) as response:
-              statuses = json.load(response)["statuses"]
-          # CI and Nix only: this release run posts statuses of its own on the same commit.
-          statuses = [s for s in statuses if s["context"].split(" / ")[0] in {"CI", "Nix"}]
-          passed = {s["context"].split(" / ")[0] for s in statuses if s["status"] == "success"}
-          failed = sorted(s["context"] for s in statuses if s["status"] != "success")
-          missing = {"CI", "Nix"} - passed
-          if missing or failed:
-              print(f"::error::commit {sha} has not passed: missing {sorted(missing)}, not passed {failed}")
-              sys.exit(1)
-          print(f"passed: {', '.join(sorted(passed))}")
-          PY
+          failed=0
+          for workflow in CI Docs; do
+            conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&event=push&per_page=100" \
+              --jq "[.workflow_runs[] | select(.name == \"$workflow\")] | sort_by(.created_at) | last | .conclusion // \"missing\"")
+            echo "$workflow: $conclusion"
+            if [ "$conclusion" != success ]; then
+              echo "::error::commit $sha has not passed $workflow ($conclusion)"
+              failed=1
+            fi
+          done
+          exit "$failed"
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
@@ -85,14 +81,15 @@ jobs:
   binaries:
     name: Binaries (${{ matrix.target }})
     needs: version
-    runs-on: release
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
-            cross: aarch64-linux-gnu
+            os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -102,14 +99,6 @@ jobs:
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           targets: ${{ matrix.target }}
-      - name: Cross toolchain
-        if: matrix.cross
-        run: |
-          # Installed on the release runner's host: its user has no sudo.
-          command -v ${{ matrix.cross }}-gcc
-          env=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
-          echo "CARGO_TARGET_${env}_LINKER=${{ matrix.cross }}-gcc" >> "$GITHUB_ENV"
-          echo "CC_$(echo "${{ matrix.target }}" | tr - _)=${{ matrix.cross }}-gcc" >> "$GITHUB_ENV"
       - name: Build
         run: >
           cargo build --release --locked --target ${{ matrix.target }}
@@ -122,20 +111,19 @@ jobs:
           cp target/${{ matrix.target }}/release/{shoal,shoald} README.md LICENSE-MIT LICENSE-APACHE "$name/"
           tar -czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: binaries-${{ matrix.target }}
           path: shoal-*.tar.gz*
 
-  # Windows' programs, built for want of a Windows release runner on the CI runner (ADR 0042's
-  # amendment), in a target directory of their own, never the one pull requests' runs keep. They
-  # are packaged and signed on the release runner.
   windows:
     name: Binaries (x86_64-pc-windows-msvc)
     needs: version
-    runs-on: windows
+    runs-on: windows-2025
     steps:
+      - name: Long paths for git
+        run: git config --global core.longpaths true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -147,14 +135,12 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          export CARGO_TARGET_DIR="$RUNNER_TEMP/release-target"
-          rm -rf "$CARGO_TARGET_DIR"
           cargo build --release --locked --target x86_64-pc-windows-msvc \
             --package shoal-daemon --package shoal-cli --package shoal-tray
           mkdir windows-bin
-          cp "$CARGO_TARGET_DIR"/x86_64-pc-windows-msvc/release/{shoal,shoald,shoal-tray}.exe \
+          cp target/x86_64-pc-windows-msvc/release/{shoal,shoald,shoal-tray}.exe \
             README.md LICENSE-MIT LICENSE-APACHE windows-bin/
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: windows-bin
@@ -163,13 +149,14 @@ jobs:
   windows-packages:
     name: Windows installer and zip
     needs: [version, windows]
-    runs-on: release
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           ref: ${{ env.TAG }}
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: windows-bin
           path: windows-bin
@@ -185,16 +172,16 @@ jobs:
             "out/shoal-$version-x86_64.msi"
           cd out
           for asset in *; do sha256sum "$asset" > "$asset.sha256"; done
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: windows
           path: out
 
   specs:
-    name: Specs, vectors and schemas
+    name: Specs, schemas and licences
     needs: version
-    runs-on: release
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -203,6 +190,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+      - uses: taiki-e/install-action@f7e5d7c961414b23f5b25b2da9294395d08513ad # v2.87.26
+        with:
+          tool: cargo-about
       - name: Package
         run: |
           name="shoal-specs-${{ needs.version.outputs.version }}"
@@ -214,7 +204,10 @@ jobs:
           api="shoal-api-${{ needs.version.outputs.version }}.openapi.json"
           cargo run --locked --quiet --package shoal-daemon -- api schema > "$api"
           sha256sum "$api" > "$api.sha256"
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+          # Every dependency's licence and notice (about.toml).
+          cargo about generate --locked --fail about.hbs > THIRD-PARTY-LICENSES.html
+          sha256sum THIRD-PARTY-LICENSES.html > THIRD-PARTY-LICENSES.html.sha256
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           retention-days: 1
           name: specs
@@ -222,66 +215,52 @@ jobs:
             shoal-specs-*.tar.gz*
             shoald-config-*.schema.json*
             shoal-api-*.openapi.json*
+            THIRD-PARTY-LICENSES.html*
 
   publish:
     name: Publish the release
     needs: [version, binaries, specs, windows-packages]
-    runs-on: release
-    # Only this job writes: it creates the release and uploads its assets.
+    runs-on: ubuntu-24.04
+    # The protected environment: only tags and main may deploy to it.
+    environment: release
+    # Only this job writes: it creates the release, uploads its assets, and signs them with
+    # this run's identity.
     permissions:
       contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
           ref: ${{ env.TAG }}
           fetch-depth: 0
-      - uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2, the newest Forgejo supports
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
       - name: Leave out the unpackaged Windows build
         run: rm -rf dist/windows-bin
-      # Each asset gets a .sigstore.json bundle, signed with the release key held in the
-      # repository's secrets and checked against cosign.pub, so a key that does not match the
-      # published one fails the release. Not recorded in Sigstore's public log: the repository is
-      # private, and the log would publish every asset's hash. cosign is the flake's Nixpkgs'.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # Each asset gets a .sigstore.json bundle: a short-lived Sigstore certificate for this
+      # workflow's identity (GitHub's OIDC token), recorded in Sigstore's public log. Checked at
+      # once against the identity users check (docs/guide/install.md), so a mismatch fails here.
       - name: Sign the assets
-        env:
-          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
-          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          cosign="$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#cosign)/bin/cosign"
+          identity="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
           find dist -type f ! -name '*.sha256' -print0 | while IFS= read -r -d '' asset; do
-            "$cosign" sign-blob --yes --key env://COSIGN_PRIVATE_KEY \
-              --use-signing-config=false --tlog-upload=false \
-              --bundle "$asset.sigstore.json" "$asset"
-            "$cosign" verify-blob --key cosign.pub --insecure-ignore-tlog \
-              --bundle "$asset.sigstore.json" "$asset"
+            cosign sign-blob --yes --bundle "$asset.sigstore.json" "$asset"
+            cosign verify-blob --bundle "$asset.sigstore.json" \
+              --certificate-identity "$identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com "$asset"
           done
       - name: Create the release and upload its assets
         env:
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           # The notes: the commits since the previous release tag.
           previous=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
-          notes=$(git log --format='- %s' ${previous:+"$previous.."}"$TAG")
-          python3 - "$notes" <<'PY'
-          import json, os, pathlib, sys, urllib.request, uuid
-          api = f"{os.environ['GITHUB_SERVER_URL']}/api/v1/repos/{os.environ['GITHUB_REPOSITORY']}"
-          auth = {"Authorization": f"token {os.environ['TOKEN']}"}
-          tag = os.environ["TAG"]
-          body = json.dumps({"tag_name": tag, "name": tag, "body": sys.argv[1], "prerelease": "-" in tag}).encode()
-          request = urllib.request.Request(f"{api}/releases", data=body, method="POST",
-                                           headers={**auth, "Content-Type": "application/json"})
-          with urllib.request.urlopen(request) as response:
-              release = json.load(response)["id"]
-          for asset in sorted(p for p in pathlib.Path("dist").rglob("*") if p.is_file()):
-              boundary = uuid.uuid4().hex
-              data = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"attachment\"; "
-                      f"filename=\"{asset.name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").encode()
-              data += asset.read_bytes() + f"\r\n--{boundary}--\r\n".encode()
-              request = urllib.request.Request(f"{api}/releases/{release}/assets?name={asset.name}", data=data,
-                                               method="POST", headers={**auth, "Content-Type": f"multipart/form-data; boundary={boundary}"})
-              urllib.request.urlopen(request).close()
-              print(f"uploaded {asset.name}")
-          PY
+          git log --format='- %s' ${previous:+"$previous.."}"$TAG" > "$RUNNER_TEMP/notes.md"
+          prerelease=()
+          case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
+          find dist -type f -print0 | xargs -0 gh release create "$TAG" --verify-tag \
+            --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md" "${prerelease[@]}"

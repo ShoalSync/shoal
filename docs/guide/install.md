@@ -26,29 +26,35 @@ sudo install shoal-$version-$target/shoal shoal-$version-$target/shoald /usr/loc
 
 ### Checking who built it
 
-Every asset is signed when it is released, with the project's release key: its public half is
-[`cosign.pub`](https://github.com/ShoalSync/shoal/blob/main/cosign.pub) in the repository.
+Every asset is signed when it is released, without a key, by the release workflow: each
+`.sigstore.json` bundle holds a certificate Sigstore issued to that workflow's identity, and the
+signature is recorded in Sigstore's public log.
 [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) checks that an asset
-was signed with it:
+was signed by the release workflow run for its tag:
 
 ```sh
 curl -LO https://github.com/ShoalSync/shoal/releases/download/v$version/shoal-$version-$target.tar.gz.sigstore.json
+cosign verify-blob shoal-$version-$target.tar.gz \
+  --bundle shoal-$version-$target.tar.gz.sigstore.json \
+  --certificate-identity "https://github.com/ShoalSync/shoal/.github/workflows/release.yml@refs/tags/v$version" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+A release made again by hand, from `main`, is signed as
+`https://github.com/ShoalSync/shoal/.github/workflows/release.yml@refs/heads/main`; check it with
+that identity instead.
+
+Releases 0.22.0 to 0.23.1 were signed with the project's release key, whose public half is
+[`cosign.pub`](https://github.com/ShoalSync/shoal/blob/main/cosign.pub) in the repository, and
+are checked with it:
+
+```sh
 cosign verify-blob shoal-$version-$target.tar.gz --key cosign.pub \
   --bundle shoal-$version-$target.tar.gz.sigstore.json --insecure-ignore-tlog
 ```
 
-The signatures are not recorded in Sigstore's public log, so cosign warns that it skipped the
-log; the key is what it checks.
-
-Releases 0.20 and 0.21 were signed without a key, by GitHub's release workflow, through Sigstore,
-and are checked by the workflow that signed them:
-
-```sh
-cosign verify-blob shoal-$version-$target.tar.gz \
-  --bundle shoal-$version-$target.tar.gz.sigstore.json \
-  --certificate-identity-regexp '^https://github\.com/Shoal/shoal/\.github/workflows/release\.yml@refs/(tags/v.+|heads/main)$' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
+Their signatures are not in Sigstore's public log, so cosign warns that it skipped the log; the
+key is what it checks.
 
 A checksum shows a download arrived whole; this shows it is what the release built.
 

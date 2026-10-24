@@ -5,7 +5,7 @@ maintainable, and the phased delivery plan. It is the canonical reference for cr
 
 ## Core rule
 
-**The monorepo (`shoal/shoal`) is the only producer of shared definitions. The other
+**The monorepo (`ShoalSync/shoal`) is the only producer of shared definitions. The other
 repositories are consumers that pin a single released version and never hand-copy anything.**
 
 Sharing happens through released artifacts with generated bindings, not through shared source,
@@ -16,15 +16,15 @@ contributors remembering it.
 
 | Repository | Owns | Consumes |
 | --- | --- | --- |
-| `shoal/shoal` | All Rust code, wire specs, test vectors, glossary, ADRs, user and admin docs | Nothing from the other repos |
-| `shoal/android` | Kotlin + Compose app, foreground service, `DocumentsProvider` | `org.shoalsync:shoal-ffi` AAR |
-| `shoal/infra` | Nix deployment of relay, DNS, hosted web peer, full-replica storage | Release binaries, config JSON Schema |
-| `shoal/site` | Website, blog, docs hosting | Built mdBook and specs from a release |
+| `ShoalSync/shoal` | All Rust code, wire specs, test vectors, glossary, ADRs, user and admin docs | Nothing from the other repos |
+| `ShoalSync/android` | Kotlin + Compose app, foreground service, `DocumentsProvider` | `org.shoalsync:shoal-ffi` AAR |
+| `ShoalSync/infra` | Nix deployment of relay, DNS, hosted web peer, full-replica storage | Release binaries, config JSON Schema |
+| `ShoalSync/site` | Website, blog, docs hosting | Built mdBook and specs from a release |
 
 ## How the repositories reference each other
 
 ```
-shoal/shoal (source of truth)
+ShoalSync/shoal (source of truth)
 ├─ crates/*   code
 ├─ specs/     wire protocol per ALPN + test vectors
 ├─ docs/      mdBook, ADRs, glossary, repo map
@@ -192,12 +192,12 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - Phase 1 is complete and released as `v0.1.0`.
 - Phase 2 steps 1–4 are implemented: identity, `net`, `fetch`, `engine` and `shoald`, with
   an end-to-end test of two daemon processes syncing a folder.
-- Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `shoal/infra`
+- Phase 2 is complete: the monorepo side is released as `v0.2.0`, and `ShoalSync/infra`
   pins it with relay, DNS and full-replica roles.
 - Phase 3 steps 1–6 are implemented: the `shoal` CLI, the web peer, and the book built by
   each release for the site to serve. It completes with the `v0.3.0` release and the site pin.
-- Phase 3 is complete: released as `v0.3.0`, and `shoal/site` serves its docs.
-- Phase 4 is complete: released as `v0.4.0`. `shoal/android` pins it and runs the exit
+- Phase 3 is complete: released as `v0.3.0`, and `ShoalSync/site` serves its docs.
+- Phase 4 is complete: released as `v0.4.0`. `ShoalSync/android` pins it and runs the exit
   criterion on an emulator in CI.
 - Phase 4b is complete: released as `v0.5.0`. A Linux partial replica mounts a folder with
   FUSE, and the exit criterion runs in CI against a real mount.
@@ -206,30 +206,30 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   emptying the recycle bin, in the engine, API, sdk and CLI.
 - Phase 5 step 3 is implemented: web uploads and share links (expiry, password, download
   limit, revocation), off unless `[web] share_links = true`.
-- Phase 5 step 4 is implemented: `shoal/infra` has `role-always-on` and a three-VM test of
+- Phase 5 step 4 is implemented: `ShoalSync/infra` has `role-always-on` and a three-VM test of
   the exit criterion, and the guide explains running an always-on peer.
 - Phase 5 step 5 is implemented: the Android bindings expose retention, the recycle-bin
   summary, emptying the recycle bin and deleting files. Camera-roll backup follows `v0.6.0`.
 - Phase 5 step 6 is implemented: the README and the book describe self-run always-on peers,
   uploads, share links and per-device retention; no page suggests a project-run service.
-- Phase 5 is complete: released as `v0.6.0`; `shoal/infra` and `shoal/site` pin it.
-  `shoal/android` builds against it with camera-roll backup and retention and recycle-bin
+- Phase 5 is complete: released as `v0.6.0`; `ShoalSync/infra` and `ShoalSync/site` pin it.
+  `ShoalSync/android` builds against it with camera-roll backup and retention and recycle-bin
   settings, and its emulator exit criterion backs up a photo to a daemon. The setting to remove
   originals after backup is deferred until the engine can report which peers hold a file.
 - Phases 5b and 6 are decided: ADRs 0022 and 0023 are accepted. Phases 7 and 8 wait for CI
   runners.
 - Phase 5b is complete: released as `v0.7.0`. Full replicas report their kind, the engine
   records confirmed copies, and a partial replica evicts a file it made only once one exists.
-  `shoal/android` pins it and offers to remove backed-up photos from the phone, off by
+  `ShoalSync/android` pins it and offers to remove backed-up photos from the phone, off by
   default; its emulator exit criterion checks that a backed-up photo becomes eligible only after
-  the daemon, a full replica, confirms it. `shoal/infra` and `shoal/site` still pin
+  the daemon, a full replica, confirms it. `ShoalSync/infra` and `ShoalSync/site` still pin
   `v0.6.0`.
 - Phase 5c is decided: ADR 0024 is accepted. Steps 2 and 3 are implemented: local changes build
   on what is on disk, equal vectors are concurrent, entries at the same path are written by the
   ADR 0024 rule, counters have a ceiling, `.shoal` is reserved, manifests are checked against
   sizes, index batches are paged and not echoed, and handshakes and requests have deadlines. A
-  test syncs 100,000 entries per replica. Step 4 is implemented in `shoal/android`
-  (shoal/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
+  test syncs 100,000 entries per replica. Step 4 is implemented in `ShoalSync/android`
+  (ShoalSync/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
   removal and is backed up again, backup runs one at a time, the sync service stops at the
   Android 15 time limit, and app data is excluded from backups and device transfer.
 - `v0.8.0` releases Phase 5c steps 2 and 3. `tidefell/infra`, `tidefell/site` and
@@ -237,7 +237,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - Phase 5c step 7 is implemented in this repository: `engine.rs` is split by concern
   (folders, files, the recycle bin and peers), folder defaults and the retention and mode
   conversions live once in the engine and are shared by the API, the bindings and the daemon
-  configuration, and every crate forbids unsafe code. The Android part is shoal/android#11 (merged):
+  configuration, and every crate forbids unsafe code. The Android part is ShoalSync/android#11 (merged):
   view models hold each screen's state, and node and `MediaStore` work runs on
   `Dispatchers.IO`. Steps 5 and 6 are not started.
 - Phase 5d is decided: ADR 0025 (phone folders on Android) and ADR 0026 (compatibility from
@@ -282,7 +282,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   and the diagnostics bundle) is implemented; the app's screens follow with the next Android
   pin. Step 5 (activity history) is implemented; the app's screen follows with the next
   Android pin. Step 6 (metrics) is implemented in `shoald`; the scrape option in
-  `shoal/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
+  `ShoalSync/infra` comes with its pin after the next release. Step 7 (reporting a crash) is
   implemented; the app's screen follows with the next Android pin.
 - Phase 5f is complete: `v0.13.0` released steps 3 to 7, and the Android screens, the infra
   metrics scrape and the site came with its pins.
@@ -305,7 +305,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - `v0.14.0` releases Phase 5h: several files written at once, small files fetched without
   their manifest, and chunk requests batched across files with no availability query to full
   replicas or a lone peer. It also carries Phase 5g's checks. The protocol is unchanged.
-- Phase 5i: step 2 (reproduction) is in `shoal/android` (ADR 0033 records what 0.14.0
+- Phase 5i: step 2 (reproduction) is in `ShoalSync/android` (ADR 0033 records what 0.14.0
   does). Step 3 (NFC) is implemented: paths are NFC on the wire, and names keep their spelling
   on disk. Step 4 (probing) is implemented, with a `filesystem` check in `shoal doctor`.
   Step 5 (collisions and refused names) is implemented, with `shoal rename`, the API's
@@ -363,7 +363,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   hold them, or withdrawn where received after a time of loss the user gives, with author
   vouching. Step 4 (Android keys) is done in this repository: the FFI keeps
   the device key in a vault the app provides (`set_key_vault`), moving a key file left from
-  before into it. Step 5 (battery) is done: the benchmark in `shoal/android`, the app's usage
+  before into it. Step 5 (battery) is done: the benchmark in `ShoalSync/android`, the app's usage
   counters in the diagnostics bundle, and budgets from the first, emulator, figures (ADR 0039).
   Phase 5l is complete; ADR 0040's revocation is built with author vouching (Phase 5c step 6).
 - `v0.18.0` releases Phase 5l: the threat model, ADR 0040, and the FFI's key vault
@@ -512,7 +512,7 @@ Delivered as a sequence of pull requests; each merges before the next is pushed.
    `shoald config schema` (JSON Schema via `schemars`), `init`, `id` and `run`. End-to-end
    test: two daemons sync a folder, including edits, deletes and a conflict.
 5. **Nix and infra.** NixOS module for `shoald` in the monorepo flake; relay and DNS server
-   NixOS configurations in `shoal/infra`, pinned to the monorepo release.
+   NixOS configurations in `ShoalSync/infra`, pinned to the monorepo release.
 
 ### Phase 3 work breakdown
 
@@ -534,7 +534,7 @@ from the recycle bin, both through the CLI and through the web peer.
 5. **`web`.** Accounts (argon2id) linked to user IDs, sessions with CSRF protection, and a
    server-rendered htmx UI: sign in, folders, file listing and download, recycle bin with
    restore, and account management for admins. Enabled by `[web]` in `shoald`.
-6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `shoal/site`
+6. **Docs and site.** `docs/` becomes an mdBook built by the release workflow; `ShoalSync/site`
    becomes a Zola site that serves the pinned release's docs.
 
 ### Phase 4 work breakdown
@@ -598,7 +598,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
 3. **Web uploads and share links (ADR 0019).** Uploads and new folders through the web peer;
    share links with expiry, password, download limit and revocation; link pages; tests that
    drive the web peer over HTTP.
-4. **Always-on peer (ADR 0018, option B).** `shoal/infra`: a NixOS role for a self-run full
+4. **Always-on peer (ADR 0018, option B).** `ShoalSync/infra`: a NixOS role for a self-run full
    replica with the web peer, relay and TLS, pinned to a release; a guide page on running one
    on a small VPS. The exit criterion runs in infra CI: a phone-like partial replica and a
    laptop-like one, never online together, sync through the always-on peer.
@@ -608,7 +608,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
 6. **Site and docs.** Remove any suggestion of a project-run service; document the always-on
    peer, sharing and backup.
 7. **Release.** `v0.6.0`, and the infra and site pin bumps.
-8. **Camera-roll backup (ADR 0020).** `shoal/android`, against the `v0.6.0` AAR: backup
+8. **Camera-roll backup (ADR 0020).** `ShoalSync/android`, against the `v0.6.0` AAR: backup
    settings, `MediaStore` tracking, `WorkManager` scheduling, and retention and recycle-bin
    settings. Tested on the emulator with seeded media. The Android pin moves to `v0.6.0` here.
    The off-by-default setting to remove originals after backup is deferred: it needs the engine
@@ -624,7 +624,7 @@ takes option C: a self-run always-on peer now, and encrypted storage peers in a 
    and a partial peer.
 4. **Surfaces.** API, sdk, CLI (`ls`, `status`), web peer and `ffi` report files without a
    confirmed copy. Release `v0.7.0`.
-5. **Removing originals (ADR 0020, 0022).** `shoal/android` against `v0.7.0`: the
+5. **Removing originals (ADR 0020, 0022).** `ShoalSync/android` against `v0.7.0`: the
    off-by-default setting on Android 11 and later, the eligibility notification and the system
    delete request. The emulator exit criterion checks that a backed-up photo becomes eligible
    only after the daemon, a full replica, confirms it.
@@ -665,7 +665,7 @@ Phone folders (ADR 0025). Nothing has been released publicly, so nothing migrate
    CLI and `ffi`. Files dropped on this device are listed as on other devices and are not
    fetched again, even for new versions, unless opened. Moving a file to the local recycle bin
    without recording a delete. Release `v0.9.0`, and the infra, site and Android pins.
-3. **Android folders.** `shoal/android`: All files access, the folder picker with the camera
+3. **Android folders.** `ShoalSync/android`: All files access, the folder picker with the camera
    folder first, the three sync options in order (backup only, two-way sync, remove after
    backup), "Delete from all devices", clean up, and `MediaStore` announcements for files
    written into shared storage. The camera backup and its removal notification are removed.
@@ -718,14 +718,14 @@ after Phase 5e step 4 (`v0.11.0`), since Android reports have no engine logs tod
 2. **Logs and crashes.** The rotating JSON log file, logcat on Android, the runtime log level,
    the recent-problems buffer, the panic hook and crash files, fatal engine-task panics, and the
    crash notice on the next start. The Android side (the app's log calls, the uncaught-exception
-   handler, restart after a crash) is in `shoal/android`.
+   handler, restart after a crash) is in `ShoalSync/android`.
 3. **Status and problems.** Peer connections, folder states, per-path problems and transfer
    rates in the engine, API, sdk, bindings, CLI, web and Android app.
 4. **Diagnostics bundle and doctor.** The redacted bundle and its preview, `shoal doctor`
    and the app and web checks, and the clock in sync/1's `Hello`.
 5. **Activity history.** Who made each file's current version, and the per-folder activity
    log, in the API, CLI, web and Android app.
-6. **Metrics.** The opt-in Prometheus endpoint and the scrape option in `shoal/infra`.
+6. **Metrics.** The opt-in Prometheus endpoint and the scrape option in `ShoalSync/infra`.
 7. **Reporting a crash.** The pre-filled issue from the CLI, web and app, and `report_url`.
    Release, with the infra, site and Android pins.
 
@@ -749,7 +749,7 @@ Static analysis and fuzzing (ADR 0031). It can run alongside Phases 5e and 5f.
    become regression tests.
 6. **Workflow checks.** `actionlint` and `zizmor` in all four repositories, with or after the
    action pinning of Phase 5c step 5.
-7. **Android.** Android Lint and `detekt` in `shoal/android` CI, with baselines.
+7. **Android.** Android Lint and `detekt` in `ShoalSync/android` CI, with baselines.
 8. **Smaller checks.** `shellcheck`, `statix` and `deadnix` as flake checks, and `typos`, in every
    repository that has files for them.
 
@@ -782,7 +782,7 @@ File names across filesystems (ADR 0033). It comes before the macOS, iOS and Win
 (Phases 7 and 8), and first because phone folders already use case-insensitive storage.
 
 1. **Decisions.** ADR 0033 and this breakdown.
-2. **Reproduce.** An emulator test in `shoal/android`: a daemon shares `Photo.jpg` and
+2. **Reproduce.** An emulator test in `ShoalSync/android`: a daemon shares `Photo.jpg` and
    `photo.jpg` with different content into a phone folder in shared storage, and a name with `:`
    into one on a FAT image. Record what happens today.
 3. **NFC.** The scanner normalises names and remembers the on-disk spelling; sync/1 rejects
@@ -854,7 +854,7 @@ Security and battery (ADR 0038, ADR 0039).
    whether a change affects it.
 3. **Device revocation.** Its ADR, before Phase 6.
 4. **Android keys.** The device key wrapped with an Android Keystore key, with existing keys
-   converted on upgrade, in `shoal/android`.
+   converted on upgrade, in `ShoalSync/android`.
 5. **Battery.** The scripted benchmark on the emulator and a device, the app's counters in the
    diagnostics bundle, budgets from the first results, then the changes the benchmark supports.
 

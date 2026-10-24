@@ -1,6 +1,6 @@
 # 0041: The repositories on Forgejo, consumed from source
 
-- Status: accepted
+- Status: accepted; its releases and runners superseded by [0045](0045-github-hosting.md)
 - Date: 2026-10-18
 
 ## Context

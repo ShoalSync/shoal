@@ -2,7 +2,8 @@
 //! on a Linux runner as the other: this device, set up as the first of the user's with a partial
 //! folder, approves the Linux daemon as a new device through the tray's own code; the shell's
 //! listing of the folder (Explorer's) shows the files it brings as placeholders; opening one
-//! fetches its content; and the two talk directly, over the LAN. Run by the exit-criterion
+//! fetches its content; and the two stay connected, directly or through a relay: the runners
+//! are separate virtual machines, which iroh may not punch through. Run by the exit-criterion
 //! workflow, which sets `SHOAL_EXIT_RUN` and the rest; ignored otherwise.
 #![cfg(windows)]
 
@@ -27,24 +28,32 @@ fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set"))
 }
 
-/// The value the Linux half last posted as `name`, if it has: a commit status's target URL.
+/// The value the Linux half last posted as `name`, if it has: a commit status's target URL,
+/// read through GitHub's REST API.
 fn mailbox(name: &str) -> Option<String> {
     let url = format!(
-        "{}/api/v1/repos/{}/commits/{}/statuses?limit=50",
-        env("GITHUB_SERVER_URL"),
+        "{}/repos/{}/commits/{}/statuses?per_page=100",
+        env("GITHUB_API_URL"),
         env("GITHUB_REPOSITORY"),
         env("GITHUB_SHA")
     );
     // The token on standard input, not the command line.
     let mut curl = Command::new("curl.exe")
-        .args(["-sSf", "-H", "@-", &url])
+        .args([
+            "-sSf",
+            "-H",
+            "@-",
+            "-H",
+            "Accept: application/vnd.github+json",
+            &url,
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
         .ok()?;
     writeln!(
         curl.stdin.take()?,
-        "Authorization: token {}",
+        "Authorization: Bearer {}",
         env("SHOAL_EXIT_TOKEN")
     )
     .ok()?;
@@ -186,7 +195,7 @@ fn check(run: &str, client: &Client, data_dir: &Path, root: &Path) {
     // Approve the Linux device, with a fresh code if one expires first.
     let mut tried = None;
     let linux = loop {
-        let code = wait("a pairing code", Duration::from_secs(75 * 60), || {
+        let code = wait("a pairing code", Duration::from_secs(150 * 60), || {
             mailbox("code").filter(|c| Some(c) != tried.as_ref())
         });
         let (sender, events) = mpsc::channel();
@@ -252,18 +261,27 @@ fn check(run: &str, client: &Client, data_dir: &Path, root: &Path) {
     assert!(!is_placeholder(&hello) && !is_placeholder(&big));
     eprintln!("after opening:\n{}", shell_listing(root));
 
-    // Directly, over the LAN, not through a relay, once the relay has helped the two meet.
+    // Connected, directly if iroh punched through, through a relay if not: the runners are
+    // separate virtual machines with only the internet between them.
     let peer = wait(
-        "a direct path to the Linux device",
+        "a path to the Linux device",
         Duration::from_secs(120),
         || {
             let status = block_on(client.status()).ok()?;
             let peer = status.peers.into_iter().find(|p| p.device == linux)?;
             eprintln!("the Linux device: {peer:?}");
-            (peer.connected && peer.path == Some(PathKind::Direct)).then_some(peer)
+            (peer.connected && peer.path.is_some()).then_some(peer)
         },
     );
-    eprintln!("direct: {peer:?}");
+    let direct = peer.path == Some(PathKind::Direct);
+    eprintln!(
+        "connected, {}: {peer:?}",
+        if direct {
+            "directly"
+        } else {
+            "through a relay"
+        }
+    );
 
     // And back: a file made here reaches the Linux daemon, which says so.
     std::fs::write(root.join("done.txt"), format!("run {run}\n")).unwrap();

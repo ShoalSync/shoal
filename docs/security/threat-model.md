@@ -181,30 +181,21 @@ Dependencies, the build machines and the release process.
 - **Protected by** locked dependencies, `cargo-deny`, pinned and checked workflow actions,
   Renovate's waiting period, a release toolchain pinned by version, and SHA-256 files beside
   each release asset.
-- **Releases are made only from tags on `main` whose commit passed CI,** on a runner that runs
-  nothing else, as its own user with its own caches (`docs/project/release-runner.md`): a pull
-  request's job cannot poison what a release builds from.
-- **Every asset is signed with the release key.** The release workflow signs each asset with
-  cosign, with a private key held only in the repository's secrets, and checks the signature
-  against `cosign.pub` before publishing; a checksum beside an asset shows it arrived whole while
-  the signature shows the release made it (`docs/guide/install.md`). Signatures stay out of
-  Sigstore's public log, which would publish every asset's hash. The key is what an attacker
-  would need: anyone who can read the repository's secrets, or run the release workflow with
-  changes of their own, can sign. Releases run only from tags on `main` whose commit passed CI,
-  on a runner that runs nothing else, so changing the workflow takes a reviewed change on `main`.
-- **Pull-request jobs run as a user of their own,** with no sudo and no access to developers'
-  keys or tokens (ADR 0041). They reach the private monorepo only with a deploy key that can read
-  `shoal/shoal` and nothing else, so a hostile pull request can read the source it already
-  has, not push or publish.
-- **Gap: the release runner shares a machine with the pull-request runners.** Separate users
-  are a wall against accidents and cache poisoning; a pull request that escapes its user through
-  the kernel or a shared service is not stopped by it. A separate machine is the boundary that
-  closes this.
-- **Gap: Windows programs are built on the Windows CI runner** (ADR 0042's amendment), which
-  also runs pull requests' jobs: one that changed its toolchain or anything else there that
-  outlives a job would reach a release's Windows programs. Each release builds them afresh from
-  the tag, and packages and signs them on the release runner, so the release key never reaches
-  that machine. A Windows release runner closes this; until there is one, this stays.
+- **Releases are made only from tags on `main` whose commit passed CI,** on fresh
+  GitHub-hosted runners, without any cache (ADR 0045): a pull request's job cannot poison what a
+  release builds from. Caches are saved only from `main`, so a pull request cannot poison what
+  later CI runs restore either.
+- **Every asset is signed by the release workflow's identity.** The release workflow signs each
+  asset with cosign, without a key: Sigstore issues a short-lived certificate for the workflow's
+  identity, from GitHub's OIDC token, and records the signature in its public log. A checksum
+  beside an asset shows it arrived whole while the signature shows the release workflow, run on
+  a tag or on `main`, made it (`docs/guide/install.md`). There is no private key to steal: an
+  attacker would need to run that workflow from a tag or from `main`, which takes a reviewed
+  change on `main`, and only those may deploy to the protected `release` environment the
+  publishing job runs in.
+- **Pull-request jobs run on GitHub's hosted runners,** a fresh virtual machine each, with a
+  read-only token and no secrets. Workflows never use `pull_request_target`, and a first-time
+  contributor's workflows run only once a maintainer approves them.
 - **Gap: the Windows installer is not signed with Authenticode,** so Windows cannot tell users
   who made it, and SmartScreen warns. Its cosign signature can be checked as the other assets'
   are (`docs/guide/install.md`); a code-signing certificate closes this, and is for later.

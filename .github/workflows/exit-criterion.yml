@@ -1,10 +1,11 @@
 name: Exit criterion
 
-# Phase 8's exit criterion (ADR 0042), on real machines: the Windows runner's partial replica
+# Phase 8's exit criterion (ADR 0042), on real machines: a Windows runner's partial replica
 # pairs with a Linux daemon on a Linux runner, the shell's listing of its folder shows
-# placeholders, opening one fetches it, and the two talk directly over the LAN. The two jobs run
-# at once and pass each other pairing codes as commit statuses. Not a pull request's check: it
-# needs both runners at the same time, and iroh's public relays to meet.
+# placeholders, opening one fetches it, and the two stay connected, directly once iroh punches
+# through or through a relay. The two jobs run at once, on separate virtual machines with no
+# network between them but the internet, and pass each other pairing codes as commit statuses.
+# Not a pull request's check: it needs iroh's public relays to meet.
 on:
   workflow_dispatch:
   schedule:
@@ -16,8 +17,8 @@ permissions:
 jobs:
   linux:
     name: Linux daemon
-    runs-on: ephemeral
-    timeout-minutes: 90
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
     permissions:
       contents: read
       statuses: write
@@ -25,6 +26,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      # The store the CI workflow's build job saved on main, which holds the package.
+      - uses: ./.github/actions/nix
       - name: Pair, join and serve
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -35,12 +38,25 @@ jobs:
 
   windows:
     name: Windows partial replica
-    runs-on: windows
-    timeout-minutes: 90
+    runs-on: windows-2025
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      statuses: read
     steps:
+      - name: Long paths for git
+        run: git config --global core.longpaths true
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
+      # The compiled dependencies the CI workflow's Windows job saved on main; never saved here.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: windows-2025
+          save-if: false
       - name: Clear sync roots earlier runs left
         shell: powershell
         run: ./scripts/windows-clear-test-sync-roots.ps1
@@ -50,9 +66,8 @@ jobs:
           SHOAL_EXIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHOAL_EXIT_RUN: ${{ github.run_id }}
         run: |
-          export CARGO_TARGET_DIR=C:/ci/target/shoal
           cargo build --locked --package shoal-daemon
-          SHOALD="$CARGO_TARGET_DIR/debug/shoald.exe" cargo test --locked \
+          SHOALD="$PWD/target/debug/shoald.exe" cargo test --locked \
             --package shoal-tray --test exit_criterion -- --ignored --nocapture
       - name: Clear the sync roots this run left
         if: always()

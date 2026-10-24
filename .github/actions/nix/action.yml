@@ -1,0 +1,44 @@
+name: Nix
+description: >
+  Nix with KVM and, for the jobs that build, room on the disk and the Nix store the last run on
+  main left (ADR 0045). Only the CI workflow's build job saves it, on main, so pull
+  requests cannot change what main's runs restore.
+
+inputs:
+  cache:
+    description: Restore the Nix store main's last run saved
+    default: "true"
+  save:
+    description: Save the store at the end of the job (only the CI build job, on main)
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    # The image's preinstalled toolchains that no job here uses, about 30 GB, for the store.
+    # The Android SDK stays: the Android jobs use it.
+    - name: Room on the disk
+      if: inputs.cache == 'true'
+      shell: bash
+      run: |
+        df -h /
+        sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL \
+          /usr/local/share/powershell /usr/local/share/chromium /usr/local/lib/node_modules
+        df -h /
+    - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      with:
+        enable_kvm: true
+    - if: inputs.cache == 'true'
+      uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7
+      with:
+        # What the compiled dependencies and the toolchains depend on, not the source: a
+        # change to the code reuses the last store, and only the crates' own builds are new.
+        primary-key: nix-${{ runner.arch }}-${{ hashFiles('flake.lock', 'Cargo.lock', 'rust-toolchain.toml', '**/*.nix') }}
+        restore-prefixes-first-match: nix-${{ runner.arch }}-
+        save: ${{ inputs.save }}
+        # Within the repository's 10 GB, beside the Windows jobs' Cargo caches.
+        gc-max-store-size-linux: 8G
+        purge: ${{ inputs.save }}
+        purge-prefixes: nix-${{ runner.arch }}-
+        purge-created: 0
+        purge-primary-key: never
