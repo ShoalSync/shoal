@@ -222,9 +222,11 @@ jobs:
       # NDK, whose llvm-readelf the loadable check uses.
       - name: Android platform
         run: |
-          # Steps run with pipefail, and yes ends on SIGPIPE once sdkmanager stops reading.
-          (yes || true) | sdkmanager --licenses > /dev/null
-          sdkmanager "platforms;android-36"
+          # The image does not put sdkmanager on PATH. Steps run with pipefail, and yes ends on
+          # SIGPIPE once sdkmanager stops reading.
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          (yes || true) | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-36"
           echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
       - name: Build
         working-directory: bindings/android
