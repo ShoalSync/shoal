@@ -103,10 +103,8 @@ async fn placeholders_fill_on_reading_and_other_programs_changes_sync() {
     blocking(move || root.unregister().unwrap()).await;
 }
 
-// Windows Server 2025 and Windows 11 Enterprise on ARM, GitHub's hosted images, never hydrate a
-// pinned placeholder by themselves, which reconcile relies on; Windows 11 Pro does. Ignored until
-// the provider hydrates after pinning (the first Shoal change: hydrate after pin).
-#[ignore = "hosted Windows images do not hydrate pinned placeholders; fixed by hydrating after pin"]
+// Windows Server 2025 and Windows 11 Enterprise on ARM, GitHub's hosted images, never fill a
+// pinned placeholder by themselves; Windows 11 Pro does. The provider fills it either way.
 #[tokio::test(flavor = "multi_thread")]
 async fn freeing_up_space_and_pinning() {
     let p = pair(110);
@@ -188,14 +186,26 @@ async fn freeing_up_space_and_pinning() {
         Some(b"kept here".as_slice())
     );
 
-    // Pinned through the engine: Windows fills the placeholder through the provider, once,
-    // and it stays pinned and on disk.
+    // Pinned through the engine: the placeholder is filled through the provider, once, and it
+    // stays pinned and on disk.
+    let served = |engine: &shoal_engine::Engine| -> f64 {
+        engine
+            .metrics()
+            .lines()
+            .find_map(|l| l.strip_prefix("shoal_chunks_served_total "))
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.0)
+    };
+    let before = served(&nas);
     laptop.pin(folder, "pinned.txt").await.unwrap();
     changed(&root).await;
     eventually("pinned.txt is on disk", || {
         on_disk(&laptop, folder, "pinned.txt")
     })
     .await;
+    // Its one chunk, fetched once, though both Windows and the provider may ask for the fill.
+    changed(&root).await;
+    assert_eq!(served(&nas) - before, 1.0, "fetched more than once");
     assert_eq!(
         p.laptop.read("pinned.txt").as_deref(),
         Some(b"pinned here".as_slice())

@@ -266,8 +266,9 @@ where they differ.
   - **Deletes and renames** become the engine's `delete` and `rename`.
   - **State changes** carry pins from Explorer to the engine. They also carry "Free up space":
     the scan finds the placeholder and drops the file's record.
-- **Pins:** Windows fills a pinned placeholder through the provider itself. A pin made through
-  the engine sets the placeholder's pin state, and the provider fills it, so one component owns
+- **Pins:** Windows fills a pinned placeholder through the provider itself (not every Windows
+  does: see the amendment of 2026-10-25). A pin made through the engine sets the placeholder's
+  pin state, and the provider fills it, so one component owns
   each placeholder's data: the engine never writes where a recorded placeholder is, and replaces
   one only if it is unrecorded, as one made just before a crash is.
 
@@ -449,6 +450,23 @@ runner until one exists.
   when online", and a fetched one's as "Available on this device".
 - **Nightly, not a pull request's check:** it needs both runners free at once and the public
   relays.
+
+## Amendment: the provider fills pinned placeholders (2026-10-25)
+
+- **Not every Windows fills a pinned placeholder.** The spike's "pins hydrate by themselves"
+  held on Windows 11 Pro, but GitHub's hosted Windows Server 2025 and Windows 11 Enterprise on
+  ARM set the pin state and never fetch: a file the user chose to always keep stayed
+  online-only.
+- **So the provider asks for the fill.** While a placeholder is pinned and not on this device,
+  each reconcile pass starts `CfHydratePlaceholder` on it, on a thread of its own, one at a time
+  per path, and the fetch goes through the provider's callback as any other fill does. This
+  covers pins made through the engine and in Explorer, and a fill that failed, as with no peer
+  online, is asked for again on a later pass.
+- **One fetch either way.** Windows synchronises the call with a fill it started itself, so where
+  Windows also fills pinned placeholders the content is still fetched once. The provider's test
+  checks this by the chunks the other device served.
+- **The data still has one owner.** The provider's callback writes it, as before; the engine
+  still never writes where a recorded placeholder is.
 
 ## Consequences
 

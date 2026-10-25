@@ -1,9 +1,10 @@
 //! Making the folder's placeholders match the engine's files (ADR 0042).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use cloud_filter::placeholder::PinState;
 use tracing::{debug, warn};
@@ -169,12 +170,45 @@ fn placeholder(
             .placeholder_made(&file.path, file.content)
             .map_err(backend_error)?;
     }
-    // Pinned through the engine: Windows fills a pinned placeholder through the provider.
-    if file.pinned && pin != PinState::Pinned {
-        debug!(path = %file.path, "pinning the placeholder");
-        ops::set_pin(abs, true)?;
+    // Pinned through the engine or in Explorer, and not on this device yet: it is filled. Some
+    // Windows fill a pinned placeholder through the provider by themselves, others never do
+    // (ADR 0042), so it is asked for either way, and each pass until it is filled.
+    if file.pinned {
+        if pin != PinState::Pinned {
+            debug!(path = %file.path, "pinning the placeholder");
+            ops::set_pin(abs, true)?;
+        }
+        hydrate(abs, &file.path);
     }
     Ok(())
+}
+
+/// Pinned placeholders being filled, by path.
+static HYDRATING: Mutex<BTreeSet<PathBuf>> = Mutex::new(BTreeSet::new());
+
+/// Fills the pinned placeholder at `abs` on a thread of its own, unless that is already under
+/// way: a fill lasts as long as the fetch, and the pass goes on meanwhile. Once filled, the
+/// provider has the engine record the file as on this device; a fill that fails, as with no
+/// peer to fetch from, is tried again on a later pass.
+fn hydrate(abs: &Path, rel: &str) {
+    if !HYDRATING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(abs.to_owned())
+    {
+        return;
+    }
+    let (abs, rel) = (abs.to_owned(), rel.to_owned());
+    std::thread::spawn(move || {
+        debug!(path = %rel, "filling the pinned placeholder");
+        if let Err(e) = ops::hydrate(&abs) {
+            debug!(path = %rel, error = %e, "cannot fill the pinned placeholder yet");
+        }
+        HYDRATING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&abs);
+    });
 }
 
 /// The file at `abs`, which the engine has on disk as `file`.
