@@ -198,6 +198,9 @@ pub(crate) struct Inner {
     events: broadcast::Sender<Event>,
     /// Serialises changes to the folder set and their persistence.
     runtime_lock: Mutex<()>,
+    /// Set by shutdown: the runtime file is no longer this engine's to write, since another
+    /// engine may have started on the same data directory.
+    runtime_closed: std::sync::atomic::AtomicBool,
     /// Known devices' certificates, and authors not vouched for (ADR 0024). Taken after a
     /// folder's lock, never before one, and never while waiting for one.
     pub(crate) vouching: Mutex<crate::vouch::Vouching>,
@@ -332,6 +335,13 @@ impl Inner {
     /// Writes runtime folders, peers, pause and pins. Callers hold `runtime_lock`, and no
     /// folder's lock.
     pub(crate) fn save_runtime(&self) -> Result<()> {
+        if self
+            .runtime_closed
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            debug!("not saving the runtime state: the engine has shut down");
+            return Ok(());
+        }
         // Copied out and let go before any folder is locked: a folder's lock is taken before
         // this one everywhere else, so holding this one while waiting for a folder's deadlocks.
         let (certificates, revocations) = {
@@ -885,6 +895,7 @@ impl Engine {
             materialize: Notify::new(),
             events: broadcast::channel(256).0,
             runtime_lock: Mutex::new(()),
+            runtime_closed: std::sync::atomic::AtomicBool::new(false),
             vouching: Mutex::new(crate::vouch::Vouching::new(
                 runtime.certificates,
                 runtime.revocations,
@@ -1445,6 +1456,14 @@ impl Engine {
         // uses again for its next changes, which they would never ask for.
         // Tasks of their own, such as a batch of requests, may still hold the node.
         self.node.close().await;
+        // Those tasks can still learn a certificate or a revocation, which saves the runtime
+        // state. Once this returns another engine may own the data directory, and two engines
+        // writing it at once race on its temporary file. None saves after this: one that took
+        // the lock first is waited for.
+        self.inner
+            .runtime_closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        drop(self.inner.runtime_lock.lock().unwrap());
         let folders: Vec<(FolderId, Arc<FolderHandle>)> = self
             .inner
             .folders
@@ -1726,5 +1745,56 @@ mod tests {
         tasks.shutdown().await;
         // Stopped already, not merely asked to stop.
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    /// A session that outlives its engine's shutdown and learns a certificate does not write
+    /// the runtime state, which a restarted engine on the same data directory may be writing
+    /// (seed 161 of the simulation failed so, renaming a temporary file the other had moved).
+    #[cfg(feature = "simulation")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_shut_down_engine_does_not_save_its_runtime_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = UserKey::from_seed([1; 32]);
+        let key = DeviceKey::from_seed([2; 32]);
+        let config = EngineConfig {
+            data_dir: dir.path().join("data"),
+            metadata_dir: None,
+            relay: shoal_net::RelayConfig::Disabled,
+            address_lookup: false,
+            local_discovery: false,
+            watch: false,
+            limits: Default::default(),
+            bind: None,
+            peers: Vec::new(),
+            folders: Vec::new(),
+            min_free_space: None,
+        };
+        let certificate = user.certify(key.id(), "test", 0);
+        let network = shoal_net::Network::new();
+        let engine = Engine::start_simulated(config, key, certificate, &network)
+            .await
+            .unwrap();
+        let inner = engine.inner.clone();
+        let runtime = dir.path().join("data").join("runtime");
+        // A certificate learnt while running is saved.
+        inner.learn_certificate(user.certify(DeviceKey::from_seed([3; 32]).id(), "a", 0));
+        let saved = std::fs::read(&runtime).unwrap();
+        engine.shutdown().await;
+        let before = std::fs::read(&runtime).unwrap();
+        assert_eq!(before, saved);
+
+        inner.learn_certificate(user.certify(DeviceKey::from_seed([4; 32]).id(), "b", 0));
+        assert!(inner
+            .vouching
+            .lock()
+            .unwrap()
+            .certificate(DeviceKey::from_seed([4; 32]).id())
+            .is_some());
+        assert_eq!(
+            std::fs::read(&runtime).unwrap(),
+            before,
+            "written after shutdown"
+        );
+        assert!(!dir.path().join("data").join("runtime.tmp").exists());
     }
 }
