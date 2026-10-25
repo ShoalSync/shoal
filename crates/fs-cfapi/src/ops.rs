@@ -267,6 +267,23 @@ pub(crate) fn in_sync(path: &Path) -> bool {
         .is_some_and(|i| i.is_in_sync())
 }
 
+/// Fills the placeholder at `path` through the provider, as reading it would, and returns once
+/// it is filled or the fill failed. Windows does not always fill a pinned placeholder by
+/// itself: Windows Server 2025 and Windows 11 Enterprise never did (ADR 0042). It synchronises
+/// this with any fill it started itself, so the content is fetched once either way.
+pub(crate) fn hydrate(path: &Path) -> io::Result<()> {
+    // Opening it does not fill it; reading its data would. Shared with everyone, so the
+    // provider's fill and other programs go on.
+    const SHARE_ALL: u32 = 0x7; // FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    let handle = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(SHARE_ALL)
+        .open(path)?;
+    Placeholder::from(handle)
+        .hydrate(..)
+        .map_err(io::Error::other)
+}
+
 /// Sets the pin state of the placeholder at `path`: pinned, or as its folder says.
 pub(crate) fn set_pin(path: &Path, pinned: bool) -> io::Result<()> {
     let state = if pinned {
