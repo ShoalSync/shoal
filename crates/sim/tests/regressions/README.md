@@ -28,3 +28,9 @@ of steps a failing seed was shortened to.
   which compaction released, as content of a send-only replica only passes through; and a
   compaction between storing a put-back version's chunks and recording the version could
   remove them. No device could then supply it. Fails about one run in 30 without the fix.
+- `runtime-saved-by-a-restarted-device.json`: changing a folder's members right after a
+  restart failed: the runtime state's temporary file was gone when renamed. Sessions of the
+  engine that had shut down could still save that state, through a certificate or revocation
+  they learnt, while the new engine saved it too. Seen once on a hosted runner; not
+  reproduced locally, so the engine's `a_shut_down_engine_does_not_save_its_runtime_state`
+  is the test of the fix.
