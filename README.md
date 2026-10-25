@@ -1,7 +1,5 @@
 # Shoal
 
-Shoal Sync, formerly Tidefell.
-
 Open-source, peer-to-peer file sync with the feel of Dropbox, OneDrive or Nextcloud, but with
 no central server.
 
@@ -142,8 +140,7 @@ Shoal is licensed under either of
 
 at your option.
 
-All earlier versions of this code, including commits made under the name Tidefell, are also
-available under MIT OR Apache-2.0.
+All earlier versions of this code are also available under MIT OR Apache-2.0.
 
 The name "Shoal Sync" and the logo identify this project: see [TRADEMARKS.md](TRADEMARKS.md).
 
