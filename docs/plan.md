@@ -232,8 +232,8 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   (ShoalSync/android#9, against `v0.7.0`): a photo edited after its backup is not offered for
   removal and is backed up again, backup runs one at a time, the sync service stops at the
   Android 15 time limit, and app data is excluded from backups and device transfer.
-- `v0.8.0` releases Phase 5c steps 2 and 3. `tidefell/infra`, `tidefell/site` and
-  `tidefell/android` pin it.
+- `v0.8.0` releases Phase 5c steps 2 and 3. `ShoalSync/infra`, `ShoalSync/site` and
+  `ShoalSync/android` pin it.
 - Phase 5c step 7 is implemented in this repository: `engine.rs` is split by concern
   (folders, files, the recycle bin and peers), folder defaults and the retention and mode
   conversions live once in the engine and are shared by the API, the bindings and the daemon
@@ -245,8 +245,8 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   dropped from one device, and `remove_here` into the device's recycle bin, in the engine,
   configuration, API, sdk, CLI and bindings. A new file at a path whose entry was never on disk
   here is kept beside the other device's file unless its content matches.
-- `v0.9.0` releases Phase 5d step 2. `tidefell/infra`, `tidefell/site` and `tidefell/android` pin
-  it. Step 3 is implemented in `tidefell/android` (tidefell/android#12): any folder on the phone
+- `v0.9.0` releases Phase 5d step 2. `ShoalSync/infra`, `ShoalSync/site` and `ShoalSync/android` pin
+  it. Step 3 is implemented in `ShoalSync/android` (ShoalSync/android#12): any folder on the phone
   with the three sync options, clean up and the recycle bin, and the emulator exit criterion.
 - ADR 0027: content is kept once per device. Files on disk are no longer copied into the block
   store; chunks are read from them, and deleted files are kept for the recycle bin by moving them
@@ -254,7 +254,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - ADR 0028: a phone folder's files that are only on other devices can be downloaded from the
   app, and each phone folder is a read-only root of the documents provider listing them.
 - `v0.10.0` releases ADRs 0027 and 0028, with engine state format 6. The Android side of
-  ADR 0028 is tidefell/android#13.
+  ADR 0028 is ShoalSync/android#13.
 - Phase 5e is decided: ADR 0029 (features from other sync tools) and its breakdown below. Step 2
   (local network discovery) is implemented in this repository; the Android multicast lock
   follows with the `v0.11.0` pin. Steps 3 (ignore patterns) and 4 (watching) are implemented.
@@ -265,7 +265,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   they are resolved, is implemented, and so are resolving, the conflict event, the CLI and the web screens;
   the Android notification and screen follow with the `v0.12.0` pin.
 - `v0.11.0` releases Phase 5e steps 2 to 4 (local discovery, ignore patterns and watching) and
-  the recycle bin's local clock (tidefell/tidefell#46). The bindings' `Network` gains
+  the recycle bin's local clock (ShoalSync/shoal#46). The bindings' `Network` gains
   `localDiscovery`.
 - `v0.12.0` releases the rest of Phase 5e: version history, bandwidth limits and pause, pins,
   upload-only links and conflict resolution (steps 5 to 9), with Phase 5f step 2 (logs and
@@ -275,7 +275,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - `v0.13.0` releases the rest of Phase 5f in this repository: status and problems, the doctor
   and diagnostics bundles, activity history, Prometheus metrics and crash reports (steps 3 to
   7). sync/1's `Hello` gains the sender's clock. The Android screens follow with the `v0.13.0`
-  pin, and `tidefell/infra`'s metrics scrape option with its pin.
+  pin, and `ShoalSync/infra`'s metrics scrape option with its pin.
 - Phase 5f is decided: ADR 0030 (diagnostics and reporting). Step 2 (logs and crashes) is
   implemented, and its Android side came with the `v0.12.0` pin. Step 3 (status and problems)
   is implemented; the app's screens follow with the next Android pin. Step 4 (the doctor
@@ -327,7 +327,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   a rebuild keeps them. Phase 5j is complete.
 - `v0.16.0` releases Phase 5j: each folder's metadata in its own database (redb) in
   `metadata_dir`, committed in order off the folder lock; sidecars beside kept files; integrity
-  checks, and per-folder rebuilds with `tidefell folder rebuild` and a `rebuilding` state; pins
+  checks, and per-folder rebuilds with `shoal folder rebuild` and a `rebuilding` state; pins
   in the runtime settings. The first start converts each folder's `meta` and `state` files to
   its database and deletes them, so an earlier version cannot read a folder afterwards; the
   runtime settings move to format 5 the same way. The protocol is unchanged. The FFI gains
@@ -346,7 +346,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   seeds run on each pull request and 10,000 nightly, and 10,000 seeds pass. Phase 5k is
   complete.
 - `v0.17.0` releases Phase 5k: folder markers and the `unavailable` state, held mass deletes
-  (`tidefell folder deletes`), free-space floors (`min_free_space`) and lasting errors with
+  (`shoal folder deletes`), free-space floors (`min_free_space`) and lasting errors with
   retry, memory at scale (manifests and the chunk index on disk, compact versions and records,
   mimalloc), and the fixes simulation testing found. The database and the protocol are
   unchanged. The FFI gains `Folder.unavailable`, `Folder.heldDeletes`, `Folder.lowSpace`,
@@ -421,7 +421,7 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   unchanged.
 - `v0.20.0` completes Phase 5c steps 5 and 6 as far as they ship before enforcement: releases
   built on their own runner and signed with Sigstore; author certificates fetched and kept
-  (sync/1 messages 6 and 7); device revocation of connections (`tidefell device revoke`, the web
+  (sync/1 messages 6 and 7); device revocation of connections (`shoal device revoke`, the web
   peer's Status page, revocations in `Hello`); receipt times recorded for ADR 0040's time of
   loss; confirmed copies from current members only; an owner-only data directory, slower
   password guessing, bounded uploads; relay access tokens and hardened systemd units. Runtime
@@ -431,8 +431,8 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
 - `v0.21.0` completes Phase 5c step 6: author vouching is enforced (ADR 0024), and what an
   author no longer vouched for made is taken over where held; ADR 0040's time of loss withdraws
   what a revoked device changed after it, putting back what each change replaced, with a
-  preview (`tidefell device revoke --lost-at`, the web peer's revoke page), the retention clamp,
-  held withdrawals (`tidefell folder withdrawals`, the web peer's folder page) and one
+  preview (`shoal device revoke --lost-at`, the web peer's revoke page), the retention clamp,
+  held withdrawals (`shoal folder withdrawals`, the web peer's folder page) and one
   revocation per device. A direct path over a network this device is on, such as a home's
   global IPv6 prefix, counts as local. Runtime settings are unchanged (format 7); the folder
   database gains a table of which version replaced each kept one, which 0.20 does not read.
@@ -440,26 +440,26 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   with `--encrypted` is sealed with folder keys granted to each vouched member device and
   rotated when a member is removed or a device revoked; versions travel sealed over sync/2 and
   content as sealed chunks over blobs/2, and pairing says a folder is encrypted (pair/2). A
-  storage peer (`[storage]` in tidefelld, `tidefell storage`) keeps encrypted folders it cannot
+  storage peer (`[storage]` in shoald, `shoal storage`) keeps encrypted folders it cannot
   read: the newest versions by vector, replaced ones until retention, and sealed chunks within
   a quota; its copy counts as confirmed only while another member device holds the key. Its
   versions are kept in memory for now, about 1.2 KB each. The first release from Forgejo, its
   assets signed with the project's release key (`cosign.pub`, ADR 0041). Runtime settings are
   format 8, which 0.21 does not read; plaintext folders' databases are unchanged. The FFI's
   folder calls take an encryption argument.
-- `v0.23.0` completes Phase 8 (ADR 0042): the Windows client. `tidefelld` runs on Windows, its
+- `v0.23.0` completes Phase 8 (ADR 0042): the Windows client. `shoald` runs on Windows, its
   API on a named pipe; a partial folder is a Cloud Files sync root, its files placeholders that
-  Explorer shows and fills on demand; `tidefell-tray` starts and supervises the daemon, sets up
+  Explorer shows and fills on demand; `shoal-tray` starts and supervises the daemon, sets up
   or joins a device and approves others; a per-user MSI, not Authenticode-signed (its cosign
   signature is the one to check). Transfers keep many requests under way at once, to each
   peer, encrypted downloads too, through one scheduler (ADR 0032). Storage priorities (ADR
   0023's amendment of 2026-10-22): a storage peer's total quota and folder priorities, members
-  rank files 0 to 255 in `.tidefellpriorities`, given to storage peers over
-  `tidefell/storage/1`; `tidefell folder storage` and `storage-drop`, the API's priorities
+  rank files 0 to 255 in `.shoalpriorities`, given to storage peers over
+  `shoal/storage/1`; `shoal folder storage` and `storage-drop`, the API's priorities
   endpoints, and the tray's Storage window. Runtime settings are unchanged (format 8); folder
   databases gain two tables, which 0.22 does not read. The FFI gains `priorities`,
   `setPriority`, `storageReport` and `storageDrop`.
-- `v0.23.1` fixes `tidefell-tray` not starting on Windows builds whose old common controls
+- `v0.23.1` fixes `shoal-tray` not starting on Windows builds whose old common controls
   (comctl32 5.82) do not export `GetWindowSubclass` by name: the tray now embeds a manifest
   asking for version 6. A file that changed while a scan read it is read again two seconds
   later, not at the next change or the hourly safety scan. `ctutils` 0.4.5 and `tokio` 1.53.3
