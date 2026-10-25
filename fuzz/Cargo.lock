@@ -3066,6 +3066,152 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "shoal-chunker"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "fastcdc",
+ "shoal-proto",
+]
+
+[[package]]
+name = "shoal-crypto"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "hkdf",
+ "postcard",
+ "sha2",
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "x25519-dalek",
+]
+
+[[package]]
+name = "shoal-engine"
+version = "0.24.0"
+dependencies = [
+ "aho-corasick",
+ "blake3",
+ "ed25519-dalek",
+ "fs4",
+ "getrandom 0.4.3",
+ "hashbrown",
+ "ignore",
+ "mimalloc",
+ "notify",
+ "paranoid-android",
+ "postcard",
+ "redb",
+ "regex",
+ "rustix",
+ "serde",
+ "serde_json",
+ "shoal-chunker",
+ "shoal-crypto",
+ "shoal-fetch",
+ "shoal-identity",
+ "shoal-meta",
+ "shoal-net",
+ "shoal-proto",
+ "shoal-store",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-normalization",
+ "winapi-util",
+ "zip",
+]
+
+[[package]]
+name = "shoal-fetch"
+version = "0.24.0"
+dependencies = [
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "shoal-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "postcard",
+ "shoal-engine",
+ "shoal-meta",
+ "shoal-proto",
+]
+
+[[package]]
+name = "shoal-identity"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "getrandom 0.4.3",
+ "postcard",
+ "shoal-proto",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shoal-meta"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "hashbrown",
+ "postcard",
+ "serde",
+ "shoal-proto",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shoal-net"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "ipnet",
+ "iroh",
+ "iroh-mdns-address-lookup",
+ "iroh-metrics",
+ "netwatch",
+ "postcard",
+ "serde",
+ "shoal-identity",
+ "shoal-proto",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "shoal-proto"
+version = "0.24.0"
+dependencies = [
+ "blake3",
+ "ed25519-dalek",
+ "postcard",
+ "serde",
+ "thiserror 2.0.21",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "shoal-store"
+version = "0.24.0"
+dependencies = [
+ "shoal-chunker",
+ "shoal-proto",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3343,152 +3489,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "shoal-chunker"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "fastcdc",
- "shoal-proto",
-]
-
-[[package]]
-name = "shoal-crypto"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "chacha20poly1305",
- "getrandom 0.4.3",
- "hkdf",
- "postcard",
- "sha2",
- "thiserror 2.0.21",
- "shoal-proto",
- "x25519-dalek",
-]
-
-[[package]]
-name = "shoal-engine"
-version = "0.23.1"
-dependencies = [
- "aho-corasick",
- "blake3",
- "ed25519-dalek",
- "fs4",
- "getrandom 0.4.3",
- "hashbrown",
- "ignore",
- "mimalloc",
- "notify",
- "paranoid-android",
- "postcard",
- "redb",
- "regex",
- "rustix",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "shoal-chunker",
- "shoal-crypto",
- "shoal-fetch",
- "shoal-identity",
- "shoal-meta",
- "shoal-net",
- "shoal-proto",
- "shoal-store",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "unicode-normalization",
- "winapi-util",
- "zip",
-]
-
-[[package]]
-name = "shoal-fetch"
-version = "0.23.1"
-dependencies = [
- "thiserror 2.0.21",
- "shoal-proto",
- "tokio",
-]
-
-[[package]]
-name = "shoal-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "postcard",
- "shoal-engine",
- "shoal-meta",
- "shoal-proto",
-]
-
-[[package]]
-name = "shoal-identity"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "getrandom 0.4.3",
- "postcard",
- "thiserror 2.0.21",
- "shoal-proto",
-]
-
-[[package]]
-name = "shoal-meta"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "hashbrown",
- "postcard",
- "serde",
- "thiserror 2.0.21",
- "shoal-proto",
-]
-
-[[package]]
-name = "shoal-net"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ipnet",
- "iroh",
- "iroh-mdns-address-lookup",
- "iroh-metrics",
- "netwatch",
- "postcard",
- "serde",
- "thiserror 2.0.21",
- "shoal-identity",
- "shoal-proto",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "shoal-proto"
-version = "0.23.1"
-dependencies = [
- "blake3",
- "ed25519-dalek",
- "postcard",
- "serde",
- "thiserror 2.0.21",
- "unicode-normalization",
-]
-
-[[package]]
-name = "shoal-store"
-version = "0.23.1"
-dependencies = [
- "thiserror 2.0.21",
- "shoal-chunker",
- "shoal-proto",
 ]
 
 [[package]]
