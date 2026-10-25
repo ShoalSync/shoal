@@ -257,9 +257,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          # The notes: the commits since the previous release tag.
-          previous=$(git describe --tags --abbrev=0 --match 'v*' "$TAG^" 2>/dev/null || true)
-          git log --format='- %s' ${previous:+"$previous.."}"$TAG" > "$RUNNER_TEMP/notes.md"
+          # The notes: the release's own, docs/releases/<version>.md, if it has them, then the
+          # commits since the previous release, leaving out release candidates.
+          notes="docs/releases/${TAG#v}.md"
+          previous=$(git describe --tags --abbrev=0 --match 'v*' --exclude 'v*-*' "$TAG^" 2>/dev/null || true)
+          {
+            if [ -f "$notes" ]; then
+              cat "$notes"
+              printf '\n## Changes since %s\n\n' "${previous:-the start}"
+            fi
+            git log --format='- %s' ${previous:+"$previous.."}"$TAG"
+          } > "$RUNNER_TEMP/notes.md"
           prerelease=()
           case "$TAG" in *-*) prerelease=(--prerelease) ;; esac
           find dist -type f -print0 | xargs -0 gh release create "$TAG" --verify-tag \
