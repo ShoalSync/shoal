@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Fails if the old name, Tidefell, is anywhere but where it belongs (ADR 0043): historic ADRs
 # (0001-0042) and their titles in docs/SUMMARY.md, ADRs 0043 and 0044, the release notes of
-# Tidefell's versions in docs/plan.md, 0.24.0's release notes (the rename's), and the README's
-# "formerly Tidefell" line and licence grant.
+# Tidefell's versions in docs/plan.md, and the README's "formerly Tidefell" line and licence
+# grant.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 hits=$(git grep -n -I -i tidefell -- . \
   ':(exclude)docs/adr/00[0-3][0-9]-*.md' ':(exclude)docs/adr/004[0-4]-*.md' \
-  ':(exclude)docs/releases/0.24.0.md' ':(exclude)scripts/check-old-name.sh' || true)
+  ':(exclude)scripts/check-old-name.sh' || true)
 hits=$(printf '%s\n' "$hits" | grep -v -E \
   'formerly Tidefell|under the name Tidefell|\(adr/00([0-3][0-9]|4[0-2])-' \
   || true)

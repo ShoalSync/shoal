@@ -464,10 +464,10 @@ Windows VM as its CI runner; its decisions are ADR 0042. Known constraints:
   asking for version 6. A file that changed while a scan read it is read again two seconds
   later, not at the next change or the hourly safety scan. `ctutils` 0.4.5 and `tokio` 1.53.3
   (RUSTSEC-2026-0385, 0386). Nothing else changes; settings and databases are as in 0.23.0.
-- `v0.24.0`, the first public release, is Shoal: renamed from Tidefell and relicensed MIT OR
+- `v0.24.0`, the first public release, is Shoal: renamed (ADR 0043) and relicensed MIT OR
   Apache-2.0 (ADR 0044), built and signed keylessly on GitHub's hosted runners (ADR 0045). A
   clean break: the protocols, the on-disk state and the key derivations were renamed, so it
-  neither talks to Tidefell 0.23 nor reads its state, and devices are set up again. The Windows
+  neither talks to 0.23 nor reads its state, and devices are set up again. The Windows
   provider fills pinned placeholders itself (ADR 0042's amendment of 2026-10-25), and a stopped
   engine no longer saves its runtime settings. Notes: `docs/releases/0.24.0.md`.
 - Author vouching is enforced (ADR 0024, for 0.21): a batch's unknown authors' certificates are
