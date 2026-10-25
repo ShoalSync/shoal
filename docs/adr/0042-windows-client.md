@@ -1,6 +1,6 @@
 # 0042: The Windows client
 
-- Status: accepted
+- Status: accepted; its runners superseded by [0045](0045-github-hosting.md)
 - Date: 2026-10-19
 
 ## Context

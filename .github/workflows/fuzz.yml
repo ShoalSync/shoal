@@ -1,7 +1,6 @@
 name: Fuzz
 
-# Every fuzz target for ten minutes each night on main (ADR 0031). Not on pull requests: a few
-# runners on one machine serve every repository.
+# Every fuzz target for ten minutes each night on main (ADR 0031).
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -13,8 +12,8 @@ permissions:
 jobs:
   fuzz:
     name: Fuzz targets
-    runs-on: ephemeral
-    timeout-minutes: 150
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -22,22 +21,20 @@ jobs:
       - name: Toolchain and cargo-fuzz
         working-directory: fuzz
         # The nightly pinned in fuzz/rust-toolchain.toml, used for nothing else.
-        # Each runner has its own CARGO_HOME, which not every runner's PATH includes; the other
-        # workflows get it from dtolnay/rust-toolchain.
         run: |
-          bin="${CARGO_HOME:-$HOME/.cargo}/bin"
-          export PATH="$bin:$PATH"
-          echo "$bin" >> "$GITHUB_PATH"
           rustup toolchain install
-          if ! cargo fuzz --version 2>/dev/null | grep -q " 0.13.2"; then
-            cargo install cargo-fuzz --locked --version 0.13.2 --force
-          fi
+          cargo install cargo-fuzz --locked --version 0.13.2
+      # The corpus each night grows, kept from one night to the next; the seeds in fuzz/corpus
+      # are read only.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/corpus
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
       - name: Run each target
         working-directory: fuzz
-        # The corpus each run grows is kept on the runner slot, beside its CARGO_HOME, which a
-        # container runner keeps between jobs; the seeds in fuzz/corpus are read only.
         run: |
-          corpus="${CARGO_HOME:-$HOME/.cargo}/shoal-fuzz/corpus"
+          corpus="$RUNNER_TEMP/corpus"
           failed=0
           for target in $(cargo fuzz list); do
             mkdir -p "$corpus/$target"
@@ -49,7 +46,7 @@ jobs:
             fi
           done
           exit "$failed"
-      - uses: actions/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5 # v3.2.1, the newest Forgejo supports
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           retention-days: 7

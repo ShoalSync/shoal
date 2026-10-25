@@ -779,7 +779,8 @@ async fn a_storage_peers_copy_counts_once_another_member_holds_the_key() {
     a.write("photo.jpg", b"only here, as far as a can tell");
     engine_a.scan(FOLDER).await.unwrap();
     eventually("the storage peer holds the photo", || {
-        stored(&engine_s).missing_chunks == 0 && stored(&engine_s).versions == 1
+        let s = stored(&engine_s);
+        s.missing_chunks == 0 && s.versions == 1 && s.bytes > 0
     })
     .await;
     // Held, but a alone has the key: not a copy that counts.
@@ -898,9 +899,11 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     let engine_author = start(&author).await;
     author.write("part.bin", &big[..cut]);
     engine_author.scan(FOLDER).await.unwrap();
+    // Its counts alone can say nothing is missing before it has listed what to fetch, so wait
+    // for the chunks on disk too.
     eventually_for("the storage peer keeps the part", 120, || {
         let s = stored(&engine_s);
-        s.versions == 1 && s.missing_chunks == 0
+        s.versions == 1 && s.missing_chunks == 0 && sealed_chunks(dir.path()).len() == half
     })
     .await;
     let first_part = sealed_chunks(dir.path());
@@ -909,10 +912,9 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     engine_author.scan(FOLDER).await.unwrap();
     eventually_for("the storage peer keeps the file", 120, || {
         let s = stored(&engine_s);
-        s.versions == 2 && s.missing_chunks == 0
+        s.versions == 2 && s.missing_chunks == 0 && sealed_chunks(dir.path()).len() == chunks.len()
     })
     .await;
-    assert_eq!(sealed_chunks(dir.path()).len(), chunks.len());
 
     // A member with only the first part on disk. Opening it on a partial replica is also what
     // once failed: compaction removed an encrypted download's chunks before they were written.
@@ -933,7 +935,6 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     })
     .await;
     engine_author.shutdown().await;
-
     // The storage peer's copy of the first part goes bad: it cannot tell, members can.
     for file in &first_part {
         let mut sealed = fs::read(file).unwrap();
@@ -943,15 +944,26 @@ async fn a_large_encrypted_file_comes_from_a_storage_peer_and_a_member_together(
     }
 
     let (storage_before, holder_before) = (served(&engine_s), served(&engine_holder));
+    // An encrypted fetch asks only the devices connected at the time, and the holder may not
+    // be yet: until it is, the fetch fails as unavailable, and is tried again.
     let mut got = Vec::new();
-    engine_fetcher
-        .fetch(FOLDER, "big.bin", None, &mut |offset, data| {
-            assert_eq!(offset, got.len() as u64);
-            got.extend_from_slice(data);
-            Ok(())
-        })
-        .await
-        .unwrap();
+    for attempt in 0.. {
+        got.clear();
+        match engine_fetcher
+            .fetch(FOLDER, "big.bin", None, &mut |offset, data| {
+                assert_eq!(offset, got.len() as u64);
+                got.extend_from_slice(data);
+                Ok(())
+            })
+            .await
+        {
+            Ok(()) => break,
+            Err(shoal_engine::Error::Unavailable(_)) if attempt < 120 => {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(e) => panic!("cannot fetch the file: {e}"),
+        }
+    }
     assert!(got == big, "the content is the file's");
     let (from_storage, from_holder) = (
         served(&engine_s) - storage_before,
@@ -1010,7 +1022,7 @@ async fn an_encrypted_download_spreads_across_peers_that_both_hold_it() {
     engine_author.scan(FOLDER).await.unwrap();
     eventually_for("the storage peer keeps it", 120, || {
         let s = stored(&engine_s);
-        s.versions == 1 && s.missing_chunks == 0
+        s.versions == 1 && s.missing_chunks == 0 && s.bytes >= big.len() as u64
     })
     .await;
     let engine_fetcher = fetcher

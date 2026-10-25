@@ -3,7 +3,8 @@ name: Memory
 # The engine's memory on synthetic folders each night on main (ADR 0035): a full replica of
 # 100,000 files and 1 TiB, reported, and a phone folder of 50,000 photos, which fails over its
 # target of 60 MB. The full-size measurement of 1,000,000 files and 10 TiB, target 500 MB, runs
-# when dispatched by hand.
+# when dispatched by hand. Hosted runners are shared machines, so the numbers vary more from
+# night to night than they did on the project's own.
 on:
   schedule:
     - cron: "47 4 * * *"
@@ -20,8 +21,8 @@ permissions:
 jobs:
   memory:
     name: Synthetic folders
-    runs-on: ephemeral
-    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:

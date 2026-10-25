@@ -2,11 +2,12 @@
 # The Linux half of Phase 8's exit criterion (ADR 0042): a real shoald, on a Linux runner,
 # pairs as a new device with the Windows runner's, which holds the user key, joins the partial
 # folder it offers as a full replica, and fills it with the files the Windows half checks. The
-# two halves find each other through iroh's relays and then talk directly over the LAN; each
-# pairing code goes to the Windows half as a commit status on this run's commit.
+# two halves find each other through iroh's relays, and talk directly if iroh punches through
+# or through a relay if not; each pairing code goes to the Windows half as a commit status on
+# this run's commit (GitHub's REST API).
 #
-# Needs TOKEN (this run's token, which may write statuses), GITHUB_SERVER_URL,
-# GITHUB_REPOSITORY, GITHUB_SHA and GITHUB_RUN_ID, as a workflow run has, and shoald on PATH.
+# Needs TOKEN (this run's token, which may write statuses), GITHUB_API_URL, GITHUB_REPOSITORY,
+# GITHUB_SHA and GITHUB_RUN_ID, as a workflow run has, and shoald on PATH.
 set -euo pipefail
 run=$GITHUB_RUN_ID
 work=${RUNNER_TEMP:-$(mktemp -d)}/exit-criterion
@@ -19,12 +20,15 @@ post() { # post <name> <value>: a status named exit-criterion/<run>/<name>, carr
   local body
   body=$(printf '{"state":"success","context":"exit-criterion/%s/%s","description":"%s","target_url":"https://mailbox.invalid/%s"}' \
     "$run" "$1" "$1" "$2")
-  curl -sSf -o /dev/null -X POST -H "Authorization: token $TOKEN" -H 'Content-Type: application/json' \
-    "$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -d "$body"
+  # The token on standard input, not the command line.
+  printf 'Authorization: Bearer %s\n' "$TOKEN" |
+    curl -sSf -o /dev/null -X POST -H @- -H 'Accept: application/vnd.github+json' \
+      "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" -d "$body"
 }
 
-# Pair, with a new code each time one expires unused, while the Windows half may still be queued.
-deadline=$((SECONDS + 75 * 60))
+# Pair, with a new code each time one expires unused, while the Windows half may still be
+# queued or building: a cold Windows build takes over an hour.
+deadline=$((SECONDS + 210 * 60))
 paired=
 while [ -z "$paired" ] && [ "$SECONDS" -lt "$deadline" ]; do
   rm -f "$work/pair.out"

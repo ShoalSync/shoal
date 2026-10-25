@@ -1,0 +1,19 @@
+name: Build outputs
+description: >
+  What the CI workflow's build job built for the jobs after it: the host build (`ci-host`) and
+  shoal-ffi for each Android ABI, with everything they need at run time, copied into this job's
+  Nix store. The job sets HOST and JNI_LIBS to their store paths, the build job's outputs.
+
+runs:
+  using: composite
+  steps:
+    - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: build-outputs
+        path: ${{ runner.temp }}/build-outputs
+    - name: Into the store
+      shell: bash
+      run: |
+        # Unsigned: the build job made them, in this workflow run.
+        nix copy --no-check-sigs --from "file://$RUNNER_TEMP/build-outputs" "$HOST" "$JNI_LIBS"

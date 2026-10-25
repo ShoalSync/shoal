@@ -33,7 +33,8 @@ Mark breaking changes with `!` (for example `feat(proto)!:`) and a `BREAKING CHA
 
 ## CI gates
 
-A pull request can merge only when CI is green. `nix flake check` runs formatting, clippy, the
+A pull request can merge only when CI is green: every job is a required check on `main`, run on
+GitHub's hosted runners (ADR 0045). `nix flake check` runs formatting, clippy, the
 tests, the crate boundaries and the MSRV build the way CI does, reusing compiled dependencies
 until `Cargo.lock` changes. Without Nix, run the same checks with cargo:
 
