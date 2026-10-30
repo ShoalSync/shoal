@@ -16,7 +16,7 @@ crate's tests, examples, dev-dependencies and `Cargo.lock` are left out.
 
 On top of upstream there is one patch, an addition: custom item states, below. Its `src` is
 exactly the branch `feat/item-properties` of <https://github.com/GraemeKnowles/cloud-filter-rs>,
-sent upstream as a pull request of its own.
+sent upstream as <https://github.com/ho-229/cloud-filter-rs/pull/17>.
 
 Drop this copy, and the `[patch.crates-io]` entry, once a release upstream has the addition.
 

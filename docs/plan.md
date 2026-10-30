@@ -990,11 +990,10 @@ their quota in that order, and nothing held is dropped unless a user asks.
 3. **Upstream's lint job.** Open: upstream #16 fixes the two clippy lints that fail `lint` on
    `main` (`cast_slice_from_raw_parts`, `chunks_exact` with a constant size). Its branch merges
    `main` and its checks pass. It waits for the maintainer's review.
-4. **Custom item states upstream.** To do: open the pull request for the branch
-   `feat/item-properties` of GraemeKnowles/cloud-filter-rs, which is based on upstream `main`
-   alone and has a behavior test, `custom_states`. That test has only been compiled so far, so
-   its first run is upstream's CI. Then link the pull request from `PATCHES.md`. Its `lint` job
-   fails until #16 is merged.
+4. **Custom item states upstream.** Open (2026-10-30): upstream #17, from the branch
+   `feat/item-properties` of GraemeKnowles/cloud-filter-rs, based on upstream `main` alone,
+   with a behavior test, `custom_states`, first run by upstream's CI. Its `lint` job fails
+   until #16 is merged.
 5. **A release.** To do once 3 and 4 are merged: ask the maintainer for 0.0.7. Then depend on it
    from crates.io, and delete `third_party/cloud-filter`, its `[patch.crates-io]` entry, and its
    `exclude` entry in the workspace `Cargo.toml`. `PATCHES.md` has observations that are not
