@@ -108,8 +108,9 @@ opt-level = 2
 inherits = "release"
 strip = "symbols"
 
-# cloud-filter with fixes not yet released upstream (third_party/cloud-filter/PATCHES.md), and
-# notify 8 with notify 9's handling of a Windows watch's overflow (third_party/notify/PATCHES.md).
+# cloud-filter from upstream main, unreleased, with one addition
+# (third_party/cloud-filter/PATCHES.md), and notify 8 with notify 9's handling of a Windows
+# watch's overflow (third_party/notify/PATCHES.md).
 [patch.crates-io]
 cloud-filter = { path = "third_party/cloud-filter" }
 notify = { path = "third_party/notify" }

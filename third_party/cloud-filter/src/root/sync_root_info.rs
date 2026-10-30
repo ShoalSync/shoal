@@ -13,9 +13,8 @@ use windows::{
         Provider::{
             StorageProviderHardlinkPolicy, StorageProviderHydrationPolicy,
             StorageProviderHydrationPolicyModifier, StorageProviderInSyncPolicy,
-            StorageProviderItemPropertyDefinition,
-            StorageProviderPopulationPolicy, StorageProviderProtectionMode,
-            StorageProviderSyncRootInfo,
+            StorageProviderItemPropertyDefinition, StorageProviderPopulationPolicy,
+            StorageProviderProtectionMode, StorageProviderSyncRootInfo,
         },
         StorageFolder,
         Streams::{DataReader, DataWriter},

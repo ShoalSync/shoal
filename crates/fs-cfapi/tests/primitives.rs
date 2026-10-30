@@ -12,10 +12,10 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use cloud_filter::error::{CResult, CloudErrorKind};
-use cloud_filter::filter::{info, ticket, Request, SyncFilter};
+use cloud_filter::filter::{info, ticket, Request, StateWatchEvent, SyncFilter};
 use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder::{ConvertOptions, PinOptions, PinState, Placeholder, UpdateOptions};
-use cloud_filter::placeholder_file::PlaceholderFile;
+use cloud_filter::placeholder_create_info::PlaceholderCreateInfo;
 use cloud_filter::root::{
     Connection, HydrationType, PopulationType, SecurityId, Session, SyncRootId, SyncRootIdBuilder,
     SyncRootInfo,
@@ -211,8 +211,20 @@ impl SyncFilter for Recorder {
         );
     }
 
-    fn state_changed(&self, changes: Vec<PathBuf>) {
+    fn state_changed(&self, event: StateWatchEvent) {
         let mut calls = self.calls.lock().unwrap();
+        let changes = match event {
+            StateWatchEvent::Changed(changes) => changes,
+            StateWatchEvent::Stopped(e) => {
+                calls.push(Call {
+                    kind: "state_watch_stopped",
+                    path: PathBuf::new(),
+                    pid: 0,
+                    extra: e.to_string(),
+                });
+                return;
+            }
+        };
         for path in changes {
             calls.push(Call {
                 kind: "state_changed",
@@ -289,7 +301,7 @@ impl Root {
             .lock()
             .unwrap()
             .insert(name.as_bytes().to_vec(), content.to_vec());
-        PlaceholderFile::new(name)
+        PlaceholderCreateInfo::new(name)
             .metadata(Metadata::file().size(content.len() as u64))
             .blob(name.as_bytes().to_vec())
             .mark_in_sync()
@@ -722,7 +734,7 @@ fn another_process_renames_a_folder_of_placeholders() {
     let root = Root::new("FolderRename", HydrationType::Full);
     // A plain folder.
     std::fs::create_dir(root.path.join("plain")).unwrap();
-    // A placeholder folder: created by cloud-filter's PlaceholderFile it is refused ("The cloud
+    // A placeholder folder: created by cloud-filter's PlaceholderCreateInfo it is refused ("The cloud
     // operation is invalid"), so made as a plain folder and converted.
     std::fs::create_dir(root.path.join("placeholder")).unwrap();
     let converted = Placeholder::options()
@@ -746,7 +758,7 @@ fn another_process_renames_a_folder_of_placeholders() {
                 .lock()
                 .unwrap()
                 .insert(blob.as_bytes().to_vec(), name.as_bytes().to_vec());
-            PlaceholderFile::new(name)
+            PlaceholderCreateInfo::new(name)
                 .metadata(Metadata::file().size(name.len() as u64))
                 .blob(blob.into_bytes())
                 .mark_in_sync()
@@ -1010,7 +1022,7 @@ fn writes_while_another_root_reconnects() {
     .unwrap();
     let a = Session::new().connect(&a_path, Slow).unwrap();
     // 1600 pieces, about 8 s of writing.
-    PlaceholderFile::new("slow.bin")
+    PlaceholderCreateInfo::new("slow.bin")
         .metadata(Metadata::file().size(1600 * 4096))
         .blob(b"slow".to_vec())
         .mark_in_sync()
@@ -1200,7 +1212,7 @@ fn fills_that_read_a_fresh_file() {
         for f in 0..5 {
             let name = format!("f{f}.txt");
             let content = format!("root {r} file {f}");
-            PlaceholderFile::new(&name)
+            PlaceholderCreateInfo::new(&name)
                 .metadata(Metadata::file().size(content.len() as u64))
                 .blob(content.into_bytes())
                 .mark_in_sync()
