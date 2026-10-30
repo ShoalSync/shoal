@@ -974,3 +974,35 @@ their quota in that order, and nothing held is dropped unless a user asks.
 5. **Ranking from the apps** (the amendment's section of 2026-10-23). The daemon's priorities
    endpoints, members without the rules on disk giving the ranking (#54); the tray's Storage
    window on Windows; the Explorer status icons; the Android Storage screen.
+
+### cloud-filter upstream
+
+`fs-cfapi` uses `cloud-filter` through a vendored copy, `third_party/cloud-filter` (its
+`PATCHES.md`). The aim is to drop the copy and depend on a release from crates.io.
+
+1. **Fixes upstream.** Done (2026-10-29): Shoal's fixes 1 to 9 to 0.0.6 are merged upstream as
+   ho-229/cloud-filter-rs #11, #12, #13 and #14. For #14 the maintainer asked for
+   `StateWatchEvent` (`Changed`, `Stopped`) rather than a watcher that ends silently.
+2. **The copy follows upstream.** Done (2026-10-30): the copy is upstream `main` at `fb36bf4`,
+   with the custom item states addition on top. `fs-cfapi` follows the new API:
+   `PlaceholderCreateInfo`, and `StateWatchEvent`. Its Windows tests run on the pull request
+   that lands this.
+3. **Upstream's lint job.** Open: upstream #16 fixes the two clippy lints that fail `lint` on
+   `main` (`cast_slice_from_raw_parts`, `chunks_exact` with a constant size). Its branch merges
+   `main` and its checks pass. It waits for the maintainer's review.
+4. **Custom item states upstream.** To do: open the pull request for the branch
+   `feat/item-properties` of GraemeKnowles/cloud-filter-rs, which is based on upstream `main`
+   alone and has a behavior test, `custom_states`. That test has only been compiled so far, so
+   its first run is upstream's CI. Then link the pull request from `PATCHES.md`. Its `lint` job
+   fails until #16 is merged.
+5. **A release.** To do once 3 and 4 are merged: ask the maintainer for 0.0.7. Then depend on it
+   from crates.io, and delete `third_party/cloud-filter`, its `[patch.crates-io]` entry, and its
+   `exclude` entry in the workspace `Cargo.toml`. `PATCHES.md` has observations that are not
+   bugs, such as the refused in-sync folder placeholder. Keep them in ADR 0042 or the
+   `fs-cfapi` docs before the file goes.
+6. **A stopped state watcher.** To do: when the watcher stops (`StateWatchEvent::Stopped`, as
+   when the root folder is deleted), pins and frees made in Explorer go unnoticed until the
+   root is connected again. The provider now logs a warning and scans the folder once. The scan
+   is safe on a deleted root, because the folder's marker check makes it "folder unavailable".
+   The daemon (`sync_roots.rs`) should reconnect the root, or report it, rather than waiting
+   for a restart.
