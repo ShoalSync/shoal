@@ -988,8 +988,9 @@ workspace `Cargo.toml`. The aim is to depend on a release from crates.io.
 4. **No vendored copy.** Done (2026-10-31): `third_party/cloud-filter` is gone, and the workspace
    pins `9474026`, the merge of #17. `fs-cfapi` follows the new API: `PlaceholderCreateInfo`, and
    `StateWatchEvent`. What `PATCHES.md` recorded of Cloud Files is in ADR 0042's amendment.
-5. **The wider state watcher.** To do before moving past `9474026`: upstream `792d8ba` makes the
-   watcher report name, size and last-write changes too, not only attributes. `state_changed`
+5. **The wider state watcher.** To do before moving past `9474026`: upstream's next commits
+   ("watch local file changes alongside placeholder attributes") make the watcher report name,
+   size and last-write changes too, not only attributes. `state_changed`
    lists the whole folder for each batch, so a busy folder, perhaps Shoal's own fills, would do
    far more of that. Filter the events first, and measure.
 6. **A release.** To do: ask the maintainer for 0.0.7. Then remove the `[patch.crates-io]` entry
