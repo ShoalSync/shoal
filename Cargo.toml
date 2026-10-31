@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/*", "xtask"]
 # The fuzz targets build with a nightly toolchain and have their own workspace (ADR 0031).
-exclude = ["fuzz", "bench", "third_party/cloud-filter", "third_party/notify"]
+exclude = ["fuzz", "bench", "third_party/notify"]
 resolver = "2"
 
 [workspace.package]
@@ -108,8 +108,9 @@ opt-level = 2
 inherits = "release"
 strip = "symbols"
 
-# cloud-filter with fixes not yet released upstream (third_party/cloud-filter/PATCHES.md), and
-# notify 8 with notify 9's handling of a Windows watch's overflow (third_party/notify/PATCHES.md).
+# cloud-filter at a commit of its repository, with fixes and an addition not yet released (back
+# to crates.io once they are: docs/plan.md), and notify 8 with notify 9's handling of a Windows
+# watch's overflow (third_party/notify/PATCHES.md).
 [patch.crates-io]
-cloud-filter = { path = "third_party/cloud-filter" }
+cloud-filter = { git = "https://github.com/ho-229/cloud-filter-rs", rev = "9474026b63cdbbaceb57d53c7aed6a9bedf7d509" }
 notify = { path = "third_party/notify" }

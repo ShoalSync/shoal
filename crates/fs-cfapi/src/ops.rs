@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 
 use cloud_filter::metadata::Metadata;
 use cloud_filter::placeholder::{ConvertOptions, PinOptions, PinState, Placeholder, UpdateOptions};
-use cloud_filter::placeholder_file::PlaceholderFile;
+use cloud_filter::placeholder_create_info::PlaceholderCreateInfo;
 use shoal_proto::{ContentHash, EntryId};
 
 use crate::backend::FileEntry;
@@ -140,7 +140,7 @@ pub(crate) fn create(root: &Path, file: &FileEntry) -> io::Result<()> {
     let name = abs
         .file_name()
         .ok_or_else(|| io::Error::other("no file name"))?;
-    PlaceholderFile::new(name)
+    PlaceholderCreateInfo::new(name)
         .metadata(placeholder_metadata(file)?)
         .blob(blob(file.entry, file.content))
         .mark_in_sync()

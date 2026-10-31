@@ -611,6 +611,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 [[package]]
 name = "cloud-filter"
 version = "0.0.6"
+source = "git+https://github.com/ho-229/cloud-filter-rs?rev=9474026b63cdbbaceb57d53c7aed6a9bedf7d509#9474026b63cdbbaceb57d53c7aed6a9bedf7d509"
 dependencies = [
  "flagset",
  "memoffset",

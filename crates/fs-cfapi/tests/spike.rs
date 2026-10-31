@@ -10,7 +10,7 @@ use std::path::Path;
 use cloud_filter::error::{CResult, CloudErrorKind};
 use cloud_filter::filter::{info, ticket, Request, SyncFilter};
 use cloud_filter::metadata::Metadata;
-use cloud_filter::placeholder_file::PlaceholderFile;
+use cloud_filter::placeholder_create_info::PlaceholderCreateInfo;
 use cloud_filter::root::{
     HydrationType, PopulationType, SecurityId, Session, SyncRootIdBuilder, SyncRootInfo,
 };
@@ -115,7 +115,7 @@ fn an_unpackaged_program_registers_a_sync_root_and_hydrates_a_placeholder() {
         )
         .unwrap();
 
-    PlaceholderFile::new("hello.txt")
+    PlaceholderCreateInfo::new("hello.txt")
         .metadata(Metadata::file().size(content.len() as u64))
         .blob(b"hello.txt".to_vec())
         .mark_in_sync()

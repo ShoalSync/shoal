@@ -974,3 +974,30 @@ their quota in that order, and nothing held is dropped unless a user asks.
 5. **Ranking from the apps** (the amendment's section of 2026-10-23). The daemon's priorities
    endpoints, members without the rules on disk giving the ranking (#54); the tray's Storage
    window on Windows; the Explorer status icons; the Android Storage screen.
+
+### cloud-filter upstream
+
+`fs-cfapi` uses `cloud-filter` at a commit of its repository, through `[patch.crates-io]` in the
+workspace `Cargo.toml`. The aim is to depend on a release from crates.io.
+
+1. **Fixes upstream.** Done (2026-10-29): Shoal's fixes to 0.0.6 are merged upstream as
+   ho-229/cloud-filter-rs #11, #12, #13 and #14. For #14 the maintainer asked for
+   `StateWatchEvent` (`Changed`, `Stopped`) rather than a watcher that ends silently.
+2. **Upstream's lint job.** Done (2026-10-30): upstream #16.
+3. **Custom item states upstream.** Done (2026-10-31): upstream #17.
+4. **No vendored copy.** Done (2026-10-31): `third_party/cloud-filter` is gone, and the workspace
+   pins `9474026`, the merge of #17. `fs-cfapi` follows the new API: `PlaceholderCreateInfo`, and
+   `StateWatchEvent`. What `PATCHES.md` recorded of Cloud Files is in ADR 0042's amendment.
+5. **The wider state watcher.** To do before moving past `9474026`: upstream's next commits
+   ("watch local file changes alongside placeholder attributes") make the watcher report name,
+   size and last-write changes too, not only attributes. `state_changed`
+   lists the whole folder for each batch, so a busy folder, perhaps Shoal's own fills, would do
+   far more of that. Filter the events first, and measure.
+6. **A release.** To do: ask the maintainer for 0.0.7. Then remove the `[patch.crates-io]` entry
+   and the `allow-git` entry in `deny.toml`. A release will include 5's change.
+7. **A stopped state watcher.** To do: when the watcher stops (`StateWatchEvent::Stopped`, as
+   when the root folder is deleted), pins and frees made in Explorer go unnoticed until the
+   root is connected again. The provider logs a warning and scans the folder once. The scan
+   is safe on a deleted root, because the folder's marker check makes it "folder unavailable".
+   The daemon (`sync_roots.rs`) should reconnect the root, or report it, rather than waiting
+   for a restart.

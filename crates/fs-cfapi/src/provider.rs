@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cloud_filter::error::{CResult, CloudErrorKind};
-use cloud_filter::filter::{info, ticket, Request, SyncFilter};
+use cloud_filter::filter::{info, ticket, Request, StateWatchEvent, SyncFilter};
 use cloud_filter::placeholder::PinState;
 use cloud_filter::utility::WriteAt;
 use tracing::{debug, warn};
@@ -240,7 +240,17 @@ impl SyncFilter for Provider {
         });
     }
 
-    fn state_changed(&self, changes: Vec<PathBuf>) {
+    fn state_changed(&self, event: StateWatchEvent) {
+        let changes = match event {
+            StateWatchEvent::Changed(changes) => changes,
+            // The watcher has ended for good: pins and frees made in Explorer go unnoticed
+            // until the root is connected again. Look at the folder once as it is now.
+            StateWatchEvent::Stopped(e) => {
+                warn!(root = %self.root.display(), error = %e, "the state watcher stopped");
+                self.later(|backend| backend.scan());
+                return;
+            }
+        };
         let changes: Vec<(PathBuf, String)> = changes
             .into_iter()
             .filter_map(|abs| self.rel(&abs).map(|rel| (abs, rel)))
