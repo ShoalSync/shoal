@@ -68,3 +68,5 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+# cloud-filter until a release has what Shoal needs (Cargo.toml).
+allow-git = ["https://github.com/ho-229/cloud-filter-rs"]

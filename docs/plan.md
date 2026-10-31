@@ -977,31 +977,26 @@ their quota in that order, and nothing held is dropped unless a user asks.
 
 ### cloud-filter upstream
 
-`fs-cfapi` uses `cloud-filter` through a vendored copy, `third_party/cloud-filter` (its
-`PATCHES.md`). The aim is to drop the copy and depend on a release from crates.io.
+`fs-cfapi` uses `cloud-filter` at a commit of its repository, through `[patch.crates-io]` in the
+workspace `Cargo.toml`. The aim is to depend on a release from crates.io.
 
-1. **Fixes upstream.** Done (2026-10-29): Shoal's fixes 1 to 9 to 0.0.6 are merged upstream as
+1. **Fixes upstream.** Done (2026-10-29): Shoal's fixes to 0.0.6 are merged upstream as
    ho-229/cloud-filter-rs #11, #12, #13 and #14. For #14 the maintainer asked for
    `StateWatchEvent` (`Changed`, `Stopped`) rather than a watcher that ends silently.
-2. **The copy follows upstream.** Done (2026-10-30): the copy is upstream `main` at `fb36bf4`,
-   with the custom item states addition on top. `fs-cfapi` follows the new API:
-   `PlaceholderCreateInfo`, and `StateWatchEvent`. Its Windows tests run on the pull request
-   that lands this.
-3. **Upstream's lint job.** Open: upstream #16 fixes the two clippy lints that fail `lint` on
-   `main` (`cast_slice_from_raw_parts`, `chunks_exact` with a constant size). Its branch merges
-   `main` and its checks pass. It waits for the maintainer's review.
-4. **Custom item states upstream.** Open (2026-10-30): upstream #17, from the branch
-   `feat/item-properties` of GraemeKnowles/cloud-filter-rs, based on upstream `main` alone,
-   with a behavior test, `custom_states`, first run by upstream's CI. Its `lint` job fails
-   until #16 is merged.
-5. **A release.** To do once 3 and 4 are merged: ask the maintainer for 0.0.7. Then depend on it
-   from crates.io, and delete `third_party/cloud-filter`, its `[patch.crates-io]` entry, and its
-   `exclude` entry in the workspace `Cargo.toml`. `PATCHES.md` has observations that are not
-   bugs, such as the refused in-sync folder placeholder. Keep them in ADR 0042 or the
-   `fs-cfapi` docs before the file goes.
-6. **A stopped state watcher.** To do: when the watcher stops (`StateWatchEvent::Stopped`, as
+2. **Upstream's lint job.** Done (2026-10-30): upstream #16.
+3. **Custom item states upstream.** Done (2026-10-31): upstream #17.
+4. **No vendored copy.** Done (2026-10-31): `third_party/cloud-filter` is gone, and the workspace
+   pins `9474026`, the merge of #17. `fs-cfapi` follows the new API: `PlaceholderCreateInfo`, and
+   `StateWatchEvent`. What `PATCHES.md` recorded of Cloud Files is in ADR 0042's amendment.
+5. **The wider state watcher.** To do before moving past `9474026`: upstream `792d8ba` makes the
+   watcher report name, size and last-write changes too, not only attributes. `state_changed`
+   lists the whole folder for each batch, so a busy folder, perhaps Shoal's own fills, would do
+   far more of that. Filter the events first, and measure.
+6. **A release.** To do: ask the maintainer for 0.0.7. Then remove the `[patch.crates-io]` entry
+   and the `allow-git` entry in `deny.toml`. A release will include 5's change.
+7. **A stopped state watcher.** To do: when the watcher stops (`StateWatchEvent::Stopped`, as
    when the root folder is deleted), pins and frees made in Explorer go unnoticed until the
-   root is connected again. The provider now logs a warning and scans the folder once. The scan
+   root is connected again. The provider logs a warning and scans the folder once. The scan
    is safe on a deleted root, because the folder's marker check makes it "folder unavailable".
    The daemon (`sync_roots.rs`) should reconnect the root, or report it, rather than waiting
    for a restart.

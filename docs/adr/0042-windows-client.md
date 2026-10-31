@@ -480,3 +480,28 @@ runner until one exists.
   always-on peer or a storage peer while it runs only when its user is signed in.
 - Every Windows-specific behaviour needs the Windows runner to test; until it exists, Windows
   code is only type-checked by cross-compiling.
+
+## Amendment: `cloud-filter` from its repository (2026-10-31)
+
+Shoal's fixes and additions to `cloud-filter` are merged upstream, so the copy at
+`third_party/cloud-filter` and its `PATCHES.md` are gone. Until a release has them, the workspace
+patches `cloud-filter` to a commit of <https://github.com/ho-229/cloud-filter-rs>. What the
+spikes observed of Cloud Files, which are not bugs in the crate and were kept in that file:
+
+- Operations a provider makes in its own process raise no callbacks: its own deletes and
+  renames in the sync root, for example.
+- `std::fs::metadata`, which follows the placeholder, does not show
+  `FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`. `symlink_metadata` does.
+- `convert_to_placeholder` and `update` need a handle opened with
+  `Placeholder::options().write_access().exclusive()`. With `Placeholder::options()` alone they
+  fail with `HRESULT(0x80070006)` "The handle is invalid."
+- Renaming an ordinary file over a dehydrated placeholder first hydrates the old placeholder,
+  through `fetch_data`.
+- Reporting progress during a fetch, or progressive hydration, keeps a fetch alive past 60 s.
+- Another process renaming a plain folder of placeholders raises no callback. Renaming a
+  placeholder folder raises one `rename` and one `renamed` for the folder.
+- A placeholder moved into a hidden folder in the root, or out of the root, stays a placeholder,
+  but is no longer in sync. Dehydrating it is then refused: "The file is not in sync with the
+  cloud", or, out of the root, "only supported on files under a cloud sync root".
+- `PlaceholderCreateInfo` (`PlaceholderFile` before upstream renamed it) refuses to create a
+  folder placeholder with `has_no_children` and `mark_in_sync`. Converting a plain folder works.
